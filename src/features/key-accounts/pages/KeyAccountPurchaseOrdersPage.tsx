@@ -44,8 +44,12 @@ import {
   FileText,
   Pencil,
   ChevronDown,
+  History,
 } from 'lucide-react';
 import { PurchaseOrderDeliveryDetailsPanel, keyAccountDeliveryDetailsEnabled } from '@/features/orders/components/PurchaseOrderDeliveryDetailsPanel';
+import { PurchaseOrderHistoryDialog } from '@/features/orders/components/PurchaseOrderHistoryDialog';
+import { logPurchaseOrderEvent } from '@/features/orders/purchaseOrderEventsApi';
+import type { PurchaseOrder } from '@/features/orders/types';
 import { KeyAccountPoWarehouseProgress } from '@/features/key-accounts/components/KeyAccountPoWarehouseProgress';
 import type { KeyAccountPoPaymentStatus, PurchaseOrderKeyAccountPayment } from '@/types/database.types';
 import { uploadKeyAccountPaymentProof } from '@/features/key-accounts/kaPaymentProofUpload';
@@ -316,6 +320,7 @@ export function KeyAccountPurchaseOrdersPage() {
 
   const [viewOpen, setViewOpen] = useState(false);
   const [active, setActive] = useState<Row | null>(null);
+  const [historyOrder, setHistoryOrder] = useState<Row | null>(null);
 
   const [actingId, setActingId] = useState<string | null>(null);
   const [cofLoadingId, setCofLoadingId] = useState<string | null>(null);
@@ -410,8 +415,9 @@ export function KeyAccountPurchaseOrdersPage() {
     isDirector && (po.workflow_status === 'director_pending' || po.workflow_status === 'kam_pending');
   const canSalesAdminReview = (po: Row) => isSalesAdmin && po.workflow_status === 'admin_pending';
 
-  /** RFPF is persisted only after the PO reaches `warehouse_reserved` (see sales admin actions below). */
-  const canManageRfpf = (po: Row) => isSalesAdmin && po.workflow_status === 'warehouse_reserved';
+  /** Sales Admin may manage RFPF while the PO is still under admin review or already queued for warehouse. */
+  const canManageRfpf = (po: Row) =>
+    isSalesAdmin && (po.workflow_status === 'admin_pending' || po.workflow_status === 'warehouse_reserved');
   const canSaveRfpf = (po: Row) => canManageRfpf(po) && !po.rfpf_number?.trim();
   const canEditRfpf = (po: Row) =>
     canManageRfpf(po) &&
@@ -918,7 +924,7 @@ export function KeyAccountPurchaseOrdersPage() {
     }
   };
 
-  const updateWorkflow = async (poId: string, patch: Partial<Row>) => {
+  const updateWorkflow = async (poId: string, patch: Partial<Row>): Promise<boolean> => {
     setActingId(poId);
     markLocalRefresh();
     try {
@@ -927,8 +933,10 @@ export function KeyAccountPurchaseOrdersPage() {
       await fetchRows(false);
       setViewOpen(false);
       setActive(null);
+      return true;
     } catch (e: any) {
       toast({ variant: 'destructive', title: 'Update failed', description: e?.message || 'Failed to update PO' });
+      return false;
     } finally {
       setActingId(null);
     }
@@ -982,21 +990,39 @@ export function KeyAccountPurchaseOrdersPage() {
 
   const directorApprove = async () => {
     if (!active || !user?.id) return;
-    await updateWorkflow(active.id, {
+    const poId = active.id;
+    const ok = await updateWorkflow(poId, {
       workflow_status: 'admin_pending',
       director_approved_at: new Date().toISOString(),
       director_approved_by: user.id,
     } as any);
+    if (ok) {
+      void logPurchaseOrderEvent({
+        purchaseOrderId: poId,
+        eventType: 'director_approved',
+        note: 'Approved by sales director',
+        createdBy: user.id,
+      });
+    }
   };
 
   const directorReject = async () => {
     if (!active || !user?.id) return;
-    await updateWorkflow(active.id, {
+    const poId = active.id;
+    const ok = await updateWorkflow(poId, {
       workflow_status: 'rejected',
       status: 'rejected',
       director_approved_at: new Date().toISOString(),
       director_approved_by: user.id,
     } as any);
+    if (ok) {
+      void logPurchaseOrderEvent({
+        purchaseOrderId: poId,
+        eventType: 'rejected',
+        note: 'Rejected by sales director',
+        createdBy: user.id,
+      });
+    }
   };
 
   const salesAdminSaveRfpf = async () => {
@@ -1007,7 +1033,7 @@ export function KeyAccountPurchaseOrdersPage() {
         title: 'Cannot save RFPF',
         description: active.rfpf_number?.trim()
           ? 'RFPF is already saved. Use Edit to correct it.'
-          : 'Submit this PO to the warehouse queue first. RFPF can only be saved once workflow status is Warehouse reserved.',
+          : 'RFPF can only be saved while workflow status is Admin pending or Warehouse reserved.',
       });
       return;
     }
@@ -1109,15 +1135,24 @@ export function KeyAccountPurchaseOrdersPage() {
   const salesAdminSubmitToWarehouse = async () => {
     if (!active || !user?.id) return;
 
-    // Release to warehouse queue first; RFPF is entered and saved only after `warehouse_reserved`.
+    // Release to warehouse queue after admin review; RFPF may already be entered before this step.
     // Keep `status` as pending so the existing Warehouse inbox can approve it.
-    await updateWorkflow(active.id, {
+    const poId = active.id;
+    const ok = await updateWorkflow(poId, {
       workflow_status: 'warehouse_reserved',
       admin_approved_at: new Date().toISOString(),
       admin_approved_by: user.id,
       custom_pricing_confirmed: true,
       status: 'pending',
     } as any);
+    if (ok) {
+      void logPurchaseOrderEvent({
+        purchaseOrderId: poId,
+        eventType: 'admin_submitted',
+        note: 'Submitted to warehouse by sales admin',
+        createdBy: user.id,
+      });
+    }
   };
 
   const submitRemainingPayment = async () => {
@@ -1401,6 +1436,15 @@ export function KeyAccountPurchaseOrdersPage() {
                                   COF
                                 </Button>
                               )}
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setHistoryOrder(po)}
+                                title="View PO history"
+                              >
+                                <History className="h-4 w-4 mr-2" />
+                                History
+                              </Button>
                               <Button variant="ghost" size="sm" onClick={() => void openView(po)}>
                                 <Eye className="h-4 w-4 mr-2" />
                                 View
@@ -2022,7 +2066,7 @@ export function KeyAccountPurchaseOrdersPage() {
                             </Button>
                           </div>
                           <p className="text-xs text-muted-foreground">
-                            RFPF is stored only while this PO is in Warehouse reserved status.
+                            RFPF can be saved while this PO is in Admin pending or Warehouse reserved status.
                           </p>
                         </>
                       )}
@@ -2080,6 +2124,16 @@ export function KeyAccountPurchaseOrdersPage() {
           </div>
 
           <div className="shrink-0 border-t px-4 py-4 sm:px-6 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
+            {active && (
+              <Button
+                className="w-full sm:w-auto"
+                variant="outline"
+                onClick={() => setHistoryOrder(active)}
+              >
+                <History className="h-4 w-4 mr-2" />
+                History
+              </Button>
+            )}
             {active && active.company_account_type === 'Key Accounts' && (
               <Button
                 className="w-full sm:w-auto"
@@ -2326,6 +2380,17 @@ export function KeyAccountPurchaseOrdersPage() {
         }}
         rebateId={rebateDetailOpen ? rebateDetailId : null}
         onRebateUpdated={() => void refreshPoRebatesForActive()}
+      />
+
+      <PurchaseOrderHistoryDialog
+        purchaseOrderId={historyOrder?.id ?? null}
+        poNumber={historyOrder?.po_number}
+        purchaseOrder={(historyOrder as unknown as PurchaseOrder) ?? null}
+        presentation="key_account"
+        open={!!historyOrder}
+        onOpenChange={(open) => {
+          if (!open) setHistoryOrder(null);
+        }}
       />
     </div>
   );

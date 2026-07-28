@@ -446,14 +446,16 @@ export function SalesDirectorDashboard() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <TrendingUp className="h-4 w-4" />
-              Pending POs
+              Outstanding payments
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-amber-600">{stats.pendingOrders}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              In workflow · Pending revenue{' '}
-              {formatKeyAccountDashboardCurrency(revenueMetrics.summary.pendingRevenue)}
+              Unpaid + partial · Outstanding{' '}
+              {formatKeyAccountDashboardCurrency(
+                revenueMetrics.summary.unpaidRevenue + revenueMetrics.summary.partialRevenue
+              )}
             </p>
           </CardContent>
         </Card>

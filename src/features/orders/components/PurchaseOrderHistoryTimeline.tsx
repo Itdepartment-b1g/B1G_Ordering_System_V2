@@ -59,12 +59,19 @@ function formatAt(iso: string): string {
   }
 }
 
-function eventTitle(event: PurchaseOrderHistoryEvent): string {
+function eventTitle(
+  event: PurchaseOrderHistoryEvent,
+  presentation: 'default' | 'key_account' = 'default'
+): string {
   switch (event.type) {
     case 'created':
       return 'PO created';
+    case 'director_approved':
+      return 'Director approved';
+    case 'admin_submitted':
+      return 'Submitted to warehouse';
     case 'approved':
-      return 'Approved';
+      return presentation === 'key_account' ? 'Warehouse approved' : 'Approved';
     case 'rejected':
       return 'Rejected';
     case 'dispatched':
@@ -106,6 +113,14 @@ function eventSummary(
     if (!items?.length) return null;
     const ordered = items.reduce((sum, item) => sum + Math.max(0, item.orderedQuantity), 0);
     return `Ordered ${unitLabel(ordered)} across ${variantLabel(items.length)}`;
+  }
+
+  if (event.type === 'director_approved') {
+    return 'Sales director approved this Key Account PO';
+  }
+
+  if (event.type === 'admin_submitted') {
+    return 'Sales admin submitted this PO to the warehouse queue';
   }
 
   if (event.type === 'approved') {
@@ -180,6 +195,8 @@ function EventIcon({
 }) {
   const iconClass = cn('h-3.5 w-3.5', className);
   if (type === 'created') return <Clock className={iconClass} />;
+  if (type === 'director_approved') return <CheckCircle2 className={iconClass} />;
+  if (type === 'admin_submitted') return <Send className={iconClass} />;
   if (type === 'approved') return <Send className={iconClass} />;
   if (type === 'dispatched') return <Truck className={iconClass} />;
   if (type === 'receive_confirmed') return <PackageCheck className={iconClass} />;
@@ -200,6 +217,12 @@ function eventTone(type: PurchaseOrderHistoryEvent['type']): {
   iconWrap: string;
 } {
   switch (type) {
+    case 'director_approved':
+      return {
+        rail: 'bg-amber-500',
+        iconWrap: 'bg-amber-50 text-amber-800 border-amber-200',
+      };
+    case 'admin_submitted':
     case 'approved':
     case 'dispatched':
       return {
@@ -238,7 +261,14 @@ function qtyHeaderForEvent(type: PurchaseOrderHistoryEvent['type']): string {
   if (type === 'receive_confirmed') return 'Received';
   if (type === 'dispatched') return 'Dispatched';
   if (type === 'cancelled') return 'Cancelled';
-  if (type === 'approved' || type === 'created') return 'Ordered';
+  if (
+    type === 'approved' ||
+    type === 'created' ||
+    type === 'director_approved' ||
+    type === 'admin_submitted'
+  ) {
+    return 'Ordered';
+  }
   if (
     type === 'shortage_opened' ||
     type === 'shortage_resolved_redeliver' ||
@@ -298,10 +328,13 @@ function HistoryLinesTable({
 function OrderStatusSummary({
   items,
   history = [],
+  presentation = 'default',
 }: {
   items: PurchaseOrderHistoryItem[];
   history?: PurchaseOrderHistoryEvent[];
+  presentation?: 'default' | 'key_account';
 }) {
+  const hideReceiveMetrics = presentation === 'key_account';
   const ordered = items.reduce((sum, item) => sum + Math.max(0, item.orderedQuantity), 0);
   const dispatched = items.reduce((sum, item) => sum + Math.max(0, item.dispatchedQuantity), 0);
   const received = items.reduce((sum, item) => sum + Math.max(0, item.receivedQuantity), 0);
@@ -320,22 +353,31 @@ function OrderStatusSummary({
       title:
         'Unique fulfillment units (Found & redeliver redispatches are not double-counted; Write off & replace redispatches are)',
     },
-    {
-      label: 'Received',
-      value: received,
-      tone: 'border-emerald-200 bg-emerald-50 text-emerald-800',
-    },
-    {
-      label: 'Short',
-      value: shortDisplay,
-      tone:
-        shortDisplay > 0
-          ? 'border-amber-200 bg-amber-50 text-amber-900'
-          : 'border-slate-200 bg-slate-50 text-slate-600',
-      title:
-        'Units still outstanding vs ordered (write-off & replace redispatches do not inflate Short; pure write-offs are excluded)',
-    },
   ];
+
+  if (!hideReceiveMetrics) {
+    chips.push(
+      {
+        label: 'Received',
+        value: received,
+        tone: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+      },
+      {
+        label: 'Short',
+        value: shortDisplay,
+        tone:
+          shortDisplay > 0
+            ? 'border-amber-200 bg-amber-50 text-amber-900'
+            : 'border-slate-200 bg-slate-50 text-slate-600',
+        title:
+          'Units still outstanding vs ordered (write-off & replace redispatches do not inflate Short; pure write-offs are excluded)',
+      }
+    );
+  }
+
+  const gridCols = hideReceiveMetrics
+    ? 'grid-cols-[1fr_4.5rem_4.5rem]'
+    : 'grid-cols-[1fr_4.5rem_4.5rem_4.5rem]';
 
   return (
     <div className="space-y-3">
@@ -354,21 +396,28 @@ function OrderStatusSummary({
       </div>
 
       <div className="rounded-md border divide-y overflow-hidden">
-        <div className="grid grid-cols-[1fr_4.5rem_4.5rem_4.5rem] gap-2 px-3 py-2 text-xs font-medium text-muted-foreground bg-muted/40">
+        <div
+          className={cn(
+            'grid gap-2 px-3 py-2 text-xs font-medium text-muted-foreground bg-muted/40',
+            gridCols
+          )}
+        >
           <span>SKU</span>
           <span className="text-right">Ordered</span>
           <span className="text-right">Dispatched</span>
-          <span className="text-right">Received</span>
+          {!hideReceiveMetrics ? <span className="text-right">Received</span> : null}
         </div>
         {items.map((item) => (
           <div
             key={item.variantId}
-            className="grid grid-cols-[1fr_4.5rem_4.5rem_4.5rem] gap-2 px-3 py-2 text-sm items-center"
+            className={cn('grid gap-2 px-3 py-2 text-sm items-center', gridCols)}
           >
             <span className="truncate font-medium">{item.variantName}</span>
             <span className="text-right tabular-nums">{item.orderedQuantity}</span>
             <span className="text-right tabular-nums">{item.dispatchedQuantity}</span>
-            <span className="text-right tabular-nums">{item.receivedQuantity}</span>
+            {!hideReceiveMetrics ? (
+              <span className="text-right tabular-nums">{item.receivedQuantity}</span>
+            ) : null}
           </div>
         ))}
       </div>
@@ -491,6 +540,8 @@ type PurchaseOrderHistoryTimelineProps = {
   items?: PurchaseOrderHistoryItem[];
   /** When set, Dispatched / Receive confirmed events can open DR / received receipts. */
   purchaseOrder?: PurchaseOrder | null;
+  /** Key Account view uses clearer labels for warehouse approve vs KA workflow steps. */
+  presentation?: 'default' | 'key_account';
   emptyLabel?: string;
 };
 
@@ -498,6 +549,7 @@ export function PurchaseOrderHistoryTimeline({
   history,
   items,
   purchaseOrder = null,
+  presentation = 'default',
   emptyLabel = 'No history yet.',
 }: PurchaseOrderHistoryTimelineProps) {
   const { toast } = useToast();
@@ -540,7 +592,7 @@ export function PurchaseOrderHistoryTimeline({
   return (
     <div className="space-y-4">
       {items && items.length > 0 ? (
-        <OrderStatusSummary items={items} history={history} />
+        <OrderStatusSummary items={items} history={history} presentation={presentation} />
       ) : null}
 
       {events.length === 0 ? (
@@ -554,6 +606,7 @@ export function PurchaseOrderHistoryTimeline({
               const lines = event.lines;
               const summary = eventSummary(event, items);
               const hasShortBadge =
+                presentation !== 'key_account' &&
                 (event.type === 'receive_confirmed' || event.type === 'shortage_opened') &&
                 (event.shortQuantity ?? 0) > 0;
               const shortBadgeLabel =
@@ -561,11 +614,14 @@ export function PurchaseOrderHistoryTimeline({
                   ? `${(event.shortQuantity ?? 0).toLocaleString()} under investigation`
                   : `${(event.shortQuantity ?? 0).toLocaleString()} left on DR`;
               const showReadyToReceive =
-                event.type === 'dispatched' && !!event.awaitingReceive;
+                presentation !== 'key_account' &&
+                event.type === 'dispatched' &&
+                !!event.awaitingReceive;
               const showNote = !!event.note?.trim();
               const canPrintDr =
                 !!purchaseOrder && event.type === 'dispatched' && !!event.deliveryId;
               const canPrintReceiveReceipt =
+                presentation !== 'key_account' &&
                 !!purchaseOrder &&
                 event.type === 'receive_confirmed' &&
                 !!event.deliveryId;
@@ -575,7 +631,9 @@ export function PurchaseOrderHistoryTimeline({
                 <TimelineStep key={event.id} type={event.type} isLast={isLast}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="text-sm font-medium leading-snug">{eventTitle(event)}</p>
+                      <p className="text-sm font-medium leading-snug">
+                        {eventTitle(event, presentation)}
+                      </p>
                       {summary ? (
                         <p className="text-sm text-foreground/80 leading-snug mt-0.5">
                           {summary}

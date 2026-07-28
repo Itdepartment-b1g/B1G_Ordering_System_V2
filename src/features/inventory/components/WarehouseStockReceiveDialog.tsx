@@ -13,17 +13,20 @@ import {
 } from '@/components/ui/dialog';
 import {
   applyBatchDefaultsToVariants,
+  applyBoxInputsToReceiveSplit,
   clearBatchDefaultsFromVariants,
   createReceiveLotSplit,
   EMPTY_RECEIVE_BATCH_DEFAULTS,
   formatReceiveCurrency,
-  getMaxQtyForSplit,
   getReceiveBatchTotal,
+  getReceiveSplitBoxBreakdown,
   getReceiveTotalUnits,
   getSplitLineAmount,
   getVariantAllocatedQty,
   isReceiveConfirmReady,
   type ReceiveBatchDefaults,
+  type ReceiveBoxInputFields,
+  type ReceiveLotSplit,
   type ReceiveVariantItem,
 } from '../warehouseStockReceiveShared';
 
@@ -38,6 +41,8 @@ type WarehouseStockReceiveDialogProps = {
   submitting: boolean;
   onConfirm: () => void;
 };
+
+const qtyInputClassName = 'h-9 tabular-nums';
 
 export function WarehouseStockReceiveDialog({
   open,
@@ -60,6 +65,31 @@ export function WarehouseStockReceiveDialog({
     onVariantsChange(variants.map((variant) => (variant.variantId === variantId ? updater(variant) : variant)));
   };
 
+  const updateSplitBoxInputs = (
+    variantId: string,
+    splitId: string,
+    updates: Partial<ReceiveBoxInputFields>
+  ) => {
+    updateVariant(variantId, (current) => ({
+      ...current,
+      splits: current.splits.map((row) =>
+        row.id === splitId ? applyBoxInputsToReceiveSplit(row, updates) : row
+      ),
+    }));
+  };
+
+  const updateSplitField = <K extends keyof ReceiveLotSplit>(
+    variantId: string,
+    splitId: string,
+    field: K,
+    value: ReceiveLotSplit[K]
+  ) => {
+    updateVariant(variantId, (current) => ({
+      ...current,
+      splits: current.splits.map((row) => (row.id === splitId ? { ...row, [field]: value } : row)),
+    }));
+  };
+
   const handleApplyDefaults = () => {
     onVariantsChange(applyBatchDefaultsToVariants(variants, defaults));
   };
@@ -71,7 +101,7 @@ export function WarehouseStockReceiveDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Truck className="h-5 w-5" />
@@ -81,8 +111,9 @@ export function WarehouseStockReceiveDialog({
 
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            One receive creates one batch (<code className="text-xs">BATCH-YYYY-MM-#####</code>). Add
-            extra rows when expiry or unit cost differs for the same variant.
+            One receive creates one batch (<code className="text-xs">BATCH-YYYY-MM-#####</code>). Enter
+            boxes to auto-compute units. Add extra rows when expiry or unit cost differs for the same
+            variant.
           </p>
 
           <div className="rounded-lg border bg-muted/20 p-3 space-y-3">
@@ -151,17 +182,24 @@ export function WarehouseStockReceiveDialog({
             {variants.map((variant) => {
               const allocated = getVariantAllocatedQty(variant.splits);
               const unallocated = Math.max(0, variant.remaining - allocated);
+              const overAllocated = allocated > variant.remaining;
 
               return (
                 <div key={variant.variantId} className="rounded-lg border p-3 space-y-3">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="text-sm font-medium truncate flex items-center gap-2">
-                        {unallocated > 0 && (
+                        {(unallocated > 0 || overAllocated) && (
                           <span
-                            className="h-2 w-2 shrink-0 rounded-full bg-red-500"
-                            title="Quantity left to assign"
-                            aria-label="Quantity left to assign"
+                            className={`h-2 w-2 shrink-0 rounded-full ${
+                              overAllocated ? 'bg-destructive' : 'bg-red-500'
+                            }`}
+                            title={
+                              overAllocated ? 'Allocated exceeds remaining' : 'Quantity left to assign'
+                            }
+                            aria-label={
+                              overAllocated ? 'Allocated exceeds remaining' : 'Quantity left to assign'
+                            }
                           />
                         )}
                         <span className="truncate">{variant.variantLabel}</span>
@@ -170,7 +208,11 @@ export function WarehouseStockReceiveDialog({
                         Remaining: {variant.remaining} of {variant.orderedQuantity}
                         <span className="ml-2">
                           · Allocated {allocated}/{variant.remaining}
-                          {unallocated > 0 ? ` · ${unallocated} left to assign` : ''}
+                          {overAllocated
+                            ? ` · ${allocated - variant.remaining} over`
+                            : unallocated > 0
+                              ? ` · ${unallocated} left to assign`
+                              : ''}
                         </span>
                       </p>
                     </div>
@@ -191,118 +233,179 @@ export function WarehouseStockReceiveDialog({
                     </Button>
                   </div>
 
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     {variant.splits.map((split) => {
-                      const maxQtyForRow = getMaxQtyForSplit(variant, split.id);
+                      const breakdown = getReceiveSplitBoxBreakdown(split);
+                      const exceedsRemaining = split.quantity > 0 && allocated > variant.remaining;
 
                       return (
-                      <div
-                        key={split.id}
-                        className="grid gap-2 sm:grid-cols-[88px_1fr_1fr_1fr_auto] items-end"
-                      >
-                        <div className="grid gap-1">
-                          <Label className="text-xs">Qty</Label>
-                          <Input
-                            type="number"
-                            min={0}
-                            max={maxQtyForRow}
-                            value={split.quantity || ''}
-                            onChange={(e) => {
-                              const qty = Math.min(
-                                maxQtyForRow,
-                                Math.max(0, parseInt(e.target.value, 10) || 0)
-                              );
-                              updateVariant(variant.variantId, (current) => ({
-                                ...current,
-                                splits: current.splits.map((row) =>
-                                  row.id === split.id ? { ...row, quantity: qty } : row
-                                ),
-                              }));
-                            }}
-                          />
-                        </div>
-                        <div className="grid gap-1">
-                          <Label className="text-xs">Mfg date</Label>
-                          <Input
-                            type="date"
-                            value={split.manufacturedDate}
-                            onChange={(e) =>
-                              updateVariant(variant.variantId, (current) => ({
-                                ...current,
-                                splits: current.splits.map((row) =>
-                                  row.id === split.id
-                                    ? { ...row, manufacturedDate: e.target.value }
-                                    : row
-                                ),
-                              }))
-                            }
-                          />
-                        </div>
-                        <div className="grid gap-1">
-                          <Label className="text-xs">Expiry date</Label>
-                          <Input
-                            type="date"
-                            value={split.expirationDate}
-                            onChange={(e) =>
-                              updateVariant(variant.variantId, (current) => ({
-                                ...current,
-                                splits: current.splits.map((row) =>
-                                  row.id === split.id
-                                    ? { ...row, expirationDate: e.target.value }
-                                    : row
-                                ),
-                              }))
-                            }
-                          />
-                        </div>
-                        <div className="grid gap-1">
-                          <div className="flex items-center justify-between gap-2 min-h-4">
-                            <Label className="text-xs">Unit cost</Label>
-                            {getSplitLineAmount(split) > 0 && (
-                              <span className="text-[10px] text-muted-foreground tabular-nums whitespace-nowrap">
-                                Line: {formatReceiveCurrency(getSplitLineAmount(split))}
-                              </span>
-                            )}
+                        <div key={split.id} className="rounded-md border bg-muted/10 p-2.5 space-y-2">
+                          <div className="flex flex-wrap items-end gap-2">
+                            <div className="grid gap-1 w-[72px]">
+                              <Label className="text-xs">Boxes</Label>
+                              <Input
+                                type="number"
+                                min={0}
+                                step={1}
+                                inputMode="numeric"
+                                placeholder="0"
+                                value={split.boxCount}
+                                onChange={(e) =>
+                                  updateSplitBoxInputs(variant.variantId, split.id, {
+                                    boxCount: e.target.value,
+                                  })
+                                }
+                                className={qtyInputClassName}
+                                aria-label={`Boxes for ${variant.variantLabel}`}
+                              />
+                            </div>
+                            <span className="pb-2 text-sm text-muted-foreground">×</span>
+                            <div className="grid gap-1 w-[80px]">
+                              <Label className="text-xs">Qty/box</Label>
+                              <Input
+                                type="number"
+                                min={0}
+                                step={1}
+                                inputMode="numeric"
+                                placeholder="0"
+                                value={split.unitsPerBox}
+                                onChange={(e) =>
+                                  updateSplitBoxInputs(variant.variantId, split.id, {
+                                    unitsPerBox: e.target.value,
+                                  })
+                                }
+                                className={qtyInputClassName}
+                                aria-label={`Quantity per box for ${variant.variantLabel}`}
+                              />
+                            </div>
+                            <span className="pb-2 text-sm text-muted-foreground">+</span>
+                            <div className="grid gap-1 w-[88px]">
+                              <Label className="text-xs">Quantity</Label>
+                              <Input
+                                type="number"
+                                min={0}
+                                step={1}
+                                inputMode="numeric"
+                                placeholder="0"
+                                value={split.extraQty}
+                                onChange={(e) =>
+                                  updateSplitBoxInputs(variant.variantId, split.id, {
+                                    extraQty: e.target.value,
+                                  })
+                                }
+                                className={qtyInputClassName}
+                                aria-label={`Extra quantity for ${variant.variantLabel}`}
+                              />
+                            </div>
+                            <div className="grid gap-1 min-w-[96px] flex-1">
+                              <Label className="text-xs flex items-center gap-1.5 flex-wrap">
+                                <span>Total</span>
+                                {breakdown && (
+                                  <span className="font-normal text-muted-foreground tabular-nums">
+                                    = {breakdown}
+                                  </span>
+                                )}
+                              </Label>
+                              <div
+                                className={`flex h-9 items-center rounded-md border border-input bg-muted/50 px-3 text-sm tabular-nums ${
+                                  split.quantity > 0
+                                    ? exceedsRemaining
+                                      ? 'text-destructive'
+                                      : 'text-foreground'
+                                    : 'text-muted-foreground'
+                                }`}
+                                aria-label={`Computed quantity for ${variant.variantLabel}`}
+                              >
+                                {split.quantity > 0 ? split.quantity.toLocaleString() : '—'}
+                              </div>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
+                              disabled={variant.splits.length <= 1}
+                              onClick={() =>
+                                updateVariant(variant.variantId, (current) => ({
+                                  ...current,
+                                  splits: current.splits.filter((row) => row.id !== split.id),
+                                }))
+                              }
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
                           </div>
-                          <Input
-                            type="number"
-                            min={0}
-                            step="0.01"
-                            placeholder="0.00"
-                            value={split.unitCost}
-                            onChange={(e) =>
-                              updateVariant(variant.variantId, (current) => ({
-                                ...current,
-                                splits: current.splits.map((row) =>
-                                  row.id === split.id ? { ...row, unitCost: e.target.value } : row
-                                ),
-                              }))
-                            }
-                          />
+
+                          <div className="grid gap-2 sm:grid-cols-3 items-end">
+                            <div className="grid gap-1">
+                              <Label className="text-xs">Mfg date</Label>
+                              <Input
+                                type="date"
+                                value={split.manufacturedDate}
+                                onChange={(e) =>
+                                  updateSplitField(
+                                    variant.variantId,
+                                    split.id,
+                                    'manufacturedDate',
+                                    e.target.value
+                                  )
+                                }
+                              />
+                            </div>
+                            <div className="grid gap-1">
+                              <Label className="text-xs">Expiry date</Label>
+                              <Input
+                                type="date"
+                                value={split.expirationDate}
+                                onChange={(e) =>
+                                  updateSplitField(
+                                    variant.variantId,
+                                    split.id,
+                                    'expirationDate',
+                                    e.target.value
+                                  )
+                                }
+                              />
+                            </div>
+                            <div className="grid gap-1">
+                              <div className="flex items-center justify-between gap-2 min-h-4">
+                                <Label className="text-xs">Unit cost</Label>
+                                {getSplitLineAmount(split) > 0 && (
+                                  <span className="text-[10px] text-muted-foreground tabular-nums whitespace-nowrap">
+                                    Line: {formatReceiveCurrency(getSplitLineAmount(split))}
+                                  </span>
+                                )}
+                              </div>
+                              <Input
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                placeholder="0.00"
+                                value={split.unitCost}
+                                onChange={(e) =>
+                                  updateSplitField(
+                                    variant.variantId,
+                                    split.id,
+                                    'unitCost',
+                                    e.target.value
+                                  )
+                                }
+                              />
+                            </div>
+                          </div>
                         </div>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
-                          disabled={variant.splits.length <= 1}
-                          onClick={() =>
-                            updateVariant(variant.variantId, (current) => ({
-                              ...current,
-                              splits: current.splits.filter((row) => row.id !== split.id),
-                            }))
-                          }
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    );
+                      );
                     })}
                   </div>
                 </div>
               );
             })}
           </div>
+
+          <p className="text-xs text-muted-foreground">
+            Total is calculated as (Boxes × Qty/box) + Quantity. Quantity is optional leftover units.
+            Assign all remaining units before confirming.
+          </p>
 
           <div className="grid gap-2">
             <Label>Receive notes (optional)</Label>

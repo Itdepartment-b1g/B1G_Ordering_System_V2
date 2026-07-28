@@ -1,5 +1,5 @@
 import { KeyAccountDashboardRevenueChart } from './KeyAccountDashboardRevenueChart';
-import type { KeyAccountMonthlyRevenueRow } from './keyAccountDashboardRevenue';
+import type { KeyAccountDashboardMonthlyPaymentRow } from './keyAccountDashboardRevenue';
 
 /** Shared revenue overview chart for Sales Head, Sales Admin, and Sales Director dashboards. */
 export function KeyAccountDashboardRevenueOverview({
@@ -7,7 +7,7 @@ export function KeyAccountDashboardRevenueOverview({
   selectedYear,
   onYearChange,
 }: {
-  monthlyData: KeyAccountMonthlyRevenueRow[];
+  monthlyData: KeyAccountDashboardMonthlyPaymentRow[];
   selectedYear: number;
   onYearChange: (year: number) => void;
 }) {

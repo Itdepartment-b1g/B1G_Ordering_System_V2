@@ -45,11 +45,12 @@ export default function StockRequestManual({ embedded = false }: StockRequestMan
       <InstructionBorder>
         <TitleSection>How to Receive a Stock Request?</TitleSection>
         <span>1. Click on the 3 vertical dots icon in the row and click on <span className="text-blue-500">Receive</span></span>
-        <span>2. Enter the quantity, manufacturing date, expiry date, and unit cost for each variant</span>
-        <span>3. Optionally use <span className="text-blue-500">Apply to all rows</span> under batch defaults to fill the same dates and unit cost for all items</span>
-        <span>4. Click on <span className="text-blue-500">Confirm receive</span></span>
-        <span>5. The received stock will be added to Main Inventory under one batch number</span>
-        <span>6. If all ordered quantities are received, the status will update to <span className="text-gray-700">Fully received</span></span>
+        <span>2. Enter <span className="text-blue-500">Boxes</span> and <span className="text-blue-500">Qty/box</span> for each variant. Optionally add leftover units in <span className="text-blue-500">Quantity</span>. <span className="text-blue-500">Total</span> is calculated as (Boxes × Qty/box) + Quantity</span>
+        <span>3. Enter the manufacturing date, expiry date, and unit cost for each row</span>
+        <span>4. Optionally use <span className="text-blue-500">Apply to all rows</span> under batch defaults to fill the same dates and unit cost for all items</span>
+        <span>5. Click on <span className="text-blue-500">Confirm receive</span></span>
+        <span>6. The received stock will be added to Main Inventory under one batch number. Boxes, Qty/box, and Quantity are saved and shown in the request view. You can export a Stock Receive Receipt PDF from receive history.</span>
+        <span>7. If all ordered quantities are received, the status will update to <span className="text-gray-700">Fully received</span></span>
       </InstructionBorder>
 
       <InstructionBorder>

@@ -1,166 +1,76 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { isDateInRange } from '@/lib/dateRangePresets';
-import { isRebateDerivedPurchaseOrder } from '../rebates/keyAccountRebateShared';
 import {
-  buildKeyAccountProductAnalyticsRows,
-  buildRebateDeductionByPoItemId,
-  buildRebateSwapByPoItemId,
   isKeyAccountAnalyticsEligibleOrder,
-  isKeyAccountCommercialProductAnalyticsOrder,
-  isKeyAccountPartialDeliveredOrder,
-  isKeyAccountPendingWorkflowOrder,
+  isKeyAccountProductAnalyticsOrder,
   KEY_ACCOUNT_DASHBOARD_MONTH_NAMES,
-  rebateResolutionHasReplacement,
-  sumKeyAccountProductRevenueSummary,
-  type KeyAccountMonthlyRevenueRow,
-  type KeyAccountProductAnalyticsItemRef,
   type KeyAccountProductAnalyticsOrderRef,
-  type KeyAccountProductRevenueSummary,
-  type KeyAccountRebateAnalyticsRecord,
-  warehouseTransferLocationStatusKey,
-  warehouseTransferReservationKey,
 } from '../key-accounts-analytics/keyAccountAnalyticsShared';
 
 export interface KeyAccountDashboardOrder extends KeyAccountProductAnalyticsOrderRef {
   order_date: string;
   status?: string | null;
   key_account_client_id?: string | null;
+  key_account_payment_status?: string | null;
+  key_account_payment_mode?: string | null;
 }
 
-interface WarehouseTransferReservationRow {
-  purchase_order_id: string;
-  warehouse_location_id: string;
-  variant_id: string;
-  quantity_reserved: number;
-  quantity_fulfilled: number;
+export interface KeyAccountDashboardPaymentSummary {
+  /** Amount collected (from payment rows, capped at PO total). */
+  paidRevenue: number;
+  /** Remaining balance on partially paid POs. */
+  partialRevenue: number;
+  /** Full amount on unpaid POs (no payments yet). */
+  unpaidRevenue: number;
+  /** paid + partial + unpaid — sales booked by order date. */
+  totalRevenue: number;
 }
 
-interface WarehouseTransferLocationStatusRow {
-  purchase_order_id: string;
-  warehouse_location_id: string;
-  status: string;
-}
-
-export interface KeyAccountDashboardRevenueContext {
-  items: KeyAccountProductAnalyticsItemRef[];
-  rebates: KeyAccountRebateAnalyticsRecord[];
-  transferReservations: WarehouseTransferReservationRow[];
-  transferLocationStatuses: WarehouseTransferLocationStatusRow[];
+export interface KeyAccountDashboardMonthlyPaymentRow {
+  month: string;
+  paidRevenue: number;
+  partialRevenue: number;
+  unpaidRevenue: number;
+  totalRevenue: number;
+  unpaidOrders: number;
+  partialOrders: number;
 }
 
 export interface KeyAccountDashboardRevenueResult {
-  summary: KeyAccountProductRevenueSummary;
-  monthlyData: KeyAccountMonthlyRevenueRow[];
+  summary: KeyAccountDashboardPaymentSummary;
+  monthlyData: KeyAccountDashboardMonthlyPaymentRow[];
+  /** POs with unpaid or partial payment status (sales collection outstanding). */
+  outstandingPaymentOrderCount: number;
+  /** @deprecated Prefer outstandingPaymentOrderCount — kept for call-site compatibility. */
   pendingOrderCount: number;
 }
 
-export async function fetchKeyAccountDashboardRevenueContext(
-  supabase: SupabaseClient,
-  orders: KeyAccountDashboardOrder[]
-): Promise<KeyAccountDashboardRevenueContext> {
-  const productAnalyticsOrderIds = orders
-    .filter(isKeyAccountCommercialProductAnalyticsOrder)
-    .map((order) => order.id);
+interface PaymentAmountRow {
+  purchase_order_id: string;
+  amount: number | null;
+}
 
-  let items: KeyAccountProductAnalyticsItemRef[] = [];
-  if (productAnalyticsOrderIds.length > 0) {
-    const { data: itemData, error: itemError } = await supabase
-      .from('purchase_order_items')
-      .select(`
-        id,
-        purchase_order_id,
-        variant_id,
-        warehouse_location_id,
-        quantity,
-        unit_price,
-        total_price,
-        variants:variant_id (
-          name,
-          brands:brand_id (name)
-        )
-      `)
-      .in('purchase_order_id', productAnalyticsOrderIds);
-
-    if (itemError) throw itemError;
-    items = (itemData || []) as KeyAccountProductAnalyticsItemRef[];
-  }
-
-  const sourcePoIdsForRebates = orders
-    .filter((order) => !isRebateDerivedPurchaseOrder(order))
-    .map((order) => order.id);
-
-  let rebates: KeyAccountRebateAnalyticsRecord[] = [];
-  if (sourcePoIdsForRebates.length > 0) {
-    const { data: rebateData, error: rebateError } = await supabase
-      .from('key_account_po_rebates')
-      .select(`
-        id,
-        purchase_order_id,
-        resolution_type,
-        status,
-        credit_amount,
-        disputed_total,
-        fulfillment_purchase_order_id,
-        lines:key_account_po_rebate_lines(
-          purchase_order_item_id,
-          line_total,
-          disputed_quantity
-        ),
-        replacements:key_account_po_rebate_replacements(
-          variant_id,
-          warehouse_location_id,
-          quantity,
-          total_price,
-          variants:variant_id (
-            name,
-            brands:brand_id (name)
-          )
-        )
-      `)
-      .in('purchase_order_id', sourcePoIdsForRebates)
-      .in('status', ['submitted', 'approved', 'executed']);
-
-    if (rebateError) throw rebateError;
-    rebates = (rebateData || []) as KeyAccountRebateAnalyticsRecord[];
-  }
-
-  const reservationPoIds = new Set(
-    orders.filter(isKeyAccountPartialDeliveredOrder).map((order) => order.id)
+function isCancelledOrRejectedOrder(order: {
+  status?: string | null;
+  workflow_status?: string | null;
+}): boolean {
+  const status = String(order.status || '').toLowerCase();
+  const workflow = String(order.workflow_status || '').toLowerCase();
+  return (
+    status === 'cancelled' ||
+    status === 'rejected' ||
+    workflow === 'cancelled' ||
+    workflow === 'rejected'
   );
-  rebates.forEach((rebate) => {
-    if (!rebateResolutionHasReplacement(rebate.resolution_type)) return;
-    if (rebate.fulfillment_purchase_order_id) {
-      reservationPoIds.add(rebate.fulfillment_purchase_order_id);
-    }
-  });
+}
 
-  let transferReservations: WarehouseTransferReservationRow[] = [];
-  let transferLocationStatuses: WarehouseTransferLocationStatusRow[] = [];
-
-  if (reservationPoIds.size > 0) {
-    const poIds = Array.from(reservationPoIds);
-    const [reservationsResult, locationStatusResult] = await Promise.all([
-      supabase
-        .from('warehouse_transfer_reservations')
-        .select(
-          'purchase_order_id, warehouse_location_id, variant_id, quantity_reserved, quantity_fulfilled'
-        )
-        .in('purchase_order_id', poIds),
-      supabase
-        .from('warehouse_transfer_location_status')
-        .select('purchase_order_id, warehouse_location_id, status')
-        .in('purchase_order_id', poIds),
-    ]);
-
-    if (reservationsResult.error) throw reservationsResult.error;
-    if (locationStatusResult.error) throw locationStatusResult.error;
-
-    transferReservations = (reservationsResult.data || []) as WarehouseTransferReservationRow[];
-    transferLocationStatuses = (locationStatusResult.data ||
-      []) as WarehouseTransferLocationStatusRow[];
-  }
-
-  return { items, rebates, transferReservations, transferLocationStatuses };
+/** Commercial KA POs that count as booked sales for the dashboard payment chart. */
+export function isKeyAccountDashboardSalesOrder(
+  order: KeyAccountDashboardOrder
+): boolean {
+  if (isCancelledOrRejectedOrder(order)) return false;
+  if (!isKeyAccountAnalyticsEligibleOrder(order)) return false;
+  return isKeyAccountProductAnalyticsOrder(order);
 }
 
 function getMonthDateRange(year: number, monthIndex: number) {
@@ -171,150 +81,155 @@ function getMonthDateRange(year: number, monthIndex: number) {
   return { start, end };
 }
 
-function buildReservationMaps(context: KeyAccountDashboardRevenueContext) {
-  const reservationByKey = new Map<string, { quantity_fulfilled: number; quantity_reserved: number }>();
-  context.transferReservations.forEach((row) => {
-    reservationByKey.set(
-      warehouseTransferReservationKey(
-        row.purchase_order_id,
-        row.warehouse_location_id,
-        row.variant_id
-      ),
-      {
-        quantity_fulfilled: Number(row.quantity_fulfilled) || 0,
-        quantity_reserved: Number(row.quantity_reserved) || 0,
-      }
-    );
-  });
+/** Split one PO's billed total into paid / partial-outstanding / unpaid buckets. */
+export function splitKeyAccountPoPaymentRevenue(
+  totalAmount: number,
+  paidSum: number
+): Omit<KeyAccountDashboardPaymentSummary, 'totalRevenue'> {
+  const total = Math.max(0, Number(totalAmount) || 0);
+  const paidRaw = Math.max(0, Number(paidSum) || 0);
+  const paid = Math.min(total, paidRaw);
+  const remaining = Math.max(0, Math.round((total - paid) * 100) / 100);
 
-  const locationStatusByKey = new Map<string, string>();
-  context.transferLocationStatuses.forEach((row) => {
-    locationStatusByKey.set(
-      warehouseTransferLocationStatusKey(row.purchase_order_id, row.warehouse_location_id),
-      row.status
-    );
-  });
-
-  return { reservationByKey, locationStatusByKey };
+  if (paid <= 0) {
+    return { paidRevenue: 0, partialRevenue: 0, unpaidRevenue: total };
+  }
+  if (remaining <= 0) {
+    return { paidRevenue: total, partialRevenue: 0, unpaidRevenue: 0 };
+  }
+  return { paidRevenue: paid, partialRevenue: remaining, unpaidRevenue: 0 };
 }
 
-const EMPTY_REVENUE_SUMMARY: KeyAccountProductRevenueSummary = {
-  grossRevenue: 0,
-  rebatedRevenue: 0,
-  deliveredRevenue: 0,
-  pendingRevenue: 0,
-  totalRevenue: 0,
-};
+function emptyPaymentSummary(): KeyAccountDashboardPaymentSummary {
+  return { paidRevenue: 0, partialRevenue: 0, unpaidRevenue: 0, totalRevenue: 0 };
+}
 
-/**
- * Compute revenue for a PO date scope — same rules as Key Account Analytics product tab.
- * `lookupOrders` stays at full-year scope so rebate fulfillment POs resolve workflow splits.
- * Replacement rebate revenue is attributed to the source PO month only (monthly bars sum to yearly).
- */
-function computeScopedKeyAccountRevenue(
+function addPaymentSummaries(
+  a: KeyAccountDashboardPaymentSummary,
+  b: Omit<KeyAccountDashboardPaymentSummary, 'totalRevenue'>
+): KeyAccountDashboardPaymentSummary {
+  const paidRevenue = a.paidRevenue + b.paidRevenue;
+  const partialRevenue = a.partialRevenue + b.partialRevenue;
+  const unpaidRevenue = a.unpaidRevenue + b.unpaidRevenue;
+  return {
+    paidRevenue,
+    partialRevenue,
+    unpaidRevenue,
+    totalRevenue: paidRevenue + partialRevenue + unpaidRevenue,
+  };
+}
+
+export async function fetchKeyAccountDashboardPaidByOrderId(
+  supabase: SupabaseClient,
+  orderIds: string[]
+): Promise<Map<string, number>> {
+  const paidByOrderId = new Map<string, number>();
+  if (orderIds.length === 0) return paidByOrderId;
+
+  const { data, error } = await supabase
+    .from('purchase_order_key_account_payments')
+    .select('purchase_order_id, amount')
+    .in('purchase_order_id', orderIds);
+
+  if (error) throw error;
+
+  ((data || []) as PaymentAmountRow[]).forEach((row) => {
+    const id = row.purchase_order_id;
+    paidByOrderId.set(id, (paidByOrderId.get(id) || 0) + (Number(row.amount) || 0));
+  });
+
+  return paidByOrderId;
+}
+
+function computeScopedPaymentRevenue(
   scopeOrders: KeyAccountDashboardOrder[],
-  lookupOrders: KeyAccountDashboardOrder[],
-  context: KeyAccountDashboardRevenueContext
-): KeyAccountProductRevenueSummary {
-  const eligibleScopeOrders = scopeOrders.filter(isKeyAccountAnalyticsEligibleOrder);
-  const scopeOrderIds = new Set(eligibleScopeOrders.map((order) => order.id));
+  paidByOrderId: Map<string, number>
+): {
+  summary: KeyAccountDashboardPaymentSummary;
+  unpaidOrders: number;
+  partialOrders: number;
+} {
+  const eligible = scopeOrders.filter(isKeyAccountDashboardSalesOrder);
+  let summary = emptyPaymentSummary();
+  let unpaidOrders = 0;
+  let partialOrders = 0;
 
-  if (scopeOrderIds.size === 0) {
-    return EMPTY_REVENUE_SUMMARY;
-  }
-
-  const scopeItems = context.items.filter((item) => scopeOrderIds.has(item.purchase_order_id));
-  const { reservationByKey, locationStatusByKey } = buildReservationMaps(context);
-
-  const productAnalyticsOrders = eligibleScopeOrders.filter(
-    isKeyAccountCommercialProductAnalyticsOrder
-  );
-  const productAnalyticsOrderById = new Map(
-    productAnalyticsOrders.map((order) => [order.id, order])
-  );
-  const orderById = new Map(
-    lookupOrders
-      .filter(isKeyAccountAnalyticsEligibleOrder)
-      .map((order) => [order.id, order as KeyAccountProductAnalyticsOrderRef])
-  );
-
-  const poLineSubtotalByOrderId = new Map<string, number>();
-  scopeItems.forEach((item) => {
-    const lineRevenue = Number(
-      item.total_price ?? Number(item.quantity || 0) * Number(item.unit_price || 0)
+  eligible.forEach((order) => {
+    const split = splitKeyAccountPoPaymentRevenue(
+      Number(order.total_amount) || 0,
+      paidByOrderId.get(order.id) || 0
     );
-    poLineSubtotalByOrderId.set(
-      item.purchase_order_id,
-      (poLineSubtotalByOrderId.get(item.purchase_order_id) || 0) + lineRevenue
-    );
+    summary = addPaymentSummaries(summary, split);
+    if (split.unpaidRevenue > 0) unpaidOrders += 1;
+    if (split.partialRevenue > 0) partialOrders += 1;
   });
 
-  const { rows } = buildKeyAccountProductAnalyticsRows({
-    items: scopeItems,
-    productAnalyticsOrderById,
-    orderById,
-    dateFilteredOrderIds: scopeOrderIds,
-    poLineSubtotalByOrderId,
-    rebateDeductionByPoItemId: buildRebateDeductionByPoItemId(context.rebates),
-    rebateSwapByPoItemId: buildRebateSwapByPoItemId(context.rebates),
-    rebates: context.rebates,
-    reservationByKey,
-    locationStatusByKey,
-  });
-
-  return sumKeyAccountProductRevenueSummary(rows);
+  return { summary, unpaidOrders, partialOrders };
 }
 
 export function computeKeyAccountDashboardRevenue(
   orders: KeyAccountDashboardOrder[],
-  context: KeyAccountDashboardRevenueContext,
+  paidByOrderId: Map<string, number>,
   selectedYear: number
 ): KeyAccountDashboardRevenueResult {
-  const summary = computeScopedKeyAccountRevenue(orders, orders, context);
+  const { summary } = computeScopedPaymentRevenue(orders, paidByOrderId);
 
-  const monthlyData: KeyAccountMonthlyRevenueRow[] = KEY_ACCOUNT_DASHBOARD_MONTH_NAMES.map(
+  const monthlyData: KeyAccountDashboardMonthlyPaymentRow[] = KEY_ACCOUNT_DASHBOARD_MONTH_NAMES.map(
     (month, monthIndex) => {
       const { start, end } = getMonthDateRange(selectedYear, monthIndex);
       const monthOrders = orders.filter((order) => isDateInRange(order.order_date, start, end));
-      const monthSummary = computeScopedKeyAccountRevenue(monthOrders, orders, context);
-      const pendingWorkflowOrders = monthOrders.filter(isKeyAccountPendingWorkflowOrder).length;
+      const monthResult = computeScopedPaymentRevenue(monthOrders, paidByOrderId);
 
       return {
         month,
-        deliveredRevenue: monthSummary.deliveredRevenue,
-        pendingRevenue: monthSummary.pendingRevenue,
-        grossRevenue: monthSummary.grossRevenue,
-        rebatedRevenue: monthSummary.rebatedRevenue,
-        totalRevenue: monthSummary.totalRevenue,
-        pendingWorkflowOrders,
+        paidRevenue: monthResult.summary.paidRevenue,
+        partialRevenue: monthResult.summary.partialRevenue,
+        unpaidRevenue: monthResult.summary.unpaidRevenue,
+        totalRevenue: monthResult.summary.totalRevenue,
+        unpaidOrders: monthResult.unpaidOrders,
+        partialOrders: monthResult.partialOrders,
       };
     }
   );
 
-  const pendingOrderCount = orders.filter(isKeyAccountPendingWorkflowOrder).length;
+  const outstandingPaymentOrderCount = orders.filter((order) => {
+    if (!isKeyAccountDashboardSalesOrder(order)) return false;
+    const split = splitKeyAccountPoPaymentRevenue(
+      Number(order.total_amount) || 0,
+      paidByOrderId.get(order.id) || 0
+    );
+    return split.unpaidRevenue > 0 || split.partialRevenue > 0;
+  }).length;
 
-  return { summary, monthlyData, pendingOrderCount };
+  return {
+    summary,
+    monthlyData,
+    outstandingPaymentOrderCount,
+    pendingOrderCount: outstandingPaymentOrderCount,
+  };
 }
 
 export function formatKeyAccountDashboardCurrency(value: number) {
   return `₱${Math.round(value).toLocaleString()}`;
 }
 
-/** Fetch analytics context and compute dashboard revenue (shared across role dashboards). */
+/** Fetch payment amounts and compute dashboard revenue by collection status (order_date months). */
 export async function loadKeyAccountDashboardRevenue(
   supabase: SupabaseClient,
   orders: KeyAccountDashboardOrder[],
   selectedYear: number
 ): Promise<KeyAccountDashboardRevenueResult> {
-  const context = await fetchKeyAccountDashboardRevenueContext(supabase, orders);
-  return computeKeyAccountDashboardRevenue(orders, context, selectedYear);
+  const salesOrderIds = orders.filter(isKeyAccountDashboardSalesOrder).map((order) => order.id);
+  const paidByOrderId = await fetchKeyAccountDashboardPaidByOrderId(supabase, salesOrderIds);
+  return computeKeyAccountDashboardRevenue(orders, paidByOrderId, selectedYear);
 }
 
 export const EMPTY_KEY_ACCOUNT_DASHBOARD_REVENUE: KeyAccountDashboardRevenueResult = {
-  summary: EMPTY_REVENUE_SUMMARY,
+  summary: emptyPaymentSummary(),
   monthlyData: [],
+  outstandingPaymentOrderCount: 0,
   pendingOrderCount: 0,
 };
 
 export { KEY_ACCOUNT_DASHBOARD_MONTH_NAMES };
-export type { KeyAccountMonthlyRevenueRow };
+export type KeyAccountMonthlyRevenueRow = KeyAccountDashboardMonthlyPaymentRow;

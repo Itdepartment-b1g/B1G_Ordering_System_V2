@@ -69,10 +69,15 @@ export function applyBoxInputsToLine(
   };
 }
 
-export function getBoxCountBreakdown(line: PhysicalCountLine): string | null {
-  const boxes = parseNonNegativeQty(line.boxCount);
-  const perBox = parseNonNegativeQty(line.unitsPerBox);
-  const loose = parseOptionalLoosePair(line.looseBoxCount, line.looseQty);
+export function formatBoxCountBreakdown(
+  boxCount: string,
+  unitsPerBox: string,
+  looseBoxCount = '',
+  looseQty = ''
+): string | null {
+  const boxes = parseNonNegativeQty(boxCount);
+  const perBox = parseNonNegativeQty(unitsPerBox);
+  const loose = parseOptionalLoosePair(looseBoxCount, looseQty);
   if (boxes === null || perBox === null || loose === null) return null;
 
   const boxed = `${boxes} × ${perBox}`;
@@ -80,4 +85,13 @@ export function getBoxCountBreakdown(line: PhysicalCountLine): string | null {
     return boxed;
   }
   return `${boxed} + ${loose.looseBoxes} × ${loose.loosePerBox}`;
+}
+
+export function getBoxCountBreakdown(line: PhysicalCountLine): string | null {
+  return formatBoxCountBreakdown(
+    line.boxCount,
+    line.unitsPerBox,
+    line.looseBoxCount,
+    line.looseQty
+  );
 }

@@ -19,6 +19,8 @@ type PurchaseOrderHistoryDialogProps = {
   poNumber?: string | null;
   /** Full PO used to open DR / received receipts from timeline events. */
   purchaseOrder?: PurchaseOrder | null;
+  /** Key Account view uses clearer labels for KA workflow + warehouse steps. */
+  presentation?: 'default' | 'key_account';
   open: boolean;
   onOpenChange: (open: boolean) => void;
 };
@@ -27,6 +29,7 @@ export function PurchaseOrderHistoryDialog({
   purchaseOrderId,
   poNumber,
   purchaseOrder = null,
+  presentation = 'default',
   open,
   onOpenChange,
 }: PurchaseOrderHistoryDialogProps) {
@@ -86,6 +89,7 @@ export function PurchaseOrderHistoryDialog({
             history={payload?.history}
             items={payload?.items}
             purchaseOrder={purchaseOrder}
+            presentation={presentation}
           />
         )}
 
@@ -101,7 +105,7 @@ export function PurchaseOrderHistoryDialog({
               if (!payload) return;
               setExporting(true);
               try {
-                exportPurchaseOrderHistoryPdf(payload);
+                exportPurchaseOrderHistoryPdf(payload, { presentation });
               } finally {
                 setExporting(false);
               }
