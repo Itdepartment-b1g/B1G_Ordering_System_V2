@@ -88,6 +88,12 @@ import {
   exportInternalStockDeliveryReceiptPdf,
   type DeliveryReceiptWaveEvent,
 } from './utils/exportInternalStockDeliveryReceiptPdf';
+import {
+  DEFAULT_MAIN_SUB_STOCK_REQUEST_SORT_DIRECTION,
+  DEFAULT_MAIN_SUB_STOCK_REQUEST_SORT_KEY,
+  sortMainSubStockRequests,
+  type MainSubStockRequestSortKey,
+} from './utils/mainSubStockRequestSorting';
 import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
 import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
 import SubStockRequestsManual from '@/features/inventory/warehouse-manual/components/SubStockRequestsManual';
@@ -107,6 +113,14 @@ import {
   ListPagination,
   type PageSize,
 } from '@/features/shared/components/ListPagination';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 
 const STATUS_LABELS: Record<SubWarehouseStockRequestStatus, string> = {
@@ -528,6 +542,8 @@ export default function MainWarehouseSubStockRequestsPage() {
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<MainSubStockRequestSortKey>>(createInitialTableSortCycle);
   const [detailRequestId, setDetailRequestId] = useState<string | null>(null);
   const [rejectTarget, setRejectTarget] = useState<SubWarehouseStockRequest | null>(null);
   const [rejectReason, setRejectReason] = useState('');
@@ -765,7 +781,7 @@ export default function MainWarehouseSubStockRequestsPage() {
 
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    const list = tabRequests.filter((r) => {
+    return tabRequests.filter((r) => {
       if (statusFilter !== 'all' && r.status !== statusFilter) return false;
       if (warehouseFilter !== 'all' && r.fromLocationId !== warehouseFilter) return false;
       if (!isDateInRange(r.createdAt, dateRange.start, dateRange.end)) return false;
@@ -782,9 +798,6 @@ export default function MainWarehouseSubStockRequestsPage() {
       }
       return true;
     });
-    return [...list].sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
   }, [
     tabRequests,
     statusFilter,
@@ -794,9 +807,24 @@ export default function MainWarehouseSubStockRequestsPage() {
     dateRange.start,
   ]);
 
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        sortState,
+        DEFAULT_MAIN_SUB_STOCK_REQUEST_SORT_KEY,
+        DEFAULT_MAIN_SUB_STOCK_REQUEST_SORT_DIRECTION
+      ),
+    [sortState]
+  );
+
+  const sorted = useMemo(
+    () => sortMainSubStockRequests(filtered, resolvedSortKey, resolvedSortDirection),
+    [filtered, resolvedSortKey, resolvedSortDirection]
+  );
+
   useEffect(() => {
     setPage(0);
-  }, [listTab, statusFilter, warehouseFilter, searchQuery, dateRangeFilter, pageSize]);
+  }, [listTab, statusFilter, warehouseFilter, searchQuery, dateRangeFilter, pageSize, sortState]);
 
   useEffect(() => {
     // Drop status filters that don't apply on the allocations tab.
@@ -809,7 +837,11 @@ export default function MainWarehouseSubStockRequestsPage() {
     }
   }, [listTab, statusFilter]);
 
-  const { pageCount, safePage, pagedItems } = getListPaginationSlice(filtered, page, pageSize);
+  const { pageCount, safePage, pagedItems } = getListPaginationSlice(sorted, page, pageSize);
+
+  const handleSort = (key: MainSubStockRequestSortKey) => {
+    setSortState((prev) => getNextTableSortCycleState(prev, key));
+  };
 
   const stats = useMemo(
     () => ({
@@ -1480,11 +1512,36 @@ export default function MainWarehouseSubStockRequestsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Request</TableHead>
-                    <TableHead>Sub-warehouse</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Qty</TableHead>
-                    <TableHead>Status</TableHead>
+                    <SortableTableHead
+                      label="Request"
+                      sortKey="requestNumber"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'requestNumber')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Sub-warehouse"
+                      sortKey="subWarehouse"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'subWarehouse')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Date"
+                      sortKey="createdAt"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'createdAt')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Qty"
+                      sortKey="qty"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'qty')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Status"
+                      sortKey="status"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'status')}
+                      onSort={handleSort}
+                    />
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
