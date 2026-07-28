@@ -16,6 +16,7 @@ import {
   Trash2,
   Truck,
   XCircle,
+  FileDown,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
@@ -81,7 +82,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { WarehouseStockReceiveDialog } from './components/WarehouseStockReceiveDialog';
 import {
   buildReceivePayload,
   createReceiveLotSplit,
@@ -89,6 +89,8 @@ import {
   validateReceiveVariants,
   type ReceiveVariantItem,
 } from './warehouseStockReceiveShared';
+import { generateAndOpenStockRequestReceivePdf } from './utils/exportWarehouseStockRequestReceivePdf';
+import { WarehouseStockReceiveDialog } from './components/WarehouseStockReceiveDialog';
 
 type RequestStatus =
   | 'pending_receive'
@@ -123,6 +125,22 @@ type StockRequestRow = {
     notes: string | null;
     batch: { batch_number: string; total_amount?: number | null } | null;
     received_by_user: { full_name: string } | null;
+    lines: Array<{
+      id: string;
+      variant_id: string;
+      quantity: number;
+      box_count: number | null;
+      units_per_box: number | null;
+      extra_qty: number;
+      manufactured_date: string | null;
+      expiration_date: string | null;
+      unit_cost: number | null;
+      variant: {
+        id: string;
+        name: string;
+        brand: { id: string; name: string } | null;
+      } | null;
+    }>;
   }>;
 };
 
@@ -185,6 +203,22 @@ function getRequestBrandLabel(req: StockRequestRow): string {
   return `${names.length} brands`;
 }
 
+function formatReceivePacking(line: {
+  box_count: number | null;
+  units_per_box: number | null;
+  extra_qty: number;
+}): string {
+  const boxes = line.box_count;
+  const perBox = line.units_per_box;
+  const extra = line.extra_qty ?? 0;
+  if (boxes != null && perBox != null) {
+    if (extra > 0) return `${boxes} × ${perBox} + ${extra}`;
+    return `${boxes} × ${perBox}`;
+  }
+  if (extra > 0) return String(extra);
+  return '—';
+}
+
 function mapRequestRow(raw: Record<string, unknown>): StockRequestRow {
   const brand = firstRelation(raw.brand as StockRequestRow['brand'] | StockRequestRow['brand'][]);
   const createdBy = firstRelation(
@@ -211,6 +245,34 @@ function mapRequestRow(raw: Record<string, unknown>): StockRequestRow {
 
   const receives = ((raw.receives as unknown[]) ?? []).map((recv) => {
     const row = recv as Record<string, unknown>;
+    const lines = ((row.lines as unknown[]) ?? []).map((lineRaw) => {
+      const line = lineRaw as Record<string, unknown>;
+      const variant = firstRelation(
+        line.variant as
+          | StockRequestRow['receives'][0]['lines'][0]['variant']
+          | StockRequestRow['receives'][0]['lines'][0]['variant'][]
+      );
+      return {
+        id: line.id as string,
+        variant_id: line.variant_id as string,
+        quantity: line.quantity as number,
+        box_count: (line.box_count as number | null) ?? null,
+        units_per_box: (line.units_per_box as number | null) ?? null,
+        extra_qty: (line.extra_qty as number | null) ?? 0,
+        manufactured_date: (line.manufactured_date as string | null) ?? null,
+        expiration_date: (line.expiration_date as string | null) ?? null,
+        unit_cost: (line.unit_cost as number | null) ?? null,
+        variant: variant
+          ? {
+              ...variant,
+              brand: firstRelation(
+                variant.brand as { id: string; name: string } | { id: string; name: string }[]
+              ),
+            }
+          : null,
+      };
+    });
+
     return {
       id: row.id as string,
       received_at: row.received_at as string,
@@ -219,6 +281,7 @@ function mapRequestRow(raw: Record<string, unknown>): StockRequestRow {
       received_by_user: firstRelation(
         row.received_by_user as StockRequestRow['receives'][0]['received_by_user']
       ),
+      lines: Array.isArray(lines) ? lines : [],
     };
   });
 
@@ -335,7 +398,19 @@ export default function WarehouseStockRequestsPage() {
             received_at,
             notes,
             batch:inventory_batches ( batch_number, total_amount ),
-            received_by_user:profiles!warehouse_stock_request_receives_received_by_fkey ( full_name )
+            received_by_user:profiles!warehouse_stock_request_receives_received_by_fkey ( full_name ),
+            lines:warehouse_stock_request_receive_lines (
+              id,
+              variant_id,
+              quantity,
+              box_count,
+              units_per_box,
+              extra_qty,
+              manufactured_date,
+              expiration_date,
+              unit_cost,
+              variant:variants ( id, name, brand:brands ( id, name ) )
+            )
           )
         `
         )
@@ -446,7 +521,7 @@ export default function WarehouseStockRequestsPage() {
           variantLabel: `${brandPrefix}${item.variant?.name ?? item.variant_id}`,
           remaining,
           orderedQuantity: item.ordered_quantity,
-          splits: [createReceiveLotSplit(remaining)],
+          splits: [createReceiveLotSplit()],
         };
       });
     setReceiveVariants(initialVariants);
@@ -1160,7 +1235,7 @@ export default function WarehouseStockRequestsPage() {
 
       {/* Detail dialog */}
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{selectedRequest?.request_number}</DialogTitle>
           </DialogHeader>
@@ -1203,35 +1278,120 @@ export default function WarehouseStockRequestsPage() {
               {selectedRequest.receives.length > 0 && (
                 <div>
                   <p className="font-medium mb-2">Receive history</p>
-                  <ul className="space-y-2">
+                  <ul className="space-y-3">
                     {selectedRequest.receives
                       .sort(
                         (a, b) =>
                           new Date(b.received_at).getTime() - new Date(a.received_at).getTime()
                       )
-                      .map((recv) => (
-                        <li
-                          key={recv.id}
-                          className="flex items-center gap-2 border rounded-md px-3 py-2"
-                        >
-                          <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                          <div className="flex-1 min-w-0">
-                            <p className="font-medium">
-                              {recv.batch?.batch_number ?? 'Batch'}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {format(new Date(recv.received_at), 'MMM d, yyyy h:mm a')}
-                              {recv.received_by_user?.full_name
-                                ? ` · ${recv.received_by_user.full_name}`
-                                : ''}
-                              {typeof recv.batch?.total_amount === 'number' &&
-                              recv.batch.total_amount > 0
-                                ? ` · ${formatReceiveCurrency(recv.batch.total_amount)}`
-                                : ''}
-                            </p>
+                      .map((recv) => {
+                        const receiveLines = recv.lines ?? [];
+
+                        return (
+                        <li key={recv.id} className="border rounded-md px-3 py-2 space-y-2">
+                          <div className="flex items-start gap-2">
+                            <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex flex-wrap items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <p className="font-medium">
+                                    {recv.batch?.batch_number ?? 'Batch'}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {format(new Date(recv.received_at), 'MMM d, yyyy h:mm a')}
+                                    {recv.received_by_user?.full_name
+                                      ? ` · ${recv.received_by_user.full_name}`
+                                      : ''}
+                                    {typeof recv.batch?.total_amount === 'number' &&
+                                    recv.batch.total_amount > 0
+                                      ? ` · ${formatReceiveCurrency(recv.batch.total_amount)}`
+                                      : ''}
+                                  </p>
+                                  {recv.notes?.trim() ? (
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                      Notes: {recv.notes}
+                                    </p>
+                                  ) : null}
+                                </div>
+                                {receiveLines.length > 0 && (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="shrink-0"
+                                    onClick={() => {
+                                      void generateAndOpenStockRequestReceivePdf({
+                                        requestNumber: selectedRequest.request_number,
+                                        batchNumber: recv.batch?.batch_number ?? null,
+                                        receivedAt: recv.received_at,
+                                        receivedByName: recv.received_by_user?.full_name ?? null,
+                                        notes: recv.notes,
+                                        lines: receiveLines.map((line) => ({
+                                          brandName: line.variant?.brand?.name ?? null,
+                                          variantName: line.variant?.name ?? null,
+                                          quantity: line.quantity,
+                                          boxCount: line.box_count,
+                                          unitsPerBox: line.units_per_box,
+                                          extraQty: line.extra_qty,
+                                          manufacturedDate: line.manufactured_date,
+                                          expirationDate: line.expiration_date,
+                                        })),
+                                      });
+                                    }}
+                                  >
+                                    <FileDown className="h-3.5 w-3.5 mr-1" />
+                                    Export PDF
+                                  </Button>
+                                )}
+                              </div>
+
+                              {receiveLines.length > 0 ? (
+                                <div className="mt-2 overflow-x-auto">
+                                  <Table>
+                                    <TableHeader>
+                                      <TableRow>
+                                        <TableHead>Item</TableHead>
+                                        <TableHead>Packing</TableHead>
+                                        <TableHead className="text-right">Qty</TableHead>
+                                        <TableHead>Expiry</TableHead>
+                                      </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                      {receiveLines.map((line) => (
+                                        <TableRow key={line.id}>
+                                          <TableCell>
+                                            {line.variant?.brand?.name
+                                              ? `${line.variant.brand.name} · `
+                                              : ''}
+                                            {line.variant?.name ?? line.variant_id}
+                                          </TableCell>
+                                          <TableCell className="tabular-nums whitespace-nowrap">
+                                            {formatReceivePacking(line)}
+                                          </TableCell>
+                                          <TableCell className="text-right tabular-nums">
+                                            {line.quantity}
+                                          </TableCell>
+                                          <TableCell className="whitespace-nowrap text-muted-foreground">
+                                            {line.expiration_date
+                                              ? format(new Date(line.expiration_date), 'MMM d, yyyy')
+                                              : '—'}
+                                          </TableCell>
+                                        </TableRow>
+                                      ))}
+                                    </TableBody>
+                                  </Table>
+                                </div>
+                              ) : (
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  No packing lines saved for this receive (older receives before box
+                                  fields).
+                                </p>
+                              )}
+                            </div>
                           </div>
                         </li>
-                      ))}
+                        );
+                      })}
                   </ul>
                 </div>
               )}

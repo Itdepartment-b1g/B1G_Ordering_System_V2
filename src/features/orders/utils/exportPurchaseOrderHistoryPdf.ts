@@ -42,12 +42,19 @@ function openPrintableHtml(title: string, html: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
-function eventTitle(event: PurchaseOrderHistoryEvent): string {
+function eventTitle(
+  event: PurchaseOrderHistoryEvent,
+  presentation: 'default' | 'key_account' = 'default'
+): string {
   switch (event.type) {
     case 'created':
       return 'PO created';
+    case 'director_approved':
+      return 'Director approved';
+    case 'admin_submitted':
+      return 'Submitted to warehouse';
     case 'approved':
-      return 'Approved';
+      return presentation === 'key_account' ? 'Warehouse approved' : 'Approved';
     case 'rejected':
       return 'Rejected';
     case 'dispatched':
@@ -73,13 +80,23 @@ function linesTotal(event: PurchaseOrderHistoryEvent): number {
   return (event.lines ?? []).reduce((s, l) => s + Math.max(0, l.quantity), 0);
 }
 
-function eventSummary(event: PurchaseOrderHistoryEvent): string {
+function eventSummary(
+  event: PurchaseOrderHistoryEvent,
+  presentation: 'default' | 'key_account' = 'default'
+): string {
   const qty = linesTotal(event);
   switch (event.type) {
     case 'created':
       return qty > 0 ? `Ordered ${qty.toLocaleString()} unit(s)` : 'Purchase order created';
+    case 'director_approved':
+      return 'Sales director approved this Key Account PO';
+    case 'admin_submitted':
+      return 'Sales admin submitted this PO to the warehouse queue';
     case 'approved':
-      return qty > 0 ? `Approved ${qty.toLocaleString()} unit(s)` : 'Approved for fulfillment';
+      if (qty > 0) return `Approved ${qty.toLocaleString()} unit(s)`;
+      return presentation === 'key_account'
+        ? 'Warehouse approved for fulfillment'
+        : 'Approved for fulfillment';
     case 'dispatched': {
       const fromWh = event.warehouseLocationName?.trim();
       return fromWh
@@ -115,7 +132,12 @@ function eventSummary(event: PurchaseOrderHistoryEvent): string {
   }
 }
 
-export function exportPurchaseOrderHistoryPdf(payload: PurchaseOrderHistoryPayload): void {
+export function exportPurchaseOrderHistoryPdf(
+  payload: PurchaseOrderHistoryPayload,
+  options?: { presentation?: 'default' | 'key_account' }
+): void {
+  const presentation = options?.presentation ?? 'default';
+  const hideReceiveMetrics = presentation === 'key_account';
   const ordered = payload.items.reduce((s, i) => s + i.orderedQuantity, 0);
   const dispatched = payload.items.reduce((s, i) => s + i.dispatchedQuantity, 0);
   const received = payload.items.reduce((s, i) => s + i.receivedQuantity, 0);
@@ -128,7 +150,11 @@ export function exportPurchaseOrderHistoryPdf(payload: PurchaseOrderHistoryPaylo
       <td>${escapeHtml(item.variantName)}</td>
       <td style="text-align:right;">${item.orderedQuantity.toLocaleString()}</td>
       <td style="text-align:right;">${item.dispatchedQuantity.toLocaleString()}</td>
-      <td style="text-align:right;">${item.receivedQuantity.toLocaleString()}</td>
+      ${
+        hideReceiveMetrics
+          ? ''
+          : `<td style="text-align:right;">${item.receivedQuantity.toLocaleString()}</td>`
+      }
     </tr>`
     )
     .join('');
@@ -168,8 +194,8 @@ export function exportPurchaseOrderHistoryPdf(payload: PurchaseOrderHistoryPaylo
       <div class="activity-item">
         <div class="activity-head">
           <div>
-            <h4>${escapeHtml(eventTitle(event))}</h4>
-            <p class="activity-summary">${escapeHtml(eventSummary(event))}</p>
+            <h4>${escapeHtml(eventTitle(event, presentation))}</h4>
+            <p class="activity-summary">${escapeHtml(eventSummary(event, presentation))}</p>
             <p class="activity-meta">${escapeHtml(formatDateTime(event.at))}${
               event.byName ? ` · ${escapeHtml(event.byName)}` : ''
             }</p>
@@ -256,8 +282,14 @@ export function exportPurchaseOrderHistoryPdf(payload: PurchaseOrderHistoryPaylo
       <div><dt>PO number</dt><dd>${escapeHtml(payload.poNumber)}</dd></div>
       <div><dt>Status</dt><dd>${escapeHtml(payload.workflowStatus || payload.status)}</dd></div>
       <div><dt>Created</dt><dd>${escapeHtml(formatDateTime(payload.createdAt))}</dd></div>
-      <div><dt>Ordered / Dispatched / Received / Short</dt>
-        <dd>${ordered.toLocaleString()} / ${dispatched.toLocaleString()} / ${received.toLocaleString()} / ${short.toLocaleString()}</dd>
+      <div><dt>${
+        hideReceiveMetrics ? 'Ordered / Dispatched' : 'Ordered / Dispatched / Received / Short'
+      }</dt>
+        <dd>${
+          hideReceiveMetrics
+            ? `${ordered.toLocaleString()} / ${dispatched.toLocaleString()}`
+            : `${ordered.toLocaleString()} / ${dispatched.toLocaleString()} / ${received.toLocaleString()} / ${short.toLocaleString()}`
+        }</dd>
       </div>
     </dl>
 
@@ -270,13 +302,13 @@ export function exportPurchaseOrderHistoryPdf(payload: PurchaseOrderHistoryPaylo
             <th>Variant</th>
             <th style="text-align:right;">Ordered</th>
             <th style="text-align:right;">Dispatched</th>
-            <th style="text-align:right;">Received</th>
+            ${hideReceiveMetrics ? '' : '<th style="text-align:right;">Received</th>'}
           </tr>
         </thead>
         <tbody>
           ${
             itemRows ||
-            `<tr><td colspan="5" style="text-align:center;font-style:italic;color:#6b7280;">No items</td></tr>`
+            `<tr><td colspan="${hideReceiveMetrics ? 4 : 5}" style="text-align:center;font-style:italic;color:#6b7280;">No items</td></tr>`
           }
         </tbody>
       </table>

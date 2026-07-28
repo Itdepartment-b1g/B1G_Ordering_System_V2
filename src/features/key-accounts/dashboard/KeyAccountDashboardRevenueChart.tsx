@@ -13,15 +13,21 @@ import {
 import { BarChart3 } from 'lucide-react';
 import {
   formatKeyAccountDashboardCurrency,
-  type KeyAccountMonthlyRevenueRow,
+  type KeyAccountDashboardMonthlyPaymentRow,
 } from './keyAccountDashboardRevenue';
+
+const BAR_LABELS: Record<string, string> = {
+  paidRevenue: 'Paid',
+  partialRevenue: 'Partial',
+  unpaidRevenue: 'Unpaid',
+};
 
 export function KeyAccountDashboardRevenueChart({
   monthlyData,
   selectedYear,
   onYearChange,
 }: {
-  monthlyData: KeyAccountMonthlyRevenueRow[];
+  monthlyData: KeyAccountDashboardMonthlyPaymentRow[];
   selectedYear: number;
   onYearChange: (year: number) => void;
 }) {
@@ -34,7 +40,7 @@ export function KeyAccountDashboardRevenueChart({
         </CardTitle>
         <div className="flex items-center gap-3">
           <span className="hidden text-xs font-normal text-muted-foreground text-right sm:block">
-            Net revenue after rebates — delivered vs pending
+            Sales by order date — paid vs partial vs unpaid
           </span>
           <Select value={selectedYear.toString()} onValueChange={(v) => onYearChange(parseInt(v))}>
             <SelectTrigger className="h-9 w-[120px]">
@@ -60,40 +66,34 @@ export function KeyAccountDashboardRevenueChart({
               <Tooltip
                 content={({ active, payload, label }) => {
                   if (!active || !payload?.length) return null;
-                  const row = payload[0].payload as KeyAccountMonthlyRevenueRow;
-                  const delivered = row.deliveredRevenue || 0;
-                  const pending = row.pendingRevenue || 0;
-                  const gross = row.grossRevenue || 0;
-                  const rebated = row.rebatedRevenue || 0;
-                  const total = row.totalRevenue || delivered + pending;
+                  const row = payload[0].payload as KeyAccountDashboardMonthlyPaymentRow;
+                  const paid = row.paidRevenue || 0;
+                  const partial = row.partialRevenue || 0;
+                  const unpaid = row.unpaidRevenue || 0;
+                  const total = row.totalRevenue || paid + partial + unpaid;
 
                   return (
                     <div className="bg-white border rounded-lg p-3 shadow-lg text-sm max-w-xs">
                       <p className="font-semibold mb-2">{label}</p>
                       <p className="text-lg font-bold">{formatKeyAccountDashboardCurrency(total)}</p>
                       <p className="text-xs text-muted-foreground mt-1">
-                        Net after rebates · Delivered {formatKeyAccountDashboardCurrency(delivered)} ·
-                        Pending {formatKeyAccountDashboardCurrency(pending)}
+                        By order date · Paid {formatKeyAccountDashboardCurrency(paid)} · Partial{' '}
+                        {formatKeyAccountDashboardCurrency(partial)} · Unpaid{' '}
+                        {formatKeyAccountDashboardCurrency(unpaid)}
                       </p>
-                      {rebated > 0 && (
+                      {(row.unpaidOrders > 0 || row.partialOrders > 0) && (
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          Gross {formatKeyAccountDashboardCurrency(gross)} · Rebated{' '}
-                          <span className="text-amber-700 dark:text-amber-400">
-                            −{formatKeyAccountDashboardCurrency(rebated)}
-                          </span>
+                          {row.unpaidOrders} unpaid · {row.partialOrders} partial POs
                         </p>
                       )}
                     </div>
                   );
                 }}
               />
-              <Legend
-                formatter={(value: string) =>
-                  value === 'deliveredRevenue' ? 'Delivered' : 'Pending'
-                }
-              />
-              <Bar dataKey="deliveredRevenue" stackId="revenue" fill="#3b82f6" name="deliveredRevenue" />
-              <Bar dataKey="pendingRevenue" stackId="revenue" fill="#f97316" name="pendingRevenue" />
+              <Legend formatter={(value: string) => BAR_LABELS[value] || value} />
+              <Bar dataKey="paidRevenue" stackId="revenue" fill="#22c55e" name="paidRevenue" />
+              <Bar dataKey="partialRevenue" stackId="revenue" fill="#f59e0b" name="partialRevenue" />
+              <Bar dataKey="unpaidRevenue" stackId="revenue" fill="#f97316" name="unpaidRevenue" />
             </BarChart>
           </ResponsiveContainer>
         </div>

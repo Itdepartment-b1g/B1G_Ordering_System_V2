@@ -8,6 +8,8 @@ export type PurchaseOrderHistoryLine = {
 
 export type PurchaseOrderHistoryEventType =
   | 'created'
+  | 'director_approved'
+  | 'admin_submitted'
   | 'approved'
   | 'rejected'
   | 'dispatched'
@@ -58,6 +60,8 @@ export type PurchaseOrderHistoryPayload = {
 
 export const PURCHASE_ORDER_HISTORY_EVENT_TYPES: PurchaseOrderHistoryEventType[] = [
   'created',
+  'director_approved',
+  'admin_submitted',
   'approved',
   'rejected',
   'dispatched',
@@ -78,6 +82,8 @@ export function isPurchaseOrderHistoryEventType(
 /** Causal order for same-delivery / same-second events (receive before shortage). */
 const PURCHASE_ORDER_HISTORY_EVENT_SEQUENCE: Record<PurchaseOrderHistoryEventType, number> = {
   created: 10,
+  director_approved: 15,
+  admin_submitted: 18,
   approved: 20,
   rejected: 20,
   dispatched: 30,
