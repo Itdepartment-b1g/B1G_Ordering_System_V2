@@ -39,6 +39,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { PurchaseOrderHistoryDialog } from '@/features/orders/components/PurchaseOrderHistoryDialog';
 import { fetchPurchaseOrderHistory } from '@/features/orders/purchaseOrderEventsApi';
+import type { PurchaseOrder } from '@/features/orders/types';
 import {
   DateRangeFilterPopover,
   type DateRangeFilterValue,
@@ -58,12 +59,6 @@ import {
   type TableSortCycleState,
 } from '@/features/shared/utils/tableSortCycle';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
-import {
-  DEFAULT_LEADER_PO_RECEIVE_SORT_DIRECTION,
-  DEFAULT_LEADER_PO_RECEIVE_SORT_KEY,
-  sortLeaderPoReceives,
-  type LeaderPoReceiveSortKey,
-} from '@/features/inventory/utils/leaderPoReceiveSorting';
 
 import {
   TL_PO_STATUS_LABELS,
@@ -71,6 +66,12 @@ import {
   type TlReceiveProof,
   type TlPoReceiveStatus,
 } from '../../utils/tlPoReceiveTypes';
+import {
+  DEFAULT_LEADER_PO_RECEIVE_SORT_DIRECTION,
+  DEFAULT_LEADER_PO_RECEIVE_SORT_KEY,
+  sortLeaderPoReceives,
+  type LeaderPoReceiveSortKey,
+} from '../../utils/leaderPoReceiveSorting';
 
 type ListViewMode = 'cards' | 'rows';
 type StatusFilter = 'all' | TlPoReceiveStatus;
@@ -81,6 +82,39 @@ const STATUS_FILTERS: TlPoReceiveStatus[] = [
   'fully_received',
   'shortfall_investigation',
 ];
+
+function toPurchaseOrder(order: TlReceiveListItem): PurchaseOrder {
+  const snap = order.poSnapshot;
+  return {
+    id: order.id,
+    po_number: order.po_number,
+    company_id: order.companyId,
+    supplier_id: null,
+    fulfillment_type: 'warehouse_transfer',
+    order_date: order.order_date,
+    expected_delivery_date: order.expected_delivery_date,
+    subtotal: snap?.subtotal ?? order.total_amount,
+    tax_rate: snap?.tax_rate ?? 0,
+    tax_amount: snap?.tax_amount ?? 0,
+    discount: snap?.discount ?? 0,
+    total_amount: order.total_amount,
+    status: (snap?.status as PurchaseOrder['status']) || 'fulfilled',
+    notes: snap?.notes || order.receiveNotes || '',
+    created_by: snap?.created_by || '',
+    created_at: snap?.created_at || order.order_date,
+    supplier: null,
+    items: order.items.map((item, index) => ({
+      id: `${order.id}-item-${index}`,
+      variant_id: item.variantId,
+      brand_name: item.brandName || 'Unknown',
+      variant_name: item.variantName,
+      variant_type: 'flavor',
+      quantity: item.orderedQuantity,
+      unit_price: 0,
+      total_price: 0,
+    })),
+  };
+}
 
 function formatPoDate(iso: string): string {
   try {
@@ -766,6 +800,7 @@ export function LeaderPoReceiveList({ orders, onReceive }: LeaderPoReceiveListPr
       <PurchaseOrderHistoryDialog
         purchaseOrderId={historyOrder?.id ?? null}
         poNumber={historyOrder?.po_number}
+        purchaseOrder={historyOrder ? toPurchaseOrder(historyOrder) : null}
         open={!!historyOrder}
         onOpenChange={(open) => {
           if (!open) setHistoryOrder(null);

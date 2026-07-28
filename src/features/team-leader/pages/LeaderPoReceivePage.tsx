@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Loader2, PackageCheck, Clock, CheckCircle2, AlertTriangle, Package } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Loader2, PackageCheck, Clock, CheckCircle2, AlertTriangle, Package, BookOpen } from 'lucide-react';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -12,12 +13,11 @@ import type { PurchaseOrder } from '@/features/orders/types';
 import { useLeaderAssignedPoReceives } from '@/features/inventory/hooks/useLeaderAssignedPoReceives';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/usePermissions';
-
 import {
   LeaderPoReceiveList,
   getTlPoReceiveStats,
-} from '../components/leader-po-receive/LeaderPoReceiveList';
-import type { TlReceiveListItem } from '../utils/tlPoReceiveTypes';
+} from '@/features/team-leader/components/leader-po-receive/LeaderPoReceiveList';
+import type { TlReceiveListItem } from '@/features/team-leader/utils/tlPoReceiveTypes';
 
 type ReceiveTarget = {
   order: TlReceiveListItem;
@@ -155,10 +155,18 @@ export default function LeaderPoReceivePage() {
             Confirm receipt for warehouse transfer POs assigned to you.
           </p>
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={() => refresh()} disabled={loading}>
-          {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-          Refresh
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" variant="outline" size="sm" asChild>
+            <Link to="/leader-manual#leader-receive-po">
+              <BookOpen className="mr-2 h-4 w-4" />
+              View manual
+            </Link>
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => refresh()} disabled={loading}>
+            {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            Refresh
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

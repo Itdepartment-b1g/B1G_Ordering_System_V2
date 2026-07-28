@@ -48,6 +48,7 @@ import AgentAttendancePage from "@/features/agent-attendance/page/AgentAttendanc
 import AgentAttendanceOverviewPage from "@/features/sales-agents/AgentAttendanceOverviewPage";
 import TeamAttendancesPage from "./features/team-leader/pages/TeamAttendancesPage";
 import LeaderAllocationHistoryPage from "./features/team-leader/pages/LeaderAllocationHistoryPage";
+import LeaderManualPage from "./features/team-leader/pages/LeaderManualPage";
 import LeaderPoReceivePage from "./features/team-leader/pages/LeaderPoReceivePage";
 import SuperAdminAllocationHistoryPage from "@/features/sales-agents/SuperAdminAllocationHistoryPage";
 import WarehouseManualPage from "./features/inventory/WarehouseManualPage";
@@ -207,6 +208,7 @@ const App = () => (
                       }
                     />
                     <Route path="/warehouse-manual" element={<ProtectedRoute allowedRoles={['warehouse']}><WarehouseManualPage /></ProtectedRoute>} />
+                    <Route path="/leader-manual" element={<ProtectedRoute allowedRoles={['team_leader']}><LeaderManualPage /></ProtectedRoute>} />
                     <Route path="/inventory/allocations" element={<ProtectedRoute><StockAllocationsPage /></ProtectedRoute>} />
                     <Route path="/inventory/remitted-stocks" element={<ProtectedRoute><RemittedStocksPage /></ProtectedRoute>} />
                     <Route path="/inventory/admin-team-remittances" element={<ProtectedRoute><AdminTeamRemittancesPage /></ProtectedRoute>} />
