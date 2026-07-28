@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import {
   DateRangeFilterPopover,
@@ -30,7 +30,14 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/co
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2, ChevronLeft, ChevronRight, FileText, Receipt, MapPin, Store, Filter, XCircle, History } from 'lucide-react';
+import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2, ChevronLeft, ChevronRight, FileText, Receipt, MapPin, Store, Filter, XCircle, History, AlertTriangle, MoreVertical } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { KeyAccountShopCorView } from '@/features/key-accounts/components/KeyAccountShopCorView';
 import { useToast } from '@/hooks/use-toast';
 import { usePurchaseOrders } from './hooks';
@@ -613,6 +620,220 @@ export default function PurchaseOrdersPage() {
     fulfillment_type?: string | null;
     company_account_type?: string | null;
   }) => resolvePoStatusPresentation(order).label;
+
+  const hasOpenShortfall = (order: {
+    id: string;
+    fulfillment_type?: string;
+    company_account_type?: string | null;
+  }) => {
+    if (!isWarehouse) return false;
+    if (isKeyAccountPo(order)) return false;
+    if (order.fulfillment_type !== 'warehouse_transfer') return false;
+    return (receiveProgressByPoId[order.id]?.shortOpen ?? 0) > 0;
+  };
+
+  const getShortageResolveHref = (poNumber: string) =>
+    `/inventory/delivery-shortages?source=po&status=open&search=${encodeURIComponent(poNumber)}`;
+
+  const renderPoResolveShortageButton = (order: { po_number: string }) => (
+    <Button asChild size="sm" variant="outline" className="h-8">
+      <Link to={getShortageResolveHref(order.po_number)}>
+        <AlertTriangle className="mr-1.5 h-3.5 w-3.5" />
+        Resolve shortage
+      </Link>
+    </Button>
+  );
+
+  /** Single primary next-step for the row; everything else goes in the ⋮ menu. */
+  type PoNextAction = 'resolve_shortage' | 'approve' | 'fulfill' | 'cancel_dr' | null;
+
+  const getPoNextAction = (order: any): PoNextAction => {
+    if (hasOpenShortfall(order)) return 'resolve_shortage';
+    if (canApproveOrder(order)) return 'approve';
+    if (canFulfillOrder(order)) return 'fulfill';
+    if (canCancelPendingDr(order)) return 'cancel_dr';
+    return null;
+  };
+
+  const renderPoNextActionButton = (order: any) => {
+    const next = getPoNextAction(order);
+    if (next === 'resolve_shortage') return renderPoResolveShortageButton(order);
+    if (next === 'approve') {
+      return (
+        <Button
+          variant="default"
+          size="sm"
+          className="h-8"
+          onClick={() => handleOpenApproveDialog(order)}
+          disabled={approvingOrderId === order.id}
+        >
+          {approvingOrderId === order.id ? (
+            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+          ) : null}
+          {order.fulfillment_type === 'warehouse_transfer' ? 'Approve PO' : 'Approve'}
+        </Button>
+      );
+    }
+    if (next === 'fulfill') {
+      return (
+        <Button
+          variant="default"
+          size="sm"
+          className="h-8"
+          onClick={() => handleOpenFulfillDialog(order)}
+          disabled={fulfillingOrderId === order.id}
+        >
+          {fulfillingOrderId === order.id ? (
+            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+          ) : (
+            <Package className="h-4 w-4 mr-1" />
+          )}
+          Fulfill
+        </Button>
+      );
+    }
+    if (next === 'cancel_dr') {
+      return (
+        <Button
+          variant="destructive"
+          size="sm"
+          className="h-8"
+          onClick={() => openCancelForOrder(order)}
+          disabled={openingCancelPoId === order.id}
+          title="Refuse this DR and return stock to warehouse"
+        >
+          {openingCancelPoId === order.id ? (
+            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+          ) : (
+            <XCircle className="h-4 w-4 mr-1" />
+          )}
+          Cancel DR
+        </Button>
+      );
+    }
+    return null;
+  };
+
+  const renderPoRowActionsMenu = (order: any) => {
+    const next = getPoNextAction(order);
+    const showRejectInMenu = canApproveOrder(order) && next === 'approve';
+    const showResolveInMenu = hasOpenShortfall(order) && next !== 'resolve_shortage';
+    const showApproveInMenu = canApproveOrder(order) && next !== 'approve';
+    const showFulfillInMenu = canFulfillOrder(order) && next !== 'fulfill';
+    const showCancelDrInMenu = canCancelPendingDr(order) && next !== 'cancel_dr';
+    const hasWorkflowItems =
+      showRejectInMenu ||
+      showResolveInMenu ||
+      showApproveInMenu ||
+      showFulfillInMenu ||
+      showCancelDrInMenu;
+
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0">
+            <MoreVertical className="h-4 w-4" />
+            <span className="sr-only">Open actions</span>
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuItem onClick={() => handleViewOrder(order)}>
+            <Eye className="mr-2 h-4 w-4" />
+            View
+          </DropdownMenuItem>
+          {canShowPurchaseOrderHistory ? (
+            <DropdownMenuItem onClick={() => setHistoryOrder(order)}>
+              <History className="mr-2 h-4 w-4" />
+              History
+            </DropdownMenuItem>
+          ) : null}
+          <DropdownMenuItem onClick={() => void openCofForOrder(order)}>
+            <FileText className="mr-2 h-4 w-4" />
+            View / Print COF
+          </DropdownMenuItem>
+          {canPrintDrForOrder(order) ? (
+            <DropdownMenuItem onClick={() => void openDrForOrder(order)}>
+              <Receipt className="mr-2 h-4 w-4" />
+              Print DR
+            </DropdownMenuItem>
+          ) : null}
+          {hasWorkflowItems ? <DropdownMenuSeparator /> : null}
+          {showResolveInMenu ? (
+            <DropdownMenuItem asChild>
+              <Link to={getShortageResolveHref(order.po_number)}>
+                <AlertTriangle className="mr-2 h-4 w-4" />
+                Resolve shortage
+              </Link>
+            </DropdownMenuItem>
+          ) : null}
+          {showApproveInMenu ? (
+            <DropdownMenuItem
+              onClick={() => handleOpenApproveDialog(order)}
+              disabled={approvingOrderId === order.id}
+            >
+              <Check className="mr-2 h-4 w-4" />
+              {order.fulfillment_type === 'warehouse_transfer' ? 'Approve PO' : 'Approve'}
+            </DropdownMenuItem>
+          ) : null}
+          {showFulfillInMenu ? (
+            <DropdownMenuItem
+              onClick={() => handleOpenFulfillDialog(order)}
+              disabled={fulfillingOrderId === order.id}
+            >
+              <Package className="mr-2 h-4 w-4" />
+              Fulfill
+            </DropdownMenuItem>
+          ) : null}
+          {showRejectInMenu ? (
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onClick={() => handleOpenRejectDialog(order)}
+              disabled={rejectingOrderId === order.id}
+            >
+              <XCircle className="mr-2 h-4 w-4" />
+              {order.created_by === user?.id ? 'Cancel' : 'Reject'}
+            </DropdownMenuItem>
+          ) : null}
+          {showCancelDrInMenu ? (
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onClick={() => openCancelForOrder(order)}
+              disabled={openingCancelPoId === order.id}
+            >
+              <XCircle className="mr-2 h-4 w-4" />
+              Cancel DR
+            </DropdownMenuItem>
+          ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  };
+
+  const renderPoRowActions = (order: any) => (
+    <div className="flex items-center justify-end gap-2">
+      {renderPoNextActionButton(order)}
+      {renderPoRowActionsMenu(order)}
+    </div>
+  );
+
+  const renderPoShortfallCallout = (order: {
+    id: string;
+    po_number: string;
+    fulfillment_type?: string;
+    company_account_type?: string | null;
+  }) => {
+    if (!hasOpenShortfall(order)) return null;
+    const shortOpen = receiveProgressByPoId[order.id]?.shortOpen ?? 0;
+    return (
+      <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+        <p className="text-sm text-amber-800">
+          Short {shortOpen} on{' '}
+          <span className="font-medium tabular-nums">{order.po_number}</span>. Open shortage
+          investigation — resolve before the next dispatch.
+        </p>
+      </div>
+    );
+  };
 
   const renderPoListStatus = (order: {
     id: string;
@@ -1849,63 +2070,8 @@ export default function PurchaseOrdersPage() {
                     <span>₱{order.total_amount.toLocaleString()}</span>
                   </div>
                 </div>
-                <div className="mt-3 flex justify-end gap-2">
-                  {canApproveOrder(order) && (
-                    <Button variant="default" size="sm" onClick={() => handleOpenApproveDialog(order)} disabled={approvingOrderId === order.id}>
-                      {order.fulfillment_type === 'warehouse_transfer' ? 'Approve PO' : 'Approve'}
-                    </Button>
-                  )}
-                  {canFulfillOrder(order) && (
-                    <Button variant="default" size="sm" onClick={() => handleOpenFulfillDialog(order)} disabled={fulfillingOrderId === order.id}>
-                      <Package className="h-4 w-4 mr-1" />
-                      Fulfill
-                    </Button>
-                  )}
-                  {canCancelPendingDr(order) && (
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => openCancelForOrder(order)}
-                      disabled={openingCancelPoId === order.id}
-                      title="Refuse this DR and return stock to warehouse"
-                    >
-                      {openingCancelPoId === order.id ? (
-                        <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                      ) : (
-                        <XCircle className="h-4 w-4 mr-1" />
-                      )}
-                      Cancel DR
-                    </Button>
-                  )}
-                  {canApproveOrder(order) && (
-                    <Button variant="destructive" size="sm" onClick={() => handleOpenRejectDialog(order)} disabled={rejectingOrderId === order.id}>
-                      {order.created_by === user?.id ? 'Cancel' : 'Reject'}
-                    </Button>
-                  )}
-                  <Button variant="outline" size="sm" onClick={() => void openCofForOrder(order)} title="View / Print COF">
-                    <FileText className="h-4 w-4 mr-1" />
-                    COF
-                  </Button>
-                  {canPrintDrForOrder(order) && (
-                    <Button variant="outline" size="sm" onClick={() => void openDrForOrder(order)} title="Print delivery receipt for your warehouse">
-                      <Receipt className="h-4 w-4 mr-1" />
-                      DR
-                    </Button>
-                  )}
-                  <Button variant="ghost" size="sm" onClick={() => handleViewOrder(order)}>
-                    <Eye className="h-4 w-4 mr-1" /> View
-                  </Button>
-                  {canShowPurchaseOrderHistory ? (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setHistoryOrder(order)}
-                      title="View PO history"
-                    >
-                      <History className="h-4 w-4 mr-1" /> History
-                    </Button>
-                  ) : null}
-                </div>
+                {renderPoShortfallCallout(order)}
+                <div className="mt-3">{renderPoRowActions(order)}</div>
               </div>
               );
             })}
@@ -2034,93 +2200,7 @@ export default function PurchaseOrdersPage() {
                       </TableCell>
                       <TableCell>{renderPoListStatus(order)}</TableCell>
                       <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          {canApproveOrder(order) && (
-                            <Button
-                              variant="default"
-                              size="sm"
-                              onClick={() => handleOpenApproveDialog(order)}
-                              disabled={approvingOrderId === order.id}
-                            >
-                              {approvingOrderId === order.id ? (
-                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                              ) : null}
-                              {order.fulfillment_type === 'warehouse_transfer'
-                                ? 'Approve PO'
-                                : 'Approve'}
-                            </Button>
-                          )}
-                          {canFulfillOrder(order) && (
-                            <Button
-                              variant="default"
-                              size="sm"
-                              onClick={() => handleOpenFulfillDialog(order)}
-                              disabled={fulfillingOrderId === order.id}
-                            >
-                              {fulfillingOrderId === order.id ? (
-                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                              ) : (
-                                <Package className="h-4 w-4 mr-1" />
-                              )}
-                              Fulfill
-                            </Button>
-                          )}
-                          {canCancelPendingDr(order) && (
-                            <Button
-                              variant="destructive"
-                              size="sm"
-                              onClick={() => openCancelForOrder(order)}
-                              disabled={openingCancelPoId === order.id}
-                              title="Refuse this DR and return stock to warehouse"
-                            >
-                              {openingCancelPoId === order.id ? (
-                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                              ) : (
-                                <XCircle className="h-4 w-4 mr-1" />
-                              )}
-                              Cancel DR
-                            </Button>
-                          )}
-                          {canApproveOrder(order) && (
-                            <Button
-                              variant="destructive"
-                              size="sm"
-                              onClick={() => handleOpenRejectDialog(order)}
-                              disabled={rejectingOrderId === order.id}
-                            >
-                              {rejectingOrderId === order.id ? (
-                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                              ) : null}
-                              {order.created_by === user?.id ? 'Cancel' : 'Reject'}
-                            </Button>
-                          )}
-                          <Button variant="ghost" size="icon" onClick={() => handleViewOrder(order)}>
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          {canShowPurchaseOrderHistory ? (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => setHistoryOrder(order)}
-                              title="View PO history"
-                            >
-                              <History className="h-4 w-4" />
-                            </Button>
-                          ) : null}
-                          <Button variant="outline" size="icon" onClick={() => void openCofForOrder(order)} title="View / Print COF">
-                            <FileText className="h-4 w-4" />
-                          </Button>
-                          {canPrintDrForOrder(order) && (
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              onClick={() => void openDrForOrder(order)}
-                              title="Print delivery receipt for your warehouse"
-                            >
-                              <Receipt className="h-4 w-4" />
-                            </Button>
-                          )}
-                        </div>
+                        {renderPoRowActions(order)}
                       </TableCell>
                     </TableRow>
                     );
@@ -3072,7 +3152,8 @@ export default function PurchaseOrdersPage() {
             </SheetHeader>
             <ScrollArea className="h-[calc(95vh-80px)]">
               {orderToView && (
-                <div className="p-4">
+                <div className="p-4 space-y-4">
+                  {renderPoShortfallCallout(orderToView)}
                   {orderToView.key_account_client_id ? (
                     <KeyAccountPOView order={orderToView} />
                   ) : (
@@ -3328,6 +3409,8 @@ export default function PurchaseOrdersPage() {
                     </div>
                     {renderPoListStatus(orderToView)}
                   </div>
+
+                  {renderPoShortfallCallout(orderToView)}
 
                   {/* Dates */}
                   <div className="grid grid-cols-2 gap-4">
