@@ -46,7 +46,7 @@ export function usePermissions() {
     }
 
     if (route === '/leader-manual') {
-      return user?.role === 'team_leader';
+      return user?.role === 'team_leader' && hasWarehouseHubLink === true;
     }
 
     // If impersonating, allow full navigation access to the tenant environment.

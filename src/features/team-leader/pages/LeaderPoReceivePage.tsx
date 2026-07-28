@@ -4,6 +4,7 @@ import { Loader2, PackageCheck, Clock, CheckCircle2, AlertTriangle, Package, Boo
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAuth } from '@/features/auth';
 import {
   PoBuyerReceiveDialog,
@@ -17,6 +18,7 @@ import {
   LeaderPoReceiveList,
   getTlPoReceiveStats,
 } from '@/features/team-leader/components/leader-po-receive/LeaderPoReceiveList';
+import LeaderReceivePoManual from '@/features/team-leader/components/leader-manual/LeaderReceivePoManual';
 import type { TlReceiveListItem } from '@/features/team-leader/utils/tlPoReceiveTypes';
 
 type ReceiveTarget = {
@@ -74,6 +76,7 @@ export default function LeaderPoReceivePage() {
 
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [receiveTarget, setReceiveTarget] = useState<ReceiveTarget | null>(null);
+  const [manualOpen, setManualOpen] = useState(false);
 
   const stats = useMemo(() => getTlPoReceiveStats(orders), [orders]);
   const openShortageCount = useMemo(
@@ -156,11 +159,9 @@ export default function LeaderPoReceivePage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" variant="outline" size="sm" asChild>
-            <Link to="/leader-manual#leader-receive-po">
-              <BookOpen className="mr-2 h-4 w-4" />
-              View manual
-            </Link>
+          <Button type="button" variant="outline" size="sm" onClick={() => setManualOpen(true)}>
+            <BookOpen className="mr-2 h-4 w-4" />
+            View manual
           </Button>
           <Button type="button" variant="outline" size="sm" onClick={() => refresh()} disabled={loading}>
             {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
@@ -244,6 +245,26 @@ export default function LeaderPoReceivePage() {
           }}
         />
       ) : null}
+
+      <Dialog open={manualOpen} onOpenChange={setManualOpen}>
+        <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>PO Receiving Manual</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <LeaderReceivePoManual embedded />
+          </div>
+          <p className="border-t pt-2 text-sm text-muted-foreground">
+            <Link
+              to="/leader-manual#leader-receive-po"
+              className="text-blue-500 hover:underline"
+              onClick={() => setManualOpen(false)}
+            >
+              View full manual
+            </Link>
+          </p>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

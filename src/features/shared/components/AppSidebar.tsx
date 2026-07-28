@@ -319,6 +319,7 @@ const leaderMenuItems: MenuItem[] = [
   { title: 'Order Management', url: '/leader-orders', icon: FileText },
   { title: 'Team Activity', url: '/system-history', icon: History },
   { title: 'Calendar', url: '/calendar', icon: Calendar },
+  { title: 'How to use?', url: '/leader-manual', icon: Book },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 
