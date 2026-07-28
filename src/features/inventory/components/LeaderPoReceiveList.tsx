@@ -46,6 +46,14 @@ import {
   ListPagination,
   type PageSize,
 } from '@/features/shared/components/ListPagination';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import { PurchaseOrderHistoryDialog } from '@/features/orders/components/PurchaseOrderHistoryDialog';
 import { fetchPurchaseOrderHistory } from '@/features/orders/purchaseOrderEventsApi';
@@ -55,6 +63,12 @@ import {
   type TlReceiveProof,
   type TlPoReceiveStatus,
 } from '../types/tlPoReceiveTypes';
+import {
+  DEFAULT_LEADER_PO_RECEIVE_SORT_DIRECTION,
+  DEFAULT_LEADER_PO_RECEIVE_SORT_KEY,
+  sortLeaderPoReceives,
+  type LeaderPoReceiveSortKey,
+} from '../utils/leaderPoReceiveSorting';
 
 type ListViewMode = 'cards' | 'rows';
 type StatusFilter = 'all' | TlPoReceiveStatus;
@@ -322,6 +336,8 @@ export function LeaderPoReceiveList({ orders, onReceive }: LeaderPoReceiveListPr
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<LeaderPoReceiveSortKey>>(createInitialTableSortCycle);
   const [historyOrder, setHistoryOrder] = useState<TlReceiveListItem | null>(null);
   const [receiptOrder, setReceiptOrder] = useState<TlReceiveListItem | null>(null);
   const [receiptProofs, setReceiptProofs] = useState<TlReceiveProof[]>([]);
@@ -361,9 +377,24 @@ export function LeaderPoReceiveList({ orders, onReceive }: LeaderPoReceiveListPr
     });
   }, [orders, statusFilter, searchQuery, dateRange]);
 
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        sortState,
+        DEFAULT_LEADER_PO_RECEIVE_SORT_KEY,
+        DEFAULT_LEADER_PO_RECEIVE_SORT_DIRECTION
+      ),
+    [sortState]
+  );
+
+  const sorted = useMemo(
+    () => sortLeaderPoReceives(filtered, resolvedSortKey, resolvedSortDirection),
+    [filtered, resolvedSortKey, resolvedSortDirection]
+  );
+
   useEffect(() => {
     setPage(0);
-  }, [statusFilter, searchQuery, dateRangeFilter, viewMode]);
+  }, [statusFilter, searchQuery, dateRangeFilter, viewMode, sortState]);
 
   useEffect(() => {
     if (!receiptOrder) {
@@ -414,9 +445,13 @@ export function LeaderPoReceiveList({ orders, onReceive }: LeaderPoReceiveListPr
   }, [receiptOrder]);
 
   const { pageCount, safePage, pagedItems } = useMemo(
-    () => getListPaginationSlice(filtered, page, pageSize),
-    [filtered, page, pageSize]
+    () => getListPaginationSlice(sorted, page, pageSize),
+    [sorted, page, pageSize]
   );
+
+  const handleSort = (key: LeaderPoReceiveSortKey) => {
+    setSortState((prev) => getNextTableSortCycleState(prev, key));
+  };
 
   return (
     <Card>
@@ -588,13 +623,44 @@ export function LeaderPoReceiveList({ orders, onReceive }: LeaderPoReceiveListPr
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>PO#</TableHead>
-                  <TableHead>Warehouse</TableHead>
-                  <TableHead>Allocated By</TableHead>
-                  <TableHead>Date</TableHead>
+                  <SortableTableHead
+                    label="PO#"
+                    sortKey="poNumber"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'poNumber')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Warehouse"
+                    sortKey="warehouse"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'warehouse')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Allocated By"
+                    sortKey="allocatedBy"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'allocatedBy')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Date"
+                    sortKey="orderDate"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'orderDate')}
+                    onSort={handleSort}
+                  />
                   <TableHead>Items</TableHead>
-                  <TableHead className="text-right">Qty</TableHead>
-                  <TableHead>Status</TableHead>
+                  <SortableTableHead
+                    label="Qty"
+                    sortKey="qty"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'qty')}
+                    onSort={handleSort}
+                    className="text-right"
+                  />
+                  <SortableTableHead
+                    label="Status"
+                    sortKey="status"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'status')}
+                    onSort={handleSort}
+                  />
                   <TableHead>Receipt</TableHead>
                   <TableHead className="text-right">Action</TableHead>
                 </TableRow>
