@@ -429,26 +429,47 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
           createdBy: user.id,
         });
 
-        if (
+        const hubLinked =
           orderData.fulfillment_type === 'warehouse_transfer' &&
-          orderData.assigned_team_leader_id &&
-          user.company_id
-        ) {
-          void sendNotification({
-            userId: orderData.assigned_team_leader_id,
-            companyId: user.company_id,
-            type: 'purchase_order_approved',
-            title: 'Purchase Order Assigned',
-            message: `${poNumber} was assigned to you for receiving. Open PO Receiving when the warehouse dispatches stock.`,
-            referenceType: 'purchase_order',
-            referenceId: newPO.id,
-          });
+          !!(orderData.warehouse_company_id || linkedWarehouseCompanyId);
+        const assignedTlId =
+          hubLinked && orderData.assigned_team_leader_id
+            ? orderData.assigned_team_leader_id
+            : null;
+
+        let assignedTlName: string | null = null;
+        if (assignedTlId) {
+          const { data: tlProfile } = await supabase
+            .from('profiles')
+            .select('full_name')
+            .eq('id', assignedTlId)
+            .maybeSingle();
+          assignedTlName = String(tlProfile?.full_name || '').trim() || null;
+
+          if (user.company_id) {
+            void sendNotification({
+              userId: assignedTlId,
+              companyId: user.company_id,
+              type: 'purchase_order_approved',
+              title: 'Purchase Order Assigned',
+              message: `${poNumber} was assigned to you for receiving. Open PO Receiving when the warehouse dispatches stock.`,
+              referenceType: 'purchase_order',
+              referenceId: newPO.id,
+            });
+          }
         }
 
-        toast({
-          title: 'Success',
-          description: `Purchase Order ${poNumber} created successfully`,
-        });
+        if (assignedTlId) {
+          toast({
+            title: 'PO assigned to Team Leader',
+            description: `${poNumber} is assigned to ${assignedTlName || 'the selected team leader'} for receiving after warehouse fulfills.`,
+          });
+        } else {
+          toast({
+            title: 'Success',
+            description: `Purchase Order ${poNumber} created successfully`,
+          });
+        }
 
         scheduleBackgroundRefresh();
 
@@ -474,7 +495,9 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
 
       const { data: poRow, error: poRowErr } = await supabase
         .from('purchase_orders')
-        .select('fulfillment_type,warehouse_location_id')
+        .select(
+          'po_number,company_id,created_by,assigned_team_leader_id,fulfillment_type,warehouse_company_id,warehouse_location_id'
+        )
         .eq('id', poId)
         .single();
 
@@ -521,14 +544,65 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
         });
       }
 
+      const poNumber = String(data.po_number || poRow?.po_number || 'PO');
+      const notifyCompanyId = (poRow?.company_id as string | null) || user.company_id;
+      const hubLinkedOnPo =
+        poRow?.fulfillment_type === 'warehouse_transfer' && !!poRow?.warehouse_company_id;
+
+      let notifiedCreator = false;
+      let notifiedTl = false;
+
+      if (hubLinkedOnPo && notifyCompanyId) {
+        const createdBy = poRow?.created_by ? String(poRow.created_by) : null;
+        const assignedTlId = poRow?.assigned_team_leader_id
+          ? String(poRow.assigned_team_leader_id)
+          : null;
+
+        if (createdBy && createdBy !== user.id) {
+          void sendNotification({
+            userId: createdBy,
+            companyId: notifyCompanyId,
+            type: 'purchase_order_approved',
+            title: 'Purchase Order Approved',
+            message: `${poNumber} was approved by warehouse and reserved for fulfillment.`,
+            referenceType: 'purchase_order',
+            referenceId: poId,
+          });
+          notifiedCreator = true;
+        }
+
+        if (assignedTlId && assignedTlId !== user.id) {
+          void sendNotification({
+            userId: assignedTlId,
+            companyId: notifyCompanyId,
+            type: 'purchase_order_approved',
+            title: 'PO Approved — Awaiting Dispatch',
+            message: `${poNumber} was approved. Open PO Receiving when the warehouse dispatches stock.`,
+            referenceType: 'purchase_order',
+            referenceId: poId,
+          });
+          notifiedTl = true;
+        }
+      }
+
+      let approveDescription =
+        rpcName === 'approve_warehouse_transfer_po'
+          ? `${poNumber} approved — stock moved from warehouse to client company`
+          : rpcName === 'approve_multi_location_po'
+            ? `${poNumber} approved — reserved for fulfillment by requested warehouses`
+            : `${poNumber} has been approved and added to inventory`;
+
+      if (notifiedCreator && notifiedTl) {
+        approveDescription += '. Creator and team leader were notified.';
+      } else if (notifiedCreator) {
+        approveDescription += '. Creator was notified.';
+      } else if (notifiedTl) {
+        approveDescription += '. Team leader was notified.';
+      }
+
       toast({
         title: 'Purchase Order Approved',
-        description:
-          rpcName === 'approve_warehouse_transfer_po'
-            ? `${data.po_number} approved — stock moved from warehouse to client company`
-            : rpcName === 'approve_multi_location_po'
-              ? `${data.po_number} approved — reserved for fulfillment by requested warehouses`
-            : `${data.po_number} has been approved and added to inventory`,
+        description: approveDescription,
         duration: 5000,
       });
 
