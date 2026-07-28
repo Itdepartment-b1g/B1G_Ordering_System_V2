@@ -59,17 +59,18 @@ import {
 } from '@/features/shared/utils/tableSortCycle';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import {
-  TL_PO_STATUS_LABELS,
-  type TlReceiveListItem,
-  type TlReceiveProof,
-  type TlPoReceiveStatus,
-} from '@/features/inventory/types/tlPoReceiveTypes';
-import {
   DEFAULT_LEADER_PO_RECEIVE_SORT_DIRECTION,
   DEFAULT_LEADER_PO_RECEIVE_SORT_KEY,
   sortLeaderPoReceives,
   type LeaderPoReceiveSortKey,
 } from '@/features/inventory/utils/leaderPoReceiveSorting';
+
+import {
+  TL_PO_STATUS_LABELS,
+  type TlReceiveListItem,
+  type TlReceiveProof,
+  type TlPoReceiveStatus,
+} from '../../utils/tlPoReceiveTypes';
 
 type ListViewMode = 'cards' | 'rows';
 type StatusFilter = 'all' | TlPoReceiveStatus;

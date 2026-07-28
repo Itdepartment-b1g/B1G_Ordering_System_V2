@@ -10,7 +10,6 @@ import {
 } from '@/features/orders/components/PoBuyerReceiveDialog';
 import type { PurchaseOrder } from '@/features/orders/types';
 import { useLeaderAssignedPoReceives } from '@/features/inventory/hooks/useLeaderAssignedPoReceives';
-import type { TlReceiveListItem } from '@/features/inventory/types/tlPoReceiveTypes';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/usePermissions';
 
@@ -18,6 +17,7 @@ import {
   LeaderPoReceiveList,
   getTlPoReceiveStats,
 } from '../components/leader-po-receive/LeaderPoReceiveList';
+import type { TlReceiveListItem } from '../utils/tlPoReceiveTypes';
 
 type ReceiveTarget = {
   order: TlReceiveListItem;
