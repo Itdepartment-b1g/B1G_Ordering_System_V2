@@ -11,7 +11,7 @@ export type TlPoReceiveStatus =
   | 'shortfall_investigation';
 
 export const TL_PO_STATUS_LABELS: Record<TlPoReceiveStatus, string> = {
-  awaiting_warehouse_fulfillment: 'Awaiting warehouse fulfillment',
+  awaiting_warehouse_fulfillment: 'Warehouse pending',
   pending_receive: 'Pending receive',
   fully_received: 'Fully received',
   shortfall_investigation: 'Shortfall · under investigation',
