@@ -48,6 +48,13 @@ import {
 } from '@/features/key-accounts/components/KeyAccountShopAddressDialogs';
 import { KeyAccountPaymentProofUploadField } from '@/features/key-accounts/components/KeyAccountPaymentProofPreview';
 import { parsePaymentTerms } from '@/features/key-accounts/keyAccountCodes';
+import { useKeyAccountPaymentSettings } from '@/features/key-accounts/hooks/useKeyAccountPaymentSettings';
+import {
+  getKeyAccountEnabledBankAccounts,
+  getKeyAccountPaymentMethods,
+  KEY_ACCOUNT_PAYMENT_METHOD_LABELS,
+  type KeyAccountPaymentMethod,
+} from '@/features/key-accounts/keyAccountPaymentSettingsUtils';
 
 interface POItem {
   id: string;
@@ -79,6 +86,16 @@ interface Warehouse {
 export function KeyAccountPurchaseOrderPage() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const { settings: paymentSettings, loading: loadingPaymentSettings } = useKeyAccountPaymentSettings();
+
+  const availablePaymentMethods = useMemo(
+    () => getKeyAccountPaymentMethods(paymentSettings),
+    [paymentSettings]
+  );
+  const enabledBankAccounts = useMemo(
+    () => getKeyAccountEnabledBankAccounts(paymentSettings),
+    [paymentSettings]
+  );
 
   // Loading states
   const [loadingClients, setLoadingClients] = useState(true);
@@ -123,8 +140,8 @@ export function KeyAccountPurchaseOrderPage() {
   const [paymentTermsCustom, setPaymentTermsCustom] = useState('');
   const [selectedClientPaymentTerm, setSelectedClientPaymentTerm] = useState('');
   const [paymentMode, setPaymentMode] = useState<KeyAccountPoPaymentMode>('full');
-  const [paymentMethod, setPaymentMethod] = useState<'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE'>('BANK_TRANSFER');
-  const [bankType, setBankType] = useState<'Unionbank' | 'BPI' | 'PBCOM'>('BPI');
+  const [paymentMethod, setPaymentMethod] = useState<KeyAccountPaymentMethod>('CASH');
+  const [bankType, setBankType] = useState('');
   const [splitFirstAmount, setSplitFirstAmount] = useState('');
   const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
 
@@ -227,6 +244,20 @@ export function KeyAccountPurchaseOrderPage() {
     if (paymentTermsSource === 'custom') return paymentTermsCustom.trim();
     return selectedClientPaymentTerm.trim();
   }, [paymentTermsSource, paymentTermsCustom, selectedClientPaymentTerm]);
+
+  useEffect(() => {
+    if (loadingPaymentSettings || availablePaymentMethods.length === 0) return;
+    if (!availablePaymentMethods.includes(paymentMethod)) {
+      setPaymentMethod(availablePaymentMethods[0]);
+    }
+  }, [availablePaymentMethods, loadingPaymentSettings, paymentMethod]);
+
+  useEffect(() => {
+    if (paymentMethod !== 'BANK_TRANSFER' || enabledBankAccounts.length === 0) return;
+    if (!enabledBankAccounts.some((bank) => bank.name === bankType)) {
+      setBankType(enabledBankAccounts[0].name);
+    }
+  }, [paymentMethod, enabledBankAccounts, bankType]);
 
   // Fetch initial data
   useEffect(() => {
@@ -694,6 +725,15 @@ export function KeyAccountPurchaseOrderPage() {
       return;
     }
 
+    if (!isConsignment && availablePaymentMethods.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: 'No payment methods',
+        description: 'Ask your Sales Head to configure payment methods in Key Account payment settings.',
+      });
+      return;
+    }
+
     if (!isConsignment && paymentMethod === 'BANK_TRANSFER' && !bankType) {
       toast({ variant: 'destructive', title: 'Bank required', description: 'Select a bank for bank transfer.' });
       return;
@@ -869,13 +909,9 @@ export function KeyAccountPurchaseOrderPage() {
   }
 
   const paymentMethodLabel =
-    paymentMethod === 'BANK_TRANSFER'
+    paymentMethod === 'BANK_TRANSFER' && bankType
       ? `Bank transfer (${bankType})`
-      : paymentMethod === 'GCASH'
-        ? 'GCash'
-        : paymentMethod === 'CASH'
-          ? 'Cash'
-          : 'Cheque';
+      : KEY_ACCOUNT_PAYMENT_METHOD_LABELS[paymentMethod];
 
   const firstPaymentPreview =
     paymentMode === 'full'
@@ -897,15 +933,20 @@ export function KeyAccountPurchaseOrderPage() {
     setPaymentTermsCustom('');
     setSelectedClientPaymentTerm('');
     setPaymentMode('full');
-    setPaymentMethod('BANK_TRANSFER');
-    setBankType('BPI');
+    const defaultMethod = availablePaymentMethods[0] ?? 'CASH';
+    setPaymentMethod(defaultMethod);
+    setBankType(
+      defaultMethod === 'BANK_TRANSFER' && enabledBankAccounts[0]
+        ? enabledBankAccounts[0].name
+        : ''
+    );
     setSplitFirstAmount('');
     setPaymentProofFile(null);
     setSourceMode('single');
     setActiveWarehouseTabId('');
   }
 
-  if (loadingClients || loadingWarehouses) {
+  if (loadingClients || loadingWarehouses || loadingPaymentSettings) {
     return (
       <div className="flex items-center justify-center h-96">
         <Loader2 className="h-8 w-8 animate-spin" />
@@ -1218,36 +1259,44 @@ export function KeyAccountPurchaseOrderPage() {
                     </div>
                     <div className="space-y-2">
                       <Label>Payment method *</Label>
-                      <Select
-                        value={paymentMethod}
-                        onValueChange={(v) =>
-                          setPaymentMethod(v as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE')
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="GCASH">GCash</SelectItem>
-                          <SelectItem value="BANK_TRANSFER">Bank transfer</SelectItem>
-                          <SelectItem value="CASH">Cash</SelectItem>
-                          <SelectItem value="CHEQUE">Cheque</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      {availablePaymentMethods.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">
+                          No payment methods are enabled. Ask your Sales Head to configure them under
+                          Key Account payment settings.
+                        </p>
+                      ) : (
+                        <Select
+                          value={paymentMethod}
+                          onValueChange={(v) => setPaymentMethod(v as KeyAccountPaymentMethod)}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {availablePaymentMethods.map((method) => (
+                              <SelectItem key={method} value={method}>
+                                {KEY_ACCOUNT_PAYMENT_METHOD_LABELS[method]}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
                     </div>
                   </div>
 
-                  {paymentMethod === 'BANK_TRANSFER' && (
+                  {paymentMethod === 'BANK_TRANSFER' && enabledBankAccounts.length > 0 && (
                     <div className="space-y-2">
                       <Label>Bank *</Label>
-                      <Select value={bankType} onValueChange={(v) => setBankType(v as 'Unionbank' | 'BPI' | 'PBCOM')}>
+                      <Select value={bankType} onValueChange={setBankType}>
                         <SelectTrigger>
-                          <SelectValue />
+                          <SelectValue placeholder="Select bank account" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="Unionbank">Unionbank</SelectItem>
-                          <SelectItem value="BPI">BPI</SelectItem>
-                          <SelectItem value="PBCOM">PBCOM</SelectItem>
+                          {enabledBankAccounts.map((bank) => (
+                            <SelectItem key={bank.name} value={bank.name}>
+                              {bank.name} · {bank.account_number}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>

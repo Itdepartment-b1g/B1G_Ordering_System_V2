@@ -428,7 +428,7 @@ export interface PurchaseOrderKeyAccountPayment {
   settlement_discount?: number;
   settlement_discount_reason?: string | null;
   payment_method: "GCASH" | "BANK_TRANSFER" | "CASH" | "CHEQUE";
-  bank_type?: "Unionbank" | "BPI" | "PBCOM" | null;
+  bank_type?: string | null;
   proof_storage_path?: string | null;
   recorded_by?: string | null;
   created_at: string;
@@ -1086,6 +1086,22 @@ export interface CompanyPaymentSettings {
   cheque_enabled: boolean;
   gcash_enabled: boolean;
   bank_transfer_enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KeyAccountPaymentSettings {
+  id: string;
+  company_id: string;
+  bank_accounts: BankAccount[];
+  gcash_number?: string | null;
+  gcash_name?: string | null;
+  gcash_qr_url?: string | null;
+  cash_enabled: boolean;
+  cheque_enabled: boolean;
+  gcash_enabled: boolean;
+  bank_transfer_enabled: boolean;
+  created_by?: string | null;
   created_at: string;
   updated_at: string;
 }

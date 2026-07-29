@@ -210,6 +210,7 @@ const salesHeadMenuItems: MenuItem[] = [
     ]
   },
   { title: 'Analytics', url: '/key-accounts/analytics', icon: Brain },
+  { title: 'Payment Settings', url: '/key-accounts/payment-settings', icon: CreditCard },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 
@@ -245,6 +246,7 @@ const salesDirectorMenuItems: MenuItem[] = [
     ]
   },
   { title: 'Analytics', url: '/key-accounts/analytics', icon: Brain },
+  { title: 'Payment Settings', url: '/key-accounts/payment-settings', icon: CreditCard },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 
