@@ -74,6 +74,7 @@ import {
   approveInternalStockRequest,
   createAndDeliverMainStockAllocation,
   deliverInternalStockRequest,
+  fetchInternalStockRequestById,
   fetchInternalStockRequests,
   rejectInternalStockRequest,
 } from './internalStockRequestsApi';
@@ -87,6 +88,12 @@ import {
   exportInternalStockDeliveryReceiptPdf,
   type DeliveryReceiptWaveEvent,
 } from './utils/exportInternalStockDeliveryReceiptPdf';
+import {
+  DEFAULT_MAIN_SUB_STOCK_REQUEST_SORT_DIRECTION,
+  DEFAULT_MAIN_SUB_STOCK_REQUEST_SORT_KEY,
+  sortMainSubStockRequests,
+  type MainSubStockRequestSortKey,
+} from './utils/mainSubStockRequestSorting';
 import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
 import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
 import SubStockRequestsManual from '@/features/inventory/warehouse-manual/components/SubStockRequestsManual';
@@ -106,6 +113,14 @@ import {
   ListPagination,
   type PageSize,
 } from '@/features/shared/components/ListPagination';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 
 const STATUS_LABELS: Record<SubWarehouseStockRequestStatus, string> = {
@@ -461,10 +476,20 @@ export default function MainWarehouseSubStockRequestsPage() {
     queryFn: () => fetchInternalStockRequests(),
   });
 
-  const invalidateRequests = async () => {
-    await queryClient.invalidateQueries({ queryKey: [INTERNAL_STOCK_REQUESTS_QUERY_KEY] });
-    await queryClient.invalidateQueries({ queryKey: ['inventory'] });
-    await queryClient.invalidateQueries({ queryKey: ['variant-batch-lots'] });
+  /** List refresh for this page — do not await on mutation success (blocks dialog close). */
+  const refreshRequestList = () => {
+    void queryClient.invalidateQueries({ queryKey: [INTERNAL_STOCK_REQUESTS_QUERY_KEY] });
+  };
+
+  /** Inventory caches — background only; InventoryContext realtime also picks these up. */
+  const refreshInventoryCaches = () => {
+    void queryClient.invalidateQueries({ queryKey: ['inventory'] });
+    void queryClient.invalidateQueries({ queryKey: ['variant-batch-lots'] });
+  };
+
+  const schedulePostMutationRefresh = () => {
+    refreshRequestList();
+    refreshInventoryCaches();
   };
 
   // Live updates when sub creates/receives (or any status change on company requests).
@@ -517,6 +542,8 @@ export default function MainWarehouseSubStockRequestsPage() {
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<MainSubStockRequestSortKey>>(createInitialTableSortCycle);
   const [detailRequestId, setDetailRequestId] = useState<string | null>(null);
   const [rejectTarget, setRejectTarget] = useState<SubWarehouseStockRequest | null>(null);
   const [rejectReason, setRejectReason] = useState('');
@@ -690,8 +717,8 @@ export default function MainWarehouseSubStockRequestsPage() {
         notes: payload.notes || undefined,
       });
     },
-    onSuccess: async (result) => {
-      await invalidateRequests();
+    onSuccess: (result) => {
+      setMainAllocateOpen(false);
       const requestNumber =
         typeof result?.request_number === 'string' ? result.request_number : 'Allocation';
       const drNumber =
@@ -704,23 +731,24 @@ export default function MainWarehouseSubStockRequestsPage() {
           ? `${requestNumber} delivered (${drNumber}). Pending receive at the sub warehouse.`
           : `${requestNumber} is now pending receive at the sub warehouse.`,
       });
-      setMainAllocateOpen(false);
+      schedulePostMutationRefresh();
 
-      if (result?.request_id) {
-        const match = (await fetchInternalStockRequests()).find((r) => r.id === result.request_id);
-        if (match) {
-          try {
-            await exportInternalStockDeliveryReceiptPdf(match);
-          } catch {
-            toast({
-              title: 'Delivery Receipt',
-              description:
-                'Allocated, but the receipt could not be opened automatically. Use Print Delivery Receipt.',
-              variant: 'destructive',
-            });
-          }
+      const requestId = result?.request_id ? String(result.request_id) : null;
+      if (!requestId) return;
+
+      void (async () => {
+        try {
+          const match = await fetchInternalStockRequestById(requestId);
+          if (match) await exportInternalStockDeliveryReceiptPdf(match);
+        } catch {
+          toast({
+            title: 'Delivery Receipt',
+            description:
+              'Allocated, but the receipt could not be opened automatically. Use Print Delivery Receipt.',
+            variant: 'destructive',
+          });
         }
-      }
+      })();
     },
     onError: (error: Error) => {
       toast({
@@ -753,7 +781,7 @@ export default function MainWarehouseSubStockRequestsPage() {
 
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    const list = tabRequests.filter((r) => {
+    return tabRequests.filter((r) => {
       if (statusFilter !== 'all' && r.status !== statusFilter) return false;
       if (warehouseFilter !== 'all' && r.fromLocationId !== warehouseFilter) return false;
       if (!isDateInRange(r.createdAt, dateRange.start, dateRange.end)) return false;
@@ -770,9 +798,6 @@ export default function MainWarehouseSubStockRequestsPage() {
       }
       return true;
     });
-    return [...list].sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
   }, [
     tabRequests,
     statusFilter,
@@ -782,9 +807,24 @@ export default function MainWarehouseSubStockRequestsPage() {
     dateRange.start,
   ]);
 
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        sortState,
+        DEFAULT_MAIN_SUB_STOCK_REQUEST_SORT_KEY,
+        DEFAULT_MAIN_SUB_STOCK_REQUEST_SORT_DIRECTION
+      ),
+    [sortState]
+  );
+
+  const sorted = useMemo(
+    () => sortMainSubStockRequests(filtered, resolvedSortKey, resolvedSortDirection),
+    [filtered, resolvedSortKey, resolvedSortDirection]
+  );
+
   useEffect(() => {
     setPage(0);
-  }, [listTab, statusFilter, warehouseFilter, searchQuery, dateRangeFilter, pageSize]);
+  }, [listTab, statusFilter, warehouseFilter, searchQuery, dateRangeFilter, pageSize, sortState]);
 
   useEffect(() => {
     // Drop status filters that don't apply on the allocations tab.
@@ -797,7 +837,11 @@ export default function MainWarehouseSubStockRequestsPage() {
     }
   }, [listTab, statusFilter]);
 
-  const { pageCount, safePage, pagedItems } = getListPaginationSlice(filtered, page, pageSize);
+  const { pageCount, safePage, pagedItems } = getListPaginationSlice(sorted, page, pageSize);
+
+  const handleSort = (key: MainSubStockRequestSortKey) => {
+    setSortState((prev) => getNextTableSortCycleState(prev, key));
+  };
 
   const stats = useMemo(
     () => ({
@@ -816,13 +860,13 @@ export default function MainWarehouseSubStockRequestsPage() {
       if (!approveTarget) throw new Error('No request selected');
       return approveInternalStockRequest({ requestId: approveTarget.id });
     },
-    onSuccess: async () => {
-      await invalidateRequests();
+    onSuccess: () => {
+      closeApproveDialog();
       toast({
         title: 'Approved',
         description: `${approveTarget?.requestNumber} is approved. Deliver when ready to ship.`,
       });
-      closeApproveDialog();
+      schedulePostMutationRefresh();
     },
     onError: (error: Error) => {
       toast({
@@ -851,37 +895,40 @@ export default function MainWarehouseSubStockRequestsPage() {
         riderPhotoUrl: proof.riderPhotoDataUrl,
       });
     },
-    onSuccess: async (result) => {
+    onSuccess: (result) => {
       const delivered = deliverTarget;
       const proof = deliverProof.value;
       const drNumber =
         typeof result?.dr_number === 'string' && result.dr_number.trim()
           ? result.dr_number.trim()
           : undefined;
-      await invalidateRequests();
+      closeDeliverDialog();
+      setDetailRequestId(null);
       toast({
         title: 'Delivered',
         description: drNumber
           ? `${delivered?.requestNumber} delivered (${drNumber}). Pending receive at ${delivered?.fromLocationName}.`
           : `${delivered?.requestNumber} is now pending receive at ${delivered?.fromLocationName}.`,
       });
-      closeDeliverDialog();
-      setDetailRequestId(null);
-      if (delivered) {
-        const receiptRequest: SubWarehouseStockRequest = {
-          ...delivered,
-          status: 'pending_receive',
-          drNumber: drNumber || delivered.drNumber,
-          riderName: proof.riderName.trim() || delivered.riderName,
-          riderPlateNumber: proof.riderPlate.trim() || delivered.riderPlateNumber,
-          riderPhotoUrl: proof.riderPhotoDataUrl || delivered.riderPhotoUrl,
-          items: delivered.items.map((item) => ({
-            ...item,
-            deliveredQuantity: item.requestedQuantity,
-            receivedQuantity: 0,
-            openReceiveQuantity: item.requestedQuantity,
-          })),
-        };
+      schedulePostMutationRefresh();
+
+      if (!delivered) return;
+
+      const receiptRequest: SubWarehouseStockRequest = {
+        ...delivered,
+        status: 'pending_receive',
+        drNumber: drNumber || delivered.drNumber,
+        riderName: proof.riderName.trim() || delivered.riderName,
+        riderPlateNumber: proof.riderPlate.trim() || delivered.riderPlateNumber,
+        riderPhotoUrl: proof.riderPhotoDataUrl || delivered.riderPhotoUrl,
+        items: delivered.items.map((item) => ({
+          ...item,
+          deliveredQuantity: item.requestedQuantity,
+          receivedQuantity: 0,
+          openReceiveQuantity: item.requestedQuantity,
+        })),
+      };
+      void (async () => {
         try {
           await exportInternalStockDeliveryReceiptPdf(receiptRequest);
         } catch {
@@ -892,7 +939,7 @@ export default function MainWarehouseSubStockRequestsPage() {
             variant: 'destructive',
           });
         }
-      }
+      })();
     },
     onError: (error: Error) => {
       toast({
@@ -914,14 +961,14 @@ export default function MainWarehouseSubStockRequestsPage() {
         signatureUrl: rejectSignatureDataUrl,
       });
     },
-    onSuccess: async () => {
-      await invalidateRequests();
+    onSuccess: () => {
+      closeRejectDialog();
+      setDetailRequestId(null);
       toast({
         title: 'Request rejected',
         description: `${rejectTarget?.requestNumber} was rejected.`,
       });
-      closeRejectDialog();
-      setDetailRequestId(null);
+      schedulePostMutationRefresh();
     },
     onError: (error: Error) => {
       toast({
@@ -957,11 +1004,12 @@ export default function MainWarehouseSubStockRequestsPage() {
       });
       return { ...result, meta: payload };
     },
-    onSuccess: async ({ allocated, meta, dr_number }) => {
-      await invalidateRequests();
+    onSuccess: ({ allocated, meta, dr_number }) => {
       const totalAllocated = allocated ?? meta.lines.reduce((s, l) => s + l.quantity, 0);
       const drNumber =
         typeof dr_number === 'string' && dr_number.trim() ? dr_number.trim() : undefined;
+      closeAllocateDialog();
+      setDetailRequestId(meta.requestId);
       toast({
         title: 'Remaining allocated',
         description: drNumber
@@ -972,12 +1020,12 @@ export default function MainWarehouseSubStockRequestsPage() {
             ? `${meta.requestNumber}: allocated ${totalAllocated} of short ${meta.shortBefore}. Status stays partially received until fully received.`
             : `${meta.requestNumber}: allocated ${totalAllocated} (full short). Sub can confirm receive; status becomes fully received when confirmed.`,
       });
-      closeAllocateDialog();
-      setDetailRequestId(meta.requestId);
+      schedulePostMutationRefresh();
 
-      try {
-        const match = (await fetchInternalStockRequests()).find((r) => r.id === meta.requestId);
-        if (match) {
+      void (async () => {
+        try {
+          const match = await fetchInternalStockRequestById(meta.requestId);
+          if (!match) return;
           const wave =
             match.history
               ?.filter(
@@ -988,15 +1036,15 @@ export default function MainWarehouseSubStockRequestsPage() {
               .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())[0] ??
             undefined;
           await exportInternalStockDeliveryReceiptPdf(match, wave ? { event: wave } : undefined);
+        } catch {
+          toast({
+            title: 'Delivery Receipt',
+            description:
+              'Allocated, but the receipt could not be opened automatically. Use Print DR on the timeline.',
+            variant: 'destructive',
+          });
         }
-      } catch {
-        toast({
-          title: 'Delivery Receipt',
-          description:
-            'Allocated, but the receipt could not be opened automatically. Use Print DR on the timeline.',
-          variant: 'destructive',
-        });
-      }
+      })();
     },
     onError: (error: Error) => {
       toast({
@@ -1464,11 +1512,36 @@ export default function MainWarehouseSubStockRequestsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Request</TableHead>
-                    <TableHead>Sub-warehouse</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Qty</TableHead>
-                    <TableHead>Status</TableHead>
+                    <SortableTableHead
+                      label="Request"
+                      sortKey="requestNumber"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'requestNumber')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Sub-warehouse"
+                      sortKey="subWarehouse"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'subWarehouse')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Date"
+                      sortKey="createdAt"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'createdAt')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Qty"
+                      sortKey="qty"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'qty')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Status"
+                      sortKey="status"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'status')}
+                      onSort={handleSort}
+                    />
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>

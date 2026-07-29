@@ -206,7 +206,7 @@ const salesHeadMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Create Purchase Order', url: '/key-accounts/create-order', icon: Plus },
       { title: 'Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
-      { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
+      // { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
     ]
   },
   { title: 'Analytics', url: '/key-accounts/analytics', icon: Brain },
@@ -241,7 +241,7 @@ const salesDirectorMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Create Purchase Order', url: '/key-accounts/create-order', icon: Plus },
       { title: 'Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
-      { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
+      // { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
     ]
   },
   { title: 'Analytics', url: '/key-accounts/analytics', icon: Brain },
@@ -260,7 +260,7 @@ const keyAccountManagerMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Create Purchase Order', url: '/key-accounts/create-order', icon: Plus },
       { title: 'My Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
-      { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
+      // { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
     ]
   },
   { title: 'Profile', url: '/profile', icon: UserCircle },
@@ -319,6 +319,7 @@ const leaderMenuItems: MenuItem[] = [
   { title: 'Order Management', url: '/leader-orders', icon: FileText },
   { title: 'Team Activity', url: '/system-history', icon: History },
   { title: 'Calendar', url: '/calendar', icon: Calendar },
+  { title: 'How to use?', url: '/leader-manual', icon: Book },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 

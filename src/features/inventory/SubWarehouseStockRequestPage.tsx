@@ -20,6 +20,7 @@ import {
   INTERNAL_STOCK_REQUESTS_QUERY_KEY,
   confirmInternalStockRequestReceive,
   createInternalStockRequest,
+  fetchInternalStockRequestById,
   fetchInternalStockRequests,
 } from './internalStockRequestsApi';
 import { exportSubWarehouseReceivePdf } from './utils/exportSubWarehouseReceivePdf';
@@ -48,11 +49,21 @@ export default function SubWarehouseStockRequestPage() {
   } = useQuery({
     queryKey: [INTERNAL_STOCK_REQUESTS_QUERY_KEY, 'sub', user?.company_id, myLocationId],
     enabled: !!user?.company_id && !!myLocationId,
-    staleTime: 0,
-    refetchOnMount: 'always',
+    staleTime: 15_000,
+    refetchOnMount: true,
     refetchOnWindowFocus: true,
     queryFn: () => fetchInternalStockRequests({ fromLocationId: myLocationId }),
   });
+
+  /** Do not await on mutation success — awaiting blocks dialog close / Confirming… state. */
+  const schedulePostMutationRefresh = () => {
+    void queryClient.invalidateQueries({ queryKey: [INTERNAL_STOCK_REQUESTS_QUERY_KEY] });
+    void queryClient.invalidateQueries({ queryKey: ['inventory'] });
+    void queryClient.invalidateQueries({ queryKey: ['variant-batch-lots'] });
+    void queryClient.invalidateQueries({
+      queryKey: ['main-warehouse-stock-for-sub-request', user?.company_id],
+    });
+  };
 
   // Live updates when main approves / rejects / allocates remaining.
   useEffect(() => {
@@ -128,13 +139,13 @@ export default function SubWarehouseStockRequestPage() {
         })),
       });
     },
-    onSuccess: async (result) => {
-      await queryClient.invalidateQueries({ queryKey: [INTERNAL_STOCK_REQUESTS_QUERY_KEY] });
+    onSuccess: (result) => {
+      setRequestOpen(false);
       toast({
         title: 'Request submitted',
         description: `${result.request_number} sent to main warehouse.`,
       });
-      setRequestOpen(false);
+      void queryClient.invalidateQueries({ queryKey: [INTERNAL_STOCK_REQUESTS_QUERY_KEY] });
     },
     onError: (error: Error) => {
       toast({
@@ -168,62 +179,59 @@ export default function SubWarehouseStockRequestPage() {
         notes: payload.notes || undefined,
         proofImageName: payload.proofImageName,
       });
-      const refreshed = await fetchInternalStockRequests({ fromLocationId: myLocationId });
-      const updated = refreshed.find((r) => r.id === payload.requestId) ?? null;
-      return { result, updated, payload };
+      return { result, payload };
     },
-    onSuccess: async ({ result, updated, payload }) => {
-      await queryClient.invalidateQueries({ queryKey: [INTERNAL_STOCK_REQUESTS_QUERY_KEY] });
-      await queryClient.invalidateQueries({ queryKey: ['inventory'] });
-      await queryClient.invalidateQueries({ queryKey: ['variant-batch-lots'] });
-      await queryClient.invalidateQueries({
-        queryKey: ['main-warehouse-stock-for-sub-request', user?.company_id],
+    onSuccess: ({ result, payload }) => {
+      setReceiveOpen(false);
+      setReceiveTarget(null);
+      toast({
+        title: result.status === 'fully_received' ? 'Fully received' : 'Partially received',
+        description:
+          result.status === 'fully_received'
+            ? 'All delivered units confirmed. Opening PDF for print/save.'
+            : `Receive confirmed. Short remaining: ${result.short_quantity ?? 0}.`,
       });
+      schedulePostMutationRefresh();
+
       const receiverName = user?.full_name || user?.email || 'Sub-warehouse user';
-      if (updated) {
-        const proof = {
-          at: new Date().toISOString(),
-          notes: payload.notes || undefined,
-          proofImageDataUrl: payload.proofImageDataUrl,
-          proofImageName: payload.proofImageName,
-          signatureDataUrl: payload.signatureDataUrl,
-          lines: payload.lines
-            .filter((line) => line.quantityThisReceive > 0)
-            .map((line) => {
-              const item = updated.items.find((i) => i.variantId === line.variantId);
-              return {
-                variantId: line.variantId,
-                variantName: item?.variantName || line.variantId,
-                brandName: item?.brandName,
-                quantity: line.quantityThisReceive,
-              };
-            }),
-        };
-        void exportSubWarehouseReceivePdf({
-          request: updated,
-          proof,
-          receivedByName: receiverName,
-          shortQuantity: result.short_quantity ?? 0,
-          statusLabel:
-            result.status === 'fully_received' ? 'Fully received' : 'Partially received',
-        }).catch(() => {
+      void (async () => {
+        try {
+          const updated = await fetchInternalStockRequestById(payload.requestId);
+          if (!updated) return;
+          const proof = {
+            at: new Date().toISOString(),
+            notes: payload.notes || undefined,
+            proofImageDataUrl: payload.proofImageDataUrl,
+            proofImageName: payload.proofImageName,
+            signatureDataUrl: payload.signatureDataUrl,
+            lines: payload.lines
+              .filter((line) => line.quantityThisReceive > 0)
+              .map((line) => {
+                const item = updated.items.find((i) => i.variantId === line.variantId);
+                return {
+                  variantId: line.variantId,
+                  variantName: item?.variantName || line.variantId,
+                  brandName: item?.brandName,
+                  quantity: line.quantityThisReceive,
+                };
+              }),
+          };
+          await exportSubWarehouseReceivePdf({
+            request: updated,
+            proof,
+            receivedByName: receiverName,
+            shortQuantity: result.short_quantity ?? 0,
+            statusLabel:
+              result.status === 'fully_received' ? 'Fully received' : 'Partially received',
+          });
+        } catch {
           toast({
             title: 'PDF export failed',
             description: 'Receive was saved, but the PDF window could not be opened.',
             variant: 'destructive',
           });
-        });
-      }
-
-      toast({
-        title: result.status === 'fully_received' ? 'Fully received' : 'Partially received',
-        description:
-          result.status === 'fully_received'
-            ? 'All delivered units confirmed. PDF opened for print/save.'
-            : `Receive confirmed. Short remaining: ${result.short_quantity ?? 0}.`,
-      });
-      setReceiveOpen(false);
-      setReceiveTarget(null);
+        }
+      })();
     },
     onError: (error: Error) => {
       toast({

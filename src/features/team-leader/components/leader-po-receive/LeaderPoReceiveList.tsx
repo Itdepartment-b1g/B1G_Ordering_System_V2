@@ -11,6 +11,7 @@ import {
   Search,
   Truck,
 } from 'lucide-react';
+
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -36,6 +37,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { PurchaseOrderHistoryDialog } from '@/features/orders/components/PurchaseOrderHistoryDialog';
+import { fetchPurchaseOrderHistory } from '@/features/orders/purchaseOrderEventsApi';
+import type { PurchaseOrder } from '@/features/orders/types';
 import {
   DateRangeFilterPopover,
   type DateRangeFilterValue,
@@ -55,20 +59,19 @@ import {
   type TableSortCycleState,
 } from '@/features/shared/utils/tableSortCycle';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
-import { PurchaseOrderHistoryDialog } from '@/features/orders/components/PurchaseOrderHistoryDialog';
-import { fetchPurchaseOrderHistory } from '@/features/orders/purchaseOrderEventsApi';
+
 import {
   TL_PO_STATUS_LABELS,
   type TlReceiveListItem,
   type TlReceiveProof,
   type TlPoReceiveStatus,
-} from '../types/tlPoReceiveTypes';
+} from '../../utils/tlPoReceiveTypes';
 import {
   DEFAULT_LEADER_PO_RECEIVE_SORT_DIRECTION,
   DEFAULT_LEADER_PO_RECEIVE_SORT_KEY,
   sortLeaderPoReceives,
   type LeaderPoReceiveSortKey,
-} from '../utils/leaderPoReceiveSorting';
+} from '../../utils/leaderPoReceiveSorting';
 
 type ListViewMode = 'cards' | 'rows';
 type StatusFilter = 'all' | TlPoReceiveStatus;
@@ -79,6 +82,39 @@ const STATUS_FILTERS: TlPoReceiveStatus[] = [
   'fully_received',
   'shortfall_investigation',
 ];
+
+function toPurchaseOrder(order: TlReceiveListItem): PurchaseOrder {
+  const snap = order.poSnapshot;
+  return {
+    id: order.id,
+    po_number: order.po_number,
+    company_id: order.companyId,
+    supplier_id: null,
+    fulfillment_type: 'warehouse_transfer',
+    order_date: order.order_date,
+    expected_delivery_date: order.expected_delivery_date,
+    subtotal: snap?.subtotal ?? order.total_amount,
+    tax_rate: snap?.tax_rate ?? 0,
+    tax_amount: snap?.tax_amount ?? 0,
+    discount: snap?.discount ?? 0,
+    total_amount: order.total_amount,
+    status: (snap?.status as PurchaseOrder['status']) || 'fulfilled',
+    notes: snap?.notes || order.receiveNotes || '',
+    created_by: snap?.created_by || '',
+    created_at: snap?.created_at || order.order_date,
+    supplier: null,
+    items: order.items.map((item, index) => ({
+      id: `${order.id}-item-${index}`,
+      variant_id: item.variantId,
+      brand_name: item.brandName || 'Unknown',
+      variant_name: item.variantName,
+      variant_type: 'flavor',
+      quantity: item.orderedQuantity,
+      unit_price: 0,
+      total_price: 0,
+    })),
+  };
+}
 
 function formatPoDate(iso: string): string {
   try {
@@ -176,7 +212,7 @@ function PoTotals({ order }: { order: TlReceiveListItem }) {
       <p className="text-xs tabular-nums">
         Delivered {delivered} · Received {received}
         {showActiveShort ? (
-          <span className="text-amber-700 font-medium"> · Short {short}</span>
+          <span className="font-medium text-amber-700"> · Short {short}</span>
         ) : null}
       </p>
       {showActiveShort ? (
@@ -210,10 +246,10 @@ function ItemChips({
             order.status === 'awaiting_warehouse_fulfillment'
               ? `${item.variantName} · x${item.orderedQuantity}`
               : order.status === 'pending_receive'
-              ? `${item.variantName} · x${item.dispatchedQuantity}`
-              : short > 0 && order.status === 'shortfall_investigation'
                 ? `${item.variantName} · x${item.dispatchedQuantity}`
-                : `${item.variantName} · x${item.receivedQuantity || item.dispatchedQuantity}`;
+                : short > 0 && order.status === 'shortfall_investigation'
+                  ? `${item.variantName} · x${item.dispatchedQuantity}`
+                  : `${item.variantName} · x${item.receivedQuantity || item.dispatchedQuantity}`;
 
           return (
             <Badge
@@ -247,6 +283,7 @@ function resolveReceiptProofs(order: TlReceiveListItem): TlReceiveProof[] {
   if (order.receiveProofs && order.receiveProofs.length > 0) {
     return order.receiveProofs;
   }
+
   return (order.history ?? [])
     .filter((e) => e.type === 'receive_confirmed')
     .map((e) => ({
@@ -265,11 +302,11 @@ function ReceiptCell({
   onViewReceipt: (order: TlReceiveListItem) => void;
 }) {
   if (!hasReceiptSummary(order.status)) {
-    return <span className="text-muted-foreground text-xs">—</span>;
+    return <span className="text-xs text-muted-foreground">-</span>;
   }
 
   return (
-    <div className="space-y-2 min-w-[11rem]">
+    <div className="min-w-[11rem] space-y-2">
       <PoTotals order={order} />
       {(order.status === 'fully_received' || order.status === 'shortfall_investigation') && (
         <Button
@@ -462,38 +499,38 @@ export function LeaderPoReceiveList({ orders, onReceive }: LeaderPoReceiveListPr
               <Package className="h-5 w-5" />
               PO Receiving
             </CardTitle>
-            <p className="text-sm text-muted-foreground font-normal mt-1">
+            <p className="mt-1 text-sm font-normal text-muted-foreground">
               Receive when status is pending receive. Awaiting warehouse fulfillment means approval
               or dispatch is still in progress.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2 items-center">
+          <div className="flex flex-wrap items-center gap-2">
             <div className="relative w-full sm:w-[220px]">
               <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search PO / DR…"
+                placeholder="Search PO / DR..."
                 className="h-9 pl-8"
               />
             </div>
             <DateRangeFilterPopover
               value={dateRangeFilter}
               onChange={setDateRangeFilter}
-              triggerClassName="w-full sm:w-[220px] justify-between h-9"
+              triggerClassName="h-9 w-full justify-between sm:w-[220px]"
             />
             <Select
               value={statusFilter}
-              onValueChange={(v) => setStatusFilter(v as StatusFilter)}
+              onValueChange={(value) => setStatusFilter(value as StatusFilter)}
             >
-              <SelectTrigger className="w-[200px] h-9">
+              <SelectTrigger className="h-9 w-[200px]">
                 <SelectValue placeholder="Filter status" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All statuses</SelectItem>
-                {STATUS_FILTERS.map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {TL_PO_STATUS_LABELS[s]}
+                {STATUS_FILTERS.map((status) => (
+                  <SelectItem key={status} value={status}>
+                    {TL_PO_STATUS_LABELS[status]}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -531,15 +568,15 @@ export function LeaderPoReceiveList({ orders, onReceive }: LeaderPoReceiveListPr
             No items match this filter.
           </p>
         ) : viewMode === 'cards' ? (
-          <ul className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <ul className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
             {pagedItems.map((order) => (
-              <li key={order.id} className="rounded-md border p-4 space-y-3">
+              <li key={order.id} className="space-y-3 rounded-md border p-4">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="font-medium tabular-nums">{order.po_number}</p>
                       {order.drNumber ? (
-                        <Badge variant="outline" className="font-normal text-[10px] h-5">
+                        <Badge variant="outline" className="h-5 text-[10px] font-normal">
                           {order.drNumber}
                         </Badge>
                       ) : null}
@@ -548,27 +585,22 @@ export function LeaderPoReceiveList({ orders, onReceive }: LeaderPoReceiveListPr
                     {order.warehouseCompanyName || order.warehouseLocationName ? (
                       <div className="mt-0.5 min-w-0">
                         {order.warehouseCompanyName ? (
-                          <p className="text-xs font-medium truncate">
-                            {order.warehouseCompanyName}
-                          </p>
+                          <p className="truncate text-xs font-medium">{order.warehouseCompanyName}</p>
                         ) : null}
                         {order.warehouseLocationName ? (
-                          <p className="text-xs text-muted-foreground truncate">
+                          <p className="truncate text-xs text-muted-foreground">
                             {order.warehouseLocationName}
                           </p>
                         ) : null}
                       </div>
                     ) : null}
                     {order.allocatedByCompanyName || order.allocatedByName ? (
-                      <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                        Allocated by{' '}
-                        {order.allocatedByName || '—'}
-                        {order.allocatedByCompanyName
-                          ? ` · ${order.allocatedByCompanyName}`
-                          : ''}
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                        Allocated by {order.allocatedByName || '-'}
+                        {order.allocatedByCompanyName ? ` · ${order.allocatedByCompanyName}` : ''}
                       </p>
                     ) : null}
-                    <p className="text-xs tabular-nums mt-1">
+                    <p className="mt-1 text-xs tabular-nums">
                       Qty {getOverallQty(order).toLocaleString()}
                     </p>
                   </div>
@@ -619,7 +651,7 @@ export function LeaderPoReceiveList({ orders, onReceive }: LeaderPoReceiveListPr
             ))}
           </ul>
         ) : (
-          <div className="rounded-md border overflow-x-auto">
+          <div className="overflow-x-auto rounded-md border">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -668,55 +700,55 @@ export function LeaderPoReceiveList({ orders, onReceive }: LeaderPoReceiveListPr
               <TableBody>
                 {pagedItems.map((order) => (
                   <TableRow key={order.id}>
-                    <TableCell className="font-medium tabular-nums whitespace-nowrap">
-                      <div className="flex flex-col gap-1 items-start">
+                    <TableCell className="whitespace-nowrap font-medium tabular-nums">
+                      <div className="flex flex-col items-start gap-1">
                         <span>{order.po_number}</span>
                         {order.drNumber ? (
-                          <Badge variant="outline" className="font-normal text-[10px] h-5 w-fit">
+                          <Badge variant="outline" className="h-5 w-fit text-[10px] font-normal">
                             {order.drNumber}
                           </Badge>
                         ) : (
-                          <span className="text-muted-foreground text-xs font-normal">—</span>
+                          <span className="text-xs font-normal text-muted-foreground">-</span>
                         )}
                       </div>
                     </TableCell>
-                    <TableCell className="whitespace-nowrap max-w-[14rem]">
+                    <TableCell className="max-w-[14rem] whitespace-nowrap">
                       {order.warehouseCompanyName || order.warehouseLocationName ? (
-                        <div className="flex flex-col gap-0.5 min-w-0">
-                          <span className="font-medium truncate">
-                            {order.warehouseCompanyName || '—'}
-                          </span>
-                          <span className="text-xs text-muted-foreground truncate">
-                            {order.warehouseLocationName || '—'}
-                          </span>
+                        <div className="min-w-0">
+                          <div className="truncate font-medium">
+                            {order.warehouseCompanyName || '-'}
+                          </div>
+                          <div className="truncate text-xs text-muted-foreground">
+                            {order.warehouseLocationName || '-'}
+                          </div>
                         </div>
                       ) : (
-                        <span className="text-muted-foreground">—</span>
+                        <span className="text-muted-foreground">-</span>
                       )}
                     </TableCell>
-                    <TableCell className="whitespace-nowrap max-w-[14rem]">
+                    <TableCell className="max-w-[14rem] whitespace-nowrap">
                       {order.allocatedByCompanyName || order.allocatedByName ? (
-                        <div className="flex flex-col gap-0.5 min-w-0">
-                          <span className="font-medium truncate">
-                            {order.allocatedByCompanyName || '—'}
-                          </span>
-                          <span className="text-xs text-muted-foreground truncate">
-                            {order.allocatedByName || '—'}
-                          </span>
+                        <div className="min-w-0">
+                          <div className="truncate font-medium">
+                            {order.allocatedByCompanyName || '-'}
+                          </div>
+                          <div className="truncate text-xs text-muted-foreground">
+                            {order.allocatedByName || '-'}
+                          </div>
                         </div>
                       ) : (
-                        <span className="text-muted-foreground">—</span>
+                        <span className="text-muted-foreground">-</span>
                       )}
                     </TableCell>
-                    <TableCell className="text-muted-foreground whitespace-nowrap">
+                    <TableCell className="whitespace-nowrap text-muted-foreground">
                       {formatPoDate(order.order_date)}
                     </TableCell>
                     <TableCell>
-                      <div className="space-y-1.5 min-w-[14rem]">
+                      <div className="min-w-[14rem] space-y-1.5">
                         <ItemChips order={order} />
                       </div>
                     </TableCell>
-                    <TableCell className="text-right font-medium tabular-nums whitespace-nowrap">
+                    <TableCell className="whitespace-nowrap text-right font-medium tabular-nums">
                       {getOverallQty(order).toLocaleString()}
                     </TableCell>
                     <TableCell>
@@ -726,7 +758,7 @@ export function LeaderPoReceiveList({ orders, onReceive }: LeaderPoReceiveListPr
                       <ReceiptCell order={order} onViewReceipt={setReceiptOrder} />
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end items-center gap-2">
+                      <div className="flex items-center justify-end gap-2">
                         {canReceivePo(order) ? (
                           <Button
                             type="button"
@@ -758,8 +790,8 @@ export function LeaderPoReceiveList({ orders, onReceive }: LeaderPoReceiveListPr
               safePage={safePage}
               pageCount={pageCount}
               onPageSizeChange={setPageSize}
-              onPrevious={() => setPage((p) => Math.max(0, p - 1))}
-              onNext={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+              onPrevious={() => setPage((prev) => Math.max(0, prev - 1))}
+              onNext={() => setPage((prev) => Math.min(pageCount - 1, prev + 1))}
             />
           </div>
         ) : null}
@@ -768,6 +800,7 @@ export function LeaderPoReceiveList({ orders, onReceive }: LeaderPoReceiveListPr
       <PurchaseOrderHistoryDialog
         purchaseOrderId={historyOrder?.id ?? null}
         poNumber={historyOrder?.po_number}
+        purchaseOrder={historyOrder ? toPurchaseOrder(historyOrder) : null}
         open={!!historyOrder}
         onOpenChange={(open) => {
           if (!open) setHistoryOrder(null);
@@ -775,10 +808,10 @@ export function LeaderPoReceiveList({ orders, onReceive }: LeaderPoReceiveListPr
       />
 
       <Dialog open={!!receiptOrder} onOpenChange={(open) => !open && setReceiptOrder(null)}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
-              Receipt{receiptOrder ? ` — ${receiptOrder.po_number}` : ''}
+              Receipt{receiptOrder ? ` - ${receiptOrder.po_number}` : ''}
             </DialogTitle>
           </DialogHeader>
           {receiptOrder ? (
@@ -793,12 +826,12 @@ export function LeaderPoReceiveList({ orders, onReceive }: LeaderPoReceiveListPr
               {receiptLoading ? (
                 <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Loading receipt attachments…
+                  Loading receipt attachments...
                 </div>
               ) : receiptError ? (
                 <p className="text-sm text-destructive">{receiptError}</p>
               ) : receiptProofs.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-2">
+                <p className="py-2 text-sm text-muted-foreground">
                   No receive attachments yet. Confirm receive to capture proof photo and signature.
                 </p>
               ) : (
@@ -806,13 +839,13 @@ export function LeaderPoReceiveList({ orders, onReceive }: LeaderPoReceiveListPr
                   {receiptProofs.map((proof, index) => (
                     <div
                       key={`${receiptOrder.id}-receipt-${index}`}
-                      className="rounded-md border p-3 space-y-3"
+                      className="space-y-3 rounded-md border p-3"
                     >
                       <p className="text-xs text-muted-foreground">
                         Receive #{index + 1}
                         {proof.at ? ` · ${formatPoDate(proof.at)}` : ''}
                       </p>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <div className="space-y-1">
                           <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
                             Proof photo
@@ -821,10 +854,10 @@ export function LeaderPoReceiveList({ orders, onReceive }: LeaderPoReceiveListPr
                             <img
                               src={proof.proofImageDataUrl}
                               alt={`Proof ${index + 1}`}
-                              className="w-full max-h-56 rounded-md object-contain border bg-muted/20"
+                              className="max-h-56 w-full rounded-md border bg-muted/20 object-contain"
                             />
                           ) : (
-                            <p className="text-xs text-muted-foreground italic">No proof photo</p>
+                            <p className="text-xs italic text-muted-foreground">No proof photo</p>
                           )}
                         </div>
                         <div className="space-y-1">
@@ -835,10 +868,10 @@ export function LeaderPoReceiveList({ orders, onReceive }: LeaderPoReceiveListPr
                             <img
                               src={proof.signatureDataUrl}
                               alt={`Signature ${index + 1}`}
-                              className="w-full max-h-40 rounded-md object-contain border bg-white"
+                              className="max-h-40 w-full rounded-md border bg-white object-contain"
                             />
                           ) : (
-                            <p className="text-xs text-muted-foreground italic">No signature</p>
+                            <p className="text-xs italic text-muted-foreground">No signature</p>
                           )}
                         </div>
                       </div>
@@ -854,7 +887,6 @@ export function LeaderPoReceiveList({ orders, onReceive }: LeaderPoReceiveListPr
   );
 }
 
-/** Summary stats helpers used by the page header cards. */
 export function getTlPoReceiveStats(orders: TlReceiveListItem[]) {
   return {
     awaiting: orders.filter((o) => o.status === 'pending_receive').length,

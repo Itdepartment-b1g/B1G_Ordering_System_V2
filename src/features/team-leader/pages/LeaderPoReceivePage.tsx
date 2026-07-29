@@ -1,21 +1,25 @@
 import { useMemo, useState } from 'react';
-import { Loader2, PackageCheck, Clock, CheckCircle2, AlertTriangle, Package } from 'lucide-react';
-import { useAuth } from '@/features/auth';
-import { useToast } from '@/hooks/use-toast';
-import { usePermissions } from '@/hooks/usePermissions';
+import { Link } from 'react-router-dom';
+import { Loader2, PackageCheck, Clock, CheckCircle2, AlertTriangle, Package, BookOpen } from 'lucide-react';
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { useAuth } from '@/features/auth';
 import {
   PoBuyerReceiveDialog,
   type PoReceiveLine,
 } from '@/features/orders/components/PoBuyerReceiveDialog';
 import type { PurchaseOrder } from '@/features/orders/types';
+import { useLeaderAssignedPoReceives } from '@/features/inventory/hooks/useLeaderAssignedPoReceives';
+import { useToast } from '@/hooks/use-toast';
+import { usePermissions } from '@/hooks/usePermissions';
 import {
   LeaderPoReceiveList,
   getTlPoReceiveStats,
-} from './components/LeaderPoReceiveList';
-import { useLeaderAssignedPoReceives } from './hooks/useLeaderAssignedPoReceives';
-import type { TlReceiveListItem } from './types/tlPoReceiveTypes';
+} from '@/features/team-leader/components/leader-po-receive/LeaderPoReceiveList';
+import LeaderReceivePoManual from '@/features/team-leader/components/leader-manual/LeaderReceivePoManual';
+import type { TlReceiveListItem } from '@/features/team-leader/utils/tlPoReceiveTypes';
 
 type ReceiveTarget = {
   order: TlReceiveListItem;
@@ -72,6 +76,7 @@ export default function LeaderPoReceivePage() {
 
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [receiveTarget, setReceiveTarget] = useState<ReceiveTarget | null>(null);
+  const [manualOpen, setManualOpen] = useState(false);
 
   const stats = useMemo(() => getTlPoReceiveStats(orders), [orders]);
   const openShortageCount = useMemo(
@@ -89,6 +94,7 @@ export default function LeaderPoReceivePage() {
       });
       return;
     }
+
     setReceiveTarget({
       order,
       deliveryId: pending.deliveryId,
@@ -103,7 +109,7 @@ export default function LeaderPoReceivePage() {
 
   if (!user || user.role !== 'team_leader') {
     return (
-      <div className="flex items-center justify-center h-screen">
+      <div className="flex h-screen items-center justify-center">
         <Card className="w-96">
           <CardHeader>
             <CardTitle>Access Denied</CardTitle>
@@ -117,9 +123,9 @@ export default function LeaderPoReceivePage() {
   if (hasWarehouseHubLinkLoading) {
     return (
       <div className="w-full p-4 md:p-6">
-        <div className="flex items-center justify-center py-16 text-muted-foreground gap-2">
+        <div className="flex items-center justify-center gap-2 py-16 text-muted-foreground">
           <Loader2 className="h-5 w-5 animate-spin" />
-          Checking warehouse link…
+          Checking warehouse link...
         </div>
       </div>
     );
@@ -141,23 +147,29 @@ export default function LeaderPoReceivePage() {
   }
 
   return (
-    <div className="w-full p-4 md:p-6 space-y-4 md:space-y-6">
+    <div className="w-full space-y-4 p-4 md:space-y-6 md:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold tracking-tight flex items-center gap-2">
+          <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight md:text-3xl">
             <PackageCheck className="h-7 w-7" />
             PO Receiving
           </h1>
-          <p className="text-muted-foreground mt-1">
+          <p className="mt-1 text-muted-foreground">
             Confirm receipt for warehouse transfer POs assigned to you.
           </p>
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={() => refresh()} disabled={loading}>
-          {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-          Refresh
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={() => setManualOpen(true)}>
+            <BookOpen className="mr-2 h-4 w-4" />
+            View manual
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => refresh()} disabled={loading}>
+            {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            Refresh
+          </Button>
+        </div>
       </div>
-p
+
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -204,9 +216,9 @@ p
       ) : null}
 
       {loading && orders.length === 0 ? (
-        <div className="flex items-center justify-center py-16 text-muted-foreground gap-2">
+        <div className="flex items-center justify-center gap-2 py-16 text-muted-foreground">
           <Loader2 className="h-5 w-5 animate-spin" />
-          Loading assigned purchase orders…
+          Loading assigned purchase orders...
         </div>
       ) : (
         <LeaderPoReceiveList orders={orders} onReceive={handleOpenReceive} />
@@ -233,6 +245,26 @@ p
           }}
         />
       ) : null}
+
+      <Dialog open={manualOpen} onOpenChange={setManualOpen}>
+        <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>PO Receiving Manual</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <LeaderReceivePoManual embedded />
+          </div>
+          <p className="border-t pt-2 text-sm text-muted-foreground">
+            <Link
+              to="/leader-manual#leader-receive-po"
+              className="text-blue-500 hover:underline"
+              onClick={() => setManualOpen(false)}
+            >
+              View full manual
+            </Link>
+          </p>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
