@@ -3029,7 +3029,7 @@ export default function MyOrdersPage() {
 
       {/* Payment Mode Selection Dialog */}
       <Dialog open={showPaymentModeDialog} onOpenChange={setShowPaymentModeDialog}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md" onInteractOutside={(e) => {e.preventDefault();}}>
           <DialogHeader>
             <DialogTitle>Select Payment Mode</DialogTitle>
             <DialogDescription>
