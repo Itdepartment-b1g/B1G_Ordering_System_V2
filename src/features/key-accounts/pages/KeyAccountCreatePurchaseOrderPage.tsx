@@ -46,6 +46,7 @@ import {
   KeyAccountAddShopDialog,
 } from '@/features/key-accounts/components/KeyAccountShopAddressDialogs';
 import { KeyAccountPaymentProofUploadField } from '@/features/key-accounts/components/KeyAccountPaymentProofPreview';
+import { parsePaymentTerms } from '@/features/key-accounts/keyAccountCodes';
 
 interface POItem {
   id: string;
@@ -117,6 +118,7 @@ export function KeyAccountPurchaseOrderPage() {
 
   const [paymentTermsSource, setPaymentTermsSource] = useState<'client' | 'custom'>('client');
   const [paymentTermsCustom, setPaymentTermsCustom] = useState('');
+  const [selectedClientPaymentTerm, setSelectedClientPaymentTerm] = useState('');
   const [paymentMode, setPaymentMode] = useState<KeyAccountPoPaymentMode>('full');
   const [paymentMethod, setPaymentMethod] = useState<'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE'>('BANK_TRANSFER');
   const [bankType, setBankType] = useState<'Unionbank' | 'BPI' | 'PBCOM'>('BPI');
@@ -132,6 +134,10 @@ export function KeyAccountPurchaseOrderPage() {
 
   // Derived data
   const selectedClient = clients.find((c) => c.id === selectedClientId);
+  const clientPaymentTerms = useMemo(
+    () => parsePaymentTerms(selectedClient?.payment_terms),
+    [selectedClient?.payment_terms]
+  );
   const selectedShop = shops.find((s) => s.id === selectedShopId);
   const selectedAddress = addresses.find((a) => a.id === selectedAddressId);
   const activeLocationId =
@@ -216,8 +222,8 @@ export function KeyAccountPurchaseOrderPage() {
 
   const resolvedPaymentTerms = useMemo(() => {
     if (paymentTermsSource === 'custom') return paymentTermsCustom.trim();
-    return (selectedClient?.payment_terms || '').trim();
-  }, [paymentTermsSource, paymentTermsCustom, selectedClient?.payment_terms]);
+    return selectedClientPaymentTerm.trim();
+  }, [paymentTermsSource, paymentTermsCustom, selectedClientPaymentTerm]);
 
   // Fetch initial data
   useEffect(() => {
@@ -233,6 +239,10 @@ export function KeyAccountPurchaseOrderPage() {
       setSelectedAddressId('');
       setPaymentTermsSource('client');
       setPaymentTermsCustom('');
+      const terms = parsePaymentTerms(
+        clients.find((c) => c.id === selectedClientId)?.payment_terms
+      );
+      setSelectedClientPaymentTerm(terms.length === 1 ? terms[0] : '');
     }
   }, [selectedClientId]);
 
@@ -673,7 +683,9 @@ export function KeyAccountPurchaseOrderPage() {
         title: 'Payment terms required',
         description:
           paymentTermsSource === 'client'
-            ? 'This client has no saved payment terms. Switch to custom terms or update the client profile.'
+            ? clientPaymentTerms.length > 0
+              ? 'Select one of the client\'s payment terms for this order.'
+              : 'This client has no saved payment terms. Switch to custom terms or update the client profile.'
             : 'Enter payment terms for this order.',
       });
       return;
@@ -869,6 +881,7 @@ export function KeyAccountPurchaseOrderPage() {
     setDiscount(0);
     setPaymentTermsSource('client');
     setPaymentTermsCustom('');
+    setSelectedClientPaymentTerm('');
     setPaymentMode('full');
     setPaymentMethod('BANK_TRANSFER');
     setBankType('BPI');
@@ -1113,11 +1126,31 @@ export function KeyAccountPurchaseOrderPage() {
                   </SelectContent>
                 </Select>
                 {paymentTermsSource === 'client' ? (
-                  <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
-                    {selectedClient?.payment_terms?.trim()
-                      ? selectedClient.payment_terms.trim()
-                      : 'No payment terms on file for this client — choose custom terms or update the client record.'}
-                  </p>
+                  clientPaymentTerms.length === 0 ? (
+                    <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
+                      No payment terms on file for this client — choose custom terms or update the client record.
+                    </p>
+                  ) : clientPaymentTerms.length === 1 ? (
+                    <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
+                      {clientPaymentTerms[0]}
+                    </p>
+                  ) : (
+                    <Select
+                      value={selectedClientPaymentTerm || undefined}
+                      onValueChange={setSelectedClientPaymentTerm}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select a client payment term…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {clientPaymentTerms.map((term) => (
+                          <SelectItem key={term} value={term}>
+                            {term}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )
                 ) : (
                   <Textarea
                     value={paymentTermsCustom}

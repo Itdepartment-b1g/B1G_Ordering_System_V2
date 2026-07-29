@@ -22,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, Building2, Store, MapPin, ChevronRight, Loader2, LayoutGrid, Table2, Pencil } from 'lucide-react';
+import { Plus, Building2, Store, MapPin, ChevronRight, Loader2, LayoutGrid, Table2, Pencil, X } from 'lucide-react';
 import {
   AnalyticsTablePagination,
   paginateAnalyticsRows,
@@ -33,6 +33,8 @@ import {
   generateKeyAccountClientCode,
   generateKeyAccountShopCode,
   KEY_ACCOUNT_CLIENT_CATEGORIES,
+  parsePaymentTerms,
+  formatPaymentTerms,
 } from '@/features/key-accounts/keyAccountCodes';
 import { KeyAccountShopCorView } from '@/features/key-accounts/components/KeyAccountShopCorView';
 import {
@@ -79,7 +81,7 @@ const EMPTY_CLIENT_FORM = {
   contact_person: '',
   contact_email: '',
   contact_phone: '',
-  payment_terms: '',
+  payment_terms: [] as string[],
   notes: '',
 };
 
@@ -173,6 +175,7 @@ export function ClientHierarchyManager() {
   const [savingAddress, setSavingAddress] = useState(false);
 
   const [newClient, setNewClient] = useState(EMPTY_CLIENT_FORM);
+  const [customPaymentTermInput, setCustomPaymentTermInput] = useState('');
 
   const [newShop, setNewShop] = useState(EMPTY_SHOP_FORM);
 
@@ -424,6 +427,7 @@ export function ClientHierarchyManager() {
   const openCreateClientDialog = () => {
     setEditingClientId(null);
     setNewClient(EMPTY_CLIENT_FORM);
+    setCustomPaymentTermInput('');
     setClientDialogOpen(true);
   };
 
@@ -435,10 +439,29 @@ export function ClientHierarchyManager() {
       contact_person: client.contact_person || '',
       contact_email: client.contact_email || '',
       contact_phone: client.contact_phone || '',
-      payment_terms: client.payment_terms || '',
+      payment_terms: parsePaymentTerms(client.payment_terms),
       notes: client.notes || '',
     });
+    setCustomPaymentTermInput('');
     setClientDialogOpen(true);
+  };
+
+  const addCustomClientPaymentTerm = () => {
+    const trimmed = customPaymentTermInput.trim();
+    if (!trimmed) return;
+    setNewClient((prev) => {
+      const exists = prev.payment_terms.some((t) => t.toLowerCase() === trimmed.toLowerCase());
+      if (exists) return prev;
+      return { ...prev, payment_terms: [...prev.payment_terms, trimmed] };
+    });
+    setCustomPaymentTermInput('');
+  };
+
+  const removeClientPaymentTerm = (term: string) => {
+    setNewClient((prev) => ({
+      ...prev,
+      payment_terms: prev.payment_terms.filter((t) => t.toLowerCase() !== term.toLowerCase()),
+    }));
   };
 
   const openCreateShopDialog = () => {
@@ -516,7 +539,7 @@ export function ClientHierarchyManager() {
         contact_person: newClient.contact_person.trim() || null,
         contact_email: newClient.contact_email.trim() || null,
         contact_phone: newClient.contact_phone.trim() || null,
-        payment_terms: newClient.payment_terms.trim() || null,
+        payment_terms: formatPaymentTerms(newClient.payment_terms) || null,
         notes: newClient.notes.trim() || null,
       };
 
@@ -550,6 +573,7 @@ export function ClientHierarchyManager() {
 
       setClientDialogOpen(false);
       setNewClient(EMPTY_CLIENT_FORM);
+      setCustomPaymentTermInput('');
       setEditingClientId(null);
       fetchClients();
     } catch (error: any) {
@@ -1276,8 +1300,48 @@ export function ClientHierarchyManager() {
               <Input id="contact_email" type="email" value={newClient.contact_email} onChange={e => setNewClient({...newClient, contact_email: e.target.value})} />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="payment_terms">Payment Terms</Label>
-              <Input id="payment_terms" value={newClient.payment_terms} onChange={e => setNewClient({...newClient, payment_terms: e.target.value})} placeholder="Net 30, COD, etc." />
+              <Label>Payment Terms</Label>
+              {newClient.payment_terms.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {newClient.payment_terms.map((term) => (
+                    <Badge key={term} variant="secondary" className="gap-1 pr-1 font-normal">
+                      {term}
+                      <button
+                        type="button"
+                        className="rounded-sm p-0.5 hover:bg-muted-foreground/20"
+                        onClick={() => removeClientPaymentTerm(term)}
+                        aria-label={`Remove ${term}`}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </Badge>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">No payment terms added yet.</p>
+              )}
+              <div className="flex gap-2">
+                <Input
+                  id="payment_terms_custom"
+                  value={customPaymentTermInput}
+                  onChange={(e) => setCustomPaymentTermInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      addCustomClientPaymentTerm();
+                    }
+                  }}
+                  placeholder="e.g. Net 30, COD…"
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={addCustomClientPaymentTerm}
+                  disabled={!customPaymentTermInput.trim()}
+                >
+                  Add
+                </Button>
+              </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="notes">Notes</Label>
