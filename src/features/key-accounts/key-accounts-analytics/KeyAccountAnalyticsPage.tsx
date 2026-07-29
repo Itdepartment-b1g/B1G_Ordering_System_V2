@@ -41,6 +41,11 @@ import KeyAccountClientAnalyticsTab from './KeyAccountClientAnalyticsTab';
 import KeyAccountFsnAnalyticsTab from './KeyAccountFsnAnalyticsTab';
 import { exportKeyAccountProductAnalyticsExcel } from './exportKeyAccountProductAnalyticsExcel';
 import {
+  fetchKeyAccountDashboardPaidByOrderId,
+  fetchKeyAccountDashboardPayments,
+  type KeyAccountDashboardPaymentRow,
+} from '../dashboard/keyAccountDashboardRevenue';
+import {
   DateRangeFilterPopover,
   type DateRangeFilterValue,
 } from '@/features/shared/components/DateRangeFilterPopover';
@@ -62,6 +67,7 @@ import {
   isDeliveredKeyAccountOrder,
   isRebateFulfillmentReplacementOrder,
   isKeyAccountCommercialProductAnalyticsOrder,
+  isKeyAccountConsignmentOrder,
   isKeyAccountPartialDeliveredOrder,
   normalizeRebateReplacements,
   rebateResolutionHasReplacement,
@@ -156,6 +162,8 @@ export default function KeyAccountAnalyticsPage() {
   const [people, setPeople] = useState<KeyAccountPerson[]>([]);
   const [clients, setClients] = useState<KeyAccountClient[]>([]);
   const [rebates, setRebates] = useState<KeyAccountRebateAnalyticsRecord[]>([]);
+  const [paidByOrderId, setPaidByOrderId] = useState<Map<string, number>>(new Map());
+  const [paymentRows, setPaymentRows] = useState<KeyAccountDashboardPaymentRow[]>([]);
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'this_year',
   });
@@ -244,6 +252,10 @@ export default function KeyAccountAnalyticsPage() {
         nextItems = (itemData || []) as PurchaseOrderItemRow[];
       }
 
+      const salesOrderIds = nextOrders.map((order) => order.id);
+      const nextPaymentRows = await fetchKeyAccountDashboardPayments(supabase, salesOrderIds);
+      const nextPaidByOrderId = await fetchKeyAccountDashboardPaidByOrderId(supabase, salesOrderIds);
+
       const sourcePoIdsForRebates = nextOrders
         .filter((order) => !isRebateDerivedPurchaseOrder(order))
         .map((order) => order.id);
@@ -324,6 +336,8 @@ export default function KeyAccountAnalyticsPage() {
       setTransferReservations(nextReservations);
       setTransferLocationStatuses(nextLocationStatuses);
       setRebates(nextRebates);
+      setPaidByOrderId(nextPaidByOrderId);
+      setPaymentRows(nextPaymentRows);
       setPeople((peopleResult.data || []) as KeyAccountPerson[]);
       setClients((clientsResult.data || []) as KeyAccountClient[]);
     } catch (error: any) {
@@ -392,8 +406,6 @@ export default function KeyAccountAnalyticsPage() {
   );
 
   const productOrders = filteredOrders;
-
-  const deliveredOrders = useMemo(() => productOrders.filter(isDeliveredKeyAccountOrder), [productOrders]);
 
   const productAnalyticsOrders = useMemo(
     () => productOrders.filter(isKeyAccountCommercialProductAnalyticsOrder),
@@ -537,36 +549,41 @@ export default function KeyAccountAnalyticsPage() {
   const summary = useMemo(() => {
     const grossRevenue = productRows.reduce((sum, row) => sum + row.grossRevenue, 0);
     const rebatedRevenue = productRows.reduce((sum, row) => sum + row.rebatedRevenue, 0);
-    const deliveredRevenue = productRows.reduce((sum, row) => sum + row.deliveredRevenue, 0);
-    const pendingRevenue = productRows.reduce((sum, row) => sum + row.pendingRevenue, 0);
-    const totalRevenue = deliveredRevenue + pendingRevenue;
+    const totalRevenue = productRows.reduce((sum, row) => sum + row.revenue, 0);
+    const totalUnits = productRows.reduce((sum, row) => sum + row.quantity, 0);
+    const consignmentUnits = productRows.reduce((sum, row) => sum + row.consignmentQuantity, 0);
     const poTableGrossTotal = filteredOrders.reduce(
       (sum, order) => sum + Math.max(0, Number(order.total_amount) || 0),
       0
     );
-    const deliveredClients = new Set(deliveredOrders.map((order) => order.key_account_client_id).filter(Boolean));
+    const productClients = new Set(
+      productAnalyticsOrders.map((order) => order.key_account_client_id).filter(Boolean)
+    );
     const cardDeliveredOrders = dateFilteredOrders.filter(isDeliveredKeyAccountOrder);
     const pendingWorkflowOrders = dateFilteredOrders.filter(
       (order) => getKeyAccountProductWorkflowBucket(order.workflow_status) === 'pending'
     ).length;
     const partialDeliveredOrders = dateFilteredOrders.filter(isKeyAccountPartialDeliveredOrder).length;
     const rebateReplacementOrders = dateFilteredOrders.filter(isRebateFulfillmentReplacementOrder).length;
+    const consignmentOrders = dateFilteredOrders.filter(isKeyAccountConsignmentOrder).length;
     return {
       grossRevenue,
       rebatedRevenue,
-      deliveredRevenue,
-      pendingRevenue,
       totalRevenue,
+      totalUnits,
+      consignmentUnits,
       poTableGrossTotal,
       totalOrders: dateFilteredOrders.length,
       deliveredOrders: cardDeliveredOrders.length,
       pendingWorkflowOrders,
       partialDeliveredOrders,
       rebateReplacementOrders,
-      clients: deliveredClients.size,
-      avgOrderValue: deliveredOrders.length > 0 ? deliveredRevenue / deliveredOrders.length : 0,
+      consignmentOrders,
+      clients: productClients.size,
+      avgOrderValue:
+        productAnalyticsOrders.length > 0 ? totalRevenue / productAnalyticsOrders.length : 0,
     };
-  }, [dateFilteredOrders, deliveredOrders, filteredOrders, productRows]);
+  }, [dateFilteredOrders, filteredOrders, productAnalyticsOrders, productRows]);
 
   const productDateRangeLabel = dateRangeLabel;
 
@@ -589,14 +606,12 @@ export default function KeyAccountAnalyticsPage() {
           brand: row.brand,
           variant: row.variant,
           totalUnits: row.quantity,
-          deliveredUnits: row.deliveredQuantity,
-          pendingUnits: row.pendingQuantity,
-          deliveredPoLines: row.deliveredOrders,
-          pendingPoLines: row.pendingOrders,
+          consignmentUnits: row.consignmentQuantity,
+          consignmentPoCount: row.consignmentOrders,
+          poCount: row.orderCount,
+          clientCount: row.clientCount,
           grossRevenue: row.grossRevenue,
           rebatedRevenue: row.rebatedRevenue,
-          deliveredRevenue: row.deliveredRevenue,
-          pendingRevenue: row.pendingRevenue,
           revenue: row.revenue,
         })),
         {
@@ -621,9 +636,9 @@ export default function KeyAccountAnalyticsPage() {
     }
   };
 
-  /** All POs in range (incl. rebate replacements) — used for agent/client PO counts. */
+  /** All POs plus placeholders — agent tab applies its own date/payment-period rules. */
   const agentAnalyticsOrders = useMemo<KeyAccountOrder[]>(() => {
-    const orderPersonIds = new Set(dateFilteredOrders.map((order) => order.kam_id).filter(Boolean));
+    const orderPersonIds = new Set(orders.map((order) => order.kam_id).filter(Boolean));
     const placeholderOrders = people
       .filter((person) => !orderPersonIds.has(person.id))
       .map((person) => ({
@@ -643,18 +658,20 @@ export default function KeyAccountAnalyticsPage() {
         },
       }));
 
-    return [...dateFilteredOrders, ...placeholderOrders];
-  }, [dateFilteredOrders, people]);
+    return [...orders, ...placeholderOrders];
+  }, [orders, people]);
 
   const productChartData = visibleProductRows.slice(0, 10).map((row) => ({
     name: row.variant,
     brand: row.brand,
-    deliveredRevenue: Math.round(row.deliveredRevenue),
-    pendingRevenue: Math.round(row.pendingRevenue),
     revenue: Math.round(row.revenue),
     grossRevenue: Math.round(row.grossRevenue),
     rebatedRevenue: Math.round(row.rebatedRevenue),
     quantity: row.quantity,
+    orderCount: row.orderCount,
+    clientCount: row.clientCount,
+    consignmentOrders: row.consignmentOrders,
+    consignmentQuantity: row.consignmentQuantity,
   }));
 
   return (
@@ -694,8 +711,10 @@ export default function KeyAccountAnalyticsPage() {
               <CardContent>
                 <div className="text-2xl font-bold">{formatCurrency(summary.totalRevenue)}</div>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Net after rebates · Delivered {formatCurrency(summary.deliveredRevenue)} · Pending{' '}
-                  {formatCurrency(summary.pendingRevenue)}
+                  Net after rebates · {summary.totalUnits.toLocaleString()} units ordered
+                  {summary.consignmentUnits > 0
+                    ? ` · ${summary.consignmentUnits.toLocaleString()} consignment`
+                    : ''}
                 </p>
                 {summary.rebatedRevenue > 0 && (
                   <p className="text-xs text-muted-foreground mt-0.5">
@@ -725,7 +744,10 @@ export default function KeyAccountAnalyticsPage() {
                 <p className="text-xs text-muted-foreground mt-1">
                   {summary.deliveredOrders} delivered · {summary.pendingWorkflowOrders} in workflow
                   {summary.partialDeliveredOrders > 0
-                    ? ` · ${summary.partialDeliveredOrders} partial (split by fulfilled qty)`
+                    ? ` · ${summary.partialDeliveredOrders} partial`
+                    : ''}
+                  {summary.consignmentOrders > 0
+                    ? ` · ${summary.consignmentOrders} consignment`
                     : ''}
                   {summary.rebateReplacementOrders > 0
                     ? ` · ${summary.rebateReplacementOrders} rebate replacement`
@@ -742,19 +764,19 @@ export default function KeyAccountAnalyticsPage() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">{summary.clients}</div>
-                <p className="text-xs text-muted-foreground mt-1">Clients with delivered POs</p>
+                <p className="text-xs text-muted-foreground mt-1">Clients with product POs in range</p>
               </CardContent>
             </Card>
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
                   <BarChart3 className="h-4 w-4" />
-                  Avg delivered PO
+                  Avg product PO
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">{formatCurrency(summary.avgOrderValue)}</div>
-                <p className="text-xs text-muted-foreground mt-1">Revenue divided by delivered POs</p>
+                <p className="text-xs text-muted-foreground mt-1">Net product revenue ÷ product POs</p>
               </CardContent>
             </Card>
           </div>
@@ -797,10 +819,8 @@ export default function KeyAccountAnalyticsPage() {
                   <div>
                     <CardTitle>Top Products by Revenue</CardTitle>
                     <CardDescription>
-                      Net revenue after rebates — {productDateRangeLabel}. Change-item rebates show the
-                      replacement SKU instead of the disputed line (same value keeps total revenue; top-up
-                      adds the client payment to the replacement value). Money/credit rebates reduce source
-                      PO line revenue.
+                      Units ordered and net revenue after rebates — {productDateRangeLabel}. Includes
+                      standard and consignment POs. Payment is tracked at PO level on the dashboard.
                     </CardDescription>
                   </div>
                   <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
@@ -851,17 +871,18 @@ export default function KeyAccountAnalyticsPage() {
                           <Tooltip
                             content={({ active, payload, label }) => {
                               if (!active || !payload?.length) return null;
-                              const delivered =
-                                (payload.find((p) => p.dataKey === 'deliveredRevenue')?.value as number) || 0;
-                              const pending =
-                                (payload.find((p) => p.dataKey === 'pendingRevenue')?.value as number) || 0;
-                              const total = delivered + pending;
                               const row = payload[0].payload as {
                                 brand: string;
                                 quantity: number;
+                                revenue: number;
+                                orderCount: number;
+                                clientCount: number;
+                                consignmentOrders?: number;
+                                consignmentQuantity?: number;
                                 rebatedRevenue?: number;
                                 grossRevenue?: number;
                               };
+                              const net = row.revenue || 0;
                               const rebated = row.rebatedRevenue || 0;
                               return (
                                 <div className="bg-background border rounded-lg p-3 shadow-lg text-sm">
@@ -870,31 +891,29 @@ export default function KeyAccountAnalyticsPage() {
                                     {rebated > 0 && (
                                       <div className="flex items-center gap-2 text-xs">
                                         <span className="text-muted-foreground">Gross:</span>
-                                        <span>{formatCurrency(row.grossRevenue || total + rebated)}</span>
+                                        <span>{formatCurrency(row.grossRevenue || net + rebated)}</span>
                                         <span className="text-amber-700 dark:text-amber-400">
                                           −{formatCurrency(rebated)} rebated
                                         </span>
                                       </div>
                                     )}
                                     <div className="flex items-center gap-2">
-                                      <span className="w-3 h-3 rounded-full bg-blue-500" />
-                                      <span className="text-muted-foreground">Delivered:</span>
-                                      <span className="font-medium">{formatCurrency(delivered)}</span>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                      <span className="w-3 h-3 rounded-full bg-orange-500" />
-                                      <span className="text-muted-foreground">Pending:</span>
-                                      <span className="font-medium">{formatCurrency(pending)}</span>
-                                    </div>
-                                    <div className="border-t pt-1 mt-2 flex items-center gap-2">
-                                      <span className="w-3 h-3 rounded-full bg-green-500" />
+                                      <span className="w-3 h-3 rounded-full bg-emerald-500" />
                                       <span className="font-semibold">Net:</span>
                                       <span className="font-bold text-green-600 dark:text-green-400">
-                                        {formatCurrency(total)}
+                                        {formatCurrency(net)}
                                       </span>
                                     </div>
                                     <p className="text-muted-foreground text-xs pt-1">
                                       Qty: {row.quantity.toLocaleString()} · Brand: {row.brand}
+                                    </p>
+                                    <p className="text-muted-foreground text-xs">
+                                      {row.orderCount} POs · {row.clientCount} clients
+                                      {(row.consignmentOrders || 0) > 0
+                                        ? ` · ${row.consignmentOrders} consignment (${(
+                                            row.consignmentQuantity || 0
+                                          ).toLocaleString()} units)`
+                                        : ''}
                                     </p>
                                   </div>
                                 </div>
@@ -903,12 +922,9 @@ export default function KeyAccountAnalyticsPage() {
                           />
                           <Legend
                             wrapperStyle={{ fontSize: '12px' }}
-                            formatter={(value: string) =>
-                              value === 'deliveredRevenue' ? 'Delivered' : 'Pending'
-                            }
+                            formatter={() => 'Net revenue'}
                           />
-                          <Bar dataKey="deliveredRevenue" fill="#3b82f6" name="deliveredRevenue" barSize={20} />
-                          <Bar dataKey="pendingRevenue" fill="#f97316" name="pendingRevenue" barSize={20} />
+                          <Bar dataKey="revenue" fill="#10b981" name="revenue" barSize={20} />
                         </BarChart>
                       </ResponsiveContainer>
                     ) : (
@@ -921,30 +937,25 @@ export default function KeyAccountAnalyticsPage() {
                   <div>
                     <p className="text-sm font-medium mb-2">Product Performance Details</p>
                     <p className="text-xs text-muted-foreground mb-3">
-                      Click total revenue for delivered / pending breakdown.
+                      Click net revenue for gross / rebated detail. Payment is tracked per PO on the
+                      dashboard.
                     </p>
                     <div className="rounded-md border bg-muted/30 px-3 py-2.5 text-xs text-muted-foreground mb-3 space-y-1">
                       <p>
-                        <span className="font-medium text-foreground">Units</span> — physical quantity
-                        (Total = Delivered + Pending).
+                        <span className="font-medium text-foreground">Units</span> — total quantity
+                        ordered on product POs in range (includes consignment).
                       </p>
                       <p>
-                        <span className="font-medium text-foreground">PO lines</span> — product rows on
-                        purchase orders. A partially delivered line may count once under Delivered PO
-                        lines and once under Pending PO lines.
+                        <span className="font-medium text-foreground">Consignment POs</span> — distinct
+                        consignment purchase orders that include this product (float stock; pay later).
                       </p>
                       <p>
-                        <span className="font-medium text-foreground">POs</span> — distinct purchase orders
-                        that include this product.
-                      </p>
-                      <p>
-                        <span className="font-medium text-foreground">Rebated</span> — money/credit taken
-                        off the source PO. Change-item rebates show the replacement SKU instead of the
-                        disputed line (same value keeps total revenue; top-up adds the extra client payment).
+                        <span className="font-medium text-foreground">POs / Clients</span> — how often
+                        and how widely this product is ordered.
                       </p>
                       <p>
                         <span className="font-medium text-foreground">Net revenue</span> — gross line
-                        revenue minus rebated credits.
+                        revenue minus rebated credits (product demand value, not collection status).
                       </p>
                     </div>
                   </div>
@@ -956,19 +967,17 @@ export default function KeyAccountAnalyticsPage() {
                           <TableHead>Brand</TableHead>
                           <TableHead>Product</TableHead>
                           <TableHead className="text-right">Total Units</TableHead>
-                          <TableHead className="text-right">Delivered Units</TableHead>
-                          <TableHead className="text-right">Pending Units</TableHead>
                           <TableHead
                             className="text-right"
-                            title="Product rows on POs counted as delivered"
+                            title="Units from consignment POs"
                           >
-                            Delivered PO
+                            Consignment Units
                           </TableHead>
                           <TableHead
                             className="text-right"
-                            title="Product rows on POs still pending or partial balance"
+                            title="Distinct consignment purchase orders"
                           >
-                            Pending PO
+                            Consignment POs
                           </TableHead>
                           <TableHead className="text-right" title="Line revenue before rebate credits">
                             Gross
@@ -991,7 +1000,7 @@ export default function KeyAccountAnalyticsPage() {
                       <TableBody>
                         {visibleProductRows.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={12} className="text-center text-muted-foreground py-6">
+                            <TableCell colSpan={10} className="text-center text-muted-foreground py-6">
                               No products found.
                             </TableCell>
                           </TableRow>
@@ -1003,17 +1012,13 @@ export default function KeyAccountAnalyticsPage() {
                               <TableCell className="text-right font-medium">
                                 {row.quantity.toLocaleString()}
                               </TableCell>
-                              <TableCell className="text-right text-blue-600 dark:text-blue-400">
-                                {row.deliveredQuantity.toLocaleString()}
+                              <TableCell className="text-right text-sky-700 dark:text-sky-400">
+                                {row.consignmentQuantity > 0
+                                  ? row.consignmentQuantity.toLocaleString()
+                                  : '—'}
                               </TableCell>
-                              <TableCell className="text-right text-orange-600 dark:text-orange-400">
-                                {row.pendingQuantity.toLocaleString()}
-                              </TableCell>
-                              <TableCell className="text-right text-blue-600 dark:text-blue-400">
-                                {row.deliveredOrders}
-                              </TableCell>
-                              <TableCell className="text-right text-orange-600 dark:text-orange-400">
-                                {row.pendingOrders}
+                              <TableCell className="text-right text-sky-700 dark:text-sky-400">
+                                {row.consignmentOrders > 0 ? row.consignmentOrders : '—'}
                               </TableCell>
                               <TableCell className="text-right text-muted-foreground">
                                 {formatCurrency(row.grossRevenue)}
@@ -1052,7 +1057,7 @@ export default function KeyAccountAnalyticsPage() {
               <Dialog open={productRevenueDialogOpen} onOpenChange={setProductRevenueDialogOpen}>
                 <DialogContent className="max-w-md">
                   <DialogHeader>
-                    <DialogTitle>Revenue breakdown</DialogTitle>
+                    <DialogTitle>Product detail</DialogTitle>
                     <DialogDescription>
                       {selectedProductRevenue
                         ? `${selectedProductRevenue.brand} — ${selectedProductRevenue.variant} (${productDateRangeLabel})`
@@ -1077,27 +1082,9 @@ export default function KeyAccountAnalyticsPage() {
                           </div>
                         </>
                       )}
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="flex items-center gap-2 text-muted-foreground">
-                          <span className="h-2.5 w-2.5 rounded-full bg-blue-500" />
-                          Delivered (net)
-                        </span>
-                        <span className="font-semibold">
-                          {formatCurrency(selectedProductRevenue.deliveredRevenue)}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="flex items-center gap-2 text-muted-foreground">
-                          <span className="h-2.5 w-2.5 rounded-full bg-orange-500" />
-                          Pending (net)
-                        </span>
-                        <span className="font-semibold">
-                          {formatCurrency(selectedProductRevenue.pendingRevenue)}
-                        </span>
-                      </div>
                       <div className="border-t pt-3 flex items-center justify-between gap-3">
                         <span className="flex items-center gap-2 font-medium">
-                          <span className="h-2.5 w-2.5 rounded-full bg-green-500" />
+                          <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
                           Net revenue
                         </span>
                         <span className="text-lg font-bold text-green-600 dark:text-green-400">
@@ -1105,25 +1092,25 @@ export default function KeyAccountAnalyticsPage() {
                         </span>
                       </div>
                       <div className="border-t pt-3 space-y-1.5 text-muted-foreground text-xs">
-                        <div className="flex justify-between">
-                          <span>Delivered PO lines</span>
-                          <span>{selectedProductRevenue.deliveredOrders}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Delivered units</span>
-                          <span>{selectedProductRevenue.deliveredQuantity.toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Pending PO</span>
-                          <span>{selectedProductRevenue.pendingOrders}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Pending units</span>
-                          <span>{selectedProductRevenue.pendingQuantity.toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between font-medium text-foreground pt-1 border-t">
+                        <div className="flex justify-between font-medium text-foreground">
                           <span>Total units</span>
                           <span>{selectedProductRevenue.quantity.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>POs</span>
+                          <span>{selectedProductRevenue.orderCount}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Clients</span>
+                          <span>{selectedProductRevenue.clientCount}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Consignment POs</span>
+                          <span>{selectedProductRevenue.consignmentOrders}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Consignment units</span>
+                          <span>{selectedProductRevenue.consignmentQuantity.toLocaleString()}</span>
                         </div>
                       </div>
                     </div>
@@ -1140,6 +1127,8 @@ export default function KeyAccountAnalyticsPage() {
                 formatCurrency={formatCurrency}
                 dateRangeFilter={dateRangeFilter}
                 onDateRangeFilterChange={setDateRangeFilter}
+                paidByOrderId={paidByOrderId}
+                paymentRows={paymentRows}
                 orderRevenueById={productOrderRevenueById}
                 rebateDeductionByPoItemId={rebateDeductionByPoItemId}
                 poLineSubtotalByOrderId={poLineSubtotalByOrderId}
@@ -1150,16 +1139,16 @@ export default function KeyAccountAnalyticsPage() {
 
             <TabsContent value="clients">
               <KeyAccountClientAnalyticsTab
-                orders={dateFilteredOrders}
-                items={filteredItems}
+                orders={orders}
+                items={items}
                 clients={clients}
-                brands={allBrands}
                 formatCurrency={formatCurrency}
                 chartDateRange={chartDateRange}
                 usePageDateFilter
                 dateRangeFilter={dateRangeFilter}
                 onDateRangeFilterChange={setDateRangeFilter}
                 orderRevenueById={productOrderRevenueById}
+                paymentRows={paymentRows}
               />
             </TabsContent>
 

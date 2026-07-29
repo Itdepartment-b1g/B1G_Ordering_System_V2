@@ -2025,6 +2025,14 @@ export default function PurchaseOrdersPage() {
                           Rebate replacement
                         </Badge>
                       )}
+                      {order.po_order_kind === 'consignment' && (
+                        <Badge
+                          variant="outline"
+                          className="text-xs font-normal border-amber-300 text-amber-800 bg-amber-50"
+                        >
+                          Consignment
+                        </Badge>
+                      )}
                     </div>
                   </div>
                   {renderPoListStatus(order)}
@@ -2164,6 +2172,14 @@ export default function PurchaseOrdersPage() {
                           {order.po_order_kind === 'rebate_fulfillment' && (
                             <Badge variant="secondary" className="text-xs font-normal">
                               Rebate
+                            </Badge>
+                          )}
+                          {order.po_order_kind === 'consignment' && (
+                            <Badge
+                              variant="outline"
+                              className="text-xs font-normal border-amber-300 text-amber-800 bg-amber-50"
+                            >
+                              Consignment
                             </Badge>
                           )}
                         </div>
@@ -3999,6 +4015,11 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
             {order.po_number}
             {order.po_order_kind === 'rebate_fulfillment' && (
               <Badge variant="secondary">Rebate replacement</Badge>
+            )}
+            {order.po_order_kind === 'consignment' && (
+              <Badge variant="outline" className="border-amber-300 text-amber-800 bg-amber-50">
+                Consignment
+              </Badge>
             )}
           </div>
           {rebateSource ? (

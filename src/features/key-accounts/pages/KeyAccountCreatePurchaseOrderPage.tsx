@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import {
@@ -116,6 +117,8 @@ export function KeyAccountPurchaseOrderPage() {
   const [taxRate, setTaxRate] = useState(0); // Default 12% VAT
   const [discount, setDiscount] = useState(0);
 
+  /** Consignment = float stock to client now; payment deferred (warehouse still fulfills). */
+  const [isConsignment, setIsConsignment] = useState(false);
   const [paymentTermsSource, setPaymentTermsSource] = useState<'client' | 'custom'>('client');
   const [paymentTermsCustom, setPaymentTermsCustom] = useState('');
   const [selectedClientPaymentTerm, setSelectedClientPaymentTerm] = useState('');
@@ -677,7 +680,7 @@ export function KeyAccountPurchaseOrderPage() {
       return;
     }
 
-    if (!resolvedPaymentTerms) {
+    if (!isConsignment && !resolvedPaymentTerms) {
       toast({
         variant: 'destructive',
         title: 'Payment terms required',
@@ -691,12 +694,12 @@ export function KeyAccountPurchaseOrderPage() {
       return;
     }
 
-    if (paymentMethod === 'BANK_TRANSFER' && !bankType) {
+    if (!isConsignment && paymentMethod === 'BANK_TRANSFER' && !bankType) {
       toast({ variant: 'destructive', title: 'Bank required', description: 'Select a bank for bank transfer.' });
       return;
     }
 
-    if (!paymentProofFile) {
+    if (!isConsignment && !paymentProofFile) {
       toast({
         variant: 'destructive',
         title: 'Payment proof required',
@@ -720,7 +723,7 @@ export function KeyAccountPurchaseOrderPage() {
     const orderTotalRounded = Math.round(computedTotal * 100) / 100;
 
     let firstPaymentAmount = orderTotalRounded;
-    if (paymentMode === 'split') {
+    if (!isConsignment && paymentMode === 'split') {
       const raw = parseFloat(String(splitFirstAmount).replace(/,/g, ''));
       if (!Number.isFinite(raw) || raw <= 0) {
         toast({
@@ -775,8 +778,11 @@ export function KeyAccountPurchaseOrderPage() {
         total_amount: computedTotal,
         status: 'pending',
         created_by: user?.id,
-        key_account_payment_terms: resolvedPaymentTerms,
-        key_account_payment_mode: paymentMode,
+        po_order_kind: isConsignment ? 'consignment' : 'standard',
+        key_account_payment_terms: resolvedPaymentTerms || null,
+        // Keep mode so unpaid badge + later "Record payment" work for consignment.
+        key_account_payment_mode: isConsignment ? 'full' : paymentMode,
+        key_account_payment_status: 'unpaid',
       };
 
       // Create the purchase order
@@ -821,24 +827,31 @@ export function KeyAccountPurchaseOrderPage() {
         createdBy: user?.id,
       });
 
-      if (!user.company_id) {
-        throw new Error('Missing company context for payment proof upload.');
-      }
-      const proofPath = await uploadKeyAccountPaymentProof(user.company_id, poData.id, paymentProofFile);
+      if (!isConsignment) {
+        if (!user.company_id) {
+          throw new Error('Missing company context for payment proof upload.');
+        }
+        if (!paymentProofFile) {
+          throw new Error('Payment proof is required.');
+        }
+        const proofPath = await uploadKeyAccountPaymentProof(user.company_id, poData.id, paymentProofFile);
 
-      const { error: payErr } = await supabase.from('purchase_order_key_account_payments').insert({
-        purchase_order_id: poData.id,
-        company_id: user.company_id,
-        amount: paymentMode === 'full' ? orderTotalRounded : firstPaymentAmount,
-        payment_method: paymentMethod,
-        bank_type: paymentMethod === 'BANK_TRANSFER' ? bankType : null,
-        proof_storage_path: proofPath,
-      });
-      if (payErr) throw payErr;
+        const { error: payErr } = await supabase.from('purchase_order_key_account_payments').insert({
+          purchase_order_id: poData.id,
+          company_id: user.company_id,
+          amount: paymentMode === 'full' ? orderTotalRounded : firstPaymentAmount,
+          payment_method: paymentMethod,
+          bank_type: paymentMethod === 'BANK_TRANSFER' ? bankType : null,
+          proof_storage_path: proofPath,
+        });
+        if (payErr) throw payErr;
+      }
 
       toast({
         title: 'Order created successfully',
-        description: `Purchase Order created for ${selectedClient?.client_name}`,
+        description: isConsignment
+          ? `Consignment PO created for ${selectedClient?.client_name} (payment deferred)`
+          : `Purchase Order created for ${selectedClient?.client_name}`,
       });
 
       setConfirmOpen(false);
@@ -879,6 +892,7 @@ export function KeyAccountPurchaseOrderPage() {
     setItems([]);
     setTaxRate(0);
     setDiscount(0);
+    setIsConsignment(false);
     setPaymentTermsSource('client');
     setPaymentTermsCustom('');
     setSelectedClientPaymentTerm('');
@@ -904,7 +918,8 @@ export function KeyAccountPurchaseOrderPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Create Key Account Order</h1>
         <p className="text-muted-foreground">
-          Create a purchase order for your assigned clients with warehouse fulfillment
+          Create a purchase order for your assigned clients with warehouse fulfillment. Turn on
+          Consignment to float stock without payment proof at create.
         </p>
       </div>
 
@@ -1110,8 +1125,33 @@ export function KeyAccountPurchaseOrderPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+                <div className="space-y-1 min-w-0">
+                  <Label htmlFor="consignment-po-toggle" className="text-sm font-medium">
+                    Consignment PO
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Float stock to the client now. Warehouse still fulfills this PO; payment can be recorded later.
+                    Consignment amounts are excluded from revenue/analytics until payment-based recognition is added.
+                  </p>
+                </div>
+                <Switch
+                  id="consignment-po-toggle"
+                  checked={isConsignment}
+                  onCheckedChange={setIsConsignment}
+                  className="mt-0.5 shrink-0"
+                />
+              </div>
+
+              {isConsignment ? (
+                <p className="text-sm rounded-md border border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-100 p-3">
+                  Payment proof is not required at create. Status will stay <span className="font-medium">unpaid</span>{' '}
+                  until you record payment on the PO later.
+                </p>
+              ) : null}
+
               <div className="space-y-2">
-                <Label>Payment terms *</Label>
+                <Label>Payment terms{isConsignment ? ' (optional)' : ' *'}</Label>
                 <Select
                   value={paymentTermsSource}
                   onValueChange={(v) => setPaymentTermsSource(v as 'client' | 'custom')}
@@ -1161,86 +1201,90 @@ export function KeyAccountPurchaseOrderPage() {
                 )}
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Payment mode *</Label>
-                  <Select value={paymentMode} onValueChange={(v) => setPaymentMode(v as KeyAccountPoPaymentMode)}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="full">Full (pay order total now)</SelectItem>
-                      <SelectItem value="split">Split (first installment now)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Payment method *</Label>
-                  <Select
-                    value={paymentMethod}
-                    onValueChange={(v) =>
-                      setPaymentMethod(v as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE')
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="GCASH">GCash</SelectItem>
-                      <SelectItem value="BANK_TRANSFER">Bank transfer</SelectItem>
-                      <SelectItem value="CASH">Cash</SelectItem>
-                      <SelectItem value="CHEQUE">Cheque</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
+              {!isConsignment ? (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Payment mode *</Label>
+                      <Select value={paymentMode} onValueChange={(v) => setPaymentMode(v as KeyAccountPoPaymentMode)}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="full">Full (pay order total now)</SelectItem>
+                          <SelectItem value="split">Split (first installment now)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Payment method *</Label>
+                      <Select
+                        value={paymentMethod}
+                        onValueChange={(v) =>
+                          setPaymentMethod(v as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE')
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="GCASH">GCash</SelectItem>
+                          <SelectItem value="BANK_TRANSFER">Bank transfer</SelectItem>
+                          <SelectItem value="CASH">Cash</SelectItem>
+                          <SelectItem value="CHEQUE">Cheque</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
 
-              {paymentMethod === 'BANK_TRANSFER' && (
-                <div className="space-y-2">
-                  <Label>Bank *</Label>
-                  <Select value={bankType} onValueChange={(v) => setBankType(v as 'Unionbank' | 'BPI' | 'PBCOM')}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Unionbank">Unionbank</SelectItem>
-                      <SelectItem value="BPI">BPI</SelectItem>
-                      <SelectItem value="PBCOM">PBCOM</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
+                  {paymentMethod === 'BANK_TRANSFER' && (
+                    <div className="space-y-2">
+                      <Label>Bank *</Label>
+                      <Select value={bankType} onValueChange={(v) => setBankType(v as 'Unionbank' | 'BPI' | 'PBCOM')}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Unionbank">Unionbank</SelectItem>
+                          <SelectItem value="BPI">BPI</SelectItem>
+                          <SelectItem value="PBCOM">PBCOM</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
 
-              {paymentMode === 'split' && (
-                <div className="space-y-2">
-                  <Label>First payment amount (₱) *</Label>
-                  <Input
-                    type="number"
-                    min={0.01}
-                    step="0.01"
-                    value={splitFirstAmount}
-                    onChange={(e) => setSplitFirstAmount(e.target.value)}
-                    placeholder="Less than order total"
+                  {paymentMode === 'split' && (
+                    <div className="space-y-2">
+                      <Label>First payment amount (₱) *</Label>
+                      <Input
+                        type="number"
+                        min={0.01}
+                        step="0.01"
+                        value={splitFirstAmount}
+                        onChange={(e) => setSplitFirstAmount(e.target.value)}
+                        placeholder="Less than order total"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Order total after tax/discount: <span className="font-medium">₱{total.toFixed(2)}</span>. You can
+                        record the balance later when the PO is warehouse reserved, fulfilled, or delivered.
+                      </p>
+                    </div>
+                  )}
+
+                  {paymentMode === 'full' && (
+                    <p className="text-sm text-muted-foreground">
+                      First payment will be the full order total: <span className="font-medium">₱{total.toFixed(2)}</span>.
+                    </p>
+                  )}
+
+                  <KeyAccountPaymentProofUploadField
+                    file={paymentProofFile}
+                    onFileChange={setPaymentProofFile}
+                    inputId="create-po-payment-proof"
+                    label="Payment proof *"
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Order total after tax/discount: <span className="font-medium">₱{total.toFixed(2)}</span>. You can
-                    record the balance later when the PO is warehouse reserved, fulfilled, or delivered.
-                  </p>
-                </div>
-              )}
-
-              {paymentMode === 'full' && (
-                <p className="text-sm text-muted-foreground">
-                  First payment will be the full order total: <span className="font-medium">₱{total.toFixed(2)}</span>.
-                </p>
-              )}
-
-              <KeyAccountPaymentProofUploadField
-                file={paymentProofFile}
-                onFileChange={setPaymentProofFile}
-                inputId="create-po-payment-proof"
-                label="Payment proof *"
-              />
+                </>
+              ) : null}
             </CardContent>
           </Card>
 
@@ -1661,7 +1705,7 @@ export function KeyAccountPurchaseOrderPage() {
                   (sourceMode === 'single' && !selectedWarehouseLocationId) ||
                   (sourceMode === 'multi' && items.some((i) => !i.warehouseLocationId)) ||
                   items.length === 0 ||
-                  !paymentProofFile ||
+                  (!isConsignment && !paymentProofFile) ||
                   !expectedDeliveryDate
                 }
                 className="w-full"
@@ -1669,7 +1713,7 @@ export function KeyAccountPurchaseOrderPage() {
               >
                 <>
                   <Save className="h-4 w-4 mr-2" />
-                  Create Purchase Order
+                  {isConsignment ? 'Create Consignment PO' : 'Create Purchase Order'}
                 </>
               </Button>
             </CardContent>
@@ -1768,22 +1812,34 @@ export function KeyAccountPurchaseOrderPage() {
 
             <div className="space-y-1 rounded-md border p-3">
               <p>
+                <span className="text-muted-foreground">Order type:</span>{' '}
+                {isConsignment ? 'Consignment (payment deferred)' : 'Standard'}
+              </p>
+              <p>
                 <span className="text-muted-foreground">Payment terms:</span> {resolvedPaymentTerms || '—'}
               </p>
-              <p>
-                <span className="text-muted-foreground">Payment mode:</span>{' '}
-                {paymentMode === 'full' ? 'Full payment' : 'Split payment'}
-              </p>
-              <p>
-                <span className="text-muted-foreground">Method:</span> {paymentMethodLabel}
-              </p>
-              <p>
-                <span className="text-muted-foreground">First payment:</span> ₱{firstPaymentPreview.toFixed(2)}
-              </p>
-              <p>
-                <span className="text-muted-foreground">Payment proof:</span>{' '}
-                {paymentProofFile?.name || '—'}
-              </p>
+              {isConsignment ? (
+                <p className="text-muted-foreground">
+                  No payment proof required at create. Record payment later on the PO.
+                </p>
+              ) : (
+                <>
+                  <p>
+                    <span className="text-muted-foreground">Payment mode:</span>{' '}
+                    {paymentMode === 'full' ? 'Full payment' : 'Split payment'}
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">Method:</span> {paymentMethodLabel}
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">First payment:</span> ₱{firstPaymentPreview.toFixed(2)}
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">Payment proof:</span>{' '}
+                    {paymentProofFile?.name || '—'}
+                  </p>
+                </>
+              )}
             </div>
 
             <div className="rounded-md border overflow-hidden">

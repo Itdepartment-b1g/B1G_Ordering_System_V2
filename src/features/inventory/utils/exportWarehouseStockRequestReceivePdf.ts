@@ -142,6 +142,7 @@ function buildStockRequestReceiveHtml(
   const batchNo = escapeHtml(options.batchNumber?.trim() || '—');
   const companyLabel = escapeHtml(companyName.trim() || options.companyName?.trim() || 'Warehouse');
   const totalUnits = options.lines.reduce((sum, line) => sum + Math.max(0, line.quantity), 0);
+  const logoUrl = escapeHtml(new URL('/logo/B1G_LOGO_BLACK.png', window.location.origin).toString());
 
   return `<!doctype html>
 <html lang="en">
@@ -202,18 +203,12 @@ function buildStockRequestReceiveHtml(
   }
 
   .logo-block { text-align: center; margin-bottom: 6px; }
-  .logo-b1g {
-    font-size: 42px;
-    font-weight: 900;
-    font-style: italic;
-    letter-spacing: -2px;
-    line-height: 1;
-  }
-  .logo-corp {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.35em;
-    margin-top: 2px;
+  .logo-img {
+    display: block;
+    max-width: 180px;
+    max-height: 52px;
+    margin: 0 auto;
+    object-fit: contain;
   }
 
   .doc-title {
@@ -320,8 +315,7 @@ function buildStockRequestReceiveHtml(
 
   <div class="page">
     <div class="logo-block">
-      <div class="logo-b1g">B1G</div>
-      <div class="logo-corp">CORPORATION</div>
+      <img class="logo-img" src="${logoUrl}" alt="B1G Corporation" />
     </div>
     <div class="doc-title">STOCK RECEIVE RECEIPT</div>
 

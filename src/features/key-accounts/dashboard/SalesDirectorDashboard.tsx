@@ -452,9 +452,11 @@ export function SalesDirectorDashboard() {
           <CardContent>
             <div className="text-2xl font-bold text-amber-600">{stats.pendingOrders}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              Unpaid + partial · Outstanding{' '}
+              Unpaid + partial + consignment ·{' '}
               {formatKeyAccountDashboardCurrency(
-                revenueMetrics.summary.unpaidRevenue + revenueMetrics.summary.partialRevenue
+                revenueMetrics.summary.unpaidRevenue +
+                  revenueMetrics.summary.partialRevenue +
+                  revenueMetrics.summary.consignmentRevenue
               )}
             </p>
           </CardContent>
