@@ -1,16 +1,10 @@
 import { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 
+import LeaderCashDepositManual from './LeaderCashDepositManual';
+import LeaderCreateOrder from './LeaderCreateOrderManual';
+import LeaderManualNav, { scrollToHash } from './LeaderManualNav';
 import LeaderReceivePoManual from './LeaderReceivePoManual';
-
-function scrollToHash(hash: string) {
-  const sectionId = hash.replace(/^#/, '');
-  if (!sectionId) return;
-
-  window.requestAnimationFrame(() => {
-    document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
-}
 
 export default function LeaderManualList() {
   const location = useLocation();
@@ -29,7 +23,11 @@ export default function LeaderManualList() {
       </section>
       <br />
 
+      <LeaderCreateOrder />
+      <LeaderCashDepositManual />
       <LeaderReceivePoManual />
+
+      <LeaderManualNav />
     </div>
   );
 }
