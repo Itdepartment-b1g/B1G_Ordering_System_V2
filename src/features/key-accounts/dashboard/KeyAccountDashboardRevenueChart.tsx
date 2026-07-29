@@ -20,6 +20,8 @@ const BAR_LABELS: Record<string, string> = {
   paidRevenue: 'Paid',
   partialRevenue: 'Partial',
   unpaidRevenue: 'Unpaid',
+  consignmentRevenue: 'Consignment',
+  settlementDiscountRevenue: 'Settlement disc.',
 };
 
 export function KeyAccountDashboardRevenueChart({
@@ -40,7 +42,7 @@ export function KeyAccountDashboardRevenueChart({
         </CardTitle>
         <div className="flex items-center gap-3">
           <span className="hidden text-xs font-normal text-muted-foreground text-right sm:block">
-            Sales by order date — paid vs partial vs unpaid
+            Standard by order date · Consignment paid by payment date
           </span>
           <Select value={selectedYear.toString()} onValueChange={(v) => onYearChange(parseInt(v))}>
             <SelectTrigger className="h-9 w-[120px]">
@@ -70,20 +72,32 @@ export function KeyAccountDashboardRevenueChart({
                   const paid = row.paidRevenue || 0;
                   const partial = row.partialRevenue || 0;
                   const unpaid = row.unpaidRevenue || 0;
-                  const total = row.totalRevenue || paid + partial + unpaid;
+                  const consignment = row.consignmentRevenue || 0;
+                  const settlementDiscount = row.settlementDiscountRevenue || 0;
+                  const total =
+                    row.totalRevenue ||
+                    paid + partial + unpaid + consignment + settlementDiscount;
 
                   return (
                     <div className="bg-white border rounded-lg p-3 shadow-lg text-sm max-w-xs">
                       <p className="font-semibold mb-2">{label}</p>
                       <p className="text-lg font-bold">{formatKeyAccountDashboardCurrency(total)}</p>
                       <p className="text-xs text-muted-foreground mt-1">
-                        By order date · Paid {formatKeyAccountDashboardCurrency(paid)} · Partial{' '}
+                        Paid {formatKeyAccountDashboardCurrency(paid)} · Partial{' '}
                         {formatKeyAccountDashboardCurrency(partial)} · Unpaid{' '}
-                        {formatKeyAccountDashboardCurrency(unpaid)}
+                        {formatKeyAccountDashboardCurrency(unpaid)} · Consignment{' '}
+                        {formatKeyAccountDashboardCurrency(consignment)} · Settlement disc.{' '}
+                        {formatKeyAccountDashboardCurrency(settlementDiscount)}
                       </p>
-                      {(row.unpaidOrders > 0 || row.partialOrders > 0) && (
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        Consignment paid uses payment date; float stays on order month
+                      </p>
+                      {(row.unpaidOrders > 0 ||
+                        row.partialOrders > 0 ||
+                        row.consignmentOrders > 0) && (
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          {row.unpaidOrders} unpaid · {row.partialOrders} partial POs
+                          {row.unpaidOrders} unpaid · {row.partialOrders} partial ·{' '}
+                          {row.consignmentOrders} consignment
                         </p>
                       )}
                     </div>
@@ -94,6 +108,18 @@ export function KeyAccountDashboardRevenueChart({
               <Bar dataKey="paidRevenue" stackId="revenue" fill="#22c55e" name="paidRevenue" />
               <Bar dataKey="partialRevenue" stackId="revenue" fill="#f59e0b" name="partialRevenue" />
               <Bar dataKey="unpaidRevenue" stackId="revenue" fill="#f97316" name="unpaidRevenue" />
+              <Bar
+                dataKey="consignmentRevenue"
+                stackId="revenue"
+                fill="#0ea5e9"
+                name="consignmentRevenue"
+              />
+              <Bar
+                dataKey="settlementDiscountRevenue"
+                stackId="revenue"
+                fill="#64748b"
+                name="settlementDiscountRevenue"
+              />
             </BarChart>
           </ResponsiveContainer>
         </div>

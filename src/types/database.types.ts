@@ -409,7 +409,11 @@ export interface Supplier {
 
 export type PurchaseOrderFulfillmentType = "supplier" | "warehouse_transfer";
 
-export type PurchaseOrderKind = 'standard' | 'rebate_fulfillment';
+export type PurchaseOrderKind =
+  | 'standard'
+  | 'rebate_fulfillment'
+  | 'rebate_topup'
+  | 'consignment';
 
 export type KeyAccountPoPaymentMode = 'full' | 'split';
 export type KeyAccountPoPaymentStatus = 'unpaid' | 'partial' | 'paid';
@@ -418,7 +422,11 @@ export interface PurchaseOrderKeyAccountPayment {
   id: string;
   purchase_order_id: string;
   company_id: string;
+  /** Cash collected on this row (may be 0 when recording discount-only settlement). */
   amount: number;
+  /** Commercial write-off applied with this row; not cash. */
+  settlement_discount?: number;
+  settlement_discount_reason?: string | null;
   payment_method: "GCASH" | "BANK_TRANSFER" | "CASH" | "CHEQUE";
   bank_type?: "Unionbank" | "BPI" | "PBCOM" | null;
   proof_storage_path?: string | null;

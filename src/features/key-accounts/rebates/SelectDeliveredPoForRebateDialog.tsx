@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Loader2 } from 'lucide-react';
 import { formatRebateCurrency, isRebateDerivedPurchaseOrder } from './keyAccountRebateShared';
+import { isKeyAccountConsignmentOrder } from '../key-accounts-analytics/keyAccountAnalyticsShared';
 
 export type DeliveredPoOption = {
   id: string;
@@ -77,7 +78,7 @@ export function SelectDeliveredPoForRebateDialog({ open, onOpenChange }: SelectD
       if (error) throw error;
       const rows = (data ?? [])
         .map((row) => mapDeliveredPoOption(row as DeliveredPoQueryRow))
-        .filter((po) => !isRebateDerivedPurchaseOrder(po));
+        .filter((po) => !isRebateDerivedPurchaseOrder(po) && !isKeyAccountConsignmentOrder(po));
       setOptions(rows);
     } catch (e: unknown) {
       const message =
@@ -118,8 +119,8 @@ export function SelectDeliveredPoForRebateDialog({ open, onOpenChange }: SelectD
         <DialogHeader>
           <DialogTitle>Select delivered PO</DialogTitle>
           <DialogDescription>
-            Rebates can only be created for original delivered POs. Rebate replacement and top-up POs
-            are not listed.
+            Rebates can only be created for original delivered POs. Rebate replacement, top-up, and
+            consignment POs are not listed.
           </DialogDescription>
         </DialogHeader>
 

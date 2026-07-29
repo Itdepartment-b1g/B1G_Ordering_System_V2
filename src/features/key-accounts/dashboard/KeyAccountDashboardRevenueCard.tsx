@@ -21,9 +21,11 @@ export function KeyAccountDashboardRevenueCard({
       <CardContent>
         <div className="text-2xl font-bold">{formatKeyAccountDashboardCurrency(summary.totalRevenue)}</div>
         <p className="text-xs text-muted-foreground mt-1">
-          By order date · Paid {formatKeyAccountDashboardCurrency(summary.paidRevenue)} · Partial{' '}
+          Paid {formatKeyAccountDashboardCurrency(summary.paidRevenue)} · Partial{' '}
           {formatKeyAccountDashboardCurrency(summary.partialRevenue)} · Unpaid{' '}
-          {formatKeyAccountDashboardCurrency(summary.unpaidRevenue)}
+          {formatKeyAccountDashboardCurrency(summary.unpaidRevenue)} · Consignment{' '}
+          {formatKeyAccountDashboardCurrency(summary.consignmentRevenue)} · Settlement disc.{' '}
+          {formatKeyAccountDashboardCurrency(summary.settlementDiscountRevenue)}
         </p>
       </CardContent>
     </Card>

@@ -6,13 +6,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
-  Users,
   Building2,
   Shield,
   TrendingUp,
-  UserCheck,
   ShoppingCart,
   BarChart3,
+  Package,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -176,11 +175,10 @@ export function SalesAdminDashboard() {
   const [activeTab, setActiveTab] = useState('overview');
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [stats, setStats] = useState({
-    totalDirectors: 0,
-    totalKAMs: 0,
     totalClients: 0,
     totalOrders: 0,
     pendingOrders: 0,
+    consignmentOrders: 0,
   });
   const [revenueMetrics, setRevenueMetrics] = useState<KeyAccountDashboardRevenueResult>(
     EMPTY_KEY_ACCOUNT_DASHBOARD_REVENUE
@@ -300,18 +298,6 @@ export function SalesAdminDashboard() {
   const fetchAdminData = async () => {
     setLoading(true);
     try {
-      // Get company users by role
-      const { data: users, error: usersError } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('company_id', user?.company_id)
-        .in('role', ['sales_director', 'key_account_manager']);
-
-      if (usersError) throw usersError;
-
-      const directors = users?.filter(u => u.role === 'sales_director').length || 0;
-      const kams = users?.filter(u => u.role === 'key_account_manager').length || 0;
-
       // Get clients count
       const { count: clientCount } = await supabase
         .from('key_account_clients')
@@ -347,11 +333,10 @@ export function SalesAdminDashboard() {
       setRevenueMetrics(revenueResult);
 
       setStats({
-        totalDirectors: directors,
-        totalKAMs: kams,
         totalClients: clientCount || 0,
         totalOrders: orderRows.length,
         pendingOrders: revenueResult.pendingOrderCount,
+        consignmentOrders: revenueResult.consignmentOrderCount,
       });
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
@@ -395,29 +380,7 @@ export function SalesAdminDashboard() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <UserCheck className="h-4 w-4" />
-              Directors
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.totalDirectors}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Users className="h-4 w-4" />
-              KAMs
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.totalKAMs}</div>
-          </CardContent>
-        </Card>
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
@@ -440,6 +403,21 @@ export function SalesAdminDashboard() {
             <div className="text-2xl font-bold">{stats.totalOrders}</div>
           </CardContent>
         </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+              <Package className="h-4 w-4" />
+              Consignment POs
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-sky-600">{stats.consignmentOrders}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Float value{' '}
+              {formatCurrency(revenueMetrics.summary.consignmentRevenue)}
+            </p>
+          </CardContent>
+        </Card>
         <KeyAccountDashboardRevenueCard summary={revenueMetrics.summary} />
         <Card>
           <CardHeader className="pb-2">
@@ -451,9 +429,11 @@ export function SalesAdminDashboard() {
           <CardContent>
             <div className="text-2xl font-bold text-amber-600">{stats.pendingOrders}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              Unpaid + partial · Outstanding{' '}
+              Unpaid + partial + consignment ·{' '}
               {formatCurrency(
-                revenueMetrics.summary.unpaidRevenue + revenueMetrics.summary.partialRevenue
+                revenueMetrics.summary.unpaidRevenue +
+                  revenueMetrics.summary.partialRevenue +
+                  revenueMetrics.summary.consignmentRevenue
               )}
             </p>
           </CardContent>

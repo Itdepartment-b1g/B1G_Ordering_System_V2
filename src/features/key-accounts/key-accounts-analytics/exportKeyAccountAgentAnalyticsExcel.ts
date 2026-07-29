@@ -5,15 +5,19 @@ import { formatExportGeneratedAt } from '@/lib/excel.helpers';
 export interface KeyAccountAgentAnalyticsExportRow {
   name: string;
   email: string;
-  grossDeliveredRevenue: number;
-  rebatedDeliveredRevenue: number;
-  deliveredRevenue: number;
-  deliveredOrders: number;
+  paidRevenue: number;
+  partialRevenue: number;
+  unpaidRevenue: number;
+  consignmentRevenue: number;
+  settlementDiscountRevenue: number;
   totalOrders: number;
-  pendingOrders: number;
+  paidOrders: number;
+  partialOrders: number;
+  unpaidOrders: number;
+  consignmentOrders: number;
+  totalRevenue: number;
   uniqueClients: number;
   avgOrderValue: number;
-  topProduct: string;
 }
 
 export interface KeyAccountAgentAnalyticsExportMeta {
@@ -69,6 +73,7 @@ export async function exportKeyAccountAgentAnalyticsExcel(
     { width: 14 },
     { width: 14 },
     { width: 14 },
+    { width: 16 },
     { width: 14 },
     { width: 12 },
     { width: 10 },
@@ -78,7 +83,7 @@ export async function exportKeyAccountAgentAnalyticsExcel(
   ];
 
   const titleRow = worksheet.getRow(1);
-  worksheet.mergeCells('A1:L1');
+  worksheet.mergeCells('A1:M1');
   titleRow.getCell(1).value = 'Key Account Agent Analytics Export';
   titleRow.getCell(1).font = { bold: true, size: 14 };
   titleRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
@@ -94,21 +99,17 @@ export async function exportKeyAccountAgentAnalyticsExcel(
     worksheet,
     cursor,
     'Revenue',
-    'Net delivered revenue after money/credit rebates on source POs'
-  );
-  cursor = addMetaRow(
-    worksheet,
-    cursor,
-    'Replacement rebates',
-    'Change-item replacements at same value do not deduct source PO revenue'
+    'PO payment buckets by agent: paid, partial, unpaid, consignment, and settlement discount (based on created POs)'
   );
   cursor = addMetaRow(worksheet, cursor, 'Agents exported', rows.length);
   cursor += 1;
 
-  const grossRevenue = rows.reduce((sum, r) => sum + r.grossDeliveredRevenue, 0);
-  const rebatedRevenue = rows.reduce((sum, r) => sum + r.rebatedDeliveredRevenue, 0);
-  const netRevenue = rows.reduce((sum, r) => sum + r.deliveredRevenue, 0);
-  const deliveredOrders = rows.reduce((sum, r) => sum + r.deliveredOrders, 0);
+  const paidRevenue = rows.reduce((sum, r) => sum + r.paidRevenue, 0);
+  const partialRevenue = rows.reduce((sum, r) => sum + r.partialRevenue, 0);
+  const unpaidRevenue = rows.reduce((sum, r) => sum + r.unpaidRevenue, 0);
+  const consignmentRevenue = rows.reduce((sum, r) => sum + r.consignmentRevenue, 0);
+  const settlementDiscountRevenue = rows.reduce((sum, r) => sum + r.settlementDiscountRevenue, 0);
+  const totalRevenue = rows.reduce((sum, r) => sum + r.totalRevenue, 0);
   const totalOrders = rows.reduce((sum, r) => sum + r.totalOrders, 0);
 
   const summaryTitle = worksheet.getRow(cursor);
@@ -117,25 +118,28 @@ export async function exportKeyAccountAgentAnalyticsExcel(
   summaryTitle.getCell(1).font = { bold: true, size: 12 };
   cursor += 1;
 
-  cursor = addMetaRow(worksheet, cursor, 'Gross delivered revenue', formatPeso(grossRevenue));
-  cursor = addMetaRow(worksheet, cursor, 'Rebated (credit)', formatPeso(rebatedRevenue));
-  cursor = addMetaRow(worksheet, cursor, 'Net delivered revenue', formatPeso(netRevenue));
-  cursor = addMetaRow(worksheet, cursor, 'Delivered POs', deliveredOrders);
+  cursor = addMetaRow(worksheet, cursor, 'Paid revenue', formatPeso(paidRevenue));
+  cursor = addMetaRow(worksheet, cursor, 'Partial revenue', formatPeso(partialRevenue));
+  cursor = addMetaRow(worksheet, cursor, 'Unpaid revenue', formatPeso(unpaidRevenue));
+  cursor = addMetaRow(worksheet, cursor, 'Consignment revenue', formatPeso(consignmentRevenue));
+  cursor = addMetaRow(worksheet, cursor, 'Settlement discount', formatPeso(settlementDiscountRevenue));
+  cursor = addMetaRow(worksheet, cursor, 'Total revenue', formatPeso(totalRevenue));
   cursor = addMetaRow(worksheet, cursor, 'Total POs', totalOrders);
   cursor += 1;
 
   const tableHeaders = [
     'Person',
     'Email',
-    'Gross Revenue',
-    'Rebated',
-    'Net Revenue',
-    'Delivered POs',
+    'Paid',
+    'Partial',
+    'Unpaid',
+    'Consignment',
+    'Settlement disc.',
+    'Total',
     'Total POs',
-    'Pending',
     'Clients',
-    'Avg Delivered PO',
-    'Top Product',
+    'Avg PO',
+    'PO Mix',
   ];
 
   const headerRow = worksheet.getRow(cursor);
@@ -149,16 +153,17 @@ export async function exportKeyAccountAgentAnalyticsExcel(
     const dataRow = worksheet.getRow(cursor);
     dataRow.getCell(1).value = agent.name;
     dataRow.getCell(2).value = agent.email;
-    dataRow.getCell(3).value = formatPeso(agent.grossDeliveredRevenue);
-    dataRow.getCell(4).value = formatPeso(agent.rebatedDeliveredRevenue);
-    dataRow.getCell(5).value = formatPeso(agent.deliveredRevenue);
-    dataRow.getCell(6).value = agent.deliveredOrders;
-    dataRow.getCell(7).value = agent.totalOrders;
-    dataRow.getCell(8).value = agent.pendingOrders;
-    dataRow.getCell(9).value = agent.uniqueClients;
-    dataRow.getCell(10).value = formatPeso(agent.avgOrderValue);
-    dataRow.getCell(11).value = agent.topProduct;
-    [3, 4, 5, 6, 7, 8, 9, 10].forEach((col) => {
+    dataRow.getCell(3).value = formatPeso(agent.paidRevenue);
+    dataRow.getCell(4).value = formatPeso(agent.partialRevenue);
+    dataRow.getCell(5).value = formatPeso(agent.unpaidRevenue);
+    dataRow.getCell(6).value = formatPeso(agent.consignmentRevenue);
+    dataRow.getCell(7).value = formatPeso(agent.settlementDiscountRevenue);
+    dataRow.getCell(8).value = formatPeso(agent.totalRevenue);
+    dataRow.getCell(9).value = agent.totalOrders;
+    dataRow.getCell(10).value = agent.uniqueClients;
+    dataRow.getCell(11).value = formatPeso(agent.avgOrderValue);
+    dataRow.getCell(12).value = `${agent.paidOrders} / ${agent.partialOrders} / ${agent.unpaidOrders} / ${agent.consignmentOrders}`;
+    [3, 4, 5, 6, 7, 8, 9, 10, 11].forEach((col) => {
       dataRow.getCell(col).alignment = { horizontal: 'right' };
     });
     cursor += 1;
@@ -167,15 +172,17 @@ export async function exportKeyAccountAgentAnalyticsExcel(
   const totalRow = worksheet.getRow(cursor);
   totalRow.getCell(1).value = 'TOTAL';
   totalRow.getCell(1).font = { bold: true };
-  totalRow.getCell(3).value = formatPeso(grossRevenue);
-  totalRow.getCell(4).value = formatPeso(rebatedRevenue);
-  totalRow.getCell(5).value = formatPeso(netRevenue);
-  totalRow.getCell(6).value = deliveredOrders;
-  totalRow.getCell(7).value = totalOrders;
-  totalRow.getCell(8).value = rows.reduce((sum, r) => sum + r.pendingOrders, 0);
-  totalRow.getCell(9).value = rows.reduce((sum, r) => sum + r.uniqueClients, 0);
+  totalRow.getCell(3).value = formatPeso(paidRevenue);
+  totalRow.getCell(4).value = formatPeso(partialRevenue);
+  totalRow.getCell(5).value = formatPeso(unpaidRevenue);
+  totalRow.getCell(6).value = formatPeso(consignmentRevenue);
+  totalRow.getCell(7).value = formatPeso(settlementDiscountRevenue);
+  totalRow.getCell(8).value = formatPeso(totalRevenue);
+  totalRow.getCell(9).value = totalOrders;
+  totalRow.getCell(10).value = rows.reduce((sum, r) => sum + r.uniqueClients, 0);
+  totalRow.getCell(12).value = `${rows.reduce((sum, r) => sum + r.paidOrders, 0)} / ${rows.reduce((sum, r) => sum + r.partialOrders, 0)} / ${rows.reduce((sum, r) => sum + r.unpaidOrders, 0)} / ${rows.reduce((sum, r) => sum + r.consignmentOrders, 0)}`;
   totalRow.font = { bold: true };
-  [3, 4, 5, 6, 7, 8, 9].forEach((col) => {
+  [3, 4, 5, 6, 7, 8, 9, 10, 11].forEach((col) => {
     totalRow.getCell(col).alignment = { horizontal: 'right' };
   });
 

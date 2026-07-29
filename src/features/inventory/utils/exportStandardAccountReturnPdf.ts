@@ -185,6 +185,7 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
   const rtNo = escapeHtml(input.requestNumber);
   const dest = escapeHtml(destinationLabel(input));
   const status = escapeHtml(statusLabel(input.status));
+  const logoUrl = escapeHtml(new URL('/logo/B1G_LOGO_BLACK.png', window.location.origin).toString());
 
   const signatureImgHtml = input.signatureUrl
     ? `<img class="sig-img" src="${escapeHtml(input.signatureUrl)}" alt="Return signature" />`
@@ -249,18 +250,12 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
   }
 
   .logo-block { text-align: center; margin-bottom: 6px; }
-  .logo-b1g {
-    font-size: 42px;
-    font-weight: 900;
-    font-style: italic;
-    letter-spacing: -2px;
-    line-height: 1;
-  }
-  .logo-corp {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.35em;
-    margin-top: 2px;
+  .logo-img {
+    display: block;
+    max-width: 180px;
+    max-height: 52px;
+    margin: 0 auto;
+    object-fit: contain;
   }
 
   .doc-title {
@@ -419,8 +414,7 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
 
   <div class="page">
     <div class="logo-block">
-      <div class="logo-b1g">B1G</div>
-      <div class="logo-corp">CORPORATION</div>
+      <img class="logo-img" src="${logoUrl}" alt="B1G Corporation" />
     </div>
 
     <div class="doc-title">STOCK RETURN RECEIPT</div>

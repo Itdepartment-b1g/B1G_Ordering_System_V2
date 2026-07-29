@@ -327,6 +327,7 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
   const cancelledWatermarkHtml = cancelled
     ? `<div class="cancelled-watermark" aria-hidden="true">CANCELLED</div>`
     : '';
+  const logoUrl = escapeHtml(new URL('/logo/B1G_LOGO_BLACK.png', window.location.origin).toString());
 
   return `<!doctype html>
 <html lang="en">
@@ -392,18 +393,12 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
   }
 
   .logo-block { text-align: center; margin-bottom: 6px; }
-  .logo-b1g {
-    font-size: 42px;
-    font-weight: 900;
-    font-style: italic;
-    letter-spacing: -2px;
-    line-height: 1;
-  }
-  .logo-corp {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.35em;
-    margin-top: 2px;
+  .logo-img {
+    display: block;
+    max-width: 180px;
+    max-height: 52px;
+    margin: 0 auto;
+    object-fit: contain;
   }
 
   .doc-title {
@@ -586,8 +581,7 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
   <div class="page">
     ${cancelledWatermarkHtml}
     <div class="logo-block">
-      <div class="logo-b1g">B1G</div>
-      <div class="logo-corp">CORPORATION</div>
+      <img class="logo-img" src="${logoUrl}" alt="B1G Corporation" />
     </div>
 
     <div class="doc-title">DELIVERY RECEIPT</div>
