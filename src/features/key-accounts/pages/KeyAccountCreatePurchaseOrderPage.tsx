@@ -1242,8 +1242,8 @@ export function KeyAccountPurchaseOrderPage() {
     setActiveWarehouseTabId('');
   }
 
-  if (loadingClients || loadingWarehouses || loadingPaymentSettings) {
-  if (loadingWarehouses) {
+  // Clients load inline in the picker; only block the page on warehouses/payment settings.
+  if (loadingWarehouses || loadingPaymentSettings) {
     return (
       <div className="flex items-center justify-center h-96">
         <Loader2 className="h-8 w-8 animate-spin" />
@@ -2479,5 +2479,4 @@ export function KeyAccountPurchaseOrderPage() {
       </Dialog>
     </div>
   );
-}
 }
