@@ -859,6 +859,20 @@ export function KeyAccountPurchaseOrderPage() {
         created_by: user?.id,
         po_order_kind: isConsignment ? 'consignment' : 'standard',
         key_account_payment_terms: resolvedPaymentTerms || null,
+        key_account_payment_terms_source: resolvedPaymentTerms
+          ? paymentTermsSource
+          : null,
+        key_account_payment_terms_created_by: (() => {
+          if (!resolvedPaymentTerms) return null;
+          if (paymentTermsSource === 'custom') return user?.id ?? null;
+          if (paymentTermsSource === 'company') {
+            const option = companyPaymentTermOptions.find(
+              (o) => o.label === selectedCompanyPaymentTerm
+            );
+            return option?.created_by ?? user?.id ?? null;
+          }
+          return null;
+        })(),
         // Keep mode so unpaid badge + later "Record payment" work for consignment.
         key_account_payment_mode: isConsignment ? 'full' : paymentMode,
         key_account_payment_status: 'unpaid',

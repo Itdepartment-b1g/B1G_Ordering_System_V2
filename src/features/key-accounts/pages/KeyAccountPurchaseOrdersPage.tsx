@@ -124,6 +124,8 @@ type Row = {
   key_account_payment_terms?: string | null;
   key_account_payment_mode?: 'full' | 'split' | null;
   key_account_payment_status?: KeyAccountPoPaymentStatus | null;
+  key_account_payment_terms_source?: 'client' | 'company' | 'custom' | null;
+  key_account_payment_terms_created_by?: string | null;
   client?: {
     client_name: string;
     client_code?: string;
@@ -148,6 +150,7 @@ type Row = {
     is_default: boolean;
   } | null;
   kam?: { full_name: string; email: string } | null;
+  payment_terms_creator?: { full_name: string | null; email: string | null } | null;
   items?: Array<{
     id: string;
     variant_id: string;
@@ -572,6 +575,8 @@ export function KeyAccountPurchaseOrdersPage() {
           key_account_payment_terms,
           key_account_payment_mode,
           key_account_payment_status,
+          key_account_payment_terms_source,
+          key_account_payment_terms_created_by,
           director_approved_at,
           director_approved_by,
           admin_approved_at,
@@ -598,7 +603,38 @@ export function KeyAccountPurchaseOrdersPage() {
       const { data, error } = await query;
 
       if (error) throw error;
-      const nextRows = ((data || []) as any[]).map(normalizePoRow);
+
+      const rawRows = (data || []) as any[];
+      const creatorIds = [
+        ...new Set(
+          rawRows
+            .map((r) => r.key_account_payment_terms_created_by)
+            .filter((id): id is string => Boolean(id))
+        ),
+      ];
+
+      const creatorById = new Map<string, { full_name: string | null; email: string | null }>();
+      if (creatorIds.length > 0) {
+        const { data: creators } = await supabase
+          .from('profiles')
+          .select('id, full_name, email')
+          .in('id', creatorIds);
+        for (const profile of creators || []) {
+          creatorById.set(profile.id, {
+            full_name: profile.full_name ?? null,
+            email: profile.email ?? null,
+          });
+        }
+      }
+
+      const nextRows = rawRows
+        .map((row) => ({
+          ...row,
+          payment_terms_creator: row.key_account_payment_terms_created_by
+            ? creatorById.get(row.key_account_payment_terms_created_by) ?? null
+            : null,
+        }))
+        .map(normalizePoRow);
       setRows(nextRows);
       setActive((prev) => {
         if (!prev?.id) return prev;
@@ -1762,11 +1798,46 @@ export function KeyAccountPurchaseOrdersPage() {
                       </div>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      <div>
-                        <Label className="text-xs text-muted-foreground">Terms</Label>
-                        <p className="text-sm font-medium whitespace-pre-wrap">
-                          {active.key_account_payment_terms || '—'}
-                        </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Terms</Label>
+                          <p className="font-medium whitespace-pre-wrap">
+                            {active.key_account_payment_terms || '—'}
+                          </p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Terms source</Label>
+                          <div className="mt-0.5">
+                            {active.key_account_payment_terms_source ? (
+                              <Badge variant="outline" className="capitalize">
+                                {active.key_account_payment_terms_source === 'client'
+                                  ? 'Client profile'
+                                  : active.key_account_payment_terms_source === 'company'
+                                    ? 'Company'
+                                    : 'Custom'}
+                              </Badge>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </div>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Term created by</Label>
+                          <div className="font-medium">
+                            {active.key_account_payment_terms_source === 'client'
+                              ? 'Client profile'
+                              : active.payment_terms_creator?.full_name?.trim() ||
+                                active.payment_terms_creator?.email ||
+                                '—'}
+                          </div>
+                          {active.key_account_payment_terms_source !== 'client' &&
+                          active.payment_terms_creator?.email &&
+                          active.payment_terms_creator?.full_name?.trim() ? (
+                            <div className="text-xs text-muted-foreground">
+                              {active.payment_terms_creator.email}
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
                         <div>

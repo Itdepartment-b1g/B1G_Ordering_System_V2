@@ -332,6 +332,8 @@ export interface KeyAccountPurchaseOrder {
   key_account_payment_terms?: string | null;
   key_account_payment_mode?: KeyAccountPoPaymentMode | null;
   key_account_payment_status?: KeyAccountPoPaymentStatus | null;
+  key_account_payment_terms_source?: 'client' | 'company' | 'custom' | null;
+  key_account_payment_terms_created_by?: string | null;
 }
 
 export interface Brand {
@@ -459,6 +461,8 @@ export interface PurchaseOrder {
   key_account_payment_terms?: string | null;
   key_account_payment_mode?: KeyAccountPoPaymentMode | null;
   key_account_payment_status?: KeyAccountPoPaymentStatus | null;
+  key_account_payment_terms_source?: 'client' | 'company' | 'custom' | null;
+  key_account_payment_terms_created_by?: string | null;
   po_order_kind?: PurchaseOrderKind | null;
   source_rebate_id?: string | null;
   /** Warehouse transfer PO: team leader who receives dispatched stock. */
