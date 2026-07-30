@@ -49,12 +49,15 @@ import {
 import { KeyAccountPaymentProofUploadField } from '@/features/key-accounts/components/KeyAccountPaymentProofPreview';
 import { parsePaymentTerms } from '@/features/key-accounts/keyAccountCodes';
 import { useKeyAccountPaymentSettings } from '@/features/key-accounts/hooks/useKeyAccountPaymentSettings';
+import { useKeyAccountPaymentTermOptions } from '@/features/key-accounts/hooks/useKeyAccountPaymentTermOptions';
 import {
   getKeyAccountEnabledBankAccounts,
   getKeyAccountPaymentMethods,
   KEY_ACCOUNT_PAYMENT_METHOD_LABELS,
   type KeyAccountPaymentMethod,
 } from '@/features/key-accounts/keyAccountPaymentSettingsUtils';
+
+type PaymentTermsSource = 'client' | 'company' | 'custom';
 
 interface POItem {
   id: string;
@@ -87,6 +90,11 @@ export function KeyAccountPurchaseOrderPage() {
   const { user } = useAuth();
   const { toast } = useToast();
   const { settings: paymentSettings, loading: loadingPaymentSettings } = useKeyAccountPaymentSettings();
+  const {
+    options: companyPaymentTermOptions,
+    loading: loadingCompanyPaymentTerms,
+    refetch: refetchCompanyPaymentTerms,
+  } = useKeyAccountPaymentTermOptions(true);
 
   const availablePaymentMethods = useMemo(
     () => getKeyAccountPaymentMethods(paymentSettings),
@@ -136,9 +144,15 @@ export function KeyAccountPurchaseOrderPage() {
 
   /** Consignment = float stock to client now; payment deferred (warehouse still fulfills). */
   const [isConsignment, setIsConsignment] = useState(false);
-  const [paymentTermsSource, setPaymentTermsSource] = useState<'client' | 'custom'>('client');
+  const [paymentTermsSource, setPaymentTermsSource] = useState<PaymentTermsSource>('client');
   const [paymentTermsCustom, setPaymentTermsCustom] = useState('');
   const [selectedClientPaymentTerm, setSelectedClientPaymentTerm] = useState('');
+  const [selectedCompanyPaymentTerm, setSelectedCompanyPaymentTerm] = useState('');
+  const [newCompanyPaymentTermInput, setNewCompanyPaymentTermInput] = useState('');
+  const [addingCompanyPaymentTerm, setAddingCompanyPaymentTerm] = useState(false);
+  const [companyPaymentTermDialogOpen, setCompanyPaymentTermDialogOpen] = useState(false);
+  const canAddCompanyPaymentTerms =
+    user?.role === 'sales_head' || user?.role === 'sales_director';
   const [paymentMode, setPaymentMode] = useState<KeyAccountPoPaymentMode>('full');
   const [paymentMethod, setPaymentMethod] = useState<KeyAccountPaymentMethod>('CASH');
   const [bankType, setBankType] = useState('');
@@ -242,8 +256,28 @@ export function KeyAccountPurchaseOrderPage() {
 
   const resolvedPaymentTerms = useMemo(() => {
     if (paymentTermsSource === 'custom') return paymentTermsCustom.trim();
+    if (paymentTermsSource === 'company') return selectedCompanyPaymentTerm.trim();
     return selectedClientPaymentTerm.trim();
-  }, [paymentTermsSource, paymentTermsCustom, selectedClientPaymentTerm]);
+  }, [
+    paymentTermsSource,
+    paymentTermsCustom,
+    selectedClientPaymentTerm,
+    selectedCompanyPaymentTerm,
+  ]);
+
+  useEffect(() => {
+    if (paymentTermsSource !== 'company') return;
+    if (companyPaymentTermOptions.length === 1) {
+      setSelectedCompanyPaymentTerm(companyPaymentTermOptions[0].label);
+      return;
+    }
+    if (
+      selectedCompanyPaymentTerm &&
+      !companyPaymentTermOptions.some((o) => o.label === selectedCompanyPaymentTerm)
+    ) {
+      setSelectedCompanyPaymentTerm('');
+    }
+  }, [paymentTermsSource, companyPaymentTermOptions, selectedCompanyPaymentTerm]);
 
   useEffect(() => {
     if (loadingPaymentSettings || availablePaymentMethods.length === 0) return;
@@ -273,6 +307,7 @@ export function KeyAccountPurchaseOrderPage() {
       setSelectedAddressId('');
       setPaymentTermsSource('client');
       setPaymentTermsCustom('');
+      setSelectedCompanyPaymentTerm('');
       const terms = parsePaymentTerms(
         clients.find((c) => c.id === selectedClientId)?.payment_terms
       );
@@ -719,8 +754,12 @@ export function KeyAccountPurchaseOrderPage() {
           paymentTermsSource === 'client'
             ? clientPaymentTerms.length > 0
               ? 'Select one of the client\'s payment terms for this order.'
-              : 'This client has no saved payment terms. Switch to custom terms or update the client profile.'
-            : 'Enter payment terms for this order.',
+              : 'This client has no saved payment terms. Switch to company or custom terms, or update the client profile.'
+            : paymentTermsSource === 'company'
+              ? companyPaymentTermOptions.length > 0
+                ? 'Select a company payment term for this order.'
+                : 'No company payment terms configured. Ask Sales Head/Director to add them, or use custom terms.'
+              : 'Enter payment terms for this order.',
       });
       return;
     }
@@ -918,6 +957,45 @@ export function KeyAccountPurchaseOrderPage() {
       ? total
       : Math.round((parseFloat(String(splitFirstAmount).replace(/,/g, '')) || 0) * 100) / 100;
 
+  async function addCompanyPaymentTerm() {
+    const label = newCompanyPaymentTermInput.trim();
+    if (!label || !user?.company_id || !user?.id || !canAddCompanyPaymentTerms) return;
+
+    setAddingCompanyPaymentTerm(true);
+    try {
+      const nextSort =
+        companyPaymentTermOptions.length === 0
+          ? 0
+          : Math.max(...companyPaymentTermOptions.map((o) => o.sort_order)) + 1;
+
+      const { error: insertError } = await supabase
+        .from('key_account_payment_term_options')
+        .insert({
+          company_id: user.company_id,
+          label,
+          is_active: true,
+          sort_order: nextSort,
+          created_by: user.id,
+        });
+
+      if (insertError) throw insertError;
+
+      setNewCompanyPaymentTermInput('');
+      setSelectedCompanyPaymentTerm(label);
+      setCompanyPaymentTermDialogOpen(false);
+      toast({ title: 'Payment term added' });
+      await refetchCompanyPaymentTerms();
+    } catch (err: any) {
+      const message =
+        err?.code === '23505'
+          ? 'That payment term already exists for this company.'
+          : err?.message || 'Failed to add payment term';
+      toast({ variant: 'destructive', title: 'Error', description: message });
+    } finally {
+      setAddingCompanyPaymentTerm(false);
+    }
+  }
+
   function resetForm() {
     setSelectedClientId('');
     setSelectedShopId('');
@@ -932,6 +1010,8 @@ export function KeyAccountPurchaseOrderPage() {
     setPaymentTermsSource('client');
     setPaymentTermsCustom('');
     setSelectedClientPaymentTerm('');
+    setSelectedCompanyPaymentTerm('');
+    setNewCompanyPaymentTermInput('');
     setPaymentMode('full');
     const defaultMethod = availablePaymentMethods[0] ?? 'CASH';
     setPaymentMethod(defaultMethod);
@@ -1195,7 +1275,7 @@ export function KeyAccountPurchaseOrderPage() {
                 <Label>Payment terms{isConsignment ? ' (optional)' : ' *'}</Label>
                 <Select
                   value={paymentTermsSource}
-                  onValueChange={(v) => setPaymentTermsSource(v as 'client' | 'custom')}
+                  onValueChange={(v) => setPaymentTermsSource(v as PaymentTermsSource)}
                   disabled={!selectedClientId}
                 >
                   <SelectTrigger>
@@ -1203,13 +1283,15 @@ export function KeyAccountPurchaseOrderPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="client">Use client profile terms</SelectItem>
+                    <SelectItem value="company">Use company payment terms</SelectItem>
                     <SelectItem value="custom">Custom terms for this PO</SelectItem>
                   </SelectContent>
                 </Select>
                 {paymentTermsSource === 'client' ? (
                   clientPaymentTerms.length === 0 ? (
                     <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
-                      No payment terms on file for this client — choose custom terms or update the client record.
+                      No payment terms on file for this client — choose company or custom terms, or
+                      update the client record.
                     </p>
                   ) : clientPaymentTerms.length === 1 ? (
                     <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
@@ -1232,6 +1314,53 @@ export function KeyAccountPurchaseOrderPage() {
                       </SelectContent>
                     </Select>
                   )
+                ) : paymentTermsSource === 'company' ? (
+                  <div className="space-y-2">
+                    {loadingCompanyPaymentTerms ? (
+                      <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3 flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading company payment terms…
+                      </p>
+                    ) : (
+                      <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                        {companyPaymentTermOptions.length === 0 ? (
+                          <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3 sm:flex-1 w-full">
+                            No company payment terms yet
+                            {canAddCompanyPaymentTerms
+                              ? ' — use Add term to create one.'
+                              : ' — ask Sales Head/Director to add them, or use custom terms.'}
+                          </p>
+                        ) : (
+                          <Select
+                            value={selectedCompanyPaymentTerm || undefined}
+                            onValueChange={setSelectedCompanyPaymentTerm}
+                          >
+                            <SelectTrigger className="sm:flex-1 w-full">
+                              <SelectValue placeholder="Select a company payment term…" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {companyPaymentTermOptions.map((option) => (
+                                <SelectItem key={option.id} value={option.label}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
+                        {canAddCompanyPaymentTerms ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="shrink-0 w-full sm:w-auto"
+                            onClick={() => setCompanyPaymentTermDialogOpen(true)}
+                          >
+                            <Plus className="h-4 w-4 mr-2" />
+                            Add term
+                          </Button>
+                        ) : null}
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   <Textarea
                     value={paymentTermsCustom}
@@ -1988,6 +2117,59 @@ export function KeyAccountPurchaseOrderPage() {
           onCreated={(address) => void handleAddressCreated(address)}
         />
       ) : null}
+
+      <Dialog
+        open={companyPaymentTermDialogOpen}
+        onOpenChange={(open) => {
+          setCompanyPaymentTermDialogOpen(open);
+          if (!open) setNewCompanyPaymentTermInput('');
+        }}
+      >
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle>Add company payment term</DialogTitle>
+            <DialogDescription>
+              This term is saved to your company catalog and can be reused on future orders.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="company_payment_term_label">Label</Label>
+            <Input
+              id="company_payment_term_label"
+              value={newCompanyPaymentTermInput}
+              onChange={(e) => setNewCompanyPaymentTermInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void addCompanyPaymentTerm();
+                }
+              }}
+              placeholder="e.g. Net 30, COD…"
+              disabled={addingCompanyPaymentTerm}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCompanyPaymentTermDialogOpen(false)}
+              disabled={addingCompanyPaymentTerm}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void addCompanyPaymentTerm()}
+              disabled={addingCompanyPaymentTerm || !newCompanyPaymentTermInput.trim()}
+            >
+              {addingCompanyPaymentTerm ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : null}
+              Add
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

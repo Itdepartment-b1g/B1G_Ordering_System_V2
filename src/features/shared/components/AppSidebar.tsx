@@ -168,7 +168,7 @@ const salesAdminMenuItems: MenuItem[] = [
     hasSubmenu: true,
     submenu: [
       { title: 'Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
-      { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
+      // { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
     ]
   },
   { title: 'Analytics', url: '/key-accounts/analytics', icon: Brain },
@@ -218,7 +218,7 @@ const salesHeadMenuItems: MenuItem[] = [
 // Key Account Accounting — view-only PO and transaction details
 const keyAccountAccountingMenuItems: MenuItem[] = [
   { title: 'Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
-  { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
+  // { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 
