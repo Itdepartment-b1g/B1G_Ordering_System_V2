@@ -174,7 +174,7 @@ function mapEvent(row: PoEventRow): PurchaseOrderHistoryEvent | null {
  * Formula: subtract min(found_resolved_qty, max(0, gross_dispatched - ordered))
  * so we only credit found qty after a redispatch actually happened.
  */
-function adjustDispatchedForFoundRedeliver(
+export function adjustDispatchedForFoundRedeliver(
   items: PurchaseOrderHistoryItem[],
   history: PurchaseOrderHistoryEvent[]
 ): PurchaseOrderHistoryItem[] {
