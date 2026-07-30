@@ -280,21 +280,40 @@ export function WarehouseStockReceiveDialog({
                             </div>
                             <span className="pb-2 text-sm text-muted-foreground">+</span>
                             <div className="grid gap-1 w-[88px]">
-                              <Label className="text-xs">Quantity</Label>
+                              <Label className="text-xs">Loose Boxes</Label>
                               <Input
                                 type="number"
                                 min={0}
                                 step={1}
                                 inputMode="numeric"
                                 placeholder="0"
-                                value={split.extraQty}
+                                value={split.looseBoxCount}
                                 onChange={(e) =>
                                   updateSplitBoxInputs(variant.variantId, split.id, {
-                                    extraQty: e.target.value,
+                                    looseBoxCount: e.target.value,
                                   })
                                 }
                                 className={qtyInputClassName}
-                                aria-label={`Extra quantity for ${variant.variantLabel}`}
+                                aria-label={`Loose boxes for ${variant.variantLabel}`}
+                              />
+                            </div>
+                            <span className="pb-2 text-sm text-muted-foreground">×</span>
+                            <div className="grid gap-1 w-[80px]">
+                              <Label className="text-xs">Loose Qty</Label>
+                              <Input
+                                type="number"
+                                min={0}
+                                step={1}
+                                inputMode="numeric"
+                                placeholder="0"
+                                value={split.looseQty}
+                                onChange={(e) =>
+                                  updateSplitBoxInputs(variant.variantId, split.id, {
+                                    looseQty: e.target.value,
+                                  })
+                                }
+                                className={qtyInputClassName}
+                                aria-label={`Loose quantity per box for ${variant.variantLabel}`}
                               />
                             </div>
                             <div className="grid gap-1 min-w-[96px] flex-1">
@@ -403,8 +422,8 @@ export function WarehouseStockReceiveDialog({
           </div>
 
           <p className="text-xs text-muted-foreground">
-            Total is calculated as (Boxes × Qty/box) + Quantity. Quantity is optional leftover units.
-            Assign all remaining units before confirming.
+            Total is calculated as (Boxes × Qty/box) + (Loose Boxes × Loose Qty). Leave loose fields
+            blank, or fill both. Assign all remaining units before confirming.
           </p>
 
           <div className="grid gap-2">
