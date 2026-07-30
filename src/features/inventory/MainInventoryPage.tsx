@@ -61,6 +61,8 @@ type OpenPoReservationDetail = {
   quantity_fulfilled: number;
   remaining: number;
   status: string;
+  /** hard = warehouse-approved reservation; soft = pending PO commitment */
+  reservation_kind: 'hard' | 'soft';
 };
 
 export default function MainInventoryPage() {
@@ -742,7 +744,7 @@ export default function MainInventoryPage() {
     let cancelled = false;
     void (async () => {
       try {
-        let query = supabase
+        let hardQuery = supabase
           .from('warehouse_transfer_reservations')
           .select(
             'variant_id,warehouse_location_id,quantity_reserved,quantity_fulfilled,status,purchase_order_id,purchase_orders:purchase_order_id(po_number),warehouse_locations:warehouse_location_id(is_main)'
@@ -750,13 +752,62 @@ export default function MainInventoryPage() {
           .eq('warehouse_company_id', user.company_id)
           .in('status', ['reserved', 'partial']);
 
+        let softQuery = supabase
+          .from('warehouse_transfer_soft_reservations')
+          .select(
+            'variant_id,warehouse_location_id,quantity_committed,status,purchase_order_id,purchase_orders:purchase_order_id(po_number),warehouse_locations:warehouse_location_id(is_main)'
+          )
+          .eq('warehouse_company_id', user.company_id)
+          .eq('status', 'active');
+
         if (membership.locationId) {
-          query = query.eq('warehouse_location_id', membership.locationId);
+          hardQuery = hardQuery.eq('warehouse_location_id', membership.locationId);
+          softQuery = softQuery.eq('warehouse_location_id', membership.locationId);
         }
 
-        const { data, error } = await query;
+        const [{ data, error }, { data: softData, error: softError }] = await Promise.all([
+          hardQuery,
+          softQuery,
+        ]);
         if (error) throw error;
+        if (softError) throw softError;
         if (cancelled) return;
+
+        const poIds = new Set<string>();
+        for (const row of data || []) {
+          if ((row as any).purchase_order_id) poIds.add(String((row as any).purchase_order_id));
+        }
+        for (const row of softData || []) {
+          if ((row as any).purchase_order_id) poIds.add(String((row as any).purchase_order_id));
+        }
+
+        // Key Account soft POs are often hidden from warehouse RLS — resolve numbers via RPC.
+        const poNumberById: Record<string, string> = {};
+        const poIdList = Array.from(poIds);
+        if (poIdList.length > 0) {
+          const { data: poLabels, error: poLabelErr } = await supabase.rpc(
+            'get_warehouse_transfer_po_numbers',
+            { p_po_ids: poIdList }
+          );
+          if (poLabelErr) {
+            console.warn('[MainInventory] PO number resolve failed', poLabelErr);
+          } else {
+            for (const row of poLabels || []) {
+              const id = String((row as any).purchase_order_id || '');
+              const num = String((row as any).po_number || '').trim();
+              if (id && num) poNumberById[id] = num;
+            }
+          }
+        }
+
+        const resolvePoNumber = (purchaseOrderId: string, nestedPo: any) => {
+          const fromJoin = String(nestedPo?.po_number || '').trim();
+          if (fromJoin) return fromJoin;
+          const fromRpc = poNumberById[purchaseOrderId];
+          if (fromRpc) return fromRpc;
+          return '—';
+        };
+
         const map: Record<string, number> = {};
         const detailsMap: Record<string, OpenPoReservationDetail[]> = {};
         for (const row of data || []) {
@@ -776,13 +827,42 @@ export default function MainInventoryPage() {
           const po = Array.isArray((row as any).purchase_orders)
             ? (row as any).purchase_orders[0]
             : (row as any).purchase_orders;
+          const purchaseOrderId = String((row as any).purchase_order_id);
           const detail: OpenPoReservationDetail = {
-            purchase_order_id: String((row as any).purchase_order_id),
-            po_number: String(po?.po_number || (row as any).purchase_order_id?.slice(0, 8) || '—'),
+            purchase_order_id: purchaseOrderId,
+            po_number: resolvePoNumber(purchaseOrderId, po),
             quantity_reserved: Number((row as any).quantity_reserved || 0),
             quantity_fulfilled: Number((row as any).quantity_fulfilled || 0),
             remaining,
             status: String((row as any).status || 'reserved'),
+            reservation_kind: 'hard',
+          };
+          const list = detailsMap[vid] ?? [];
+          list.push(detail);
+          detailsMap[vid] = list;
+        }
+        for (const row of softData || []) {
+          const loc = Array.isArray((row as any).warehouse_locations)
+            ? (row as any).warehouse_locations[0]
+            : (row as any).warehouse_locations;
+          if (!membership.locationId && !loc?.is_main) continue;
+          const remaining = Math.max(0, Number((row as any).quantity_committed || 0));
+          if (remaining <= 0) continue;
+          const vid = String((row as any).variant_id);
+          map[vid] = (map[vid] || 0) + remaining;
+
+          const po = Array.isArray((row as any).purchase_orders)
+            ? (row as any).purchase_orders[0]
+            : (row as any).purchase_orders;
+          const purchaseOrderId = String((row as any).purchase_order_id);
+          const detail: OpenPoReservationDetail = {
+            purchase_order_id: purchaseOrderId,
+            po_number: resolvePoNumber(purchaseOrderId, po),
+            quantity_reserved: remaining,
+            quantity_fulfilled: 0,
+            remaining,
+            status: 'pending',
+            reservation_kind: 'soft',
           };
           const list = detailsMap[vid] ?? [];
           list.push(detail);
@@ -851,8 +931,12 @@ export default function MainInventoryPage() {
 
   const getPoReservationStatusLabel = (status: string) => {
     if (status === 'partial') return 'Partial';
-    return 'Full';
+    if (status === 'pending') return 'Pending approval';
+    return 'Approved';
   };
+
+  const getPoReservationKindLabel = (kind?: 'hard' | 'soft') =>
+    kind === 'soft' ? 'Soft reserved' : 'Hard reserved';
 
   const openPoReservedDialog = (brandName: string, variantName: string, variant: Variant) => {
     const items = poReservedDetailsByVariantId[variant.id] ?? [];
@@ -908,7 +992,7 @@ export default function MainInventoryPage() {
       <TableCell
         className="text-violet-700 font-medium text-center cursor-pointer hover:underline hover:bg-violet-50/50"
         onClick={() => openPoReservedDialog(brandName, variant.name, variant)}
-        title={`${qty} unit${qty === 1 ? '' : 's'} committed to approved transfer POs — click to view`}
+        title={`${qty} unit${qty === 1 ? '' : 's'} held by open/pending transfer POs — click to view`}
       >
         {qty}
       </TableCell>
@@ -2581,11 +2665,31 @@ export default function MainInventoryPage() {
                   {' — '}
                   {poReservedDialog.variantName}
                   {' · '}
-                  {poReservedDialog.totalReserved} unit{poReservedDialog.totalReserved === 1 ? '' : 's'} committed to
-                  approved transfer POs awaiting dispatch
+                  {poReservedDialog.totalReserved} unit
+                  {poReservedDialog.totalReserved === 1 ? '' : 's'} held by open transfer POs
                 </>
               )}
             </p>
+            <div className="flex flex-col gap-1.5 pt-1 text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Badge
+                  variant="outline"
+                  className="bg-violet-50 text-violet-800 border-violet-200 text-[10px] font-medium"
+                >
+                  Hard reserved
+                </Badge>
+                <span>- Warehouse-approved, awaiting dispatch</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Badge
+                  variant="outline"
+                  className="bg-sky-50 text-sky-800 border-sky-200 text-[10px] font-medium"
+                >
+                  Soft reserved
+                </Badge>
+                <span>- Pending PO (not warehouse-approved yet)</span>
+              </div>
+            </div>
           </DialogHeader>
 
           <div className="flex-1 min-h-0 overflow-y-auto">
@@ -2594,6 +2698,7 @@ export default function MainInventoryPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>PO #</TableHead>
+                    <TableHead>Type</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Reserved</TableHead>
                     <TableHead className="text-right">Fulfilled</TableHead>
@@ -2602,7 +2707,7 @@ export default function MainInventoryPage() {
                 </TableHeader>
                 <TableBody>
                   {poReservedDialog.items.map((item) => (
-                    <TableRow key={`${item.purchase_order_id}-${item.remaining}`}>
+                    <TableRow key={`${item.reservation_kind}-${item.purchase_order_id}-${item.remaining}`}>
                       <TableCell className="font-mono text-sm whitespace-nowrap">
                         <Link
                           to="/purchase-orders"
@@ -2616,9 +2721,23 @@ export default function MainInventoryPage() {
                         <Badge
                           variant="outline"
                           className={
+                            item.reservation_kind === 'soft'
+                              ? 'bg-sky-50 text-sky-800 border-sky-200 text-xs'
+                              : 'bg-violet-50 text-violet-800 border-violet-200 text-xs'
+                          }
+                        >
+                          {getPoReservationKindLabel(item.reservation_kind)}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="outline"
+                          className={
                             item.status === 'partial'
                               ? 'bg-amber-50 text-amber-800 border-amber-200 text-xs'
-                              : 'bg-violet-50 text-violet-800 border-violet-200 text-xs'
+                              : item.status === 'pending'
+                                ? 'bg-sky-50 text-sky-800 border-sky-200 text-xs'
+                                : 'bg-emerald-50 text-emerald-800 border-emerald-200 text-xs'
                           }
                         >
                           {getPoReservationStatusLabel(item.status)}

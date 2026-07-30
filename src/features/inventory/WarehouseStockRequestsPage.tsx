@@ -131,6 +131,8 @@ type StockRequestRow = {
       quantity: number;
       box_count: number | null;
       units_per_box: number | null;
+      loose_box_count: number | null;
+      loose_qty: number | null;
       extra_qty: number;
       manufactured_date: string | null;
       expiration_date: string | null;
@@ -206,16 +208,29 @@ function getRequestBrandLabel(req: StockRequestRow): string {
 function formatReceivePacking(line: {
   box_count: number | null;
   units_per_box: number | null;
-  extra_qty: number;
+  loose_box_count?: number | null;
+  loose_qty?: number | null;
+  extra_qty?: number;
 }): string {
   const boxes = line.box_count;
   const perBox = line.units_per_box;
-  const extra = line.extra_qty ?? 0;
+  const looseBoxes = line.loose_box_count ?? 0;
+  const looseQty = line.loose_qty ?? 0;
+  const legacyExtra = line.extra_qty ?? 0;
+
   if (boxes != null && perBox != null) {
-    if (extra > 0) return `${boxes} × ${perBox} + ${extra}`;
-    return `${boxes} × ${perBox}`;
+    const boxed = `Boxes ${boxes} × ${perBox}`;
+    if (looseBoxes > 0 || looseQty > 0) {
+      return `${boxed} + Loose ${looseBoxes} × ${looseQty}`;
+    }
+    // Legacy rows saved as leftover units before loose pair existed
+    if (legacyExtra > 0 && looseBoxes === 0 && looseQty === 0) {
+      return `${boxed} + Loose ${legacyExtra}`;
+    }
+    return boxed;
   }
-  if (extra > 0) return String(extra);
+  if (looseBoxes > 0 || looseQty > 0) return `Loose ${looseBoxes} × ${looseQty}`;
+  if (legacyExtra > 0) return `Loose ${legacyExtra}`;
   return '—';
 }
 
@@ -258,6 +273,8 @@ function mapRequestRow(raw: Record<string, unknown>): StockRequestRow {
         quantity: line.quantity as number,
         box_count: (line.box_count as number | null) ?? null,
         units_per_box: (line.units_per_box as number | null) ?? null,
+        loose_box_count: (line.loose_box_count as number | null) ?? null,
+        loose_qty: (line.loose_qty as number | null) ?? null,
         extra_qty: (line.extra_qty as number | null) ?? 0,
         manufactured_date: (line.manufactured_date as string | null) ?? null,
         expiration_date: (line.expiration_date as string | null) ?? null,
@@ -405,6 +422,8 @@ export default function WarehouseStockRequestsPage() {
               quantity,
               box_count,
               units_per_box,
+              loose_box_count,
+              loose_qty,
               extra_qty,
               manufactured_date,
               expiration_date,
@@ -1332,6 +1351,8 @@ export default function WarehouseStockRequestsPage() {
                                           quantity: line.quantity,
                                           boxCount: line.box_count,
                                           unitsPerBox: line.units_per_box,
+                                          looseBoxCount: line.loose_box_count,
+                                          looseQty: line.loose_qty,
                                           extraQty: line.extra_qty,
                                           manufacturedDate: line.manufactured_date,
                                           expirationDate: line.expiration_date,
@@ -1351,7 +1372,12 @@ export default function WarehouseStockRequestsPage() {
                                     <TableHeader>
                                       <TableRow>
                                         <TableHead>Item</TableHead>
-                                        <TableHead>Packing</TableHead>
+                                        <TableHead>
+                                          Packing
+                                          <span className="block text-[10px] font-normal text-muted-foreground">
+                                            Boxes × Qty/box + Loose × Loose qty
+                                          </span>
+                                        </TableHead>
                                         <TableHead className="text-right">Qty</TableHead>
                                         <TableHead>Expiry</TableHead>
                                       </TableRow>

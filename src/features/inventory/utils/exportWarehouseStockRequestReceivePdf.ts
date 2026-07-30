@@ -10,6 +10,9 @@ export type StockRequestReceiveLinePdf = {
   quantity: number;
   boxCount?: number | null;
   unitsPerBox?: number | null;
+  looseBoxCount?: number | null;
+  looseQty?: number | null;
+  /** Legacy leftover units before loose pair existed. */
   extraQty?: number | null;
   manufacturedDate?: string | null;
   expirationDate?: string | null;
@@ -43,12 +46,22 @@ function fmtQty(n: number | null | undefined): string {
 function formatPacking(line: StockRequestReceiveLinePdf): string {
   const boxes = line.boxCount;
   const perBox = line.unitsPerBox;
-  const extra = line.extraQty ?? 0;
+  const looseBoxes = line.looseBoxCount ?? 0;
+  const looseQty = line.looseQty ?? 0;
+  const legacyExtra = line.extraQty ?? 0;
+
   if (boxes != null && perBox != null) {
-    if (extra > 0) return `${fmtQty(boxes)} × ${fmtQty(perBox)} + ${fmtQty(extra)}`;
-    return `${fmtQty(boxes)} × ${fmtQty(perBox)}`;
+    const boxed = `Boxes ${fmtQty(boxes)} × ${fmtQty(perBox)}`;
+    if (looseBoxes > 0 || looseQty > 0) {
+      return `${boxed} + Loose ${fmtQty(looseBoxes)} × ${fmtQty(looseQty)}`;
+    }
+    if (legacyExtra > 0) return `${boxed} + Loose ${fmtQty(legacyExtra)}`;
+    return boxed;
   }
-  if (extra > 0) return fmtQty(extra);
+  if (looseBoxes > 0 || looseQty > 0) {
+    return `Loose ${fmtQty(looseBoxes)} × ${fmtQty(looseQty)}`;
+  }
+  if (legacyExtra > 0) return `Loose ${fmtQty(legacyExtra)}`;
   return '—';
 }
 
@@ -332,7 +345,7 @@ function buildStockRequestReceiveHtml(
       <thead>
         <tr>
           <th class="col-desc">Item</th>
-          <th class="col-pack">Packing</th>
+          <th class="col-pack">Packing<br /><span style="font-weight:600;font-size:9px;color:#666">Boxes × Qty/box + Loose × Loose qty</span></th>
           <th class="col-qty">Qty</th>
           <th class="col-date">Expiry</th>
         </tr>

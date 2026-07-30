@@ -179,7 +179,12 @@ export function CreatePurchaseOrderDialog({
         let cancelled = false;
         (async () => {
             // Fetch stock from both main_inventory and warehouse_location_inventory
-            const [{ data: mainInvData, error: mainInvError }, { data: locInvData, error: locInvError }, { data: reservedData }] = await Promise.all([
+            const [
+                { data: mainInvData, error: mainInvError },
+                { data: locInvData, error: locInvError },
+                { data: reservedData },
+                { data: softReservedData },
+            ] = await Promise.all([
                 supabase
                     .from('main_inventory')
                     .select('variant_id, stock, allocated_stock')
@@ -196,6 +201,12 @@ export function CreatePurchaseOrderDialog({
                     .eq('warehouse_company_id', linkedWarehouseCompanyId)
                     .in('variant_id', variantIds)
                     .in('status', ['reserved', 'partial']),
+                supabase
+                    .from('warehouse_transfer_soft_reservations')
+                    .select('variant_id, warehouse_location_id, quantity_committed, status')
+                    .eq('warehouse_company_id', linkedWarehouseCompanyId)
+                    .in('variant_id', variantIds)
+                    .eq('status', 'active'),
             ]);
 
             console.log('[CreatePO] Stock fetch debug:', {
@@ -221,9 +232,15 @@ export function CreatePurchaseOrderDialog({
                 const key = `${row.variant_id}::${row.warehouse_location_id}`;
                 reservedByLocVar[key] = (reservedByLocVar[key] || 0) + remaining;
             }
+            for (const row of softReservedData || []) {
+                const committed = Math.max(0, Number(row.quantity_committed || 0));
+                if (committed <= 0) continue;
+                const key = `${row.variant_id}::${row.warehouse_location_id}`;
+                reservedByLocVar[key] = (reservedByLocVar[key] || 0) + committed;
+            }
 
             // Map main inventory stock (location_id = main warehouse id)
-            // Calculate available = stock - allocated_stock - open PO reservations
+            // available = stock - allocated_stock - hard reservations - soft (pending PO) commitments
             if (mainWarehouseLocationId && mainInvData) {
                 for (const row of mainInvData) {
                     const key = `${row.variant_id}::${mainWarehouseLocationId}`;
@@ -243,7 +260,7 @@ export function CreatePurchaseOrderDialog({
                 console.log('[CreatePO] Main inventory NOT mapped:', { mainWarehouseLocationId: !!mainWarehouseLocationId, hasData: !!mainInvData });
             }
 
-            // Map sub-warehouse inventory stock (minus open reservations at that location)
+            // Map sub-warehouse inventory stock (minus hard + soft reservations at that location)
             if (locInvData) {
                 for (const row of locInvData) {
                     const key = `${row.variant_id}::${row.location_id}`;

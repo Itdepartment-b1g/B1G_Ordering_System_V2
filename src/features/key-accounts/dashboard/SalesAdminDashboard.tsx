@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
+import { fetchAllPaginated } from '@/lib/supabasePaginate';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
@@ -305,30 +306,35 @@ export function SalesAdminDashboard() {
         .eq('company_id', user?.company_id)
         .eq('status', 'active');
 
-      // Get orders and revenue
-      const { data: orders, error: ordersError } = await supabase
-        .from('purchase_orders')
-        .select(`
-          id,
-          total_amount,
-          subtotal,
-          status,
-          workflow_status,
-          po_order_kind,
-          source_rebate_id,
-          warehouse_location_id,
-          order_date,
-          key_account_client_id,
-          client:key_account_clients(client_name)
-        `)
-        .eq('company_id', user?.company_id)
-        .eq('company_account_type', 'Key Accounts')
-        .gte('order_date', `${selectedYear}-01-01`)
-        .lte('order_date', `${selectedYear}-12-31`);
+      // Get orders and revenue (paged — PostgREST caps at 1000 rows per request)
+      const orderRows = await fetchAllPaginated<AdminOrderRow>(async (from, to) => {
+        const { data, error } = await supabase
+          .from('purchase_orders')
+          .select(`
+            id,
+            po_number,
+            total_amount,
+            subtotal,
+            status,
+            workflow_status,
+            po_order_kind,
+            source_rebate_id,
+            warehouse_location_id,
+            order_date,
+            key_account_client_id,
+            key_account_payment_status,
+            client:key_account_clients(client_name)
+          `)
+          .eq('company_id', user?.company_id)
+          .eq('company_account_type', 'Key Accounts')
+          .gte('order_date', `${selectedYear}-01-01`)
+          .lte('order_date', `${selectedYear}-12-31`)
+          .order('order_date', { ascending: true })
+          .order('id', { ascending: true })
+          .range(from, to);
+        return { data: (data as AdminOrderRow[] | null) ?? null, error };
+      });
 
-      if (ordersError) throw ordersError;
-
-      const orderRows = (orders || []) as AdminOrderRow[];
       const revenueResult = await loadKeyAccountDashboardRevenue(supabase, orderRows, selectedYear);
       setRevenueMetrics(revenueResult);
 
@@ -444,6 +450,8 @@ export function SalesAdminDashboard() {
         monthlyData={revenueMetrics.monthlyData}
         selectedYear={selectedYear}
         onYearChange={setSelectedYear}
+        orders={revenueMetrics.orders}
+        payments={revenueMetrics.payments}
       />
 
       {/* Product Purchase Breakdown */}

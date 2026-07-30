@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
@@ -21,6 +22,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -33,7 +43,19 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Plus, Trash2, Package, Building2, Store, MapPin, Loader2, Save, CreditCard } from 'lucide-react';
+import {
+  Plus,
+  Trash2,
+  Package,
+  Building2,
+  Store,
+  MapPin,
+  Loader2,
+  Save,
+  CreditCard,
+  Check,
+  ChevronsUpDown,
+} from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import type {
   KeyAccountClient,
@@ -47,6 +69,8 @@ import {
   KeyAccountAddShopDialog,
 } from '@/features/key-accounts/components/KeyAccountShopAddressDialogs';
 import { KeyAccountPaymentProofUploadField } from '@/features/key-accounts/components/KeyAccountPaymentProofPreview';
+
+const CLIENT_PAGE_SIZE = 10;
 
 interface POItem {
   id: string;
@@ -78,21 +102,35 @@ interface Warehouse {
 export function KeyAccountPurchaseOrderPage() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const navigate = useNavigate();
 
   // Loading states
   const [loadingClients, setLoadingClients] = useState(true);
+  const [loadingMoreClients, setLoadingMoreClients] = useState(false);
   const [loadingWarehouses, setLoadingWarehouses] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
   // Data states
   const [clients, setClients] = useState<KeyAccountClient[]>([]);
+  const [clientsHasMore, setClientsHasMore] = useState(false);
+  const [clientSearch, setClientSearch] = useState('');
+  const [clientPickerOpen, setClientPickerOpen] = useState(false);
+  const [selectedClient, setSelectedClient] = useState<KeyAccountClient | null>(null);
+  const kamAssignedClientIdsRef = useRef<string[] | null>(null);
+  const clientFetchGenRef = useRef(0);
   const [shops, setShops] = useState<KeyAccountShop[]>([]);
   const [addresses, setAddresses] = useState<KeyAccountDeliveryAddress[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [linkedWarehouseCompanyId, setLinkedWarehouseCompanyId] = useState<string | null>(null);
   const [brands, setBrands] = useState<any[]>([]);
   const [variants, setVariants] = useState<any[]>([]);
+  /** Available-to-order qty by `${variantId}::${locationId}` */
   const [stockMap, setStockMap] = useState<Record<string, number>>({});
+  /** On-hand (physical) qty by same key — for stock modal breakdown */
+  const [onHandMap, setOnHandMap] = useState<Record<string, number>>({});
+  /** Open PO holds (hard + soft) by same key */
+  const [reservedMap, setReservedMap] = useState<Record<string, number>>({});
+  const [stockLoading, setStockLoading] = useState(false);
 
   // UI state: warehouse stock modal
   const [stockModalOpen, setStockModalOpen] = useState(false);
@@ -134,7 +172,6 @@ export function KeyAccountPurchaseOrderPage() {
   const [itemUnitPrice, setItemUnitPrice] = useState(0);
 
   // Derived data
-  const selectedClient = clients.find((c) => c.id === selectedClientId);
   const selectedShop = shops.find((s) => s.id === selectedShopId);
   const selectedAddress = addresses.find((a) => a.id === selectedAddressId);
   const activeLocationId =
@@ -162,10 +199,21 @@ export function KeyAccountPurchaseOrderPage() {
     return 'bg-emerald-600 text-white';
   };
 
+  const stockKey = (variantId: string, locationId: string) => `${variantId}::${locationId}`;
+
   const getVariantStock = (variantId: string, locationId: string) => {
     if (!variantId || !locationId) return null;
-    const key = `${variantId}::${locationId}`;
-    return stockMap[key] ?? null;
+    return stockMap[stockKey(variantId, locationId)] ?? null;
+  };
+
+  const getVariantOnHand = (variantId: string, locationId: string) => {
+    if (!variantId || !locationId) return null;
+    return onHandMap[stockKey(variantId, locationId)] ?? null;
+  };
+
+  const getVariantReserved = (variantId: string, locationId: string) => {
+    if (!variantId || !locationId) return 0;
+    return reservedMap[stockKey(variantId, locationId)] ?? 0;
   };
 
   const stockedVariantIdsForActiveLocation = useMemo(() => {
@@ -222,11 +270,19 @@ export function KeyAccountPurchaseOrderPage() {
     return (selectedClient?.payment_terms || '').trim();
   }, [paymentTermsSource, paymentTermsCustom, selectedClient?.payment_terms]);
 
-  // Fetch initial data
+  // Fetch warehouses on mount; clients load via search/pagination effect below
   useEffect(() => {
-    fetchClients();
     fetchWarehouses();
   }, []);
+
+  // Debounced searchable client list (10 at a time)
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      void fetchClients({ search: clientSearch, append: false });
+    }, clientSearch.trim() ? 300 : 0);
+    return () => window.clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchClients closes over latest user/search
+  }, [clientSearch, user?.company_id, user?.id, user?.role]);
 
   // Fetch shops when client changes
   useEffect(() => {
@@ -262,78 +318,171 @@ export function KeyAccountPurchaseOrderPage() {
     setSelectedVariantId('');
   }, [selectedBrandId]);
 
-  // Load stock for all linked warehouse locations (supports single + multi source modes)
-  useEffect(() => {
+  const loadWarehouseAvailableStock = async () => {
     if (!linkedWarehouseCompanyId) {
       setStockMap({});
+      setOnHandMap({});
+      setReservedMap({});
       return;
     }
     if (!variants || variants.length === 0) {
       setStockMap({});
+      setOnHandMap({});
+      setReservedMap({});
       return;
     }
 
-    let cancelled = false;
-    (async () => {
-      try {
-        const variantIds = variants.map((v) => v.id).filter(Boolean);
-        if (variantIds.length === 0) {
-          if (!cancelled) setStockMap({});
-          return;
+    const variantIds = variants.map((v) => v.id).filter(Boolean);
+    if (variantIds.length === 0) {
+      setStockMap({});
+      setOnHandMap({});
+      setReservedMap({});
+      return;
+    }
+
+    setStockLoading(true);
+    try {
+      // Preferred: SECURITY DEFINER RPC (includes soft open POs across linked tenants)
+      const { data: rpcRows, error: rpcErr } = await supabase.rpc(
+        'get_linked_warehouse_available_stock',
+        {
+          p_warehouse_company_id: linkedWarehouseCompanyId,
+          p_variant_ids: variantIds,
         }
+      );
 
-        const [{ data: mainInvData, error: mainInvErr }, { data: locInvData, error: locInvErr }] =
-          await Promise.all([
-            supabase
-              .from('main_inventory')
-              .select('variant_id, stock, allocated_stock')
-              .eq('company_id', linkedWarehouseCompanyId)
-              .in('variant_id', variantIds),
-            supabase
-              .from('warehouse_location_inventory')
-              .select('variant_id, location_id, stock')
-              .eq('company_id', linkedWarehouseCompanyId)
-              .in('variant_id', variantIds),
-          ]);
-
-        if (mainInvErr) throw mainInvErr;
-        if (locInvErr) throw locInvErr;
-        if (cancelled) return;
-
-        const next: Record<string, number> = {};
-
-        if (mainWarehouseLocationId && mainInvData) {
-          for (const row of mainInvData as any[]) {
-            const stock = row.stock || 0;
-            const allocated = row.allocated_stock || 0;
-            const available = Math.max(0, stock - allocated);
-            next[`${row.variant_id}::${mainWarehouseLocationId}`] = available;
-          }
+      if (!rpcErr && Array.isArray(rpcRows)) {
+        const nextAvail: Record<string, number> = {};
+        const nextOnHand: Record<string, number> = {};
+        const nextReserved: Record<string, number> = {};
+        for (const row of rpcRows as any[]) {
+          if (!row?.variant_id || !row?.location_id) continue;
+          const key = stockKey(String(row.variant_id), String(row.location_id));
+          const hard = Math.max(0, Number(row.hard_reserved || 0));
+          const soft = Math.max(0, Number(row.soft_reserved || 0));
+          nextAvail[key] = Math.max(0, Number(row.available || 0));
+          nextOnHand[key] = Math.max(0, Number(row.on_hand || 0));
+          nextReserved[key] = hard + soft;
         }
+        setStockMap(nextAvail);
+        setOnHandMap(nextOnHand);
+        setReservedMap(nextReserved);
+        return;
+      }
 
-        if (locInvData) {
-          for (const row of locInvData as any[]) {
-            next[`${row.variant_id}::${row.location_id}`] = row.stock || 0;
-          }
-        }
+      if (rpcErr) {
+        console.warn('[KA Create PO] available stock RPC unavailable, using fallback', rpcErr.message);
+      }
 
-        setStockMap(next);
-      } catch (e: any) {
-        if (!cancelled) {
-          setStockMap({});
-          toast({
-            variant: 'destructive',
-            title: 'Error loading warehouse stock',
-            description: e?.message || 'Failed to load warehouse stock',
-          });
+      const [
+        { data: mainInvData, error: mainInvErr },
+        { data: locInvData, error: locInvErr },
+        { data: reservedData },
+        { data: softReservedData },
+      ] = await Promise.all([
+        supabase
+          .from('main_inventory')
+          .select('variant_id, stock, allocated_stock')
+          .eq('company_id', linkedWarehouseCompanyId)
+          .in('variant_id', variantIds),
+        supabase
+          .from('warehouse_location_inventory')
+          .select('variant_id, location_id, stock')
+          .eq('company_id', linkedWarehouseCompanyId)
+          .in('variant_id', variantIds),
+        supabase
+          .from('warehouse_transfer_reservations')
+          .select('variant_id, warehouse_location_id, quantity_reserved, quantity_fulfilled, status')
+          .eq('warehouse_company_id', linkedWarehouseCompanyId)
+          .in('variant_id', variantIds)
+          .in('status', ['reserved', 'partial']),
+        supabase
+          .from('warehouse_transfer_soft_reservations')
+          .select('variant_id, warehouse_location_id, quantity_committed, status')
+          .eq('warehouse_company_id', linkedWarehouseCompanyId)
+          .in('variant_id', variantIds)
+          .eq('status', 'active'),
+      ]);
+
+      if (mainInvErr) throw mainInvErr;
+      if (locInvErr) throw locInvErr;
+
+      const reservedByLocVar: Record<string, number> = {};
+      for (const row of reservedData || []) {
+        const remaining = Math.max(
+          0,
+          Number((row as any).quantity_reserved || 0) - Number((row as any).quantity_fulfilled || 0)
+        );
+        if (remaining <= 0) continue;
+        const key = stockKey(String((row as any).variant_id), String((row as any).warehouse_location_id));
+        reservedByLocVar[key] = (reservedByLocVar[key] || 0) + remaining;
+      }
+      for (const row of softReservedData || []) {
+        const committed = Math.max(0, Number((row as any).quantity_committed || 0));
+        if (committed <= 0) continue;
+        const key = stockKey(String((row as any).variant_id), String((row as any).warehouse_location_id));
+        reservedByLocVar[key] = (reservedByLocVar[key] || 0) + committed;
+      }
+
+      const nextAvail: Record<string, number> = {};
+      const nextOnHand: Record<string, number> = {};
+      const nextReserved: Record<string, number> = {};
+
+      if (mainWarehouseLocationId && mainInvData) {
+        for (const row of mainInvData as any[]) {
+          const key = stockKey(String(row.variant_id), mainWarehouseLocationId);
+          const stock = Number(row.stock || 0);
+          const allocated = Number(row.allocated_stock || 0);
+          const reserved = reservedByLocVar[key] || 0;
+          nextOnHand[key] = Math.max(0, stock);
+          nextReserved[key] = reserved;
+          nextAvail[key] = Math.max(0, stock - allocated - reserved);
         }
       }
-    })();
 
-    return () => {
-      cancelled = true;
-    };
+      if (locInvData) {
+        for (const row of locInvData as any[]) {
+          const locId = String(row.location_id);
+          // Main location stock comes from main_inventory (already mapped above).
+          if (mainWarehouseLocationId && locId === mainWarehouseLocationId) continue;
+          const key = stockKey(String(row.variant_id), locId);
+          const stock = Number(row.stock || 0);
+          const reserved = reservedByLocVar[key] || 0;
+          nextOnHand[key] = Math.max(0, stock);
+          nextReserved[key] = reserved;
+          nextAvail[key] = Math.max(0, stock - reserved);
+        }
+      }
+
+      setStockMap(nextAvail);
+      setOnHandMap(nextOnHand);
+      setReservedMap(nextReserved);
+    } catch (e: any) {
+      setStockMap({});
+      setOnHandMap({});
+      setReservedMap({});
+      toast({
+        variant: 'destructive',
+        title: 'Error loading warehouse stock',
+        description: e?.message || 'Failed to load warehouse stock',
+      });
+    } finally {
+      setStockLoading(false);
+    }
+  };
+
+  // Load stock for all linked warehouse locations (supports single + multi source modes)
+  useEffect(() => {
+    void loadWarehouseAvailableStock();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkedWarehouseCompanyId, variants, mainWarehouseLocationId]);
+
+  // Refresh ATP when opening the stock modal so open POs are reflected immediately
+  useEffect(() => {
+    if (!stockModalOpen) return;
+    void loadWarehouseAvailableStock();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stockModalOpen]);
 
   // Single-warehouse mode: keep item locations aligned with the selected warehouse
   useEffect(() => {
@@ -343,47 +492,100 @@ export function KeyAccountPurchaseOrderPage() {
     );
   }, [sourceMode, selectedWarehouseLocationId]);
 
-  async function fetchClients() {
+  async function resolveKamAssignedClientIds(): Promise<string[] | null> {
+    if (user?.role !== 'key_account_manager') return null;
+    if (kamAssignedClientIdsRef.current) return kamAssignedClientIdsRef.current;
+
+    const { data: assignments, error: assignErr } = await supabase
+      .from('kam_client_assignments')
+      .select('client_id')
+      .eq('kam_id', user.id);
+
+    if (assignErr) throw assignErr;
+
+    const clientIds = (assignments ?? []).map((a) => a.client_id).filter(Boolean);
+    kamAssignedClientIdsRef.current = clientIds;
+    return clientIds;
+  }
+
+  async function fetchClients(opts: { search?: string; append?: boolean } = {}) {
     if (!user?.company_id) return;
 
+    const search = (opts.search ?? clientSearch).trim();
+    const append = opts.append ?? false;
+    const offset = append ? clients.length : 0;
+    const fetchGen = append ? clientFetchGenRef.current : ++clientFetchGenRef.current;
+
+    if (append) {
+      setLoadingMoreClients(true);
+    } else {
+      setLoadingClients(true);
+    }
+
     try {
-      // For KAMs, only show assigned clients
-      // For Sales Directors/Admins, show all clients in company
+      const kamClientIds = await resolveKamAssignedClientIds();
+      if (kamClientIds && kamClientIds.length === 0) {
+        if (fetchGen !== clientFetchGenRef.current) return;
+        setClients([]);
+        setClientsHasMore(false);
+        return;
+      }
+
       let query = supabase
         .from('key_account_clients')
         .select('*')
         .eq('company_id', user.company_id)
-        .eq('status', 'active');
+        .eq('status', 'active')
+        .order('client_name')
+        .range(offset, offset + CLIENT_PAGE_SIZE - 1);
 
-      if (user.role === 'key_account_manager') {
-        const { data: assignments, error: assignErr } = await supabase
-          .from('kam_client_assignments')
-          .select('client_id')
-          .eq('kam_id', user.id);
-
-        if (assignErr) throw assignErr;
-
-        const clientIds = (assignments ?? []).map((a) => a.client_id).filter(Boolean);
-        if (clientIds.length === 0) {
-          setClients([]);
-          return;
-        }
-        query = query.in('id', clientIds);
+      if (kamClientIds) {
+        query = query.in('id', kamClientIds);
       }
 
-      const { data, error } = await query.order('client_name');
+      if (search) {
+        // Strip chars that break PostgREST `.or()` filter parsing
+        const safe = search.replace(/[,.()]/g, ' ').replace(/%/g, '').trim();
+        if (safe) {
+          query = query.or(`client_name.ilike.%${safe}%,client_code.ilike.%${safe}%`);
+        }
+      }
+
+      const { data, error } = await query;
 
       if (error) throw error;
-      setClients(data || []);
+      if (fetchGen !== clientFetchGenRef.current) return;
+
+      const rows = (data || []) as KeyAccountClient[];
+      setClients((prev) => {
+        if (!append) return rows;
+        const seen = new Set(prev.map((c) => c.id));
+        return [...prev, ...rows.filter((c) => !seen.has(c.id))];
+      });
+      setClientsHasMore(rows.length === CLIENT_PAGE_SIZE);
     } catch (error: any) {
+      if (fetchGen !== clientFetchGenRef.current) return;
       toast({
         variant: 'destructive',
         title: 'Error loading clients',
         description: error.message,
       });
+      if (!append) {
+        setClients([]);
+        setClientsHasMore(false);
+      }
     } finally {
-      setLoadingClients(false);
+      if (fetchGen === clientFetchGenRef.current) {
+        setLoadingClients(false);
+        setLoadingMoreClients(false);
+      }
     }
+  }
+
+  function handleSelectClient(client: KeyAccountClient) {
+    setSelectedClientId(client.id);
+    setSelectedClient(client);
+    setClientPickerOpen(false);
   }
 
   async function fetchShops(clientId: string) {
@@ -843,8 +1045,7 @@ export function KeyAccountPurchaseOrderPage() {
       });
 
       setConfirmOpen(false);
-      // Reset form
-      resetForm();
+      navigate('/key-accounts/purchase-orders');
     } catch (error: any) {
       toast({
         variant: 'destructive',
@@ -870,35 +1071,17 @@ export function KeyAccountPurchaseOrderPage() {
       ? total
       : Math.round((parseFloat(String(splitFirstAmount).replace(/,/g, '')) || 0) * 100) / 100;
 
-  function resetForm() {
-    setSelectedClientId('');
-    setSelectedShopId('');
-    setSelectedAddressId('');
-    setOrderDate(new Date().toISOString().split('T')[0]);
-    setExpectedDeliveryDate('');
-    setNotes('');
-    setItems([]);
-    setTaxRate(0);
-    setDiscount(0);
-    setIsConsignment(false);
-    setPaymentTermsSource('client');
-    setPaymentTermsCustom('');
-    setPaymentMode('full');
-    setPaymentMethod('BANK_TRANSFER');
-    setBankType('BPI');
-    setSplitFirstAmount('');
-    setPaymentProofFile(null);
-    setSourceMode('single');
-    setActiveWarehouseTabId('');
-  }
-
-  if (loadingClients || loadingWarehouses) {
+  if (loadingWarehouses) {
     return (
       <div className="flex items-center justify-center h-96">
         <Loader2 className="h-8 w-8 animate-spin" />
       </div>
     );
   }
+
+  const selectedClientLabel = selectedClient
+    ? `${selectedClient.client_name} (${selectedClient.client_code})`
+    : 'Choose a client...';
 
   return (
     <div className="p-6 space-y-6">
@@ -925,18 +1108,91 @@ export function KeyAccountPurchaseOrderPage() {
               {/* Client Select */}
               <div className="space-y-2">
                 <Label>Select Client *</Label>
-                <Select value={selectedClientId} onValueChange={setSelectedClientId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Choose a client..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {clients.map((client) => (
-                      <SelectItem key={client.id} value={client.id}>
-                        {client.client_name} ({client.client_code})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Popover open={clientPickerOpen} onOpenChange={setClientPickerOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={clientPickerOpen}
+                      className="w-full justify-between font-normal"
+                    >
+                      <span
+                        className={cn(
+                          'truncate text-left',
+                          !selectedClient && 'text-muted-foreground'
+                        )}
+                      >
+                        {selectedClientLabel}
+                      </span>
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                    <Command shouldFilter={false}>
+                      <CommandInput
+                        placeholder="Search client name or code..."
+                        value={clientSearch}
+                        onValueChange={setClientSearch}
+                      />
+                      <CommandList>
+                        {loadingClients && clients.length === 0 ? (
+                          <div className="flex items-center justify-center py-6">
+                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                          </div>
+                        ) : (
+                          <>
+                            <CommandEmpty>No client found.</CommandEmpty>
+                            <CommandGroup>
+                              {clients.map((client) => (
+                                <CommandItem
+                                  key={client.id}
+                                  value={`${client.client_name} ${client.client_code || ''}`}
+                                  onSelect={() => handleSelectClient(client)}
+                                >
+                                  <Check
+                                    className={cn(
+                                      'mr-2 h-4 w-4 shrink-0',
+                                      selectedClientId === client.id ? 'opacity-100' : 'opacity-0'
+                                    )}
+                                  />
+                                  <span className="truncate">
+                                    {client.client_name} ({client.client_code})
+                                  </span>
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                            {clientsHasMore && (
+                              <div className="border-t p-1">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="w-full"
+                                  disabled={loadingMoreClients || loadingClients}
+                                  onMouseDown={(e) => {
+                                    // Keep popover open while loading more
+                                    e.preventDefault();
+                                  }}
+                                  onClick={() => void fetchClients({ append: true })}
+                                >
+                                  {loadingMoreClients ? (
+                                    <>
+                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                      Loading...
+                                    </>
+                                  ) : (
+                                    'See more'
+                                  )}
+                                </Button>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
               </div>
 
               {/* Shop Select */}
@@ -1260,14 +1516,20 @@ export function KeyAccountPurchaseOrderPage() {
             <DialogContent className="max-w-[95vw] w-[1100px] max-h-[90vh] overflow-hidden flex flex-col">
               <DialogHeader>
                 <DialogTitle>Warehouse stock</DialogTitle>
+                <DialogDescription>
+                  Numbers show <span className="font-medium text-foreground">available to order</span>
+                  {' '}(on hand minus open / pending PO commitments).
+                </DialogDescription>
               </DialogHeader>
 
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div className="text-sm text-muted-foreground">
                   {selectedWarehouse?.location_name ? (
                     <>
-                      Viewing stock for <span className="font-medium text-foreground">{selectedWarehouse.location_name}</span>
+                      Viewing available stock for{' '}
+                      <span className="font-medium text-foreground">{selectedWarehouse.location_name}</span>
                       {selectedWarehouse.is_main ? ' (Main)' : ''}
+                      {stockLoading ? <span className="ml-2 text-xs">(refreshing…)</span> : null}
                     </>
                   ) : (
                     'Select a warehouse to view stock.'
@@ -1293,7 +1555,7 @@ export function KeyAccountPurchaseOrderPage() {
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span className="h-3 w-3 rounded-sm bg-emerald-600" />
-                  In stock
+                  Available
                 </span>
               </div>
 
@@ -1379,11 +1641,18 @@ export function KeyAccountPurchaseOrderPage() {
                                   <div key={typeKey} className="flex min-h-0 min-w-[7.5rem] flex-1 flex-col">
                                     <div className="max-h-[min(55vh,520px)] min-h-[120px] flex-1 overflow-y-auto overflow-x-hidden">
                                       {(list as any[]).map((v) => {
-                                        const s = displayedStockFor(v.id);
+                                        const available = displayedStockFor(v.id);
+                                        const reserved = getVariantReserved(v.id, stockViewLocationId);
+                                        const onHand = getVariantOnHand(v.id, stockViewLocationId);
+                                        const title =
+                                          reserved > 0
+                                            ? `Available ${available.toLocaleString()} (on hand ${(onHand ?? available + reserved).toLocaleString()}, ${reserved.toLocaleString()} held on open POs)`
+                                            : `Available ${available.toLocaleString()}`;
                                         return (
                                           <div
                                             key={v.id}
                                             className="flex items-center gap-2 border-b border-border px-2 py-1.5 text-xs leading-snug min-h-[2.25rem]"
+                                            title={title}
                                           >
                                             <span className="flex-1 min-w-0 text-left font-medium text-foreground break-words">
                                               {v.name}
@@ -1391,10 +1660,10 @@ export function KeyAccountPurchaseOrderPage() {
                                             <span
                                               className={[
                                                 'shrink-0 rounded-md px-2 py-0.5 text-[11px] font-bold tabular-nums min-w-[2.75rem] text-center',
-                                                stockBadgeClass(s),
+                                                stockBadgeClass(available),
                                               ].join(' ')}
                                             >
-                                              {s}
+                                              {available.toLocaleString()}
                                             </span>
                                           </div>
                                         );
@@ -1402,7 +1671,7 @@ export function KeyAccountPurchaseOrderPage() {
                                     </div>
                                     <div className="mt-auto flex shrink-0 items-center justify-between gap-2 border-t border-primary/20 bg-primary px-2 py-2 text-[10px] font-bold uppercase tracking-wide text-primary-foreground">
                                       <span className="min-w-0 leading-tight">{totalLabelForType(typeKey)}:</span>
-                                      <span className="shrink-0 tabular-nums">{sum}</span>
+                                      <span className="shrink-0 tabular-nums">{sum.toLocaleString()}</span>
                                     </div>
                                   </div>
                                 );

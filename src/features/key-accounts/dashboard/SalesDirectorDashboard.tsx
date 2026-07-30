@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
+import { fetchAllPaginated } from '@/lib/supabasePaginate';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -249,35 +250,44 @@ export function SalesDirectorDashboard() {
 
       setClients(clientsWithOrders);
 
-      // Get all orders from my KAMs
-      const { data: ordersData, error: ordersError } = await supabase
-        .from('purchase_orders')
-        .select(`
-          id,
-          total_amount,
-          subtotal,
-          status,
-          workflow_status,
-          po_order_kind,
-          source_rebate_id,
-          warehouse_location_id,
-          order_date,
-          dr_number,
-          key_account_client_id,
-          client:key_account_clients(client_name),
-          shop:key_account_shops(shop_name),
-          kam:profiles!purchase_orders_kam_id_fkey(full_name)
-        `)
-        .eq('company_id', user?.company_id)
-        .in('kam_id', kamIds)
-        .eq('company_account_type', 'Key Accounts')
-        .gte('order_date', `${selectedYear}-01-01`)
-        .lte('order_date', `${selectedYear}-12-31`)
-        .order('order_date', { ascending: false });
+      // Get all orders from my KAMs (paged — PostgREST caps at 1000 rows per request)
+      const analyticsOrders = await fetchAllPaginated<KeyAccountDashboardOrder & {
+        client?: { client_name: string | null } | { client_name: string | null }[] | null;
+        shop?: { shop_name: string | null } | { shop_name: string | null }[] | null;
+        kam?: { full_name: string | null } | { full_name: string | null }[] | null;
+        dr_number?: string | null;
+      }>(async (from, to) => {
+        const { data, error } = await supabase
+          .from('purchase_orders')
+          .select(`
+            id,
+            po_number,
+            total_amount,
+            subtotal,
+            status,
+            workflow_status,
+            po_order_kind,
+            source_rebate_id,
+            warehouse_location_id,
+            order_date,
+            dr_number,
+            key_account_client_id,
+            key_account_payment_status,
+            client:key_account_clients(client_name),
+            shop:key_account_shops(shop_name),
+            kam:profiles!purchase_orders_kam_id_fkey(full_name)
+          `)
+          .eq('company_id', user?.company_id)
+          .in('kam_id', kamIds)
+          .eq('company_account_type', 'Key Accounts')
+          .gte('order_date', `${selectedYear}-01-01`)
+          .lte('order_date', `${selectedYear}-12-31`)
+          .order('order_date', { ascending: false })
+          .order('id', { ascending: true })
+          .range(from, to);
+        return { data: (data as any[] | null) ?? null, error };
+      });
 
-      if (ordersError) throw ordersError;
-
-      const analyticsOrders = (ordersData || []) as KeyAccountDashboardOrder[];
       const revenueResult = await loadKeyAccountDashboardRevenue(
         supabase,
         analyticsOrders,
@@ -285,17 +295,17 @@ export function SalesDirectorDashboard() {
       );
       setRevenueMetrics(revenueResult);
 
-      const formattedOrders: DirectorOrder[] = ordersData?.map((o: any) => ({
+      const formattedOrders: DirectorOrder[] = analyticsOrders.map((o: any) => ({
         id: o.id,
-        client_name: o.client?.client_name || 'Unknown',
-        shop_name: o.shop?.shop_name || 'Unknown',
-        kam_name: o.kam?.full_name || 'Unknown',
+        client_name: Array.isArray(o.client) ? o.client?.[0]?.client_name : o.client?.client_name || 'Unknown',
+        shop_name: Array.isArray(o.shop) ? o.shop?.[0]?.shop_name : o.shop?.shop_name || 'Unknown',
+        kam_name: Array.isArray(o.kam) ? o.kam?.[0]?.full_name : o.kam?.full_name || 'Unknown',
         total_amount: o.total_amount,
         status: o.status,
         workflow_status: o.workflow_status,
         order_date: o.order_date,
         dr_number: o.dr_number
-      })) || [];
+      }));
 
       setOrders(formattedOrders);
 
@@ -475,6 +485,8 @@ export function SalesDirectorDashboard() {
         monthlyData={revenueMetrics.monthlyData}
         selectedYear={selectedYear}
         onYearChange={setSelectedYear}
+        orders={revenueMetrics.orders}
+        payments={revenueMetrics.payments}
       />
 
       {/* Main Tabs */}

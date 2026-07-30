@@ -1,6 +1,8 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { isDateInRange } from '@/lib/dateRangePresets';
+import { fetchAllPaginated } from '@/lib/supabasePaginate';
 import {
+  firstRelation,
   getKeyAccountProductWorkflowBucket,
   isKeyAccountAnalyticsEligibleOrder,
   isKeyAccountConsignmentOrder,
@@ -12,10 +14,15 @@ import {
 
 export interface KeyAccountDashboardOrder extends KeyAccountProductAnalyticsOrderRef {
   order_date: string;
+  po_number?: string | null;
   status?: string | null;
   key_account_client_id?: string | null;
   key_account_payment_status?: string | null;
   key_account_payment_mode?: string | null;
+  client?:
+    | { client_name: string | null }
+    | { client_name: string | null }[]
+    | null;
 }
 
 export interface KeyAccountDashboardPaymentSummary {
@@ -49,6 +56,10 @@ export interface KeyAccountDashboardMonthlyPaymentRow {
 export interface KeyAccountDashboardRevenueResult {
   summary: KeyAccountDashboardPaymentSummary;
   monthlyData: KeyAccountDashboardMonthlyPaymentRow[];
+  /** Eligible sales orders used for the chart (for month click breakdown). */
+  orders: KeyAccountDashboardOrder[];
+  /** Payment rows for those orders (for month click breakdown). */
+  payments: KeyAccountDashboardPaymentRow[];
   /** POs with unpaid / partial / consignment float outstanding. */
   outstandingPaymentOrderCount: number;
   /** Non-cancelled consignment POs in the loaded scope. */
@@ -62,6 +73,33 @@ export interface KeyAccountDashboardPaymentRow {
   amount: number | null;
   settlement_discount?: number | null;
   created_at: string;
+}
+
+/** Bucket that contributes to a month's stacked revenue bar. */
+export type KeyAccountDashboardMonthPoBucket =
+  | 'paid'
+  | 'partial'
+  | 'unpaid'
+  | 'consignment'
+  | 'settlement_discount';
+
+/** One row per PO for a month's revenue breakdown (amounts split across chart buckets). */
+export interface KeyAccountDashboardMonthPoRow {
+  orderId: string;
+  poNumber: string;
+  orderDate: string;
+  clientName: string;
+  isConsignment: boolean;
+  paidInMonth: number;
+  partialInMonth: number;
+  unpaidInMonth: number;
+  consignmentInMonth: number;
+  settlementDiscountInMonth: number;
+  totalAmount: number;
+  /** Remaining balance after all cash + settlement discount. */
+  remainingBalance: number;
+  /** Overall PO payment status. */
+  paymentStatus: string;
 }
 
 type PaymentBucketSplit = Omit<KeyAccountDashboardPaymentSummary, 'totalRevenue'>;
@@ -296,13 +334,26 @@ export async function fetchKeyAccountDashboardPayments(
 ): Promise<KeyAccountDashboardPaymentRow[]> {
   if (orderIds.length === 0) return [];
 
-  const { data, error } = await supabase
-    .from('purchase_order_key_account_payments')
-    .select('purchase_order_id, amount, settlement_discount, created_at')
-    .in('purchase_order_id', orderIds);
+  // `.in()` URL size + PostgREST 1000-row cap — chunk IDs and page each chunk.
+  const chunkSize = 100;
+  const all: KeyAccountDashboardPaymentRow[] = [];
 
-  if (error) throw error;
-  return (data || []) as KeyAccountDashboardPaymentRow[];
+  for (let i = 0; i < orderIds.length; i += chunkSize) {
+    const chunk = orderIds.slice(i, i + chunkSize);
+    const rows = await fetchAllPaginated<KeyAccountDashboardPaymentRow>(async (from, to) => {
+      const { data, error } = await supabase
+        .from('purchase_order_key_account_payments')
+        .select('purchase_order_id, amount, settlement_discount, created_at')
+        .in('purchase_order_id', chunk)
+        .order('created_at', { ascending: true })
+        .order('purchase_order_id', { ascending: true })
+        .range(from, to);
+      return { data: (data as KeyAccountDashboardPaymentRow[] | null) ?? null, error };
+    });
+    all.push(...rows);
+  }
+
+  return all;
 }
 
 /** @deprecated Prefer fetchKeyAccountDashboardPayments — kept for compatibility. */
@@ -487,10 +538,138 @@ export function computeKeyAccountDashboardRevenue(
   return {
     summary,
     monthlyData,
+    orders: eligible,
+    payments,
     outstandingPaymentOrderCount,
     consignmentOrderCount,
     pendingOrderCount: outstandingPaymentOrderCount,
   };
+}
+
+function getDashboardOrderClientName(order: KeyAccountDashboardOrder): string {
+  return firstRelation(order.client)?.client_name || '—';
+}
+
+/**
+ * One row per PO that contributes to a month's stacked revenue bar.
+ * Standard + consignment float: by order_date. Consignment cash/discount: by payment date.
+ */
+export function buildKeyAccountDashboardMonthPoBreakdown(
+  orders: KeyAccountDashboardOrder[],
+  payments: KeyAccountDashboardPaymentRow[],
+  selectedYear: number,
+  monthIndex: number
+): KeyAccountDashboardMonthPoRow[] {
+  const { start, end } = getMonthDateRange(selectedYear, monthIndex);
+  const paidByOrderId = sumPaidByOrderId(payments);
+  const discountByOrderId = sumSettlementDiscountByOrderId(payments);
+  const paymentsByOrderId = groupPaymentsByOrderId(payments);
+  const eligible = orders.filter(isKeyAccountDashboardSalesOrder);
+  const rows: KeyAccountDashboardMonthPoRow[] = [];
+
+  const emptyAmounts = () => ({
+    paidInMonth: 0,
+    partialInMonth: 0,
+    unpaidInMonth: 0,
+    consignmentInMonth: 0,
+    settlementDiscountInMonth: 0,
+  });
+
+  eligible.forEach((order) => {
+    const total = Number(order.total_amount) || 0;
+    const isConsignment = isKeyAccountConsignmentOrder(order);
+    const poNumber = order.po_number || order.id.slice(0, 8);
+    const clientName = getDashboardOrderClientName(order);
+    const orderInMonth = isDateInRange(order.order_date, start, end);
+    const amounts = emptyAmounts();
+
+    if (isConsignment) {
+      const chunks = getCappedConsignmentPaymentChunks(
+        total,
+        paymentsByOrderId.get(order.id) || []
+      );
+      const paidAll = chunks.reduce((sum, chunk) => sum + chunk.amount, 0);
+      const discountAll = chunks.reduce((sum, chunk) => sum + chunk.settlement_discount, 0);
+      const remaining = Math.max(
+        0,
+        Math.round((total - paidAll - discountAll) * 100) / 100
+      );
+
+      if (orderInMonth && remaining > 0) {
+        amounts.consignmentInMonth = remaining;
+      }
+
+      chunks.forEach((chunk) => {
+        if (!isDateInRange(chunk.created_at, start, end)) return;
+        amounts.paidInMonth += chunk.amount;
+        amounts.settlementDiscountInMonth += chunk.settlement_discount;
+      });
+
+      const contributes =
+        amounts.consignmentInMonth > 0 ||
+        amounts.paidInMonth > 0 ||
+        amounts.settlementDiscountInMonth > 0;
+      if (!contributes) return;
+
+      rows.push({
+        orderId: order.id,
+        poNumber,
+        orderDate: order.order_date,
+        clientName,
+        isConsignment: true,
+        ...amounts,
+        totalAmount: total,
+        remainingBalance: remaining,
+        paymentStatus:
+          remaining <= 0 ? 'paid' : paidAll > 0 || discountAll > 0 ? 'partial' : 'consignment',
+      });
+      return;
+    }
+
+    if (!orderInMonth) return;
+
+    const split = splitKeyAccountPoPaymentRevenue(
+      total,
+      paidByOrderId.get(order.id) || 0,
+      false,
+      discountByOrderId.get(order.id) || 0
+    );
+    const remaining = Math.max(
+      0,
+      Math.round(
+        (total - split.paidRevenue - split.settlementDiscountRevenue) * 100
+      ) / 100
+    );
+
+    if (split.unpaidRevenue > 0) {
+      amounts.unpaidInMonth = split.unpaidRevenue;
+    } else {
+      amounts.paidInMonth = split.paidRevenue;
+      amounts.partialInMonth = split.partialRevenue;
+      amounts.settlementDiscountInMonth = split.settlementDiscountRevenue;
+    }
+
+    rows.push({
+      orderId: order.id,
+      poNumber,
+      orderDate: order.order_date,
+      clientName,
+      isConsignment: false,
+      ...amounts,
+      totalAmount: total,
+      remainingBalance: remaining,
+      paymentStatus:
+        amounts.unpaidInMonth > 0
+          ? 'unpaid'
+          : remaining > 0
+            ? 'partial'
+            : 'paid',
+    });
+  });
+
+  return rows.sort(
+    (a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime()
+  );
 }
 
 export function formatKeyAccountDashboardCurrency(value: number) {
@@ -514,6 +693,8 @@ export async function loadKeyAccountDashboardRevenue(
 export const EMPTY_KEY_ACCOUNT_DASHBOARD_REVENUE: KeyAccountDashboardRevenueResult = {
   summary: emptyPaymentSummary(),
   monthlyData: [],
+  orders: [],
+  payments: [],
   outstandingPaymentOrderCount: 0,
   consignmentOrderCount: 0,
   pendingOrderCount: 0,
