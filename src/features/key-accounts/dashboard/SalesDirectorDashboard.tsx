@@ -133,27 +133,18 @@ export function SalesDirectorDashboard() {
       if (kamError) throw kamError;
 
       const kamIds = kamAssignments?.map((a: any) => a.kam_id) || [];
+      // Director-created POs store kam_id = director user id — include them in revenue/orders
+      // the same way Sales Head/Admin see company POs.
+      const orderScopeKamIds = Array.from(
+        new Set([...kamIds, ...(user?.id ? [user.id] : [])])
+      );
 
-      if (kamIds.length === 0) {
-        setKamStats([]);
-        setClients([]);
-        setOrders([]);
-        setRevenueMetrics(EMPTY_KEY_ACCOUNT_DASHBOARD_REVENUE);
-        setStats({
-          totalKAMs: 0,
-          totalClients: 0,
-          totalOrders: 0,
-          pendingOrders: 0,
-          inactiveClients: 0,
-        });
-        return;
-      }
-
-      // Get stats for each KAM
+      // Get stats for each assigned KAM
       const kamsWithStats: KAMWithStats[] = [];
       for (const assignment of kamAssignments || []) {
         const kamData = assignment.kam as any;
-        
+        if (!kamData?.id) continue;
+
         // Count clients
         const { count: clientCount } = await supabase
           .from('kam_client_assignments')
@@ -188,105 +179,46 @@ export function SalesDirectorDashboard() {
 
       setKamStats(kamsWithStats);
 
-      // Get all clients under my KAMs with last order info
-      const { data: clientAssignments, error: clientError } = await supabase
-        .from('kam_client_assignments')
-        .select('client_id, kam_id, kam:profiles!kam_client_assignments_kam_id_fkey(full_name), client:key_account_clients(*)')
-        .in('kam_id', kamIds);
-
-      if (clientError) throw clientError;
-
-      const clientsWithOrders: ClientWithLastOrder[] = [];
-      for (const assignment of clientAssignments || []) {
-        const clientData = firstRelation(assignment.client as any);
-        if (!clientData) continue;
-
-        const kam = firstRelation(assignment.kam as any);
-        const kamName = kam?.full_name || 'Unknown';
-
-        // Get last order for this client
-        const { data: lastOrder, error: lastOrderError } = await supabase
-          .from('purchase_orders')
-          .select('order_date, total_amount')
-          .eq('key_account_client_id', clientData.id)
-          .order('order_date', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        if (lastOrderError) throw lastOrderError;
-
-        // Get total orders and revenue for the year
-        const { data: clientOrders, error: clientOrdersError } = await supabase
-          .from('purchase_orders')
-          .select('total_amount, status, workflow_status')
-          .eq('key_account_client_id', clientData.id)
-          .gte('order_date', `${selectedYear}-01-01`)
-          .lte('order_date', `${selectedYear}-12-31`);
-
-        if (clientOrdersError) throw clientOrdersError;
-
-        const totalOrders = clientOrders?.length || 0;
-        const totalRevenue =
-          clientOrders
-            ?.filter((o: any) => isDeliveredRevenue(o))
-            .reduce((sum: number, o: any) => sum + (o.total_amount || 0), 0) || 0;
-
-        const lastOrderDate = lastOrder?.order_date;
-        const daysSinceLastOrder = lastOrderDate 
-          ? Math.floor((Date.now() - new Date(lastOrderDate).getTime()) / (1000 * 60 * 60 * 24))
-          : null;
-
-        clientsWithOrders.push({
-          id: clientData.id,
-          client_name: clientData.client_name,
-          client_code: clientData.client_code,
-          kam_name: kamName,
-          lastOrderDate,
-          daysSinceLastOrder,
-          totalOrders,
-          totalRevenue
-        });
-      }
-
-      setClients(clientsWithOrders);
-
-      // Get all orders from my KAMs (paged — PostgREST caps at 1000 rows per request)
-      const analyticsOrders = await fetchAllPaginated<KeyAccountDashboardOrder & {
-        client?: { client_name: string | null } | { client_name: string | null }[] | null;
-        shop?: { shop_name: string | null } | { shop_name: string | null }[] | null;
-        kam?: { full_name: string | null } | { full_name: string | null }[] | null;
-        dr_number?: string | null;
-      }>(async (from, to) => {
-        const { data, error } = await supabase
-          .from('purchase_orders')
-          .select(`
-            id,
-            po_number,
-            total_amount,
-            subtotal,
-            status,
-            workflow_status,
-            po_order_kind,
-            source_rebate_id,
-            warehouse_location_id,
-            order_date,
-            dr_number,
-            key_account_client_id,
-            key_account_payment_status,
-            client:key_account_clients(client_name),
-            shop:key_account_shops(shop_name),
-            kam:profiles!purchase_orders_kam_id_fkey(full_name)
-          `)
-          .eq('company_id', user?.company_id)
-          .in('kam_id', kamIds)
-          .eq('company_account_type', 'Key Accounts')
-          .gte('order_date', `${selectedYear}-01-01`)
-          .lte('order_date', `${selectedYear}-12-31`)
-          .order('order_date', { ascending: false })
-          .order('id', { ascending: true })
-          .range(from, to);
-        return { data: (data as any[] | null) ?? null, error };
-      });
+      // Orders for assigned KAMs + director-created POs (paged — PostgREST 1000-row cap)
+      const analyticsOrders =
+        orderScopeKamIds.length === 0
+          ? []
+          : await fetchAllPaginated<KeyAccountDashboardOrder & {
+              client?: { client_name: string | null } | { client_name: string | null }[] | null;
+              shop?: { shop_name: string | null } | { shop_name: string | null }[] | null;
+              kam?: { full_name: string | null } | { full_name: string | null }[] | null;
+              dr_number?: string | null;
+            }>(async (from, to) => {
+              const { data, error } = await supabase
+                .from('purchase_orders')
+                .select(`
+                  id,
+                  po_number,
+                  total_amount,
+                  subtotal,
+                  status,
+                  workflow_status,
+                  po_order_kind,
+                  source_rebate_id,
+                  warehouse_location_id,
+                  order_date,
+                  dr_number,
+                  key_account_client_id,
+                  key_account_payment_status,
+                  client:key_account_clients(client_name),
+                  shop:key_account_shops(shop_name),
+                  kam:profiles!purchase_orders_kam_id_fkey(full_name)
+                `)
+                .eq('company_id', user?.company_id)
+                .in('kam_id', orderScopeKamIds)
+                .eq('company_account_type', 'Key Accounts')
+                .gte('order_date', `${selectedYear}-01-01`)
+                .lte('order_date', `${selectedYear}-12-31`)
+                .order('order_date', { ascending: false })
+                .order('id', { ascending: true })
+                .range(from, to);
+              return { data: (data as any[] | null) ?? null, error };
+            });
 
       const revenueResult = await loadKeyAccountDashboardRevenue(
         supabase,
@@ -308,6 +240,121 @@ export function SalesDirectorDashboard() {
       }));
 
       setOrders(formattedOrders);
+
+      // Client monitoring: KAM-assigned clients + clients from POs in director scope
+      // (director-created POs often use clients not assigned via kam_client_assignments).
+      const clientById = new Map<string, ClientWithLastOrder>();
+
+      if (kamIds.length > 0) {
+        const { data: clientAssignments, error: clientError } = await supabase
+          .from('kam_client_assignments')
+          .select('client_id, kam_id, kam:profiles!kam_client_assignments_kam_id_fkey(full_name), client:key_account_clients(*)')
+          .in('kam_id', kamIds);
+
+        if (clientError) throw clientError;
+
+        for (const assignment of clientAssignments || []) {
+          const clientData = firstRelation(assignment.client as any);
+          if (!clientData || clientById.has(clientData.id)) continue;
+
+          const kam = firstRelation(assignment.kam as any);
+          const kamName = kam?.full_name || 'Unknown';
+
+          const { data: lastOrder, error: lastOrderError } = await supabase
+            .from('purchase_orders')
+            .select('order_date, total_amount')
+            .eq('key_account_client_id', clientData.id)
+            .order('order_date', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (lastOrderError) throw lastOrderError;
+
+          const scopedOrders = analyticsOrders.filter(
+            (o) => o.key_account_client_id === clientData.id
+          );
+          const totalOrders = scopedOrders.length;
+          const totalRevenue = scopedOrders
+            .filter((o) => isDeliveredRevenue(o))
+            .reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0);
+
+          const lastOrderDate = lastOrder?.order_date ?? null;
+          const daysSinceLastOrder = lastOrderDate
+            ? Math.floor((Date.now() - new Date(lastOrderDate).getTime()) / (1000 * 60 * 60 * 24))
+            : null;
+
+          clientById.set(clientData.id, {
+            id: clientData.id,
+            client_name: clientData.client_name,
+            client_code: clientData.client_code,
+            kam_name: kamName,
+            lastOrderDate,
+            daysSinceLastOrder,
+            totalOrders,
+            totalRevenue
+          });
+        }
+      }
+
+      const missingClientIds = Array.from(
+        new Set(
+          analyticsOrders
+            .map((o) => o.key_account_client_id)
+            .filter((id): id is string => !!id && !clientById.has(id))
+        )
+      );
+
+      if (missingClientIds.length > 0) {
+        const { data: extraClients, error: extraClientsError } = await supabase
+          .from('key_account_clients')
+          .select('id, client_name, client_code')
+          .in('id', missingClientIds);
+
+        if (extraClientsError) throw extraClientsError;
+
+        for (const client of extraClients || []) {
+          const scopedOrders = analyticsOrders
+            .filter((o) => o.key_account_client_id === client.id)
+            .sort(
+              (a, b) =>
+                new Date(b.order_date).getTime() - new Date(a.order_date).getTime()
+            );
+          const latest = scopedOrders[0];
+          const kamRel = latest ? firstRelation((latest as any).kam) : null;
+          const kamName = kamRel?.full_name || 'You';
+
+          const { data: lastOrder, error: lastOrderError } = await supabase
+            .from('purchase_orders')
+            .select('order_date')
+            .eq('key_account_client_id', client.id)
+            .order('order_date', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (lastOrderError) throw lastOrderError;
+
+          const lastOrderDate = lastOrder?.order_date ?? latest?.order_date ?? null;
+          const daysSinceLastOrder = lastOrderDate
+            ? Math.floor((Date.now() - new Date(lastOrderDate).getTime()) / (1000 * 60 * 60 * 24))
+            : null;
+
+          clientById.set(client.id, {
+            id: client.id,
+            client_name: client.client_name,
+            client_code: client.client_code,
+            kam_name: kamName,
+            lastOrderDate,
+            daysSinceLastOrder,
+            totalOrders: scopedOrders.length,
+            totalRevenue: scopedOrders
+              .filter((o) => isDeliveredRevenue(o))
+              .reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0)
+          });
+        }
+      }
+
+      const clientsWithOrders = Array.from(clientById.values());
+      setClients(clientsWithOrders);
 
       const inactiveThreshold = 30;
       const inactiveClients = clientsWithOrders.filter(
@@ -611,7 +658,7 @@ export function SalesDirectorDashboard() {
                 <Calendar className="h-5 w-5" />
                 Client Order Monitoring
                 <span className="text-sm font-normal text-muted-foreground ml-2">
-                  (Shows when each client last placed an order)
+                  (Assigned KAM clients + clients from your POs)
                 </span>
               </CardTitle>
             </CardHeader>
@@ -665,7 +712,7 @@ export function SalesDirectorDashboard() {
                   {clients.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={8} className="py-6 text-center text-muted-foreground">
-                        No clients assigned yet.
+                        No clients in your scope yet.
                       </TableCell>
                     </TableRow>
                   )}

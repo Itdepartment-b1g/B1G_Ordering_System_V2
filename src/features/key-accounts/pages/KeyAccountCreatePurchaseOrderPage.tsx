@@ -79,7 +79,7 @@ import {
   type KeyAccountPaymentMethod,
 } from '@/features/key-accounts/keyAccountPaymentSettingsUtils';
 
-type PaymentTermsSource = 'client' | 'company' | 'custom';
+type PaymentTermsSource = 'client' | 'company';
 
 const CLIENT_PAGE_SIZE = 10;
 
@@ -183,7 +183,6 @@ export function KeyAccountPurchaseOrderPage() {
   /** Consignment = float stock to client now; payment deferred (warehouse still fulfills). */
   const [isConsignment, setIsConsignment] = useState(false);
   const [paymentTermsSource, setPaymentTermsSource] = useState<PaymentTermsSource>('client');
-  const [paymentTermsCustom, setPaymentTermsCustom] = useState('');
   const [selectedClientPaymentTerm, setSelectedClientPaymentTerm] = useState('');
   const [selectedCompanyPaymentTerm, setSelectedCompanyPaymentTerm] = useState('');
   const [newCompanyPaymentTermInput, setNewCompanyPaymentTermInput] = useState('');
@@ -303,12 +302,10 @@ export function KeyAccountPurchaseOrderPage() {
   const total = subtotal + taxAmount - discount;
 
   const resolvedPaymentTerms = useMemo(() => {
-    if (paymentTermsSource === 'custom') return paymentTermsCustom.trim();
     if (paymentTermsSource === 'company') return selectedCompanyPaymentTerm.trim();
     return selectedClientPaymentTerm.trim();
   }, [
     paymentTermsSource,
-    paymentTermsCustom,
     selectedClientPaymentTerm,
     selectedCompanyPaymentTerm,
   ]);
@@ -362,7 +359,6 @@ export function KeyAccountPurchaseOrderPage() {
       setSelectedShopId('');
       setSelectedAddressId('');
       setPaymentTermsSource('client');
-      setPaymentTermsCustom('');
       setSelectedCompanyPaymentTerm('');
       const terms = parsePaymentTerms(
         clients.find((c) => c.id === selectedClientId)?.payment_terms
@@ -904,6 +900,11 @@ export function KeyAccountPurchaseOrderPage() {
   }
 
   async function handleSubmit() {
+    const finalResolvedPaymentTerms =
+      paymentTermsSource === 'company'
+          ? selectedCompanyPaymentTerm.trim()
+          : selectedClientPaymentTerm.trim();
+
     if (!selectedClientId || !selectedShopId || !selectedAddressId || !linkedWarehouseCompanyId) {
       toast({
         variant: 'destructive',
@@ -948,7 +949,7 @@ export function KeyAccountPurchaseOrderPage() {
       return;
     }
 
-    if (!isConsignment && !resolvedPaymentTerms) {
+    if (!isConsignment && !finalResolvedPaymentTerms) {
       toast({
         variant: 'destructive',
         title: 'Payment terms required',
@@ -956,12 +957,10 @@ export function KeyAccountPurchaseOrderPage() {
           paymentTermsSource === 'client'
             ? clientPaymentTerms.length > 0
               ? 'Select one of the client\'s payment terms for this order.'
-              : 'This client has no saved payment terms. Switch to company or custom terms, or update the client profile.'
-            : paymentTermsSource === 'company'
-              ? companyPaymentTermOptions.length > 0
-                ? 'Select a company payment term for this order.'
-                : 'No company payment terms configured. Ask Sales Head/Director to add them, or use custom terms.'
-              : 'Enter payment terms for this order.',
+              : 'This client has no saved payment terms. Switch to company terms, or update the client profile.'
+            : companyPaymentTermOptions.length > 0
+              ? 'Select a company payment term for this order.'
+              : 'No company payment terms configured. Ask Sales Head/Director to add them.',
       });
       return;
     }
@@ -1060,13 +1059,12 @@ export function KeyAccountPurchaseOrderPage() {
         status: 'pending',
         created_by: user?.id,
         po_order_kind: isConsignment ? 'consignment' : 'standard',
-        key_account_payment_terms: resolvedPaymentTerms || null,
-        key_account_payment_terms_source: resolvedPaymentTerms
+        key_account_payment_terms: finalResolvedPaymentTerms || null,
+        key_account_payment_terms_source: finalResolvedPaymentTerms
           ? paymentTermsSource
           : null,
         key_account_payment_terms_created_by: (() => {
-          if (!resolvedPaymentTerms) return null;
-          if (paymentTermsSource === 'custom') return user?.id ?? null;
+          if (!finalResolvedPaymentTerms) return null;
           if (paymentTermsSource === 'company') {
             const option = companyPaymentTermOptions.find(
               (o) => o.label === selectedCompanyPaymentTerm
@@ -1224,7 +1222,6 @@ export function KeyAccountPurchaseOrderPage() {
     setDiscount(0);
     setIsConsignment(false);
     setPaymentTermsSource('client');
-    setPaymentTermsCustom('');
     setSelectedClientPaymentTerm('');
     setSelectedCompanyPaymentTerm('');
     setNewCompanyPaymentTermInput('');
@@ -1578,14 +1575,13 @@ export function KeyAccountPurchaseOrderPage() {
                   <SelectContent>
                     <SelectItem value="client">Use client profile terms</SelectItem>
                     <SelectItem value="company">Use company payment terms</SelectItem>
-                    <SelectItem value="custom">Custom terms for this PO</SelectItem>
                   </SelectContent>
                 </Select>
                 {paymentTermsSource === 'client' ? (
                   clientPaymentTerms.length === 0 ? (
                     <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
-                      No payment terms on file for this client — choose company or custom terms, or
-                      update the client record.
+                      No payment terms on file for this client — choose company terms, or update
+                      the client record.
                     </p>
                   ) : clientPaymentTerms.length === 1 ? (
                     <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
@@ -1608,7 +1604,7 @@ export function KeyAccountPurchaseOrderPage() {
                       </SelectContent>
                     </Select>
                   )
-                ) : paymentTermsSource === 'company' ? (
+                ) : (
                   <div className="space-y-2">
                     {loadingCompanyPaymentTerms ? (
                       <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3 flex items-center gap-2">
@@ -1622,7 +1618,7 @@ export function KeyAccountPurchaseOrderPage() {
                             No company payment terms yet
                             {canAddCompanyPaymentTerms
                               ? ' — use Add term to create one.'
-                              : ' — ask Sales Head/Director to add them, or use custom terms.'}
+                              : ' — ask Sales Head/Director to add them.'}
                           </p>
                         ) : (
                           <Select
@@ -1655,13 +1651,6 @@ export function KeyAccountPurchaseOrderPage() {
                       </div>
                     )}
                   </div>
-                ) : (
-                  <Textarea
-                    value={paymentTermsCustom}
-                    onChange={(e) => setPaymentTermsCustom(e.target.value)}
-                    placeholder="e.g. Net 30, COD, 50% down…"
-                    rows={3}
-                  />
                 )}
               </div>
 

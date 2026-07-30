@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import type { PoReceiveLine } from '@/features/orders/components/PoBuyerReceiveDialog';
-import type { PurchaseOrderHistoryItem } from '@/features/orders/purchaseOrderHistoryTypes';
+import { adjustDispatchedForFoundRedeliver } from '@/features/orders/purchaseOrderEventsApi';
+import type {
+  PurchaseOrderHistoryEvent,
+  PurchaseOrderHistoryItem,
+} from '@/features/orders/purchaseOrderHistoryTypes';
 import type {
   TlPendingReceive,
   TlReceiveListItem,
@@ -175,9 +179,11 @@ export function useLeaderAssignedPoReceives(
         > = {};
         const qtyByPoVariant: Record<string, Record<string, { dispatched: number; received: number }>> =
           {};
+        const historyByPo: Record<string, PurchaseOrderHistoryEvent[]> = {};
         for (const id of poIds) {
           progressByPo[id] = { dispatched: 0, received: 0, shortOpen: 0 };
           qtyByPoVariant[id] = {};
+          historyByPo[id] = [];
         }
 
         const linesByDelivery: Record<string, PoReceiveLine[]> = {};
@@ -233,6 +239,50 @@ export function useLeaderAssignedPoReceives(
           const qty = Number((row as { quantity: number }).quantity) || 0;
           const status = String((row as { status?: string }).status || '');
           if (status === 'open') progressByPo[poId].shortOpen += qty;
+        }
+
+        const { data: resolvedEvents, error: resolvedEventsErr } = await supabase
+          .from('purchase_order_events')
+          .select('id,purchase_order_id,event_type,lines,created_at')
+          .in('purchase_order_id', poIds)
+          .in('event_type', [
+            'shortage_resolved_redeliver',
+            'shortage_resolved_write_off_replace',
+            'shortage_resolved_write_off',
+          ])
+          .order('created_at', { ascending: true });
+        if (resolvedEventsErr) {
+          console.warn('[TL PO Receive] resolved shortage event load failed', resolvedEventsErr);
+        } else {
+          for (const row of (resolvedEvents || []) as Array<{
+            id: string;
+            purchase_order_id: string;
+            event_type: PurchaseOrderHistoryEvent['type'];
+            lines?: unknown;
+            created_at?: string | null;
+          }>) {
+            const poId = String(row.purchase_order_id);
+            if (!historyByPo[poId]) continue;
+            historyByPo[poId].push({
+              id: String(row.id),
+              type: row.event_type,
+              at: row.created_at ? String(row.created_at) : '',
+              lines: Array.isArray(row.lines)
+                ? row.lines.map((line) => {
+                    const entry = line as {
+                      variant_id?: string;
+                      variantId?: string;
+                      quantity?: number;
+                    };
+                    return {
+                      variantId: String(entry.variant_id || entry.variantId || ''),
+                      variantName: String(entry.variant_id || entry.variantId || ''),
+                      quantity: Number(entry.quantity) || 0,
+                    };
+                  })
+                : [],
+            });
+          }
         }
 
         const pendingByPo: Record<string, TlPendingReceive> = {};
@@ -415,7 +465,10 @@ export function useLeaderAssignedPoReceives(
             }
           }
 
-          const items = Array.from(itemsMap.values());
+          const items = adjustDispatchedForFoundRedeliver(
+            Array.from(itemsMap.values()),
+            historyByPo[po.id] || []
+          );
           const pending = pendingByPo[po.id];
           const progress = progressByPo[po.id] || {
             dispatched: 0,
