@@ -13,7 +13,7 @@ export default function BatchViewManual({ embedded = false }: BatchViewManualPro
         <TitleSection>How Batch View Works?</TitleSection>
         <p>Batch View is used to browse on-hand stock grouped by batch. Each batch shows the warehouse, total SKUs, total units, and received date.</p>
         <hr className="my-2 border-gray-500"/>
-        <p>Expand a batch to see the brands and variants inside it, including expiration date and quantity. Stock appears here after receiving stock requests, adjustments, or opening balance imports.</p>
+        <p>Expand a batch to see the brands and variants inside it, including expiration date and quantity. Use Packing → View to open box/loose quantities from stock request receive. Stock appears here after receiving stock requests, adjustments, or opening balance imports.</p>
       </InstructionBorder>
 
       <InstructionBorder>
@@ -34,8 +34,9 @@ export default function BatchViewManual({ embedded = false }: BatchViewManualPro
         <TitleSection>How to View Batch Details?</TitleSection>
         <span>1. Click on a batch row to expand it</span>
         <span>2. You will see the brands and variants in that batch, including expiration date and quantity</span>
-        <span>3. Each batch also shows its source <span className="text-gray-700">(eg. Stock request, Adjustment, Opening balance)</span></span>
-        <span>4. Click <span className="text-blue-500">View</span> under Adjustments to see the adjustment history for a specific variant lot</span>
+        <span>3. Click <span className="text-blue-500">Packing → View</span> to see Boxes × Qty/box and Loose boxes/qty from the stock request receive. Lots from adjustments or opening balance have no packing</span>
+        <span>4. Each batch also shows its source <span className="text-gray-700">(eg. Stock request, Adjustment, Opening balance)</span></span>
+        <span>5. Click <span className="text-blue-500">View</span> under Adjustments to see the adjustment history for a specific variant lot</span>
       </InstructionBorder>
 
       <InstructionBorder>

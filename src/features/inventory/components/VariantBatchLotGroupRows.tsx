@@ -1,9 +1,14 @@
 import { useState } from 'react';
 import { differenceInDays, format } from 'date-fns';
-import { ChevronDown, ChevronRight, Eye } from 'lucide-react';
+import { ChevronDown, ChevronRight, Eye, Package } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  LotPackingDialog,
+  type LotPackingDialogTarget,
+} from './LotPackingDialog';
+import { hasReceivePacking } from '../utils/formatReceivePacking';
 import {
   type VariantBatchLotGroup,
   type VariantBatchLotRow,
@@ -22,15 +27,42 @@ function formatLotDate(date: string | null): string {
 
 type VariantBatchLotGroupRowsProps = {
   groups: VariantBatchLotGroup[];
+  variantName: string;
   onViewAdjustments: (lot: VariantBatchLotRow) => void;
 };
+
+function PackingButton({
+  lot,
+  onViewPacking,
+}: {
+  lot: VariantBatchLotRow;
+  onViewPacking: (lot: VariantBatchLotRow) => void;
+}) {
+  const enabled = hasReceivePacking(lot.packing);
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="h-8 px-2"
+      disabled={!enabled}
+      title={enabled ? 'View box packing' : 'No packing saved for this lot'}
+      onClick={() => onViewPacking(lot)}
+    >
+      <Package className="h-3.5 w-3.5 mr-1" />
+      View
+    </Button>
+  );
+}
 
 function LotDetailTable({
   lots,
   onViewAdjustments,
+  onViewPacking,
 }: {
   lots: VariantBatchLotRow[];
   onViewAdjustments: (lot: VariantBatchLotRow) => void;
+  onViewPacking: (lot: VariantBatchLotRow) => void;
 }) {
   return (
     <div className="overflow-hidden rounded-md border bg-white">
@@ -42,6 +74,7 @@ function LotDetailTable({
             <TableHead className="text-right">Received</TableHead>
             <TableHead className="text-right">Remaining</TableHead>
             <TableHead className="text-right">Days in warehouse</TableHead>
+            <TableHead className="text-right w-[100px]">Packing</TableHead>
             <TableHead className="text-right w-[90px]">Adjustments</TableHead>
           </TableRow>
         </TableHeader>
@@ -58,6 +91,9 @@ function LotDetailTable({
               </TableCell>
               <TableCell className="text-right tabular-nums">
                 {differenceInDays(new Date(), new Date(lot.received_at))}
+              </TableCell>
+              <TableCell className="text-right">
+                <PackingButton lot={lot} onViewPacking={onViewPacking} />
               </TableCell>
               <TableCell className="text-right">
                 <Button
@@ -82,9 +118,11 @@ function LotDetailTable({
 function SingleLotRow({
   lot,
   onViewAdjustments,
+  onViewPacking,
 }: {
   lot: VariantBatchLotRow;
   onViewAdjustments: (lot: VariantBatchLotRow) => void;
+  onViewPacking: (lot: VariantBatchLotRow) => void;
 }) {
   return (
     <TableRow>
@@ -102,6 +140,9 @@ function SingleLotRow({
       <TableCell>{format(new Date(lot.received_at), 'MMM d, yyyy')}</TableCell>
       <TableCell className="text-right tabular-nums">
         {differenceInDays(new Date(), new Date(lot.received_at))}
+      </TableCell>
+      <TableCell className="text-right">
+        <PackingButton lot={lot} onViewPacking={onViewPacking} />
       </TableCell>
       <TableCell className="text-right">
         <Button
@@ -122,9 +163,11 @@ function SingleLotRow({
 function MultiLotGroupRow({
   group,
   onViewAdjustments,
+  onViewPacking,
 }: {
   group: VariantBatchLotGroup;
   onViewAdjustments: (lot: VariantBatchLotRow) => void;
+  onViewPacking: (lot: VariantBatchLotRow) => void;
 }) {
   const [open, setOpen] = useState(false);
   const uniqueMfgDates = new Set(
@@ -148,6 +191,7 @@ function MultiLotGroupRow({
         ? '—'
         : `${uniqueExpiries.size} expirations`;
 
+  const packingCount = group.lots.filter((lot) => hasReceivePacking(lot.packing)).length;
   const toggleOpen = () => setOpen((prev) => !prev);
 
   return (
@@ -185,16 +229,23 @@ function MultiLotGroupRow({
           {differenceInDays(new Date(), new Date(group.received_at))}
         </TableCell>
         <TableCell className="text-right text-muted-foreground text-xs">
+          {packingCount > 0 ? `${packingCount} with packing` : '—'}
+        </TableCell>
+        <TableCell className="text-right text-muted-foreground text-xs">
           {group.lots.length} lots
         </TableCell>
       </TableRow>
       {open && (
         <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
-          <TableCell colSpan={10} className="p-4">
+          <TableCell colSpan={11} className="p-4">
             <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Lots in {group.batch_number}
             </p>
-            <LotDetailTable lots={group.lots} onViewAdjustments={onViewAdjustments} />
+            <LotDetailTable
+              lots={group.lots}
+              onViewAdjustments={onViewAdjustments}
+              onViewPacking={onViewPacking}
+            />
           </TableCell>
         </TableRow>
       )}
@@ -204,21 +255,47 @@ function MultiLotGroupRow({
 
 export function VariantBatchLotGroupRows({
   groups,
+  variantName,
   onViewAdjustments,
 }: VariantBatchLotGroupRowsProps) {
+  const [packingTarget, setPackingTarget] = useState<LotPackingDialogTarget | null>(null);
+
+  const handleViewPacking = (lot: VariantBatchLotRow) => {
+    setPackingTarget({
+      variantName,
+      batchNumber: lot.batch_number,
+      packing: lot.packing ?? null,
+      remainingQty: lot.quantity_remaining,
+    });
+  };
+
   return (
     <>
       {groups.map((group) =>
         group.lots.length === 1 ? (
-          <SingleLotRow key={group.batch_id} lot={group.lots[0]} onViewAdjustments={onViewAdjustments} />
+          <SingleLotRow
+            key={group.batch_id}
+            lot={group.lots[0]}
+            onViewAdjustments={onViewAdjustments}
+            onViewPacking={handleViewPacking}
+          />
         ) : (
           <MultiLotGroupRow
             key={group.batch_id}
             group={group}
             onViewAdjustments={onViewAdjustments}
+            onViewPacking={handleViewPacking}
           />
         )
       )}
+
+      <LotPackingDialog
+        open={!!packingTarget}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setPackingTarget(null);
+        }}
+        target={packingTarget}
+      />
     </>
   );
 }

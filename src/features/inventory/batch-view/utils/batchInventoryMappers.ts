@@ -1,4 +1,5 @@
 import type { InventoryBatchSourceType } from '@/types/database.types';
+import type { LotReceivePacking } from '@/features/inventory/utils/formatReceivePacking';
 
 import type {
   BatchInventoryBrandGroup,
@@ -74,7 +75,10 @@ function compareLots(a: BatchInventoryLotLine, b: BatchInventoryLotLine): number
   return new Date(a.expirationDate).getTime() - new Date(b.expirationDate).getTime();
 }
 
-export function mapBatchInventoryGroups(data: unknown[]): BatchInventoryGroup[] {
+export function mapBatchInventoryGroups(
+  data: unknown[],
+  packingByLotId: Record<string, LotReceivePacking> = {}
+): BatchInventoryGroup[] {
   const batchMap = new Map<string, BatchAccumulator>();
 
   for (const raw of data) {
@@ -126,6 +130,7 @@ export function mapBatchInventoryGroups(data: unknown[]): BatchInventoryGroup[] 
       variantType: variant.variant_type,
       expirationDate: row.expiration_date ?? null,
       quantity: qty,
+      packing: packingByLotId[row.id] ?? null,
     });
   }
 

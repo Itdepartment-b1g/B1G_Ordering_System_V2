@@ -90,6 +90,7 @@ import {
   type ReceiveVariantItem,
 } from './warehouseStockReceiveShared';
 import { generateAndOpenStockRequestReceivePdf } from './utils/exportWarehouseStockRequestReceivePdf';
+import { formatReceivePacking } from './utils/formatReceivePacking';
 import { WarehouseStockReceiveDialog } from './components/WarehouseStockReceiveDialog';
 
 type RequestStatus =
@@ -205,34 +206,6 @@ function getRequestBrandLabel(req: StockRequestRow): string {
   return `${names.length} brands`;
 }
 
-function formatReceivePacking(line: {
-  box_count: number | null;
-  units_per_box: number | null;
-  loose_box_count?: number | null;
-  loose_qty?: number | null;
-  extra_qty?: number;
-}): string {
-  const boxes = line.box_count;
-  const perBox = line.units_per_box;
-  const looseBoxes = line.loose_box_count ?? 0;
-  const looseQty = line.loose_qty ?? 0;
-  const legacyExtra = line.extra_qty ?? 0;
-
-  if (boxes != null && perBox != null) {
-    const boxed = `Boxes ${boxes} × ${perBox}`;
-    if (looseBoxes > 0 || looseQty > 0) {
-      return `${boxed} + Loose ${looseBoxes} × ${looseQty}`;
-    }
-    // Legacy rows saved as leftover units before loose pair existed
-    if (legacyExtra > 0 && looseBoxes === 0 && looseQty === 0) {
-      return `${boxed} + Loose ${legacyExtra}`;
-    }
-    return boxed;
-  }
-  if (looseBoxes > 0 || looseQty > 0) return `Loose ${looseBoxes} × ${looseQty}`;
-  if (legacyExtra > 0) return `Loose ${legacyExtra}`;
-  return '—';
-}
 
 function mapRequestRow(raw: Record<string, unknown>): StockRequestRow {
   const brand = firstRelation(raw.brand as StockRequestRow['brand'] | StockRequestRow['brand'][]);

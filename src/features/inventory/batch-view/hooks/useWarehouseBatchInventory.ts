@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { fetchReceivePackingByLotIds } from '@/features/inventory/utils/formatReceivePacking';
 
 import { mapBatchInventoryGroups } from '../utils/batchInventoryMappers';
 import type { BatchInventoryGroup } from '../types';
@@ -54,7 +55,11 @@ export function useWarehouseBatchInventory({
 
       const { data, error } = await query;
       if (error) throw error;
-      return mapBatchInventoryGroups(data ?? []);
+
+      const rows = data ?? [];
+      const lotIds = rows.map((row) => String((row as { id: string }).id));
+      const packingByLotId = await fetchReceivePackingByLotIds(lotIds);
+      return mapBatchInventoryGroups(rows, packingByLotId);
     },
   });
 }

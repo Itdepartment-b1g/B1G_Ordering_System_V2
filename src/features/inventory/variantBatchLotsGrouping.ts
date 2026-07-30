@@ -1,3 +1,5 @@
+import type { LotReceivePacking } from './utils/formatReceivePacking';
+
 export type VariantBatchLotRow = {
   lot_id: string;
   batch_id: string;
@@ -8,6 +10,8 @@ export type VariantBatchLotRow = {
   received_at: string;
   manufactured_date: string | null;
   expiration_date: string | null;
+  /** Receive packing from stock request, when available. */
+  packing?: LotReceivePacking | null;
 };
 
 export type VariantBatchLotGroup = {

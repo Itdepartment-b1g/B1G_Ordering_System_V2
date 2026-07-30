@@ -3,6 +3,7 @@
  * Opens in a new tab for Print → Save as PDF.
  */
 import { supabase } from '@/lib/supabase';
+import { formatReceivePacking } from './formatReceivePacking';
 
 export type StockRequestReceiveLinePdf = {
   brandName?: string | null;
@@ -44,25 +45,13 @@ function fmtQty(n: number | null | undefined): string {
 }
 
 function formatPacking(line: StockRequestReceiveLinePdf): string {
-  const boxes = line.boxCount;
-  const perBox = line.unitsPerBox;
-  const looseBoxes = line.looseBoxCount ?? 0;
-  const looseQty = line.looseQty ?? 0;
-  const legacyExtra = line.extraQty ?? 0;
-
-  if (boxes != null && perBox != null) {
-    const boxed = `Boxes ${fmtQty(boxes)} × ${fmtQty(perBox)}`;
-    if (looseBoxes > 0 || looseQty > 0) {
-      return `${boxed} + Loose ${fmtQty(looseBoxes)} × ${fmtQty(looseQty)}`;
-    }
-    if (legacyExtra > 0) return `${boxed} + Loose ${fmtQty(legacyExtra)}`;
-    return boxed;
-  }
-  if (looseBoxes > 0 || looseQty > 0) {
-    return `Loose ${fmtQty(looseBoxes)} × ${fmtQty(looseQty)}`;
-  }
-  if (legacyExtra > 0) return `Loose ${fmtQty(legacyExtra)}`;
-  return '—';
+  return formatReceivePacking({
+    box_count: line.boxCount ?? null,
+    units_per_box: line.unitsPerBox ?? null,
+    loose_box_count: line.looseBoxCount,
+    loose_qty: line.looseQty,
+    extra_qty: line.extraQty,
+  });
 }
 
 function formatDate(value: string | null | undefined): string {
