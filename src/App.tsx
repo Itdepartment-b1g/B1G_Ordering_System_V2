@@ -36,7 +36,7 @@ import PaymentSettingsPage from "@/features/finance/PaymentSettingsPage";
 import SystemAdminPage from "@/features/system-admin/SystemAdminPage";
 import ManagementPortal from "@/features/system-admin/ManagementPortal";
 import { WarRoomPage } from "@/features/war-room";
-import { KeyAccountsDashboardWrapper, ClientHierarchyPage, ClientAssignmentPage, KeyAccountTeamPage, KeyAccountPurchaseOrderPage, KeyAccountPurchaseOrdersPage, KeyAccountAnalyticsPage, KeyAccountClientAnalyticsPage, KeyAccountRebatesPage, KeyAccountCreateRebatePage, KeyAccountPaymentSettingsPage } from "@/features/key-accounts";
+import { KeyAccountsDashboardWrapper, ClientHierarchyPage, ClientAssignmentPage, KeyAccountTeamPage, KeyAccountPurchaseOrderPage, KeyAccountPurchaseOrdersPage, KeyAccountAnalyticsPage, KeyAccountClientAnalyticsPage, KeyAccountRebatesPage, KeyAccountCreateRebatePage, KeyAccountPaymentSettingsPage, KeyAccountPaymentTermsPage } from "@/features/key-accounts";
 import NotFound from "@/features/shared/NotFound";
 import { AgentRemittanceReminder } from "@/features/shared/components/AgentRemittanceReminder";
 import { SupportWidget } from "@/components/SupportWidget";
@@ -356,6 +356,14 @@ const App = () => (
                       element={
                         <ProtectedRoute allowedRoles={['sales_head', 'sales_director']}>
                           <KeyAccountPaymentSettingsPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/key-accounts/payment-terms"
+                      element={
+                        <ProtectedRoute allowedRoles={['sales_head', 'sales_director']}>
+                          <KeyAccountPaymentTermsPage />
                         </ProtectedRoute>
                       }
                     />

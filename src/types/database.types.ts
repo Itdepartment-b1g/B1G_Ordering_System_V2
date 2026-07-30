@@ -1106,6 +1106,17 @@ export interface KeyAccountPaymentSettings {
   updated_at: string;
 }
 
+export interface KeyAccountPaymentTermOption {
+  id: string;
+  company_id: string;
+  label: string;
+  is_active: boolean;
+  sort_order: number;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // ============================================================================
 // DASHBOARD STATS TYPES
 // ============================================================================
