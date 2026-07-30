@@ -43,6 +43,7 @@ export function LotPackingDialog({ open, onOpenChange, target }: LotPackingDialo
   const boxedUnits = packing ? getBoxedUnits(packing) : null;
   const looseUnits = packing ? getLooseUnits(packing) : 0;
 
+  // Count standard and loose boxes separately so the summary matches older receive records too.
   const notLooseBoxes = packing?.box_count != null ? Number(packing.box_count) : 0;
   const looseBoxes =
     packing == null
