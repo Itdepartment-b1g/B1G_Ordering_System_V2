@@ -889,7 +889,7 @@ export default function MainInventoryPage() {
   /** From main_inventory.allocated_stock (gross). */
   const getVariantGrossAllocated = (variant: Variant) => variant.allocatedStock || 0;
 
-  /** Remaining allocated: gross allocated − mobile-sales pending (not yet finance-approved). */
+  /** Remaining allocated: gross allocated − pending field sales orders (not yet finance-approved). */
   const getVariantRemainingAllocated = (variant: Variant) => {
     const gross = getVariantGrossAllocated(variant);
     if (!showPendingAllocations) return gross;
@@ -2603,7 +2603,7 @@ export default function MainInventoryPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Order #</TableHead>
-                    <TableHead>Mobile sales</TableHead>
+                    <TableHead>Created by</TableHead>
                     <TableHead>Client</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Qty</TableHead>
@@ -2638,7 +2638,7 @@ export default function MainInventoryPage() {
                 </TableBody>
               </Table>
             ) : (
-              <p className="text-sm text-muted-foreground py-6 text-center">No pending mobile sales orders for this variant.</p>
+              <p className="text-sm text-muted-foreground py-6 text-center">No pending field sales orders for this variant.</p>
             )}
           </div>
 
