@@ -2720,7 +2720,7 @@ export default function MyClientsPage() {
 
           {/* Desktop/Tablet: table */}
           <div className="hidden md:block w-full overflow-x-auto">
-            <Table className="min-w-[920px]">
+            <Table className="min-w-[1100px]">
               <TableHeader>
                 <TableRow>
                   <TableHead className="text-center">Photo</TableHead>
@@ -2752,6 +2752,8 @@ export default function MyClientsPage() {
                     onSort={handleClientSort}
                     className="text-center"
                   />
+                  <TableHead className="text-center">Latitude</TableHead>
+                  <TableHead className="text-center">Longitude</TableHead>
                   <SortableTableHead
                     label="Category"
                     sortKey="category"
@@ -2840,6 +2842,38 @@ export default function MyClientsPage() {
                     <TableCell className="text-center">{client.company}</TableCell>
                     <TableCell className="text-center">{client.email}</TableCell>
                     <TableCell className="text-center">{client.phone}</TableCell>
+                    <TableCell className="text-center">
+                      {client.location ? (
+                        <a
+                          href={`https://www.google.com/maps?q=${client.location.latitude},${client.location.longitude}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs whitespace-nowrap text-primary hover:underline"
+                          title="Open in Google Maps"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {client.location.latitude.toFixed(6)}
+                        </a>
+                      ) : (
+                        <span className="text-muted-foreground text-xs">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {client.location ? (
+                        <a
+                          href={`https://www.google.com/maps?q=${client.location.latitude},${client.location.longitude}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs whitespace-nowrap text-primary hover:underline"
+                          title="Open in Google Maps"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {client.location.longitude.toFixed(6)}
+                        </a>
+                      ) : (
+                        <span className="text-muted-foreground text-xs">—</span>
+                      )}
+                    </TableCell>
                     <TableCell className="text-center">
                       <Badge
                         variant={
@@ -3168,20 +3202,22 @@ export default function MyClientsPage() {
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between text-xs pt-2 border-t border-dashed border-gray-300">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs pt-2 border-t border-dashed border-gray-300">
                       <div className="flex items-center gap-2">
                         <Badge variant="outline" className={getAccuracyBadge(viewingClient.location.accuracy).color}>
                           {getAccuracyBadge(viewingClient.location.accuracy).icon} ±{Math.round(viewingClient.location.accuracy)}m Accuracy
                         </Badge>
                       </div>
-                      <a
-                        href={`https://www.google.com/maps?q=${viewingClient.location.latitude},${viewingClient.location.longitude}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-primary hover:underline font-medium flex items-center gap-1"
-                      >
-                        Open Maps <ExternalLink className="h-3 w-3" />
-                      </a>
+                      <Button variant="outline" size="sm" className="w-full sm:w-auto" asChild>
+                        <a
+                          href={`https://www.google.com/maps?q=${viewingClient.location.latitude},${viewingClient.location.longitude}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                          View Google Map
+                        </a>
+                      </Button>
                     </div>
                   </div>
                 </div>
