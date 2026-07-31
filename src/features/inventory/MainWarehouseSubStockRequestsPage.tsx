@@ -89,6 +89,10 @@ import {
   type DeliveryReceiptWaveEvent,
 } from './utils/exportInternalStockDeliveryReceiptPdf';
 import {
+  attachInternalStockProofImageUrls,
+  prepareInternalStockDeliveryUploads,
+} from './utils/uploadInternalStockDeliveryEvidence';
+import {
   DEFAULT_MAIN_SUB_STOCK_REQUEST_SORT_DIRECTION,
   DEFAULT_MAIN_SUB_STOCK_REQUEST_SORT_KEY,
   sortMainSubStockRequests,
@@ -706,16 +710,37 @@ export default function MainWarehouseSubStockRequestsPage() {
 
   const mainAllocateMutation = useMutation({
     mutationFn: async (payload: MainAllocateSubmitPayload) => {
-      return createAndDeliverMainStockAllocation({
+      if (!user?.company_id) throw new Error('Missing company');
+      const uploaded = await prepareInternalStockDeliveryUploads({
+        companyId: user.company_id,
+        riderPhotoDataUrl: payload.riderPhotoUrl,
+        packagePhotos: payload.packagePhotos,
+        signatureDataUrl: payload.signatureUrl,
+      });
+      const result = await createAndDeliverMainStockAllocation({
         fromLocationId: payload.fromLocationId,
         items: payload.items,
-        signatureUrl: payload.signatureUrl,
-        proofImageUrl: payload.proofImageUrl,
+        signatureUrl: uploaded.signature.url,
+        signaturePath: uploaded.signature.path,
+        proofImageUrl: uploaded.packages.firstUrl,
+        proofImagePath: uploaded.packages.firstPath,
         riderName: payload.riderName,
         riderPlateNumber: payload.riderPlateNumber,
-        riderPhotoUrl: payload.riderPhotoUrl,
+        riderPhotoUrl: uploaded.rider.url,
+        riderPhotoPath: uploaded.rider.path,
         notes: payload.notes || undefined,
       });
+      const requestId =
+        typeof result?.request_id === 'string' ? result.request_id : undefined;
+      if (requestId) {
+        await attachInternalStockProofImageUrls({
+          requestId,
+          eventType: 'delivered',
+          proofImageUrls: uploaded.packages.urls,
+          proofImagePaths: uploaded.packages.paths,
+        });
+      }
+      return result;
     },
     onSuccess: (result) => {
       setMainAllocateOpen(false);
@@ -882,18 +907,37 @@ export default function MainWarehouseSubStockRequestsPage() {
       if (!deliverTarget) {
         throw new Error('No request selected');
       }
+      if (!user?.company_id) throw new Error('Missing company');
       const proof = deliverProof.value;
       if (!isInternalStockDeliveryProofComplete(proof)) {
-        throw new Error('Rider details, delivery proof, and signature are required');
+        throw new Error('Rider details, package photos, and signature are required');
       }
-      return deliverInternalStockRequest({
+      const uploaded = await prepareInternalStockDeliveryUploads({
+        companyId: user.company_id,
         requestId: deliverTarget.id,
-        signatureUrl: proof.signatureDataUrl,
-        proofImageUrl: proof.proofImageDataUrl,
+        riderPhotoDataUrl: proof.riderPhotoDataUrl,
+        riderPhotoName: proof.riderPhotoName,
+        packagePhotos: proof.packagePhotos,
+        signatureDataUrl: proof.signatureDataUrl,
+      });
+      const result = await deliverInternalStockRequest({
+        requestId: deliverTarget.id,
+        signatureUrl: uploaded.signature.url,
+        signaturePath: uploaded.signature.path,
+        proofImageUrl: uploaded.packages.firstUrl,
+        proofImagePath: uploaded.packages.firstPath,
         riderName: proof.riderName.trim(),
         riderPlateNumber: proof.riderPlate.trim(),
-        riderPhotoUrl: proof.riderPhotoDataUrl,
+        riderPhotoUrl: uploaded.rider.url,
+        riderPhotoPath: uploaded.rider.path,
       });
+      await attachInternalStockProofImageUrls({
+        requestId: deliverTarget.id,
+        eventType: 'delivered',
+        proofImageUrls: uploaded.packages.urls,
+        proofImagePaths: uploaded.packages.paths,
+      });
+      return result;
     },
     onSuccess: (result) => {
       const delivered = deliverTarget;
@@ -986,21 +1030,40 @@ export default function MainWarehouseSubStockRequestsPage() {
       lines: Array<{ variant_id: string; quantity: number }>;
       note?: string;
       shortBefore: number;
-      proofImageUrl: string;
-      signatureUrl: string;
+      packagePhotos: import('@/features/shared/components/MultiProofPhotoField').PackageProofPhotoItem[];
+      signatureDataUrl: string;
       riderName: string;
       riderPlateNumber: string;
-      riderPhotoUrl: string;
+      riderPhotoDataUrl: string;
+      riderPhotoName?: string;
     }) => {
+      if (!user?.company_id) throw new Error('Missing company');
+      const uploaded = await prepareInternalStockDeliveryUploads({
+        companyId: user.company_id,
+        requestId: payload.requestId,
+        riderPhotoDataUrl: payload.riderPhotoDataUrl,
+        riderPhotoName: payload.riderPhotoName,
+        packagePhotos: payload.packagePhotos,
+        signatureDataUrl: payload.signatureDataUrl,
+      });
       const result = await allocateInternalStockRequestRemaining({
         requestId: payload.requestId,
         lines: payload.lines,
         note: payload.note,
-        proofImageUrl: payload.proofImageUrl,
-        signatureUrl: payload.signatureUrl,
+        proofImageUrl: uploaded.packages.firstUrl,
+        proofImagePath: uploaded.packages.firstPath,
+        signatureUrl: uploaded.signature.url,
+        signaturePath: uploaded.signature.path,
         riderName: payload.riderName,
         riderPlateNumber: payload.riderPlateNumber,
-        riderPhotoUrl: payload.riderPhotoUrl,
+        riderPhotoUrl: uploaded.rider.url,
+        riderPhotoPath: uploaded.rider.path,
+      });
+      await attachInternalStockProofImageUrls({
+        requestId: payload.requestId,
+        eventType: 'remaining_released',
+        proofImageUrls: uploaded.packages.urls,
+        proofImagePaths: uploaded.packages.paths,
       });
       return { ...result, meta: payload };
     },
@@ -1162,11 +1225,12 @@ export default function MainWarehouseSubStockRequestsPage() {
       lines: payload,
       note: allocateNote.trim() || undefined,
       shortBefore,
-      proofImageUrl: proof.proofImageDataUrl,
-      signatureUrl: proof.signatureDataUrl,
+      packagePhotos: proof.packagePhotos,
+      signatureDataUrl: proof.signatureDataUrl,
       riderName: proof.riderName.trim(),
       riderPlateNumber: proof.riderPlate.trim(),
-      riderPhotoUrl: proof.riderPhotoDataUrl,
+      riderPhotoDataUrl: proof.riderPhotoDataUrl,
+      riderPhotoName: proof.riderPhotoName,
     });
   };
 

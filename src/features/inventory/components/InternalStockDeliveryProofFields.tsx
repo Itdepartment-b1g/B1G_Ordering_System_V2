@@ -1,5 +1,5 @@
 /**
- * Shared rider + delivery proof + signature fields for internal stock
+ * Shared rider + package photos + signature fields for internal stock
  * deliver / allocate-remaining / main-allocate flows.
  */
 import { useEffect, useId, useRef, useState } from 'react';
@@ -14,6 +14,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
+import {
+  MultiProofPhotoField,
+  readFileAsDataUrl,
+  revokePackageProofPreviews,
+  validatePackageProofFile,
+  type PackageProofPhotoItem,
+} from '@/features/shared/components/MultiProofPhotoField';
 
 export const MAX_INTERNAL_STOCK_PROOF_BYTES = 5 * 1024 * 1024;
 export const ACCEPTED_INTERNAL_STOCK_PROOF_TYPES = [
@@ -28,8 +35,10 @@ export type InternalStockDeliveryProofValue = {
   riderPlate: string;
   riderPhotoDataUrl: string;
   riderPhotoName: string;
+  /** @deprecated Prefer packagePhotos; kept as first photo for callers. */
   proofImageDataUrl: string;
   proofImageName: string;
+  packagePhotos: PackageProofPhotoItem[];
   signatureDataUrl: string;
 };
 
@@ -53,6 +62,7 @@ export function emptyInternalStockDeliveryProof(): InternalStockDeliveryProofVal
     riderPhotoName: '',
     proofImageDataUrl: '',
     proofImageName: '',
+    packagePhotos: [],
     signatureDataUrl: '',
   };
 }
@@ -60,37 +70,23 @@ export function emptyInternalStockDeliveryProof(): InternalStockDeliveryProofVal
 export function isInternalStockDeliveryProofComplete(
   value: InternalStockDeliveryProofValue
 ): boolean {
+  const hasPackage =
+    value.packagePhotos.length > 0 || !!value.proofImageDataUrl;
   return (
     !!value.riderName.trim() &&
     !!value.riderPlate.trim() &&
     !!value.riderPhotoDataUrl &&
-    !!value.proofImageDataUrl &&
+    hasPackage &&
     !!value.signatureDataUrl
   );
 }
 
 export function validateInternalStockProofFile(file: File): string | null {
-  if (
-    !(ACCEPTED_INTERNAL_STOCK_PROOF_TYPES as readonly string[]).includes(file.type)
-  ) {
-    return 'Use JPG, PNG, WEBP, or GIF.';
-  }
-  if (file.size > MAX_INTERNAL_STOCK_PROOF_BYTES) {
-    return 'Image must be 5MB or smaller.';
-  }
-  return null;
+  return validatePackageProofFile(file);
 }
 
 export function readInternalStockProofAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') resolve(reader.result);
-      else reject(new Error('Failed to read image'));
-    };
-    reader.onerror = () => reject(new Error('Failed to read image'));
-    reader.readAsDataURL(file);
-  });
+  return readFileAsDataUrl(file);
 }
 
 /** Controlled proof state with optional reset when `resetKey` becomes true. */
@@ -101,17 +97,30 @@ export function useInternalStockDeliveryProof(resetKey?: boolean) {
 
   useEffect(() => {
     if (!resetKey) return;
-    setValue(emptyInternalStockDeliveryProof());
+    setValue((prev) => {
+      revokePackageProofPreviews(prev.packagePhotos);
+      return emptyInternalStockDeliveryProof();
+    });
     setRiderPhotoError(null);
     setProofError(null);
   }, [resetKey]);
 
   const patch = (partial: Partial<InternalStockDeliveryProofValue>) => {
-    setValue((prev) => ({ ...prev, ...partial }));
+    setValue((prev) => {
+      const next = { ...prev, ...partial };
+      if (partial.packagePhotos) {
+        next.proofImageDataUrl = partial.packagePhotos[0]?.previewUrl || '';
+        next.proofImageName = partial.packagePhotos[0]?.fileName || '';
+      }
+      return next;
+    });
   };
 
   const reset = () => {
-    setValue(emptyInternalStockDeliveryProof());
+    setValue((prev) => {
+      revokePackageProofPreviews(prev.packagePhotos);
+      return emptyInternalStockDeliveryProof();
+    });
     setRiderPhotoError(null);
     setProofError(null);
   };
@@ -224,28 +233,29 @@ export function InternalStockDeliveryProofFields({
   const prefix = labels?.idPrefix || reactId;
   const [signatureOpen, setSignatureOpen] = useState(false);
 
-  const handleImagePick = async (
-    file: File | null,
-    kind: 'rider' | 'proof'
-  ) => {
-    const setErr = kind === 'rider' ? onRiderPhotoError : onProofError;
-    setErr?.(null);
+  const handleRiderPick = async (file: File | null) => {
+    onRiderPhotoError?.(null);
     if (!file) return;
     const err = validateInternalStockProofFile(file);
     if (err) {
-      setErr?.(err);
+      onRiderPhotoError?.(err);
       return;
     }
     try {
       const dataUrl = await readInternalStockProofAsDataUrl(file);
-      if (kind === 'rider') {
-        onChange({ riderPhotoDataUrl: dataUrl, riderPhotoName: file.name });
-      } else {
-        onChange({ proofImageDataUrl: dataUrl, proofImageName: file.name });
-      }
+      onChange({ riderPhotoDataUrl: dataUrl, riderPhotoName: file.name });
     } catch {
-      setErr?.('Could not read image file.');
+      onRiderPhotoError?.('Could not read image file.');
     }
+  };
+
+  const handlePackageChange = (next: PackageProofPhotoItem[]) => {
+    onProofError?.(null);
+    onChange({
+      packagePhotos: next,
+      proofImageDataUrl: next[0]?.previewUrl || '',
+      proofImageName: next[0]?.fileName || '',
+    });
   };
 
   return (
@@ -286,19 +296,17 @@ export function InternalStockDeliveryProofFields({
         dataUrl={value.riderPhotoDataUrl}
         fileName={value.riderPhotoName}
         error={riderPhotoError ?? null}
-        onPick={(file) => void handleImagePick(file, 'rider')}
+        onPick={(file) => void handleRiderPick(file)}
         onClear={() => onChange({ riderPhotoDataUrl: '', riderPhotoName: '' })}
       />
 
-      <ImageUploadField
-        label={labels?.proofLabel || 'Delivery proof (required)'}
-        emptyTitle={labels?.proofUploadTitle || 'Upload delivery / cargo proof'}
-        alt={labels?.proofAlt || 'Delivery proof'}
-        dataUrl={value.proofImageDataUrl}
-        fileName={value.proofImageName}
+      <MultiProofPhotoField
+        label={labels?.proofLabel || 'Package photos'}
+        emptyTitle={labels?.proofUploadTitle || 'Upload package photo'}
+        recommendedHint="Recommended"
+        value={value.packagePhotos}
+        onChange={handlePackageChange}
         error={proofError ?? null}
-        onPick={(file) => void handleImagePick(file, 'proof')}
-        onClear={() => onChange({ proofImageDataUrl: '', proofImageName: '' })}
       />
 
       <div className="space-y-2">

@@ -53,6 +53,7 @@ export type MainAllocateSubmitPayload = {
   items: Array<{ variant_id: string; quantity: number }>;
   signatureUrl: string;
   proofImageUrl: string;
+  packagePhotos: import('@/features/shared/components/MultiProofPhotoField').PackageProofPhotoItem[];
   riderName: string;
   riderPlateNumber: string;
   riderPhotoUrl: string;
@@ -314,6 +315,7 @@ export function MainWarehouseAllocateDialog({
       })),
       signatureUrl: proof.signatureDataUrl,
       proofImageUrl: proof.proofImageDataUrl,
+      packagePhotos: proof.packagePhotos,
       riderName: proof.riderName.trim(),
       riderPlateNumber: proof.riderPlate.trim(),
       riderPhotoUrl: proof.riderPhotoDataUrl,

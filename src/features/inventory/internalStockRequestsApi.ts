@@ -74,6 +74,7 @@ export type InternalStockRequestEventRow = {
   lines: unknown;
   short_quantity: number | null;
   proof_image_url: string | null;
+  proof_image_urls?: string[] | null;
   signature_url: string | null;
   rider_name?: string | null;
   rider_plate_number?: string | null;
@@ -114,6 +115,7 @@ const REQUEST_SELECT = `
     lines,
     short_quantity,
     proof_image_url,
+    proof_image_urls,
     signature_url,
     rider_name,
     rider_plate_number,

@@ -76,6 +76,7 @@ function resolveReceiveProof(request: SubWarehouseStockRequest): SubWarehouseRec
       at: latest.at,
       notes: latest.note || request.receiveNotes,
       proofImageDataUrl: latest.proofImageDataUrl || '',
+      proofImageUrls: latest.proofImageUrls,
       signatureDataUrl: latest.signatureDataUrl || '',
       lines: latest.lines,
     };
@@ -205,9 +206,14 @@ function qtyHeaderForEvent(type: SubWarehouseRequestHistoryEvent['type']): strin
   return 'Qty';
 }
 
-function resolveEventProof(event: SubWarehouseRequestHistoryEvent): string | undefined {
-  if ('proofImageDataUrl' in event) return event.proofImageDataUrl;
-  return undefined;
+function resolveEventProofUrls(event: SubWarehouseRequestHistoryEvent): string[] {
+  if ('proofImageUrls' in event && Array.isArray(event.proofImageUrls) && event.proofImageUrls.length > 0) {
+    return event.proofImageUrls.filter((url) => !!url?.trim());
+  }
+  if ('proofImageDataUrl' in event && event.proofImageDataUrl?.trim()) {
+    return [event.proofImageDataUrl];
+  }
+  return [];
 }
 
 function resolveEventSignature(
@@ -286,16 +292,28 @@ function renderEventAttachments(
 
   if (!showProof && !showSignature) return '';
 
-  const proof = resolveEventProof(event);
+  const proofUrls = showProof ? resolveEventProofUrls(event) : [];
   const signature = resolveEventSignature(event, request);
   const boxes: string[] = [];
 
   if (showProof) {
-    boxes.push(`
+    if (proofUrls.length === 0) {
+      boxes.push(`
       <div class="attach-box">
-        <h4>Proof photo</h4>
-        ${imgOrMuted(proof, 'Proof photo', 'attach')}
+        <h4>Package photo</h4>
+        ${imgOrMuted(null, 'Package photo', 'attach')}
       </div>`);
+    } else {
+      proofUrls.forEach((url, index) => {
+        const label =
+          proofUrls.length > 1 ? `Package photo ${index + 1}` : 'Package photo';
+        boxes.push(`
+      <div class="attach-box">
+        <h4>${escapeHtml(label)}</h4>
+        ${imgOrMuted(url, label, 'attach')}
+      </div>`);
+      });
+    }
   }
   if (showSignature) {
     boxes.push(`

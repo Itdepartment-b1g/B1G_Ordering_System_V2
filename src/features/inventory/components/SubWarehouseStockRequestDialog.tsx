@@ -50,6 +50,7 @@ export type SubWarehouseReceiveProof = {
   at: string;
   notes?: string;
   proofImageDataUrl: string;
+  proofImageUrls?: string[];
   proofImageName?: string;
   signatureDataUrl: string;
   /** Line qtys confirmed in this receive event. */
@@ -100,6 +101,7 @@ export type SubWarehouseRequestHistoryEvent =
       byName?: string;
       lines: SubWarehouseReleaseLine[];
       proofImageDataUrl?: string;
+      proofImageUrls?: string[];
       signatureDataUrl?: string;
       riderName?: string;
       riderPlateNumber?: string;
@@ -115,6 +117,7 @@ export type SubWarehouseRequestHistoryEvent =
       byName?: string;
       lines: SubWarehouseReleaseLine[];
       proofImageDataUrl?: string;
+      proofImageUrls?: string[];
       signatureDataUrl?: string;
       riderName?: string;
       riderPlateNumber?: string;
@@ -129,6 +132,7 @@ export type SubWarehouseRequestHistoryEvent =
       byName?: string;
       lines: SubWarehouseReleaseLine[];
       proofImageDataUrl?: string;
+      proofImageUrls?: string[];
       signatureDataUrl?: string;
       riderName?: string;
       riderPlateNumber?: string;
@@ -144,6 +148,7 @@ export type SubWarehouseRequestHistoryEvent =
       lines: SubWarehouseReleaseLine[];
       shortQuantity: number;
       proofImageDataUrl?: string;
+      proofImageUrls?: string[];
       signatureDataUrl?: string;
     }
   | {

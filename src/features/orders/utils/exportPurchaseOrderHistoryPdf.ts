@@ -175,13 +175,19 @@ export function exportPurchaseOrderHistoryPdf(
         .join('');
 
       const attachments: string[] = [];
-      if (event.proofImageDataUrl) {
+      const proofUrls =
+        Array.isArray(event.proofImageUrls) && event.proofImageUrls.length > 0
+          ? event.proofImageUrls.filter(Boolean)
+          : event.proofImageDataUrl
+            ? [event.proofImageDataUrl]
+            : [];
+      proofUrls.forEach((url, index) => {
         attachments.push(`
           <div class="attach-box">
-            <h4>Proof photo</h4>
-            <img class="attach" src="${escapeHtml(event.proofImageDataUrl)}" alt="Proof" />
+            <h4>${proofUrls.length > 1 ? `Package photo ${index + 1}` : 'Package photo'}</h4>
+            <img class="attach" src="${escapeHtml(url)}" alt="Package photo" />
           </div>`);
-      }
+      });
       if (event.signatureDataUrl) {
         attachments.push(`
           <div class="attach-box">

@@ -24,6 +24,11 @@ import {
   fetchInternalStockRequests,
 } from './internalStockRequestsApi';
 import { exportSubWarehouseReceivePdf } from './utils/exportSubWarehouseReceivePdf';
+import {
+  attachInternalStockProofImageUrls,
+  uploadInternalStockPackagePhotos,
+  uploadInternalStockSignature,
+} from './utils/uploadInternalStockDeliveryEvidence';
 import { fetchMainWarehouseStockBoard } from './warehouseStockBoard';
 import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
 
@@ -171,15 +176,50 @@ export default function SubWarehouseStockRequestPage() {
       if (!lines.some((line) => line.quantity > 0)) {
         throw new Error('Enter at least one receive quantity greater than 0.');
       }
+      if (!user?.company_id) throw new Error('Missing company');
+      if (!payload.packagePhotos?.length) {
+        throw new Error('At least one package photo is required');
+      }
+
+      const [packages, signature] = await Promise.all([
+        uploadInternalStockPackagePhotos({
+          photos: payload.packagePhotos,
+          companyId: user.company_id,
+          requestId: payload.requestId,
+        }),
+        uploadInternalStockSignature({
+          signatureDataUrl: payload.signatureDataUrl,
+          companyId: user.company_id,
+          requestId: payload.requestId,
+        }),
+      ]);
+
       const result = await confirmInternalStockRequestReceive({
         requestId: payload.requestId,
         lines,
-        proofImageUrl: payload.proofImageDataUrl,
-        signatureUrl: payload.signatureDataUrl,
+        proofImageUrl: packages.firstUrl,
+        proofImagePath: packages.firstPath,
+        signatureUrl: signature.url,
+        signaturePath: signature.path,
         notes: payload.notes || undefined,
         proofImageName: payload.proofImageName,
       });
-      return { result, payload };
+
+      await attachInternalStockProofImageUrls({
+        requestId: payload.requestId,
+        eventType: 'receive_confirmed',
+        proofImageUrls: packages.urls,
+        proofImagePaths: packages.paths,
+      });
+
+      return {
+        result,
+        payload: {
+          ...payload,
+          proofImageDataUrl: packages.firstUrl,
+          signatureDataUrl: signature.url,
+        },
+      };
     },
     onSuccess: ({ result, payload }) => {
       setReceiveOpen(false);

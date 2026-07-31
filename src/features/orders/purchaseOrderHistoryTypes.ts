@@ -29,6 +29,8 @@ export type PurchaseOrderHistoryEvent = {
   lines?: PurchaseOrderHistoryLine[];
   shortQuantity?: number;
   proofImageDataUrl?: string;
+  /** Package / proof photos (preferred over scalar). */
+  proofImageUrls?: string[];
   signatureDataUrl?: string;
   deliveryId?: string;
   discrepancyId?: string;

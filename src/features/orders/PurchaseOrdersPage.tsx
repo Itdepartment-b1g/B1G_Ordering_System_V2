@@ -30,6 +30,12 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/co
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
+import {
+  MultiProofPhotoField,
+  revokePackageProofPreviews,
+  type PackageProofPhotoItem,
+} from '@/features/shared/components/MultiProofPhotoField';
+import { uploadPackageProofPhotos } from '@/features/orders/utils/uploadPackageProofPhotos';
 import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2, ChevronLeft, ChevronRight, FileText, Receipt, MapPin, Store, Filter, XCircle, History, AlertTriangle, MoreVertical } from 'lucide-react';
 import {
   DropdownMenu,
@@ -289,12 +295,22 @@ export default function PurchaseOrdersPage() {
   const [riderPhotoFile, setRiderPhotoFile] = useState<File | null>(null);
   const [riderPhotoPreviewUrl, setRiderPhotoPreviewUrl] = useState<string | null>(null);
   const riderPhotoInputRef = useRef<HTMLInputElement>(null);
+  const [packagePhotos, setPackagePhotos] = useState<PackageProofPhotoItem[]>([]);
+  const [packagePhotoError, setPackagePhotoError] = useState<string | null>(null);
 
   const clearRiderPhoto = () => {
     setRiderPhotoFile(null);
     if (riderPhotoInputRef.current) {
       riderPhotoInputRef.current.value = '';
     }
+  };
+
+  const clearPackagePhotos = () => {
+    setPackagePhotos((prev) => {
+      revokePackageProofPreviews(prev);
+      return [];
+    });
+    setPackagePhotoError(null);
   };
   const [warehouseSignatureDataUrl, setWarehouseSignatureDataUrl] = useState<string | null>(null);
   const [dispatchNotes, setDispatchNotes] = useState('');
@@ -1526,6 +1542,7 @@ export default function PurchaseOrdersPage() {
     setRiderName('');
     setRiderPlate('');
     clearRiderPhoto();
+    clearPackagePhotos();
     setWarehouseSignatureDataUrl(null);
     setDispatchNotes('');
     setDispatchLines([]);
@@ -2740,6 +2757,19 @@ export default function PurchaseOrdersPage() {
                   ) : null}
                 </div>
 
+                <MultiProofPhotoField
+                  label="Package photos"
+                  value={packagePhotos}
+                  onChange={(next) => {
+                    setPackagePhotoError(null);
+                    setPackagePhotos(next);
+                  }}
+                  error={packagePhotoError}
+                  emptyTitle="Upload package photo"
+                  recommendedHint="Recommended"
+                  disabled={savingDispatch}
+                />
+
                 <div className="space-y-2">
                   <Label>Warehouse e-signature</Label>
                   {warehouseSignatureDataUrl ? (
@@ -2810,6 +2840,15 @@ export default function PurchaseOrdersPage() {
                     if (!validateDispatchShipQtys()) return;
                     if (!riderName.trim() || !riderPlate.trim() || !riderPhotoFile || !warehouseSignatureDataUrl) {
                       toast({ title: 'Missing info', description: 'Rider name, plate number, rider photo, and warehouse signature are required.', variant: 'destructive' });
+                      return;
+                    }
+                    if (packagePhotos.length < 1) {
+                      setPackagePhotoError('At least one package photo is required.');
+                      toast({
+                        title: 'Missing package photo',
+                        description: 'Upload at least one recommended package photo.',
+                        variant: 'destructive',
+                      });
                       return;
                     }
 
@@ -2905,6 +2944,13 @@ export default function PurchaseOrdersPage() {
                       if (!riderPhotoUrl) throw new Error('Failed to create signed URL');
                       if (!warehouseSignatureUrl) throw new Error('Failed to create signature URL');
 
+                      const packageUpload = await uploadPackageProofPhotos({
+                        photos: packagePhotos,
+                        bucket: KA_DELIVERY_RIDER_PHOTOS_BUCKET,
+                        pathPrefix: storageBasePath,
+                        fileStem: 'package',
+                      });
+
                       // 2) Create DR number (WH + first letter of warehouse_locations.name, e.g. Bacoor → WHB)
                       const { data: drNumber, error: drErr } = await supabase.rpc('generate_dr_number', {
                         p_warehouse_location_id: locId,
@@ -2926,6 +2972,9 @@ export default function PurchaseOrdersPage() {
                           rider_name: riderName.trim(),
                           rider_plate_number: riderPlate.trim(),
                           rider_photo_url: riderPhotoUrl,
+                          proof_of_delivery_url: packageUpload.firstUrl,
+                          proof_image_urls: packageUpload.urls,
+                          proof_image_paths: packageUpload.paths,
                           warehouse_signature_url: warehouseSignatureUrl,
                           warehouse_signature_path: signaturePath,
                           dr_number: drNumber,
@@ -2962,7 +3011,10 @@ export default function PurchaseOrdersPage() {
                             brand_name: fromUi?.brand_name ?? null,
                           };
                         }),
-                        proofImageUrl: riderPhotoUrl,
+                        proofImageUrl: packageUpload.firstUrl,
+                        proofImagePath: packageUpload.firstPath,
+                        proofImageUrls: packageUpload.urls,
+                        proofImagePaths: packageUpload.paths,
                         signatureUrl: warehouseSignatureUrl,
                         signaturePath: signaturePath,
                         deliveryId: deliveryRow.id,
@@ -3063,6 +3115,8 @@ export default function PurchaseOrdersPage() {
                       setDispatchOpen(false);
                       setDispatchStep(1);
                       setDispatchPo(null);
+                      clearRiderPhoto();
+                      clearPackagePhotos();
                       setWarehouseSignatureDataUrl(null);
                       setDispatchNotes('');
                       setDispatchLines([]);

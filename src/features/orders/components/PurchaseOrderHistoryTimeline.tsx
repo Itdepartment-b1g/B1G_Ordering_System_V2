@@ -458,35 +458,45 @@ function DetailsToggle({
 
 function EventAttachments({
   proofImageDataUrl,
+  proofImageUrls,
   signatureDataUrl,
   signatureLabel,
 }: {
   proofImageDataUrl?: string;
+  proofImageUrls?: string[];
   signatureDataUrl?: string;
   signatureLabel: string;
 }) {
-  if (!proofImageDataUrl && !signatureDataUrl) return null;
+  const urls =
+    Array.isArray(proofImageUrls) && proofImageUrls.length > 0
+      ? proofImageUrls.filter(Boolean)
+      : proofImageDataUrl
+        ? [proofImageDataUrl]
+        : [];
+
+  if (urls.length === 0 && !signatureDataUrl) return null;
 
   const parts: string[] = [];
-  if (proofImageDataUrl) parts.push('proof photo');
+  if (urls.length === 1) parts.push('package photo');
+  if (urls.length > 1) parts.push(`${urls.length} package photos`);
   if (signatureDataUrl) parts.push('signature');
 
   return (
     <DetailsToggle label={parts.join(' & ')}>
       <div className="flex flex-wrap gap-3">
-        {proofImageDataUrl ? (
-          <div className="space-y-1">
+        {urls.map((url, index) => (
+          <div key={`${url}-${index}`} className="space-y-1">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground flex items-center gap-1">
               <ImageIcon className="h-3 w-3" />
-              Proof photo
+              {urls.length > 1 ? `Package ${index + 1}` : 'Package photo'}
             </p>
             <img
-              src={proofImageDataUrl}
-              alt="Proof"
+              src={url}
+              alt={`Package ${index + 1}`}
               className="h-40 w-40 max-w-full rounded-md object-cover border bg-muted/30"
             />
           </div>
-        ) : null}
+        ))}
         {signatureDataUrl ? (
           <div className="space-y-1">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -753,6 +763,7 @@ export function PurchaseOrderHistoryTimeline({
                   {event.type === 'receive_confirmed' || event.type === 'cancelled' ? (
                     <EventAttachments
                       proofImageDataUrl={event.proofImageDataUrl}
+                      proofImageUrls={event.proofImageUrls}
                       signatureDataUrl={event.signatureDataUrl}
                       signatureLabel={
                         event.type === 'cancelled' ? 'Cancel signature' : 'Buyer signature'
@@ -763,6 +774,7 @@ export function PurchaseOrderHistoryTimeline({
                   {event.type === 'dispatched' ? (
                     <EventAttachments
                       proofImageDataUrl={event.proofImageDataUrl}
+                      proofImageUrls={event.proofImageUrls}
                       signatureDataUrl={event.signatureDataUrl}
                       signatureLabel="Warehouse signature"
                     />

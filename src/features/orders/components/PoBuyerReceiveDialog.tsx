@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
@@ -34,11 +34,15 @@ import {
 } from '@/features/orders/deliveryDiscrepancyShared';
 import { refetchSuperAdminAllocationHistory } from '@/features/sales-agents/components/super-admin-allocation-history/hooks/useSuperAdminAllocationHistory';
 import { sendNotification } from '@/features/shared/lib/notification.helpers';
+import {
+  MultiProofPhotoField,
+  revokePackageProofPreviews,
+  type PackageProofPhotoItem,
+} from '@/features/shared/components/MultiProofPhotoField';
+import { uploadPackageProofPhotos } from '@/features/orders/utils/uploadPackageProofPhotos';
 
 const BUYER_PROOF_BUCKET = 'ka-delivery-rider-photos';
 const BUYER_SIGNATURE_BUCKET = 'ka-delivery-warehouse-signatures';
-const PROOF_ACCEPT = 'image/jpeg,image/png,image/webp,image/gif';
-const PROOF_MAX_BYTES = 5 * 1024 * 1024;
 
 export type PoReceiveLine = {
   variant_id: string;
@@ -78,13 +82,12 @@ export function PoBuyerReceiveDialog({
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const proofInputRef = useRef<HTMLInputElement>(null);
   const [qtyByVariant, setQtyByVariant] = useState<Record<string, number>>({});
   const [reasonByVariant, setReasonByVariant] = useState<Record<string, ShortfallReason | ''>>({});
   const [otherDetailByVariant, setOtherDetailByVariant] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState('');
-  const [proofFile, setProofFile] = useState<File | null>(null);
-  const [proofPreview, setProofPreview] = useState<string | null>(null);
+  const [packagePhotos, setPackagePhotos] = useState<PackageProofPhotoItem[]>([]);
+  const [packagePhotoError, setPackagePhotoError] = useState<string | null>(null);
   const [signatureDataUrl, setSignatureDataUrl] = useState<string | null>(null);
   const [showSignatureModal, setShowSignatureModal] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -103,22 +106,14 @@ export function PoBuyerReceiveDialog({
     setReasonByVariant(reasons);
     setOtherDetailByVariant(otherDetails);
     setNotes('');
-    setProofFile(null);
-    setProofPreview(null);
+    setPackagePhotos((prev) => {
+      revokePackageProofPreviews(prev);
+      return [];
+    });
+    setPackagePhotoError(null);
     setSignatureDataUrl(null);
     setShowSignatureModal(false);
-    if (proofInputRef.current) proofInputRef.current.value = '';
   }, [open, lines]);
-
-  useEffect(() => {
-    if (!proofFile) {
-      setProofPreview(null);
-      return;
-    }
-    const url = URL.createObjectURL(proofFile);
-    setProofPreview(url);
-    return () => URL.revokeObjectURL(url);
-  }, [proofFile]);
 
   const totalDispatched = useMemo(
     () => lines.reduce((s, l) => s + l.quantity_dispatched, 0),
@@ -156,22 +151,6 @@ export function PoBuyerReceiveDialog({
     () => shortfallLines.reduce((s, l) => s + l.shortfall, 0),
     [shortfallLines]
   );
-
-  const handleProofChange = (file: File | null) => {
-    if (!file) {
-      setProofFile(null);
-      return;
-    }
-    if (file.size > PROOF_MAX_BYTES) {
-      toast({
-        title: 'File too large',
-        description: 'Proof image must be 5 MB or less.',
-        variant: 'destructive',
-      });
-      return;
-    }
-    setProofFile(file);
-  };
 
   const validateQtys = () => {
     for (const line of lines) {
@@ -214,10 +193,11 @@ export function PoBuyerReceiveDialog({
       return;
     }
     if (!validateQtys()) return;
-    if (!proofFile) {
+    if (packagePhotos.length < 1) {
+      setPackagePhotoError('At least one package photo is required.');
       toast({
-        title: 'Proof required',
-        description: 'Upload a proof photo of the received items.',
+        title: 'Package photo required',
+        description: 'Upload at least one recommended package photo.',
         variant: 'destructive',
       });
       return;
@@ -245,8 +225,12 @@ export function PoBuyerReceiveDialog({
       const uploadTs = Date.now();
       const storageBase = `${companyId}/po/${purchaseOrderId}`;
 
-      const ext = proofFile.name.split('.').pop() || 'jpg';
-      const proofPath = `${storageBase}/receive_${deliveryId}_${uploadTs}.${ext}`;
+      const packageUpload = await uploadPackageProofPhotos({
+        photos: packagePhotos,
+        bucket: BUYER_PROOF_BUCKET,
+        pathPrefix: storageBase,
+        fileStem: `receive_${deliveryId}`,
+      });
 
       const base64Data = signatureDataUrl.split(',')[1];
       if (!base64Data) throw new Error('Invalid signature data');
@@ -258,29 +242,19 @@ export function PoBuyerReceiveDialog({
       const signatureBlob = new Blob([bytes], { type: 'image/png' });
       const signaturePath = `${storageBase}/receive_signature_${deliveryId}_${uploadTs}.png`;
 
-      const [{ error: uploadErr }, { error: sigUploadErr }] = await Promise.all([
-        supabase.storage.from(BUYER_PROOF_BUCKET).upload(proofPath, proofFile, {
-          upsert: false,
-          contentType: proofFile.type || 'image/jpeg',
-        }),
-        supabase.storage.from(BUYER_SIGNATURE_BUCKET).upload(signaturePath, signatureBlob, {
+      const { error: sigUploadErr } = await supabase.storage
+        .from(BUYER_SIGNATURE_BUCKET)
+        .upload(signaturePath, signatureBlob, {
           upsert: false,
           contentType: 'image/png',
-        }),
-      ]);
-      if (uploadErr) throw uploadErr;
+        });
       if (sigUploadErr) throw sigUploadErr;
 
-      const [{ data: urlData, error: urlErr }, { data: sigUrlData, error: sigUrlErr }] =
-        await Promise.all([
-          supabase.storage.from(BUYER_PROOF_BUCKET).createSignedUrl(proofPath, 60 * 60 * 24 * 365),
-          supabase.storage
-            .from(BUYER_SIGNATURE_BUCKET)
-            .createSignedUrl(signaturePath, 60 * 60 * 24 * 365),
-        ]);
-      if (urlErr) throw urlErr;
+      const { data: sigUrlData, error: sigUrlErr } = await supabase.storage
+        .from(BUYER_SIGNATURE_BUCKET)
+        .createSignedUrl(signaturePath, 60 * 60 * 24 * 365);
       if (sigUrlErr) throw sigUrlErr;
-      const proofUrl = urlData?.signedUrl;
+      const proofUrl = packageUpload.firstUrl;
       const signatureUrl = sigUrlData?.signedUrl;
       if (!proofUrl) throw new Error('Failed to create proof URL');
       if (!signatureUrl) throw new Error('Failed to create signature URL');
@@ -306,6 +280,8 @@ export function PoBuyerReceiveDialog({
         p_delivery_id: deliveryId,
         p_items: payload,
         p_proof_url: proofUrl,
+        p_proof_urls: packageUpload.urls,
+        p_proof_paths: packageUpload.paths,
         p_notes: notes.trim() || null,
         p_signature_url: signatureUrl,
         p_signature_path: signaturePath,
@@ -332,6 +308,9 @@ export function PoBuyerReceiveDialog({
           .filter((l) => l.quantity > 0),
         shortQuantity: shortfall > 0 ? shortfall : 0,
         proofImageUrl: proofUrl,
+        proofImagePath: packageUpload.firstPath,
+        proofImageUrls: packageUpload.urls,
+        proofImagePaths: packageUpload.paths,
         signatureUrl: signatureUrl,
         signaturePath: signaturePath,
         deliveryId,
@@ -585,24 +564,18 @@ export function PoBuyerReceiveDialog({
               </p>
             )}
 
-            <div className="space-y-2">
-              <Label>Proof photo</Label>
-              <Input
-                ref={proofInputRef}
-                type="file"
-                accept={PROOF_ACCEPT}
-                onChange={(e) => handleProofChange(e.target.files?.[0] ?? null)}
-              />
-              {proofPreview ? (
-                <div className="rounded border overflow-hidden bg-muted/30 p-2">
-                  <img
-                    src={proofPreview}
-                    alt="Receive proof preview"
-                    className="max-h-40 w-full object-contain mx-auto"
-                  />
-                </div>
-              ) : null}
-            </div>
+            <MultiProofPhotoField
+              label="Package photos"
+              value={packagePhotos}
+              onChange={(next) => {
+                setPackagePhotoError(null);
+                setPackagePhotos(next);
+              }}
+              error={packagePhotoError}
+              emptyTitle="Upload package photo"
+              recommendedHint="Recommended"
+              disabled={saving}
+            />
 
             <div className="space-y-2">
               <Label>Receiver e-signature</Label>
@@ -670,7 +643,7 @@ export function PoBuyerReceiveDialog({
                 saving ||
                 lines.length === 0 ||
                 !signatureDataUrl ||
-                !proofFile ||
+                packagePhotos.length < 1 ||
                 (totalShortfall > 0 && !notes.trim())
               }
             >

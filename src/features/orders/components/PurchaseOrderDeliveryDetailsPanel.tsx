@@ -54,8 +54,10 @@ export type PurchaseOrderDeliveryRow = {
   notes?: string | null;
   buyer_notes?: string | null;
   buyer_proof_url?: string | null;
+  buyer_proof_urls?: string[] | null;
   buyer_signature_url?: string | null;
   proof_of_delivery_url?: string | null;
+  proof_image_urls?: string[] | null;
   cancel_proof_url?: string | null;
   cancel_signature_url?: string | null;
   cancel_notes?: string | null;
@@ -248,7 +250,7 @@ export function PurchaseOrderDeliveryDetailsPanel({
       const { data, error: qErr } = await supabase
         .from('purchase_order_deliveries')
         .select(
-          'id,warehouse_location_id,warehouse_locations:warehouse_location_id(name),created_by_profile:profiles!purchase_order_deliveries_created_by_fkey(full_name,email),rider_name,rider_plate_number,rider_photo_url,warehouse_signature_url,status,dr_number,notes,buyer_notes,buyer_proof_url,buyer_signature_url,proof_of_delivery_url,cancel_proof_url,cancel_signature_url,cancel_notes,cancelled_at,dispatched_at,delivered_at'
+          'id,warehouse_location_id,warehouse_locations:warehouse_location_id(name),created_by_profile:profiles!purchase_order_deliveries_created_by_fkey(full_name,email),rider_name,rider_plate_number,rider_photo_url,warehouse_signature_url,status,dr_number,notes,buyer_notes,buyer_proof_url,buyer_proof_urls,buyer_signature_url,proof_of_delivery_url,proof_image_urls,cancel_proof_url,cancel_signature_url,cancel_notes,cancelled_at,dispatched_at,delivered_at'
         )
         .eq('purchase_order_id', purchaseOrderId)
         .order('dispatched_at', { ascending: false });
@@ -412,6 +414,18 @@ export function PurchaseOrderDeliveryDetailsPanel({
                   (row.status === 'received' || row.status === 'delivered') &&
                   itemLines.some((l) => Number(l.quantity_received) > 0);
                 const proofUrl = row.buyer_proof_url || row.proof_of_delivery_url;
+                const dispatchPackageUrls =
+                  Array.isArray(row.proof_image_urls) && row.proof_image_urls.length > 0
+                    ? row.proof_image_urls.filter(Boolean)
+                    : row.proof_of_delivery_url && !row.buyer_proof_url
+                      ? [row.proof_of_delivery_url]
+                      : [];
+                const receivePackageUrls =
+                  Array.isArray(row.buyer_proof_urls) && row.buyer_proof_urls.length > 0
+                    ? row.buyer_proof_urls.filter(Boolean)
+                    : proofUrl
+                      ? [proofUrl]
+                      : [];
                 const isCancelled = row.status === 'cancelled';
                 const cancelProofUrl = row.cancel_proof_url || null;
 
@@ -533,12 +547,15 @@ export function PurchaseOrderDeliveryDetailsPanel({
                       const hasWarehouseProof =
                         !!row.rider_photo_url ||
                         !!row.warehouse_signature_url ||
+                        dispatchPackageUrls.length > 0 ||
                         !!row.notes?.trim();
                       const hasBuyerProof = isCancelled
                         ? !!cancelProofUrl ||
                           !!row.cancel_signature_url ||
                           !!row.cancel_notes?.trim()
-                        : !!proofUrl || !!row.buyer_signature_url || !!row.buyer_notes?.trim();
+                        : receivePackageUrls.length > 0 ||
+                          !!row.buyer_signature_url ||
+                          !!row.buyer_notes?.trim();
                       if (!hasWarehouseProof && (isKeyAccount || !hasBuyerProof)) return null;
 
                       const warehouseCol = (
@@ -586,6 +603,36 @@ export function PurchaseOrderDeliveryDetailsPanel({
                                   alt="Warehouse signature"
                                   className="max-h-28 w-full object-contain"
                                 />
+                              </div>
+                            </div>
+                          ) : null}
+                          {dispatchPackageUrls.length > 0 ? (
+                            <div className="space-y-2">
+                              <Label className="text-xs text-muted-foreground">Package photos</Label>
+                              <div className="flex flex-wrap gap-2">
+                                {dispatchPackageUrls.map((url, index) => (
+                                  <button
+                                    key={`${url}-${index}`}
+                                    type="button"
+                                    className="rounded border overflow-hidden bg-muted/20 cursor-pointer hover:opacity-90 transition-opacity"
+                                    onClick={() =>
+                                      setFullImage({
+                                        url,
+                                        title:
+                                          dispatchPackageUrls.length > 1
+                                            ? `Package photo ${index + 1}`
+                                            : 'Package photo',
+                                      })
+                                    }
+                                    title="View full size"
+                                  >
+                                    <img
+                                      src={url}
+                                      alt={`Package ${index + 1}`}
+                                      className="h-28 w-28 object-cover"
+                                    />
+                                  </button>
+                                ))}
                               </div>
                             </div>
                           ) : null}
@@ -671,37 +718,36 @@ export function PurchaseOrderDeliveryDetailsPanel({
                               </>
                             ) : (
                               <>
-                                {proofUrl ? (
-                                  <div>
-                                    <div className="flex items-center justify-between gap-2">
-                                      <Label className="text-xs text-muted-foreground">Receive proof</Label>
-                                      <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="sm"
-                                        className="h-7 px-2 text-xs"
-                                        onClick={() =>
-                                          setFullImage({ url: proofUrl, title: 'Receive proof' })
-                                        }
-                                      >
-                                        <Expand className="h-3.5 w-3.5 mr-1" />
-                                        View full
-                                      </Button>
+                                {receivePackageUrls.length > 0 ? (
+                                  <div className="space-y-2">
+                                    <Label className="text-xs text-muted-foreground">
+                                      Package photos
+                                    </Label>
+                                    <div className="flex flex-wrap gap-2">
+                                      {receivePackageUrls.map((url, index) => (
+                                        <button
+                                          key={`${url}-${index}`}
+                                          type="button"
+                                          className="rounded border overflow-hidden bg-muted/20 cursor-pointer hover:opacity-90 transition-opacity"
+                                          onClick={() =>
+                                            setFullImage({
+                                              url,
+                                              title:
+                                                receivePackageUrls.length > 1
+                                                  ? `Receive package ${index + 1}`
+                                                  : 'Receive package photo',
+                                            })
+                                          }
+                                          title="View full size"
+                                        >
+                                          <img
+                                            src={url}
+                                            alt={`Receive package ${index + 1}`}
+                                            className="h-28 w-28 object-cover"
+                                          />
+                                        </button>
+                                      ))}
                                     </div>
-                                    <button
-                                      type="button"
-                                      className="mt-1 block w-full rounded border overflow-hidden bg-muted/20 cursor-pointer hover:opacity-90 transition-opacity"
-                                      onClick={() =>
-                                        setFullImage({ url: proofUrl, title: 'Receive proof' })
-                                      }
-                                      title="View full size"
-                                    >
-                                      <img
-                                        src={proofUrl}
-                                        alt="Buyer proof"
-                                        className="max-h-36 w-full object-contain"
-                                      />
-                                    </button>
                                   </div>
                                 ) : null}
                                 {row.buyer_signature_url ? (

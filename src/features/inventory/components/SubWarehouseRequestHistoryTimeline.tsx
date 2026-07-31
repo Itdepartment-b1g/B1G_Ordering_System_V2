@@ -652,37 +652,47 @@ function DetailsToggle({
 
 function EventAttachments({
   proofImageDataUrl,
+  proofImageUrls,
   signatureDataUrl,
   signatureLabel,
-  proofLabel = 'Proof photo',
+  proofLabel = 'Package photo',
 }: {
   proofImageDataUrl?: string;
+  proofImageUrls?: string[];
   signatureDataUrl?: string;
   signatureLabel: string;
   proofLabel?: string;
 }) {
-  if (!proofImageDataUrl && !signatureDataUrl) return null;
+  const urls =
+    Array.isArray(proofImageUrls) && proofImageUrls.length > 0
+      ? proofImageUrls.filter(Boolean)
+      : proofImageDataUrl
+        ? [proofImageDataUrl]
+        : [];
+
+  if (urls.length === 0 && !signatureDataUrl) return null;
 
   const parts: string[] = [];
-  if (proofImageDataUrl) parts.push(proofLabel.toLowerCase());
+  if (urls.length === 1) parts.push(proofLabel.toLowerCase());
+  if (urls.length > 1) parts.push(`${urls.length} package photos`);
   if (signatureDataUrl) parts.push('signature');
 
   return (
     <DetailsToggle label={parts.join(' & ')}>
       <div className="flex flex-wrap gap-3">
-        {proofImageDataUrl ? (
-          <div className="space-y-1">
+        {urls.map((url, index) => (
+          <div key={`${url}-${index}`} className="space-y-1">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground flex items-center gap-1">
               <ImageIcon className="h-3 w-3" />
-              {proofLabel}
+              {urls.length > 1 ? `Package ${index + 1}` : proofLabel}
             </p>
             <img
-              src={proofImageDataUrl}
-              alt={proofLabel}
+              src={url}
+              alt={urls.length > 1 ? `Package ${index + 1}` : proofLabel}
               className="h-40 w-40 max-w-full rounded-md object-cover border bg-muted/30"
             />
           </div>
-        ) : null}
+        ))}
         {signatureDataUrl ? (
           <div className="space-y-1">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -970,6 +980,7 @@ export function SubWarehouseRequestHistoryTimeline({
                   {event.type === 'receive_confirmed' ? (
                     <EventAttachments
                       proofImageDataUrl={event.proofImageDataUrl}
+                      proofImageUrls={event.proofImageUrls}
                       signatureDataUrl={event.signatureDataUrl}
                       signatureLabel="Signature"
                     />
@@ -978,15 +989,17 @@ export function SubWarehouseRequestHistoryTimeline({
                   {event.type === 'delivered' || event.type === 'approved_released' ? (
                     <EventAttachments
                       proofImageDataUrl={event.proofImageDataUrl}
+                      proofImageUrls={event.proofImageUrls}
                       signatureDataUrl={event.signatureDataUrl}
                       signatureLabel="Delivery signature"
-                      proofLabel="Delivery proof"
+                      proofLabel="Package photo"
                     />
                   ) : null}
 
                   {event.type === 'remaining_released' ? (
                     <EventAttachments
                       proofImageDataUrl={event.proofImageDataUrl}
+                      proofImageUrls={event.proofImageUrls}
                       signatureDataUrl={event.signatureDataUrl}
                       signatureLabel="Allocator signature"
                     />

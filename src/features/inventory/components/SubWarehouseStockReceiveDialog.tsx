@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { ImagePlus, Loader2, PenTool, Trash2, Truck, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Loader2, PenTool, Truck, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -25,16 +25,17 @@ import {
   type ShortfallReason,
 } from '@/features/orders/deliveryDiscrepancyShared';
 import {
+  MultiProofPhotoField,
+  revokePackageProofPreviews,
+  type PackageProofPhotoItem,
+} from '@/features/shared/components/MultiProofPhotoField';
+import {
   getItemDeliveredQty,
   getItemReceivedQty,
   getItemRemainingQty,
   getRequestDeliveryTotals,
   type SubWarehouseStockRequest,
-  type SubWarehouseStockRequestItem,
 } from './SubWarehouseStockRequestDialog';
-
-const MAX_PROOF_IMAGE_BYTES = 5 * 1024 * 1024;
-const ACCEPTED_PROOF_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
 export type ReceiveConfirmLine = {
   variantId: string;
@@ -49,6 +50,7 @@ export type ReceiveConfirmPayload = {
   notes: string;
   proofImageDataUrl: string;
   proofImageName?: string;
+  packagePhotos: PackageProofPhotoItem[];
   signatureDataUrl: string;
 };
 
@@ -86,18 +88,6 @@ function parseReceiveInput(value: string): number | null {
   return Number(trimmed);
 }
 
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') resolve(reader.result);
-      else reject(new Error('Failed to read image'));
-    };
-    reader.onerror = () => reject(new Error('Failed to read image'));
-    reader.readAsDataURL(file);
-  });
-}
-
 type SubWarehouseStockReceiveDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -113,14 +103,12 @@ export function SubWarehouseStockReceiveDialog({
   submitting = false,
   onConfirm,
 }: SubWarehouseStockReceiveDialogProps) {
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [lines, setLines] = useState<LineDraft[]>([]);
   const [reasonByVariant, setReasonByVariant] = useState<Record<string, ShortfallReason | ''>>({});
   const [otherDetailByVariant, setOtherDetailByVariant] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [proofImageDataUrl, setProofImageDataUrl] = useState('');
-  const [proofImageName, setProofImageName] = useState('');
+  const [packagePhotos, setPackagePhotos] = useState<PackageProofPhotoItem[]>([]);
   const [signatureDataUrl, setSignatureDataUrl] = useState('');
   const [signatureOpen, setSignatureOpen] = useState(false);
 
@@ -131,71 +119,48 @@ export function SubWarehouseStockReceiveDialog({
     setOtherDetailByVariant({});
     setNotes('');
     setError(null);
-    setProofImageDataUrl('');
-    setProofImageName('');
+    setPackagePhotos((prev) => {
+      revokePackageProofPreviews(prev);
+      return [];
+    });
     setSignatureDataUrl('');
     setSignatureOpen(false);
-    if (fileInputRef.current) fileInputRef.current.value = '';
   }, [open, request]);
-
-  const totals = useMemo(() => {
-    let delivered = 0;
-    let thisReceive = 0;
-    let remainingCap = 0;
-    for (const line of lines) {
-      delivered += line.deliveredQuantity;
-      remainingCap += line.remaining;
-      const parsed = parseReceiveInput(line.receivedInput);
-      if (parsed != null) thisReceive += parsed;
-    }
-    return { delivered, thisReceive, remainingCap };
-  }, [lines]);
 
   const shortfallLines = useMemo(() => {
     return lines
       .map((line) => {
         const parsed = parseReceiveInput(line.receivedInput);
-        if (parsed == null || parsed >= line.remaining) return null;
-        const shortfall = line.remaining - parsed;
-        if (shortfall <= 0) return null;
-        return {
-          variantId: line.variantId,
-          variantName: line.variantName,
-          shortfall,
-          reason: reasonByVariant[line.variantId] || ('' as ShortfallReason | ''),
-          otherDetail: otherDetailByVariant[line.variantId] || '',
-        };
+        const qty = parsed ?? 0;
+        const shortfall = Math.max(0, line.remaining - qty);
+        return shortfall > 0
+          ? {
+              variantId: line.variantId,
+              variantName: line.variantName,
+              shortfall,
+              reason: reasonByVariant[line.variantId] || '',
+              otherDetail: otherDetailByVariant[line.variantId] || '',
+            }
+          : null;
       })
-      .filter(
-        (line): line is {
-          variantId: string;
-          variantName: string;
-          shortfall: number;
-          reason: ShortfallReason | '';
-          otherDetail: string;
-        } => line != null
-      );
+      .filter(Boolean) as Array<{
+      variantId: string;
+      variantName: string;
+      shortfall: number;
+      reason: ShortfallReason | '';
+      otherDetail: string;
+    }>;
   }, [lines, reasonByVariant, otherDetailByVariant]);
 
-  const totalShortfall = useMemo(
-    () => shortfallLines.reduce((sum, line) => sum + line.shortfall, 0),
-    [shortfallLines]
-  );
-
   const qtyValidationError = useMemo(() => {
-    if (lines.length === 0) return 'Nothing left to receive on this request.';
-
     let anyPositive = false;
     for (const line of lines) {
       const parsed = parseReceiveInput(line.receivedInput);
       if (parsed == null) {
-        return `${line.variantName}: enter a whole number (0 or more).`;
+        return `Enter a valid receive quantity for ${line.variantName}.`;
       }
-      if (parsed < 0) {
-        return `${line.variantName}: received cannot be negative.`;
-      }
-      if (parsed > line.remaining) {
-        return `${line.variantName}: received cannot exceed remaining (${line.remaining}).`;
+      if (parsed < 0 || parsed > line.remaining) {
+        return `${line.variantName}: receive qty must be between 0 and ${line.remaining}.`;
       }
       if (parsed > 0) anyPositive = true;
     }
@@ -217,43 +182,13 @@ export function SubWarehouseStockReceiveDialog({
   }, [lines, shortfallLines]);
 
   const proofValidationError = useMemo(() => {
-    if (!proofImageDataUrl) return 'Upload a proof photo of the received stock.';
+    if (packagePhotos.length < 1) return 'Upload at least one recommended package photo.';
     if (!signatureDataUrl) return 'Add your signature to confirm receive.';
     return null;
-  }, [proofImageDataUrl, signatureDataUrl]);
+  }, [packagePhotos.length, signatureDataUrl]);
 
   const validationError = qtyValidationError || proofValidationError;
-
   const hasShortage = shortfallLines.length > 0;
-
-  const handleProofFileChange = async (file: File | null) => {
-    setError(null);
-    if (!file) return;
-
-    if (!ACCEPTED_PROOF_TYPES.includes(file.type)) {
-      setError('Proof photo must be JPG, PNG, WEBP, or GIF.');
-      return;
-    }
-    if (file.size > MAX_PROOF_IMAGE_BYTES) {
-      setError('Proof photo must be 5MB or smaller.');
-      return;
-    }
-
-    try {
-      const dataUrl = await readFileAsDataUrl(file);
-      setProofImageDataUrl(dataUrl);
-      setProofImageName(file.name);
-    } catch {
-      setError('Could not read the selected image.');
-    }
-  };
-
-  const clearProofImage = () => {
-    setProofImageDataUrl('');
-    setProofImageName('');
-    if (fileInputRef.current) fileInputRef.current.value = '';
-    setError(null);
-  };
 
   const handleConfirm = async () => {
     if (!request || submitting) return;
@@ -262,212 +197,143 @@ export function SubWarehouseStockReceiveDialog({
       return;
     }
 
-    const confirmLines: ReceiveConfirmLine[] = lines.map((line) => {
-      const quantityThisReceive = parseReceiveInput(line.receivedInput) ?? 0;
-      const shortfall = Math.max(0, line.remaining - quantityThisReceive);
-      const reason = reasonByVariant[line.variantId];
-      const otherDetail = otherDetailByVariant[line.variantId]?.trim() || '';
-      return {
-        variantId: line.variantId,
-        quantityThisReceive,
-        ...(shortfall > 0 && reason
-          ? {
-              shortfallReason: reason,
-              ...(reason === 'other' && otherDetail ? { shortfallNotes: otherDetail } : {}),
-            }
-          : {}),
-      };
-    });
-
+    setError(null);
     await onConfirm({
       requestId: request.id,
-      lines: confirmLines,
       notes: notes.trim(),
-      proofImageDataUrl,
-      proofImageName: proofImageName || undefined,
+      proofImageDataUrl: packagePhotos[0]?.previewUrl || '',
+      proofImageName: packagePhotos[0]?.fileName,
+      packagePhotos,
       signatureDataUrl,
+      lines: lines.map((line) => {
+        const quantityThisReceive = parseReceiveInput(line.receivedInput) ?? 0;
+        const shortfall = Math.max(0, line.remaining - quantityThisReceive);
+        const reason = reasonByVariant[line.variantId];
+        const otherDetail = otherDetailByVariant[line.variantId]?.trim() || '';
+        return {
+          variantId: line.variantId,
+          quantityThisReceive,
+          ...(shortfall > 0 && reason
+            ? {
+                shortfallReason: reason,
+                ...(reason === 'other' && otherDetail ? { shortfallNotes: otherDetail } : {}),
+              }
+            : {}),
+        };
+      }),
     });
   };
 
-  const updateLineInput = (variantId: string, value: string) => {
-    setError(null);
-    setLines((prev) =>
-      prev.map((line) => (line.variantId === variantId ? { ...line, receivedInput: value } : line))
-    );
-  };
+  if (!request) return null;
+
+  const requestTotals = getRequestDeliveryTotals(request.items);
 
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="w-[calc(100%-1.5rem)] max-w-2xl max-h-[90vh] flex flex-col gap-0 p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Truck className="h-5 w-5" />
-              {request?.status === 'partially_received'
-                ? `Confirm partial receive${request ? ` — ${request.requestNumber}` : ''}`
-                : `Confirm receive${request ? ` — ${request.requestNumber}` : ''}`}
+              Confirm receive · {request.requestNumber}
             </DialogTitle>
-            <p className="text-sm text-muted-foreground font-normal pt-1">
-              {request?.status === 'partially_received' ? (
-                <>
-                  Confirm only this unlocked wave from main. If you receive less than unlocked,
-                  choose a shortage reason — main investigates before releasing or replacing stock.
-                  {totals.remainingCap > 0 && request ? (
-                    <>
-                      {' '}
-                      <span className="font-medium text-foreground tabular-nums">
-                        Unlocked {totals.remainingCap} of short{' '}
-                        {getRequestDeliveryTotals(request.items).short}
-                      </span>
-                    </>
-                  ) : null}
-                </>
-              ) : (
-                'Enter received quantities for this release wave, attach a proof photo, and sign. Short qty requires a reason and opens a main warehouse investigation.'
-              )}
-            </p>
           </DialogHeader>
 
-          <div className="space-y-4 py-2">
-            <div className="rounded-md border divide-y">
-              <div className="hidden sm:grid grid-cols-[minmax(0,1.4fr)_5.5rem_5.5rem] gap-3 px-3 py-2 text-xs font-medium text-muted-foreground bg-muted/40">
-                <span>SKU</span>
-                <span className="text-right">Delivered</span>
-                <span className="text-right">Received</span>
-              </div>
-              {lines.map((line) => (
-                <div
-                  key={line.variantId}
-                  className="grid grid-cols-1 sm:grid-cols-[minmax(0,1.4fr)_5.5rem_5.5rem] gap-2 sm:gap-3 px-3 py-3 items-center"
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium truncate">{line.variantName}</p>
-                    <p className="text-xs text-muted-foreground">
-                      Delivered {line.deliveredQuantity}
-                      {line.alreadyReceived > 0 ? ` · Already received ${line.alreadyReceived}` : ''}
-                      {` · Unlocked this wave ${line.remaining}`}
-                    </p>
-                  </div>
-                  <div className="flex sm:block items-center justify-between gap-2">
-                    <span className="text-xs text-muted-foreground sm:hidden">Unlocked this wave</span>
-                    <p className="text-sm tabular-nums text-right font-medium">{line.remaining}</p>
-                  </div>
-                  <div className="flex sm:block items-center justify-between gap-2">
-                    <Label
-                      htmlFor={`recv-${line.variantId}`}
-                      className="text-xs text-muted-foreground sm:sr-only"
-                    >
-                      Received
-                    </Label>
-                    <Input
-                      id={`recv-${line.variantId}`}
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      max={line.remaining}
-                      step={1}
-                      className="h-9 text-right tabular-nums"
-                      value={line.receivedInput}
-                      onChange={(e) => updateLineInput(line.variantId, e.target.value)}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
+          <div className="space-y-4 py-2 flex-1 min-h-0 overflow-y-auto">
+            <p className="text-sm text-muted-foreground">
+              Delivered {requestTotals.delivered} · already received {requestTotals.received} ·
+              unlocked remaining {requestTotals.openReceive}.
+            </p>
 
-            <div className="rounded-md border bg-muted/20 px-3 py-2 text-sm space-y-1">
-              <p>
-                This confirm:{' '}
-                <span className="font-medium tabular-nums">{totals.thisReceive}</span>
-                {' / '}
-                <span className="tabular-nums">{totals.remainingCap}</span> remaining
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Received cannot exceed unlocked qty for each SKU. A shortage locks leftover unlock
-                and reports it to main for investigation (found / write-off).
-              </p>
-            </div>
-
-            {hasShortage ? (
-              <div className="rounded-md border border-amber-200 bg-amber-50/60 dark:bg-amber-950/20 dark:border-amber-900 space-y-3 p-3">
-                <p className="text-xs font-medium text-foreground">
-                  Shortage ({totalShortfall} unit{totalShortfall === 1 ? '' : 's'}) — reason required
-                  per short line
-                </p>
-                {shortfallLines.map((line) => (
-                  <div key={line.variantId} className="space-y-1.5">
-                    <Label className="text-xs">
-                      {line.variantName}{' '}
-                      <span className="text-muted-foreground font-normal">
-                        ({line.shortfall} short)
-                      </span>
-                    </Label>
-                    <Select
-                      value={line.reason || undefined}
-                      onValueChange={(value) => {
-                        setError(null);
-                        setReasonByVariant((prev) => ({
-                          ...prev,
-                          [line.variantId]: value as ShortfallReason,
-                        }));
-                      }}
-                    >
-                      <SelectTrigger className="h-9 text-xs">
-                        <SelectValue placeholder="Select shortage reason" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {SHORTFALL_REASON_OPTIONS.map((opt) => (
-                          <SelectItem key={opt.value} value={opt.value} className="text-xs">
-                            {opt.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {line.reason === 'other' ? (
-                      <Input
-                        value={line.otherDetail}
-                        onChange={(e) => {
-                          setError(null);
-                          setOtherDetailByVariant((prev) => ({
-                            ...prev,
-                            [line.variantId]: e.target.value,
-                          }));
-                        }}
-                        placeholder="Describe the shortage…"
-                        maxLength={500}
-                        aria-label="Other shortage reason"
-                        className="h-9 text-xs"
-                      />
+            <div className="space-y-3 rounded-md border p-3">
+              {lines.map((line) => {
+                const parsed = parseReceiveInput(line.receivedInput);
+                const shortfall =
+                  parsed == null ? 0 : Math.max(0, line.remaining - parsed);
+                return (
+                  <div
+                    key={line.variantId}
+                    className="space-y-2 border-b last:border-0 pb-3 last:pb-0"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">{line.variantName}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Remaining unlocked: {line.remaining}
+                        </p>
+                      </div>
+                      <div className="w-28">
+                        <Label className="text-xs">Receive</Label>
+                        <Input
+                          className="h-9"
+                          inputMode="numeric"
+                          value={line.receivedInput}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setLines((prev) =>
+                              prev.map((row) =>
+                                row.variantId === line.variantId
+                                  ? { ...row, receivedInput: value }
+                                  : row
+                              )
+                            );
+                          }}
+                        />
+                      </div>
+                    </div>
+                    {shortfall > 0 ? (
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Shortage reason</Label>
+                          <Select
+                            value={reasonByVariant[line.variantId] || undefined}
+                            onValueChange={(value) =>
+                              setReasonByVariant((prev) => ({
+                                ...prev,
+                                [line.variantId]: value as ShortfallReason,
+                              }))
+                            }
+                          >
+                            <SelectTrigger className="h-9">
+                              <SelectValue placeholder="Select reason" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {SHORTFALL_REASON_OPTIONS.map((opt) => (
+                                <SelectItem key={opt.value} value={opt.value}>
+                                  {formatShortfallReasonLabel(opt.value)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        {reasonByVariant[line.variantId] === 'other' ? (
+                          <div className="space-y-1">
+                            <Label className="text-xs">Describe shortage</Label>
+                            <Input
+                              className="h-9"
+                              value={otherDetailByVariant[line.variantId] || ''}
+                              onChange={(e) =>
+                                setOtherDetailByVariant((prev) => ({
+                                  ...prev,
+                                  [line.variantId]: e.target.value,
+                                }))
+                              }
+                              placeholder="Required for Other"
+                            />
+                          </div>
+                        ) : null}
+                      </div>
                     ) : null}
                   </div>
-                ))}
-                <p className="text-xs text-amber-800 dark:text-amber-200">
-                  {totalShortfall} unit{totalShortfall === 1 ? '' : 's'} will be reported to main
-                  warehouse for investigation
-                  {shortfallLines
-                    .map((l) =>
-                      l.reason
-                        ? ` (${formatShortfallReasonLabel(l.reason, l.otherDetail)})`
-                        : ''
-                    )
-                    .join('')}
-                  .
-                </p>
-              </div>
-            ) : null}
+                );
+              })}
+            </div>
 
             <div className="space-y-2">
-              <Label htmlFor="sw-receive-notes">
-                Notes
-                <span className="text-muted-foreground font-normal"> (optional)</span>
-              </Label>
+              <Label>Notes {hasShortage ? '(optional extra)' : '(optional)'}</Label>
               <Textarea
-                id="sw-receive-notes"
                 value={notes}
-                onChange={(e) => {
-                  setNotes(e.target.value);
-                  setError(null);
-                }}
+                onChange={(e) => setNotes(e.target.value)}
                 placeholder={
                   hasShortage
                     ? 'Optional extra notes for main (gate notes, carton condition, etc.)'
@@ -477,52 +343,17 @@ export function SubWarehouseStockReceiveDialog({
               />
             </div>
 
-            <div className="space-y-2">
-              <Label>Proof photo (required)</Label>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
-                className="hidden"
-                onChange={(e) => void handleProofFileChange(e.target.files?.[0] ?? null)}
-              />
-              {!proofImageDataUrl ? (
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-full rounded-md border border-dashed px-4 py-8 text-center hover:bg-muted/40 transition-colors"
-                >
-                  <ImagePlus className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                  <p className="text-sm font-medium">Upload receive proof</p>
-                  <p className="text-xs text-muted-foreground mt-1">JPG, PNG, WEBP, or GIF · max 5MB</p>
-                </button>
-              ) : (
-                <div className="rounded-md border p-3 space-y-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-xs text-muted-foreground truncate">
-                      {proofImageName || 'Proof image'}
-                    </p>
-                    <Button type="button" variant="ghost" size="sm" onClick={clearProofImage}>
-                      <Trash2 className="h-4 w-4 mr-1" />
-                      Remove
-                    </Button>
-                  </div>
-                  <img
-                    src={proofImageDataUrl}
-                    alt="Receive proof"
-                    className="max-h-48 mx-auto rounded-md object-contain"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    Replace photo
-                  </Button>
-                </div>
-              )}
-            </div>
+            <MultiProofPhotoField
+              label="Package photos"
+              value={packagePhotos}
+              onChange={(next) => {
+                setError(null);
+                setPackagePhotos(next);
+              }}
+              emptyTitle="Upload package photo"
+              recommendedHint="Recommended"
+              disabled={submitting}
+            />
 
             <div className="space-y-2">
               <Label>Signature (required)</Label>
@@ -553,34 +384,41 @@ export function SubWarehouseStockReceiveDialog({
                       <X className="h-4 w-4 mr-1" />
                       Clear
                     </Button>
-                    <Button type="button" variant="outline" size="sm" onClick={() => setSignatureOpen(true)}>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSignatureOpen(true)}
+                    >
                       Re-sign
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    By signing, you confirm the quantities above were received at your sub-warehouse.
-                  </p>
                 </div>
               )}
             </div>
 
-            {(error || validationError) && (
-              <p className="text-sm text-destructive">{error || validationError}</p>
-            )}
+            {error ? <p className="text-sm text-destructive">{error}</p> : null}
           </div>
 
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={submitting}
+            >
               Cancel
             </Button>
-            <Button type="button" disabled={!!validationError || submitting} onClick={() => void handleConfirm()}>
+            <Button
+              type="button"
+              onClick={() => void handleConfirm()}
+              disabled={submitting || !!validationError}
+            >
               {submitting ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   Confirming…
                 </>
-              ) : request?.status === 'partially_received' ? (
-                'Confirm partial receive'
               ) : (
                 'Confirm receive'
               )}
@@ -590,17 +428,16 @@ export function SubWarehouseStockReceiveDialog({
       </Dialog>
 
       <Dialog open={signatureOpen} onOpenChange={setSignatureOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Sign to confirm receive</DialogTitle>
+            <DialogTitle>Sign receive</DialogTitle>
           </DialogHeader>
           <SignatureCanvas
-            title="Receiver signature"
-            description="Draw your signature to confirm this receipt"
+            title="Receive signature"
+            description="Draw your signature to confirm this receive"
             onSave={(dataUrl) => {
               setSignatureDataUrl(dataUrl);
               setSignatureOpen(false);
-              setError(null);
             }}
             onCancel={() => setSignatureOpen(false)}
           />
@@ -608,39 +445,4 @@ export function SubWarehouseStockReceiveDialog({
       </Dialog>
     </>
   );
-}
-
-/** Apply a receive confirm onto request items (local mock). Matches wave-based SQL. */
-export function applyReceiveConfirmToItems(
-  items: SubWarehouseStockRequestItem[],
-  lines: ReceiveConfirmLine[]
-): SubWarehouseStockRequestItem[] {
-  const qtyByVariant = new Map(lines.map((line) => [line.variantId, line.quantityThisReceive]));
-  const shortVariants = new Set(
-    lines
-      .filter((line) => {
-        const item = items.find((i) => i.variantId === line.variantId);
-        if (!item) return false;
-        const open = item.openReceiveQuantity ?? 0;
-        return open > line.quantityThisReceive;
-      })
-      .map((line) => line.variantId)
-  );
-  const nextItems = items.map((item) => {
-    const add = qtyByVariant.get(item.variantId) ?? 0;
-    if (add <= 0 && !shortVariants.has(item.variantId)) return item;
-    const nextReceived =
-      add > 0
-        ? Math.min(getItemDeliveredQty(item), getItemReceivedQty(item) + add)
-        : getItemReceivedQty(item);
-    const nextOpen = shortVariants.has(item.variantId)
-      ? 0
-      : Math.max(0, (item.openReceiveQuantity ?? 0) - add);
-    return {
-      ...item,
-      receivedQuantity: nextReceived,
-      openReceiveQuantity: nextOpen,
-    };
-  });
-  return nextItems;
 }

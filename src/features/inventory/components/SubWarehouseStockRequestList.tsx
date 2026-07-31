@@ -277,6 +277,7 @@ function resolveReceiptProofs(request: SubWarehouseStockRequest): SubWarehouseRe
         at: e.at,
         notes: e.note || request.receiveNotes,
         proofImageDataUrl: e.proofImageDataUrl || '',
+        proofImageUrls: e.proofImageUrls,
         signatureDataUrl: e.signatureDataUrl || '',
         lines: e.lines,
       };

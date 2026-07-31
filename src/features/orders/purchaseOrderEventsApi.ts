@@ -22,6 +22,8 @@ export type LogPurchaseOrderEventInput = {
   shortQuantity?: number | null;
   proofImageUrl?: string | null;
   proofImagePath?: string | null;
+  proofImageUrls?: string[] | null;
+  proofImagePaths?: string[] | null;
   signatureUrl?: string | null;
   signaturePath?: string | null;
   deliveryId?: string | null;
@@ -51,6 +53,7 @@ type PoEventRow = {
   lines: unknown;
   short_quantity: number | null;
   proof_image_url: string | null;
+  proof_image_urls?: string[] | null;
   signature_url: string | null;
   created_by: string | null;
   created_at: string;
@@ -160,6 +163,12 @@ function mapEvent(row: PoEventRow): PurchaseOrderHistoryEvent | null {
     lines: mapLines(row.lines),
     shortQuantity: row.short_quantity ?? undefined,
     proofImageDataUrl: row.proof_image_url || undefined,
+    proofImageUrls:
+      Array.isArray(row.proof_image_urls) && row.proof_image_urls.length > 0
+        ? row.proof_image_urls.filter(Boolean)
+        : row.proof_image_url
+          ? [row.proof_image_url]
+          : undefined,
     signatureDataUrl: row.signature_url || undefined,
     deliveryId: row.delivery_id || undefined,
     discrepancyId: row.discrepancy_id || undefined,
@@ -219,6 +228,8 @@ export async function logPurchaseOrderEvent(input: LogPurchaseOrderEventInput): 
       p_short_quantity: input.shortQuantity ?? null,
       p_proof_image_url: input.proofImageUrl ?? null,
       p_proof_image_path: input.proofImagePath ?? null,
+      p_proof_image_urls: input.proofImageUrls?.length ? input.proofImageUrls : null,
+      p_proof_image_paths: input.proofImagePaths?.length ? input.proofImagePaths : null,
       p_signature_url: input.signatureUrl ?? null,
       p_signature_path: input.signaturePath ?? null,
       p_delivery_id: input.deliveryId ?? null,
@@ -378,6 +389,7 @@ export async function fetchPurchaseOrderHistory(
       lines,
       short_quantity,
       proof_image_url,
+      proof_image_urls,
       signature_url,
       created_by,
       created_at,
@@ -408,6 +420,9 @@ export async function fetchPurchaseOrderHistory(
         lines: row.lines,
         short_quantity: row.short_quantity ?? null,
         proof_image_url: row.proof_image_url ?? null,
+        proof_image_urls: Array.isArray(row.proof_image_urls)
+          ? (row.proof_image_urls as string[])
+          : null,
         signature_url: row.signature_url ?? null,
         created_by: row.created_by ? String(row.created_by) : null,
         created_at: String(row.created_at),

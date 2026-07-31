@@ -11,6 +11,7 @@ import type {
   InternalStockRequestRow,
 } from './internalStockRequestsApi';
 import { formatShortfallReasonLabel } from '@/features/orders/deliveryDiscrepancyShared';
+import { resolveProofImageUrls } from '@/features/shared/lib/resolveProofImageUrls';
 
 type RawEventLine = {
   variant_id?: string;
@@ -82,6 +83,12 @@ function mapEvent(
     byName,
   };
   const lines = resolveLines(event.lines, items);
+  const proofUrls = resolveProofImageUrls({
+    proofImageUrls: event.proof_image_urls,
+    proofImageUrl: event.proof_image_url,
+  });
+  const proofImageDataUrl = proofUrls[0];
+  const proofImageUrls = proofUrls.length > 0 ? proofUrls : undefined;
 
   switch (event.event_type) {
     case 'created':
@@ -99,7 +106,8 @@ function mapEvent(
         ...base,
         type: 'delivered',
         lines,
-        proofImageDataUrl: event.proof_image_url || undefined,
+        proofImageDataUrl,
+        proofImageUrls,
         signatureDataUrl: event.signature_url || undefined,
         riderName: event.rider_name || undefined,
         riderPlateNumber: event.rider_plate_number || undefined,
@@ -111,7 +119,8 @@ function mapEvent(
         ...base,
         type: 'approved_released',
         lines,
-        proofImageDataUrl: event.proof_image_url || undefined,
+        proofImageDataUrl,
+        proofImageUrls,
         signatureDataUrl: event.signature_url || undefined,
         riderName: event.rider_name || undefined,
         riderPlateNumber: event.rider_plate_number || undefined,
@@ -123,7 +132,8 @@ function mapEvent(
         ...base,
         type: 'remaining_released',
         lines,
-        proofImageDataUrl: event.proof_image_url || undefined,
+        proofImageDataUrl,
+        proofImageUrls,
         signatureDataUrl: event.signature_url || undefined,
         riderName: event.rider_name || undefined,
         riderPlateNumber: event.rider_plate_number || undefined,
@@ -136,7 +146,8 @@ function mapEvent(
         type: 'receive_confirmed',
         lines,
         shortQuantity: event.short_quantity ?? 0,
-        proofImageDataUrl: event.proof_image_url || undefined,
+        proofImageDataUrl,
+        proofImageUrls,
         signatureDataUrl: event.signature_url || undefined,
       };
     case 'shortage_opened':
@@ -190,6 +201,7 @@ function mapReceiveProofs(
       at: e.at,
       notes: e.note,
       proofImageDataUrl: e.proofImageDataUrl || '',
+      proofImageUrls: e.proofImageUrls,
       signatureDataUrl: e.signatureDataUrl || '',
       lines: e.lines,
     }));
