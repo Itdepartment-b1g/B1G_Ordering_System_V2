@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Edit, Trash2, Building, Camera, Loader2, Filter, Eye, Users, ArrowRightLeft, Upload, X, MapPin, RefreshCw, Download, MoreHorizontal, CheckCircle, BarChart3, Tag } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Building, Camera, Loader2, Filter, Eye, Users, ArrowRightLeft, Upload, X, MapPin, RefreshCw, Download, MoreHorizontal, CheckCircle, BarChart3, Tag, ExternalLink } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
@@ -4143,15 +4143,33 @@ export default function ClientsPage() {
                       )}
                     </TableCell>
                     <TableCell className="text-center">
-                      {client.location_latitude != null ? (
-                        <span className="text-xs whitespace-nowrap">{Number(client.location_latitude).toFixed(6)}</span>
+                      {client.location_latitude != null && client.location_longitude != null ? (
+                        <a
+                          href={`https://www.google.com/maps?q=${Number(client.location_latitude)},${Number(client.location_longitude)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs whitespace-nowrap text-primary hover:underline"
+                          title="Open in Google Maps"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {Number(client.location_latitude).toFixed(6)}
+                        </a>
                       ) : (
                         <span className="text-muted-foreground text-xs">—</span>
                       )}
                     </TableCell>
                     <TableCell className="text-center">
-                      {client.location_longitude != null ? (
-                        <span className="text-xs whitespace-nowrap">{Number(client.location_longitude).toFixed(6)}</span>
+                      {client.location_latitude != null && client.location_longitude != null ? (
+                        <a
+                          href={`https://www.google.com/maps?q=${Number(client.location_latitude)},${Number(client.location_longitude)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs whitespace-nowrap text-primary hover:underline"
+                          title="Open in Google Maps"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {Number(client.location_longitude).toFixed(6)}
+                        </a>
                       ) : (
                         <span className="text-muted-foreground text-xs">—</span>
                       )}
@@ -4326,7 +4344,7 @@ export default function ClientsPage() {
                     Location Coordinates
                   </p>
                   {viewingClient.location_latitude != null && viewingClient.location_longitude != null ? (
-                    <div className="space-y-1">
+                    <div className="space-y-2">
                       <p className="text-sm sm:text-base font-medium">
                         Lat: {Number(viewingClient.location_latitude).toFixed(6)}, Long: {Number(viewingClient.location_longitude).toFixed(6)}
                       </p>
@@ -4336,6 +4354,21 @@ export default function ClientsPage() {
                           {viewingClient.location_accuracy != null && ` (±${Math.round(viewingClient.location_accuracy)}m accuracy)`}
                         </p>
                       )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full sm:w-auto"
+                        asChild
+                      >
+                        <a
+                          href={`https://www.google.com/maps?q=${Number(viewingClient.location_latitude)},${Number(viewingClient.location_longitude)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                          View Google Map
+                        </a>
+                      </Button>
                     </div>
                   ) : (
                     <p className="text-sm sm:text-base font-medium text-muted-foreground">Location not captured</p>
