@@ -14,6 +14,7 @@ type InventoryVariantTableHeaderProps = {
   headClassName: string;
   isSubWarehouseUser: boolean;
   isWarehouse: boolean;
+  showPoReservedColumn?: boolean;
   sortState: TableSortCycleState<MainInventoryVariantSortKey>;
   onSort: (key: MainInventoryVariantSortKey) => void;
 };
@@ -24,6 +25,7 @@ export function InventoryVariantTableHeader({
   headClassName,
   isSubWarehouseUser,
   isWarehouse,
+  showPoReservedColumn = false,
   sortState,
   onSort,
 }: InventoryVariantTableHeaderProps) {
@@ -55,6 +57,15 @@ export function InventoryVariantTableHeader({
             className={th}
           />
         )}
+        {showPoReservedColumn && (
+          <SortableTableHead
+            label="PO Reserved"
+            sortKey="poReserved"
+            sortDirection={getTableSortDisplayDirection(sortState, 'poReserved')}
+            onSort={onSort}
+            className={th}
+          />
+        )}
         {!isWarehouse && (
           <SortableTableHead
             label="Allocated (Remaining stocks)"
@@ -64,7 +75,7 @@ export function InventoryVariantTableHeader({
             className={th}
           />
         )}
-        {!isSubWarehouseUser && (
+        {(!isSubWarehouseUser || showPoReservedColumn) && (
           <SortableTableHead
             label="Available"
             sortKey="available"

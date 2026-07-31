@@ -27,6 +27,11 @@ import {
   isDateInRange,
 } from '@/lib/dateRangePresets';
 import { exportKeyAccountAgentAnalyticsExcel } from './exportKeyAccountAgentAnalyticsExcel';
+import {
+  getCappedConsignmentPaymentChunks,
+  splitKeyAccountPoPaymentRevenue,
+  type KeyAccountDashboardPaymentRow,
+} from '../dashboard/keyAccountDashboardRevenue';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -37,6 +42,7 @@ import {
   getKeyAccountOrderNetRevenueFromAttribution,
   isDeliveredKeyAccountOrder,
   isKeyAccountAnalyticsEligibleOrder,
+  isKeyAccountConsignmentOrder,
   isKeyAccountPartialDeliveredOrder,
   isKeyAccountPendingWorkflowOrder,
   isKeyAccountProductAnalyticsOrder,
@@ -79,6 +85,8 @@ interface KeyAccountKamAnalyticsTabProps {
   formatCurrency: (value: number) => string;
   dateRangeFilter: DateRangeFilterValue;
   onDateRangeFilterChange: (value: DateRangeFilterValue) => void;
+  paidByOrderId?: Map<string, number>;
+  paymentRows?: KeyAccountDashboardPaymentRow[];
   orderRevenueById?: Map<string, KeyAccountOrderRevenueAttribution>;
   rebateDeductionByPoItemId?: Map<string, number>;
   poLineSubtotalByOrderId?: Map<string, number>;
@@ -87,6 +95,8 @@ interface KeyAccountKamAnalyticsTabProps {
 }
 
 const EMPTY_ORDER_REVENUE_MAP = new Map<string, KeyAccountOrderRevenueAttribution>();
+const EMPTY_PAID_BY_ORDER_MAP = new Map<string, number>();
+const EMPTY_PAYMENT_ROWS: KeyAccountDashboardPaymentRow[] = [];
 const EMPTY_REBATE_DEDUCTION_MAP = new Map<string, number>();
 const EMPTY_PO_LINE_SUBTOTAL_MAP = new Map<string, number>();
 const EMPTY_RESERVATION_MAP = new Map<string, { quantity_fulfilled: number; quantity_reserved: number }>();
@@ -104,11 +114,15 @@ interface TimeSeriesDataPoint {
   [key: string]: string | number;
 }
 
-const revenueGrossKey = (agentId: string) => `${agentId}_gross`;
-const revenueRebatedKey = (agentId: string) => `${agentId}_rebated`;
-const revenueDeliveredNetKey = (agentId: string) => `${agentId}_delivered_net`;
-const revenuePendingNetKey = (agentId: string) => `${agentId}_pending_net`;
-const revenuePartialDeliveredKey = (agentId: string) => `${agentId}_partial_delivered`;
+const revenuePaidKey = (agentId: string) => `${agentId}_paid`;
+const revenuePartialKey = (agentId: string) => `${agentId}_partial`;
+const revenueUnpaidKey = (agentId: string) => `${agentId}_unpaid`;
+const revenueConsignmentKey = (agentId: string) => `${agentId}_consignment`;
+const revenueSettlementDiscountKey = (agentId: string) => `${agentId}_settlement_discount`;
+const revenuePaidOrdersKey = (agentId: string) => `${agentId}_paid_orders`;
+const revenuePartialOrdersKey = (agentId: string) => `${agentId}_partial_orders`;
+const revenueUnpaidOrdersKey = (agentId: string) => `${agentId}_unpaid_orders`;
+const revenueConsignmentOrdersKey = (agentId: string) => `${agentId}_consignment_orders`;
 const ordersPendingKey = (agentId: string) => `${agentId}_pending`;
 const ordersPartialDeliveredKey = (agentId: string) => `${agentId}_partial_delivered`;
 const ordersDeliveredPoLinesKey = (agentId: string) => `${agentId}_delivered_po_lines`;
@@ -297,6 +311,8 @@ export default function KeyAccountKamAnalyticsTab({
   formatCurrency,
   dateRangeFilter,
   onDateRangeFilterChange,
+  paidByOrderId = EMPTY_PAID_BY_ORDER_MAP,
+  paymentRows = EMPTY_PAYMENT_ROWS,
   orderRevenueById = EMPTY_ORDER_REVENUE_MAP,
   rebateDeductionByPoItemId = EMPTY_REBATE_DEDUCTION_MAP,
   poLineSubtotalByOrderId = EMPTY_PO_LINE_SUBTOTAL_MAP,
@@ -377,6 +393,11 @@ export default function KeyAccountKamAnalyticsTab({
     [orderDateRange, orders]
   );
 
+  const allAnalyticsEligibleOrders = useMemo(
+    () => orders.filter((order) => !order.analytics_only && isKeyAccountAnalyticsEligibleOrder(order)),
+    [orders]
+  );
+
   const revenueSplitContext = useMemo<KeyAccountOrderRevenueSplitContext>(
     () => ({
       poLineSubtotalByOrderId,
@@ -392,6 +413,27 @@ export default function KeyAccountKamAnalyticsTab({
     [filteredOrders]
   );
 
+  const paymentsByOrderId = useMemo(() => {
+    const map = new Map<string, KeyAccountDashboardPaymentRow[]>();
+    paymentRows.forEach((row) => {
+      const list = map.get(row.purchase_order_id) || [];
+      list.push(row);
+      map.set(row.purchase_order_id, list);
+    });
+    return map;
+  }, [paymentRows]);
+
+  const discountByOrderId = useMemo(() => {
+    const map = new Map<string, number>();
+    paymentRows.forEach((row) => {
+      map.set(
+        row.purchase_order_id,
+        (map.get(row.purchase_order_id) || 0) + (Number(row.settlement_discount) || 0)
+      );
+    });
+    return map;
+  }, [paymentRows]);
+
   const productAnalyticsOrders = useMemo(
     () => analyticsEligibleOrders.filter(isKeyAccountProductAnalyticsOrder),
     [analyticsEligibleOrders]
@@ -403,33 +445,125 @@ export default function KeyAccountKamAnalyticsTab({
   );
   const deliveredOrderById = useMemo(() => new Map(deliveredOrders.map((order) => [order.id, order])), [deliveredOrders]);
 
-  const computeAgentPeriodRevenue = (agentOrders: AnalyticsOrder[]) => {
-    let grossDelivered = 0;
-    let grossPending = 0;
-    let rebatedDelivered = 0;
-    let rebatedPending = 0;
+  const computeAgentPaymentRevenue = (agentOrders: AnalyticsOrder[]) =>
+    agentOrders.reduce(
+      (acc, order) => {
+        const split = splitKeyAccountPoPaymentRevenue(
+          Number(order.total_amount) || 0,
+          paidByOrderId.get(order.id) || 0,
+          isKeyAccountConsignmentOrder(order),
+          discountByOrderId.get(order.id) || 0
+        );
+        acc.paidRevenue += split.paidRevenue;
+        acc.partialRevenue += split.partialRevenue;
+        acc.unpaidRevenue += split.unpaidRevenue;
+        acc.consignmentRevenue += split.consignmentRevenue;
+        acc.settlementDiscountRevenue += split.settlementDiscountRevenue;
+        if (
+          (split.paidRevenue > 0 || split.settlementDiscountRevenue > 0) &&
+          split.partialRevenue <= 0 &&
+          split.unpaidRevenue <= 0 &&
+          split.consignmentRevenue <= 0
+        ) {
+          acc.paidOrders += 1;
+        }
+        if (split.partialRevenue > 0) acc.partialOrders += 1;
+        if (split.unpaidRevenue > 0) acc.unpaidOrders += 1;
+        if (split.consignmentRevenue > 0) acc.consignmentOrders += 1;
+        return acc;
+      },
+      {
+        paidRevenue: 0,
+        partialRevenue: 0,
+        unpaidRevenue: 0,
+        consignmentRevenue: 0,
+        settlementDiscountRevenue: 0,
+        totalRevenue: 0,
+        paidOrders: 0,
+        partialOrders: 0,
+        unpaidOrders: 0,
+        consignmentOrders: 0,
+      }
+    );
+
+  const computeAgentPaymentRevenueForPeriod = (
+    agentOrders: AnalyticsOrder[],
+    periodStart: Date,
+    periodEnd: Date
+  ) => {
+    let paidRevenue = 0;
+    let partialRevenue = 0;
+    let unpaidRevenue = 0;
+    let consignmentRevenue = 0;
+    let settlementDiscountRevenue = 0;
+    let paidOrders = 0;
+    let partialOrders = 0;
+    let unpaidOrders = 0;
+    let consignmentOrders = 0;
 
     agentOrders.forEach((order) => {
-      if (!isKeyAccountProductAnalyticsOrder(order)) return;
-      const revenue = getKeyAccountOrderNetRevenueFromAttribution(orderRevenueById.get(order.id));
-      grossDelivered += revenue.grossDelivered;
-      grossPending += revenue.grossPending;
-      rebatedDelivered += revenue.rebatedDelivered;
-      rebatedPending += revenue.rebatedPending;
+      const total = Number(order.total_amount) || 0;
+      if (isKeyAccountConsignmentOrder(order)) {
+        if (isDateInRange(order.order_date, periodStart, periodEnd)) {
+          const chunks = getCappedConsignmentPaymentChunks(total, paymentsByOrderId.get(order.id) || []);
+          const paidAll = chunks.reduce((sum, chunk) => sum + chunk.amount, 0);
+          const discountAll = chunks.reduce((sum, chunk) => sum + chunk.settlement_discount, 0);
+          const remaining = Math.max(0, Math.round((total - paidAll - discountAll) * 100) / 100);
+          if (remaining > 0) {
+            consignmentRevenue += remaining;
+            consignmentOrders += 1;
+          }
+        }
+        const chunks = getCappedConsignmentPaymentChunks(total, paymentsByOrderId.get(order.id) || []);
+        chunks.forEach((chunk) => {
+          if (isDateInRange(chunk.created_at, periodStart, periodEnd)) {
+            paidRevenue += chunk.amount;
+            settlementDiscountRevenue += chunk.settlement_discount;
+            if (chunk.amount > 0 || chunk.settlement_discount > 0) paidOrders += 1;
+          }
+        });
+        return;
+      }
+
+      if (!isDateInRange(order.order_date, periodStart, periodEnd)) return;
+
+      const split = splitKeyAccountPoPaymentRevenue(
+        total,
+        paidByOrderId.get(order.id) || 0,
+        false,
+        discountByOrderId.get(order.id) || 0
+      );
+      paidRevenue += split.paidRevenue;
+      partialRevenue += split.partialRevenue;
+      unpaidRevenue += split.unpaidRevenue;
+      settlementDiscountRevenue += split.settlementDiscountRevenue;
+      if (
+        (split.paidRevenue > 0 || split.settlementDiscountRevenue > 0) &&
+        split.partialRevenue <= 0 &&
+        split.unpaidRevenue <= 0
+      ) {
+        paidOrders += 1;
+      }
+      if (split.partialRevenue > 0) partialOrders += 1;
+      if (split.unpaidRevenue > 0) unpaidOrders += 1;
     });
 
-    const netDelivered = grossDelivered - rebatedDelivered;
-    const netPending = grossPending - rebatedPending;
     return {
-      grossDelivered,
-      grossPending,
-      rebatedDelivered,
-      rebatedPending,
-      netDelivered,
-      netPending,
-      gross: grossDelivered + grossPending,
-      rebated: rebatedDelivered + rebatedPending,
-      net: netDelivered + netPending,
+      paidRevenue,
+      partialRevenue,
+      unpaidRevenue,
+      consignmentRevenue,
+      settlementDiscountRevenue,
+      totalRevenue:
+        paidRevenue +
+        partialRevenue +
+        unpaidRevenue +
+        consignmentRevenue +
+        settlementDiscountRevenue,
+      paidOrders,
+      partialOrders,
+      unpaidOrders,
+      consignmentOrders,
     };
   };
 
@@ -460,26 +594,29 @@ export default function KeyAccountKamAnalyticsTab({
 
       visibleAgents.forEach((agent) => {
         const agentId = agent.id;
+        const isAgentMatch = (order: AnalyticsOrder) => (order.kam_id || 'unassigned') === agentId;
         const isAgentOrder = (order: AnalyticsOrder) =>
-          (order.kam_id || 'unassigned') === agentId &&
+          isAgentMatch(order) &&
           new Date(order.order_date) >= period.start &&
           new Date(order.order_date) <= period.end;
 
-        const periodDeliveredOrders = deliveredOrders.filter(isAgentOrder);
         const periodAllOrders = filteredOrders.filter(isAgentOrder);
-        const periodRevenueOrders = productAnalyticsOrders.filter(isAgentOrder);
+        const periodDeliveredOrders = deliveredOrders.filter(isAgentOrder);
+        const periodRevenueOrders = allAnalyticsEligibleOrders.filter(isAgentMatch);
         const periodPoLineOrders = productAnalyticsOrders.filter(isAgentOrder);
 
         if (selectedMetric === 'revenue') {
-          const revenue = computeAgentPeriodRevenue(periodRevenueOrders);
-          point[agentId] = revenue.netDelivered;
-          point[revenueDeliveredNetKey(agentId)] = revenue.netDelivered;
-          point[revenuePendingNetKey(agentId)] = revenue.netPending;
-          point[revenueGrossKey(agentId)] = revenue.gross;
-          point[revenueRebatedKey(agentId)] = revenue.rebated;
-          point[revenuePartialDeliveredKey(agentId)] = periodAllOrders.filter(
-            isKeyAccountPartialDeliveredOrder
-          ).length;
+          const revenue = computeAgentPaymentRevenueForPeriod(periodRevenueOrders, period.start, period.end);
+          point[agentId] = revenue.totalRevenue;
+          point[revenuePaidKey(agentId)] = revenue.paidRevenue;
+          point[revenuePartialKey(agentId)] = revenue.partialRevenue;
+          point[revenueUnpaidKey(agentId)] = revenue.unpaidRevenue;
+          point[revenueConsignmentKey(agentId)] = revenue.consignmentRevenue;
+          point[revenueSettlementDiscountKey(agentId)] = revenue.settlementDiscountRevenue;
+          point[revenuePaidOrdersKey(agentId)] = revenue.paidOrders;
+          point[revenuePartialOrdersKey(agentId)] = revenue.partialOrders;
+          point[revenueUnpaidOrdersKey(agentId)] = revenue.unpaidOrders;
+          point[revenueConsignmentOrdersKey(agentId)] = revenue.consignmentOrders;
         } else if (selectedMetric === 'orders') {
           const poLineCounts = computeAgentPeriodPoLineCounts(periodPoLineOrders, revenueSplitContext);
           point[agentId] = periodDeliveredOrders.length;
@@ -502,19 +639,24 @@ export default function KeyAccountKamAnalyticsTab({
       return point;
     });
   }, [
+    allAnalyticsEligibleOrders,
     deliveredOrders,
     filteredOrders,
     chartDateRange,
     items,
     orders,
     productAnalyticsOrders,
-    orderRevenueById,
+    paidByOrderId,
+    paymentsByOrderId,
+    discountByOrderId,
     revenueSplitContext,
     selectedMetric,
     visibleAgents,
   ]);
 
   const rows = useMemo(() => {
+    const revenueRangeStart = orderDateRange.start || new Date(0);
+    const revenueRangeEnd = orderDateRange.end || new Date(8640000000000000);
     const rowMap = new Map<string, {
       kamId: string;
       name: string;
@@ -522,13 +664,16 @@ export default function KeyAccountKamAnalyticsTab({
       totalOrders: number;
       deliveredOrders: number;
       pendingOrders: number;
-      grossDeliveredRevenue: number;
-      grossPendingRevenue: number;
-      rebatedDeliveredRevenue: number;
-      rebatedPendingRevenue: number;
-      deliveredRevenue: number;
-      pendingRevenue: number;
+      paidRevenue: number;
+      partialRevenue: number;
+      unpaidRevenue: number;
+      consignmentRevenue: number;
+      settlementDiscountRevenue: number;
       totalRevenue: number;
+      paidOrders: number;
+      partialOrders: number;
+      unpaidOrders: number;
+      consignmentOrders: number;
       clientIds: Set<string>;
       productQty: Map<string, number>;
     }>();
@@ -541,13 +686,16 @@ export default function KeyAccountKamAnalyticsTab({
         totalOrders: 0,
         deliveredOrders: 0,
         pendingOrders: 0,
-        grossDeliveredRevenue: 0,
-        grossPendingRevenue: 0,
-        rebatedDeliveredRevenue: 0,
-        rebatedPendingRevenue: 0,
-        deliveredRevenue: 0,
-        pendingRevenue: 0,
+        paidRevenue: 0,
+        partialRevenue: 0,
+        unpaidRevenue: 0,
+        consignmentRevenue: 0,
+        settlementDiscountRevenue: 0,
         totalRevenue: 0,
+        paidOrders: 0,
+        partialOrders: 0,
+        unpaidOrders: 0,
+        consignmentOrders: 0,
         clientIds: new Set<string>(),
         productQty: new Map<string, number>(),
       });
@@ -560,25 +708,33 @@ export default function KeyAccountKamAnalyticsTab({
 
       row.totalOrders += 1;
       if (isKeyAccountPendingWorkflowOrder(order)) row.pendingOrders += 1;
+      if (order.key_account_client_id) row.clientIds.add(order.key_account_client_id);
       if (isDeliveredKeyAccountOrder(order)) {
         row.deliveredOrders += 1;
-        if (order.key_account_client_id) row.clientIds.add(order.key_account_client_id);
       }
     });
 
-    productAnalyticsOrders.forEach((order) => {
-      const kamId = order.kam_id || 'unassigned';
-      const row = rowMap.get(kamId);
+    visibleAgents.forEach((agent) => {
+      const row = rowMap.get(agent.id);
       if (!row) return;
-
-      const revenue = getKeyAccountOrderNetRevenueFromAttribution(orderRevenueById.get(order.id));
-      row.grossDeliveredRevenue += revenue.grossDelivered;
-      row.grossPendingRevenue += revenue.grossPending;
-      row.rebatedDeliveredRevenue += revenue.rebatedDelivered;
-      row.rebatedPendingRevenue += revenue.rebatedPending;
-      row.deliveredRevenue += revenue.deliveredRevenue;
-      row.pendingRevenue += revenue.pendingRevenue;
-      row.totalRevenue += revenue.totalRevenue;
+      const agentOrders = allAnalyticsEligibleOrders.filter(
+        (order) => (order.kam_id || 'unassigned') === agent.id
+      );
+      const revenue = computeAgentPaymentRevenueForPeriod(
+        agentOrders,
+        revenueRangeStart,
+        revenueRangeEnd
+      );
+      row.paidRevenue = revenue.paidRevenue;
+      row.partialRevenue = revenue.partialRevenue;
+      row.unpaidRevenue = revenue.unpaidRevenue;
+      row.consignmentRevenue = revenue.consignmentRevenue;
+      row.settlementDiscountRevenue = revenue.settlementDiscountRevenue;
+      row.totalRevenue = revenue.totalRevenue;
+      row.paidOrders = revenue.paidOrders;
+      row.partialOrders = revenue.partialOrders;
+      row.unpaidOrders = revenue.unpaidOrders;
+      row.consignmentOrders = revenue.consignmentOrders;
     });
 
     items.forEach((item) => {
@@ -599,19 +755,22 @@ export default function KeyAccountKamAnalyticsTab({
         totalOrders: row.totalOrders,
         deliveredOrders: row.deliveredOrders,
         pendingOrders: row.pendingOrders,
-        grossDeliveredRevenue: row.grossDeliveredRevenue,
-        grossPendingRevenue: row.grossPendingRevenue,
-        rebatedDeliveredRevenue: row.rebatedDeliveredRevenue,
-        rebatedPendingRevenue: row.rebatedPendingRevenue,
-        deliveredRevenue: row.deliveredRevenue,
-        pendingRevenue: row.pendingRevenue,
+        paidRevenue: row.paidRevenue,
+        partialRevenue: row.partialRevenue,
+        unpaidRevenue: row.unpaidRevenue,
+        consignmentRevenue: row.consignmentRevenue,
+        settlementDiscountRevenue: row.settlementDiscountRevenue,
         totalRevenue: row.totalRevenue,
+        paidOrders: row.paidOrders,
+        partialOrders: row.partialOrders,
+        unpaidOrders: row.unpaidOrders,
+        consignmentOrders: row.consignmentOrders,
         uniqueClients: row.clientIds.size,
-        avgOrderValue: row.deliveredOrders > 0 ? row.deliveredRevenue / row.deliveredOrders : 0,
-        topProduct: Array.from(row.productQty.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || 'No delivered products',
+        avgOrderValue: row.totalOrders > 0 ? row.totalRevenue / row.totalOrders : 0,
+        topProduct: Array.from(row.productQty.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || 'No product rows',
       }))
       .sort((a, b) => b.totalRevenue - a.totalRevenue);
-  }, [deliveredOrderById, filteredOrders, items, orderRevenueById, productAnalyticsOrders, visibleAgents]);
+  }, [allAnalyticsEligibleOrders, deliveredOrderById, discountByOrderId, filteredOrders, items, orderDateRange.end, orderDateRange.start, paidByOrderId, paymentsByOrderId, visibleAgents]);
 
   const paginatedRows = useMemo(
     () => paginateAnalyticsRows(rows, agentTablePage),
@@ -639,25 +798,34 @@ export default function KeyAccountKamAnalyticsTab({
 
   const totals = rows.reduce(
     (acc, row) => ({
-      grossRevenue: acc.grossRevenue + row.grossDeliveredRevenue + row.grossPendingRevenue,
-      rebatedRevenue:
-        acc.rebatedRevenue + row.rebatedDeliveredRevenue + row.rebatedPendingRevenue,
-      deliveredRevenue: acc.deliveredRevenue + row.deliveredRevenue,
-      pendingRevenue: acc.pendingRevenue + row.pendingRevenue,
+      paidRevenue: acc.paidRevenue + row.paidRevenue,
+      partialRevenue: acc.partialRevenue + row.partialRevenue,
+      unpaidRevenue: acc.unpaidRevenue + row.unpaidRevenue,
+      consignmentRevenue: acc.consignmentRevenue + row.consignmentRevenue,
+      settlementDiscountRevenue: acc.settlementDiscountRevenue + row.settlementDiscountRevenue,
       totalRevenue: acc.totalRevenue + row.totalRevenue,
       totalOrders: acc.totalOrders + row.totalOrders,
       deliveredOrders: acc.deliveredOrders + row.deliveredOrders,
       clients: acc.clients + row.uniqueClients,
+      paidOrders: acc.paidOrders + row.paidOrders,
+      partialOrders: acc.partialOrders + row.partialOrders,
+      unpaidOrders: acc.unpaidOrders + row.unpaidOrders,
+      consignmentOrders: acc.consignmentOrders + row.consignmentOrders,
     }),
     {
-      grossRevenue: 0,
-      rebatedRevenue: 0,
-      deliveredRevenue: 0,
-      pendingRevenue: 0,
+      paidRevenue: 0,
+      partialRevenue: 0,
+      unpaidRevenue: 0,
+      consignmentRevenue: 0,
+      settlementDiscountRevenue: 0,
       totalRevenue: 0,
       totalOrders: 0,
       deliveredOrders: 0,
       clients: 0,
+      paidOrders: 0,
+      partialOrders: 0,
+      unpaidOrders: 0,
+      consignmentOrders: 0,
     }
   );
 
@@ -692,19 +860,19 @@ export default function KeyAccountKamAnalyticsTab({
         rows.map((row) => ({
           name: row.name,
           email: row.email,
-          grossDeliveredRevenue: row.grossDeliveredRevenue,
-          grossPendingRevenue: row.grossPendingRevenue,
-          rebatedDeliveredRevenue: row.rebatedDeliveredRevenue,
-          rebatedPendingRevenue: row.rebatedPendingRevenue,
-          deliveredRevenue: row.deliveredRevenue,
-          pendingRevenue: row.pendingRevenue,
+          paidRevenue: row.paidRevenue,
+          partialRevenue: row.partialRevenue,
+          unpaidRevenue: row.unpaidRevenue,
+          consignmentRevenue: row.consignmentRevenue,
+          settlementDiscountRevenue: row.settlementDiscountRevenue,
           totalRevenue: row.totalRevenue,
-          deliveredOrders: row.deliveredOrders,
+          paidOrders: row.paidOrders,
+          partialOrders: row.partialOrders,
+          unpaidOrders: row.unpaidOrders,
+          consignmentOrders: row.consignmentOrders,
           totalOrders: row.totalOrders,
-          pendingOrders: row.pendingOrders,
           uniqueClients: row.uniqueClients,
           avgOrderValue: row.avgOrderValue,
-          topProduct: row.topProduct,
         })),
         {
           dateRangeLabel,
@@ -756,14 +924,37 @@ export default function KeyAccountKamAnalyticsTab({
     if (selectedMetric === 'revenue') {
       return visibleAgents.reduce(
         (acc, agent) => ({
-          gross: acc.gross + Number(row[revenueGrossKey(agent.id)] ?? 0),
-          rebated: acc.rebated + Number(row[revenueRebatedKey(agent.id)] ?? 0),
-          netDelivered: acc.netDelivered + Number(row[revenueDeliveredNetKey(agent.id)] ?? 0),
-          netPending: acc.netPending + Number(row[revenuePendingNetKey(agent.id)] ?? 0),
-          partialDelivered: acc.partialDelivered + Number(row[revenuePartialDeliveredKey(agent.id)] ?? 0),
-          net: acc.net + Number(row[revenueDeliveredNetKey(agent.id)] ?? 0) + Number(row[revenuePendingNetKey(agent.id)] ?? 0),
+          paid: acc.paid + Number(row[revenuePaidKey(agent.id)] ?? 0),
+          partial: acc.partial + Number(row[revenuePartialKey(agent.id)] ?? 0),
+          unpaid: acc.unpaid + Number(row[revenueUnpaidKey(agent.id)] ?? 0),
+          consignment: acc.consignment + Number(row[revenueConsignmentKey(agent.id)] ?? 0),
+          settlementDiscount:
+            acc.settlementDiscount + Number(row[revenueSettlementDiscountKey(agent.id)] ?? 0),
+          paidOrders: acc.paidOrders + Number(row[revenuePaidOrdersKey(agent.id)] ?? 0),
+          partialOrders: acc.partialOrders + Number(row[revenuePartialOrdersKey(agent.id)] ?? 0),
+          unpaidOrders: acc.unpaidOrders + Number(row[revenueUnpaidOrdersKey(agent.id)] ?? 0),
+          consignmentOrders:
+            acc.consignmentOrders + Number(row[revenueConsignmentOrdersKey(agent.id)] ?? 0),
+          total:
+            acc.total +
+            Number(row[revenuePaidKey(agent.id)] ?? 0) +
+            Number(row[revenuePartialKey(agent.id)] ?? 0) +
+            Number(row[revenueUnpaidKey(agent.id)] ?? 0) +
+            Number(row[revenueConsignmentKey(agent.id)] ?? 0) +
+            Number(row[revenueSettlementDiscountKey(agent.id)] ?? 0),
         }),
-        { gross: 0, rebated: 0, netDelivered: 0, netPending: 0, partialDelivered: 0, net: 0 }
+        {
+          paid: 0,
+          partial: 0,
+          unpaid: 0,
+          consignment: 0,
+          settlementDiscount: 0,
+          paidOrders: 0,
+          partialOrders: 0,
+          unpaidOrders: 0,
+          consignmentOrders: 0,
+          total: 0,
+        }
       );
     }
 
@@ -796,49 +987,73 @@ export default function KeyAccountKamAnalyticsTab({
 
   const renderPeriodSummary = (row: TimeSeriesDataPoint) => {
     if (selectedMetric === 'revenue') {
-      const { gross, rebated, netDelivered, netPending, partialDelivered, net } = computePeriodAggregateTotals(row) as {
-        gross: number;
-        rebated: number;
-        netDelivered: number;
-        netPending: number;
-        partialDelivered: number;
-        net: number;
-      };
+      const {
+        paid,
+        partial,
+        unpaid,
+        consignment,
+        settlementDiscount,
+        paidOrders,
+        partialOrders,
+        unpaidOrders,
+        consignmentOrders,
+        total,
+      } = computePeriodAggregateTotals(row) as {
+          paid: number;
+          partial: number;
+          unpaid: number;
+          consignment: number;
+          settlementDiscount: number;
+          paidOrders: number;
+          partialOrders: number;
+          unpaidOrders: number;
+          consignmentOrders: number;
+          total: number;
+        };
+      const orderNotes = [
+        paidOrders > 0 ? `${paidOrders.toLocaleString()} paid` : null,
+        partialOrders > 0 ? `${partialOrders.toLocaleString()} partial` : null,
+        unpaidOrders > 0 ? `${unpaidOrders.toLocaleString()} unpaid` : null,
+        consignmentOrders > 0 ? `${consignmentOrders.toLocaleString()} consignment` : null,
+      ].filter(Boolean);
       return (
         <div className="rounded-lg border bg-muted/40 p-4 mb-4 space-y-3">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
             Period total — all agents
           </p>
-          <div className="grid grid-cols-3 gap-3 text-sm">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 text-sm">
             <div>
-              <p className="text-muted-foreground text-xs">Delivered (net)</p>
-              <p className="font-semibold text-green-600 dark:text-green-400">{formatCurrency(netDelivered)}</p>
+              <p className="text-muted-foreground text-xs">Paid</p>
+              <p className="font-semibold text-green-600 dark:text-green-400">{formatCurrency(paid)}</p>
             </div>
             <div>
-              <p className="text-muted-foreground text-xs">Pending (net)</p>
-              <p className="font-semibold text-orange-600 dark:text-orange-400">{formatCurrency(netPending)}</p>
+              <p className="text-muted-foreground text-xs">Partial</p>
+              <p className="font-semibold text-amber-600 dark:text-amber-400">{formatCurrency(partial)}</p>
             </div>
             <div>
-              <p className="text-muted-foreground text-xs">Total (net)</p>
-              <p className="text-xl font-bold">{formatCurrency(net)}</p>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3 text-sm border-t pt-3">
-            <div>
-              <p className="text-muted-foreground text-xs">Gross</p>
-              <p className="font-semibold">{formatCurrency(gross)}</p>
+              <p className="text-muted-foreground text-xs">Unpaid</p>
+              <p className="font-semibold text-orange-600 dark:text-orange-400">{formatCurrency(unpaid)}</p>
             </div>
             <div>
-              <p className="text-muted-foreground text-xs">Rebated</p>
-              <p className="font-semibold text-amber-700 dark:text-amber-400">
-                {rebated > 0 ? `−${formatCurrency(rebated)}` : '—'}
+              <p className="text-muted-foreground text-xs">Consignment</p>
+              <p className="font-semibold text-sky-600 dark:text-sky-400">{formatCurrency(consignment)}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground text-xs">Settlement disc.</p>
+              <p className="font-semibold text-slate-600 dark:text-slate-300">
+                {formatCurrency(settlementDiscount)}
               </p>
             </div>
           </div>
-          {partialDelivered > 0 && (
+          <div className="grid grid-cols-1 gap-3 text-sm border-t pt-3">
+            <div>
+              <p className="text-muted-foreground text-xs">Total</p>
+              <p className="text-xl font-bold">{formatCurrency(total)}</p>
+            </div>
+          </div>
+          {orderNotes.length > 0 && (
             <p className="text-xs text-muted-foreground border-t pt-3">
-              Pending (net) includes remaining balance on {partialDelivered.toLocaleString()} partial-delivered
-              PO{partialDelivered === 1 ? '' : 's'} (split by fulfilled qty).
+              PO status mix: {orderNotes.join(' · ')}.
             </p>
           )}
         </div>
@@ -952,12 +1167,16 @@ export default function KeyAccountKamAnalyticsTab({
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">By agent</p>
           <div className="space-y-4 text-sm">
             {visibleAgents.map((agent) => {
-              const gross = Number(row[revenueGrossKey(agent.id)] ?? 0);
-              const rebated = Number(row[revenueRebatedKey(agent.id)] ?? 0);
-              const netDelivered = Number(row[revenueDeliveredNetKey(agent.id)] ?? 0);
-              const netPending = Number(row[revenuePendingNetKey(agent.id)] ?? 0);
-              const partialDelivered = Number(row[revenuePartialDeliveredKey(agent.id)] ?? 0);
-              const net = netDelivered + netPending;
+              const paid = Number(row[revenuePaidKey(agent.id)] ?? 0);
+              const partial = Number(row[revenuePartialKey(agent.id)] ?? 0);
+              const unpaid = Number(row[revenueUnpaidKey(agent.id)] ?? 0);
+              const consignment = Number(row[revenueConsignmentKey(agent.id)] ?? 0);
+              const settlementDiscount = Number(row[revenueSettlementDiscountKey(agent.id)] ?? 0);
+              const paidOrders = Number(row[revenuePaidOrdersKey(agent.id)] ?? 0);
+              const partialOrders = Number(row[revenuePartialOrdersKey(agent.id)] ?? 0);
+              const unpaidOrders = Number(row[revenueUnpaidOrdersKey(agent.id)] ?? 0);
+              const consignmentOrders = Number(row[revenueConsignmentOrdersKey(agent.id)] ?? 0);
+              const total = paid + partial + unpaid + consignment + settlementDiscount;
               return (
                 <div key={agent.id} className="rounded-lg border p-3 space-y-2">
                   <p className="font-medium flex items-center gap-2">
@@ -971,39 +1190,49 @@ export default function KeyAccountKamAnalyticsTab({
                     <div className="flex items-center justify-between gap-3">
                       <span className="flex items-center gap-1.5">
                         <span className="h-2 w-2 rounded-full bg-green-500" />
-                        Delivered (net):
+                        Paid:
                       </span>
-                      <span className="font-medium text-foreground">{formatCurrency(netDelivered)}</span>
+                      <span className="font-medium text-foreground">{formatCurrency(paid)}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full bg-amber-500" />
+                        Partial:
+                      </span>
+                      <span className="font-medium text-foreground">{formatCurrency(partial)}</span>
                     </div>
                     <div className="flex items-center justify-between gap-3">
                       <span className="flex items-center gap-1.5">
                         <span className="h-2 w-2 rounded-full bg-orange-500" />
-                        Pending (net):
+                        Unpaid:
                       </span>
-                      <span className="font-medium text-foreground">{formatCurrency(netPending)}</span>
-                    </div>
-                    {partialDelivered > 0 && (
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="flex items-center gap-1.5">
-                          <span className="h-2 w-2 rounded-full bg-blue-500" />
-                          Partial delivered POs:
-                        </span>
-                        <span className="font-medium text-foreground">{partialDelivered.toLocaleString()}</span>
-                      </div>
-                    )}
-                    <div className="flex items-center justify-between gap-3">
-                      <span>Gross:</span>
-                      <span className="font-medium text-foreground">{formatCurrency(gross)}</span>
+                      <span className="font-medium text-foreground">{formatCurrency(unpaid)}</span>
                     </div>
                     <div className="flex items-center justify-between gap-3">
-                      <span>Rebated:</span>
-                      <span className="font-medium text-amber-700 dark:text-amber-400">
-                        {rebated > 0 ? `−${formatCurrency(rebated)}` : '—'}
+                      <span className="flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full bg-sky-500" />
+                        Consignment:
+                      </span>
+                      <span className="font-medium text-foreground">{formatCurrency(consignment)}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full bg-slate-500" />
+                        Settlement disc.:
+                      </span>
+                      <span className="font-medium text-foreground">
+                        {formatCurrency(settlementDiscount)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 border-t pt-2 mt-1 text-xs">
+                      <span>PO mix:</span>
+                      <span className="font-medium text-foreground">
+                        {paidOrders} paid · {partialOrders} partial · {unpaidOrders} unpaid · {consignmentOrders} consignment
                       </span>
                     </div>
                     <div className="flex items-center justify-between gap-3 border-t pt-2 mt-1">
-                      <span className="font-medium text-foreground">Total (net):</span>
-                      <span className="font-bold">{formatCurrency(net)}</span>
+                      <span className="font-medium text-foreground">Total:</span>
+                      <span className="font-bold">{formatCurrency(total)}</span>
                     </div>
                   </div>
                 </div>
@@ -1103,23 +1332,17 @@ export default function KeyAccountKamAnalyticsTab({
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <TrendingUp className="h-4 w-4" />
-              Total product revenue
+              Total Agent revenue
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{formatCurrency(totals.totalRevenue)}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              Net after rebates · Delivered {formatCurrency(totals.deliveredRevenue)} · Pending{' '}
-              {formatCurrency(totals.pendingRevenue)}
+              Paid {formatCurrency(totals.paidRevenue)} · Partial {formatCurrency(totals.partialRevenue)}
+              {' · '}Unpaid {formatCurrency(totals.unpaidRevenue)} · Consignment{' '}
+              {formatCurrency(totals.consignmentRevenue)} · Settlement disc.{' '}
+              {formatCurrency(totals.settlementDiscountRevenue)}
             </p>
-            {totals.rebatedRevenue > 0 && (
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Gross {formatCurrency(totals.grossRevenue)} · Rebated{' '}
-                <span className="text-amber-700 dark:text-amber-400">
-                  −{formatCurrency(totals.rebatedRevenue)}
-                </span>
-              </p>
-            )}
           </CardContent>
         </Card>
         <Card>
@@ -1132,13 +1355,9 @@ export default function KeyAccountKamAnalyticsTab({
           <CardContent>
             <div className="text-2xl font-bold">{totals.totalOrders}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              {totals.deliveredOrders} delivered · {pendingWorkflowOrders} in workflow
-              {partialDeliveredOrders > 0
-                ? ` · ${partialDeliveredOrders} partial (split by fulfilled qty)`
-                : ''}
-              {rebateReplacementOrders > 0
-                ? ` · ${rebateReplacementOrders} rebate replacement`
-                : ''}
+              {totals.paidOrders} paid · {totals.partialOrders} partial · {totals.unpaidOrders} unpaid
+              {totals.consignmentOrders > 0 ? ` · ${totals.consignmentOrders} consignment` : ''}
+              {rebateReplacementOrders > 0 ? ` · ${rebateReplacementOrders} rebate replacement` : ''}
             </p>
           </CardContent>
         </Card>
@@ -1161,9 +1380,8 @@ export default function KeyAccountKamAnalyticsTab({
           <CardTitle>Agent Performance Overview</CardTitle>
           <CardDescription>
             Compare Key Account user performance across different metrics and time periods. Revenue
-            uses the same product analytics rules as the summary cards (line items, money/credit
-            rebates, and change-item swaps on the source PO month). Click a data point or period
-            label to view the breakdown.
+            is grouped by PO payment status on the orders they created: paid, partial, unpaid, and
+            consignment. Click a data point or period label to view the breakdown.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -1350,21 +1568,21 @@ export default function KeyAccountKamAnalyticsTab({
               <TableHeader>
                 <TableRow>
                   <TableHead>Person</TableHead>
-                  <TableHead className="text-right">Gross</TableHead>
-                  <TableHead className="text-right">Rebated</TableHead>
+                  <TableHead className="text-right">Paid</TableHead>
+                  <TableHead className="text-right">Partial</TableHead>
+                  <TableHead className="text-right">Unpaid</TableHead>
+                  <TableHead className="text-right">Consignment</TableHead>
+                  <TableHead className="text-right">Settlement disc.</TableHead>
                   <TableHead className="text-right">Net</TableHead>
-                  <TableHead className="text-right">Delivered POs</TableHead>
                   <TableHead className="text-right">Total POs</TableHead>
-                  <TableHead className="text-right">Pending</TableHead>
                   <TableHead className="text-right">Clients</TableHead>
-                  <TableHead className="text-right">Avg Delivered PO</TableHead>
-                  <TableHead>Top Product</TableHead>
+                  <TableHead className="text-right">Avg PO</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center text-muted-foreground py-6">
+                    <TableCell colSpan={11} className="text-center text-muted-foreground py-6">
                       No agent analytics found.
                     </TableCell>
                   </TableRow>
@@ -1377,29 +1595,19 @@ export default function KeyAccountKamAnalyticsTab({
                           {row.email && <p className="text-xs text-muted-foreground">{row.email}</p>}
                         </div>
                       </TableCell>
-                      <TableCell className="text-right text-muted-foreground">
-                        {formatCurrency(row.grossDeliveredRevenue + row.grossPendingRevenue)}
-                      </TableCell>
-                      <TableCell className="text-right text-amber-700 dark:text-amber-400">
-                        {row.rebatedDeliveredRevenue + row.rebatedPendingRevenue > 0
-                          ? `−${formatCurrency(row.rebatedDeliveredRevenue + row.rebatedPendingRevenue)}`
-                          : '—'}
+                      <TableCell className="text-right text-green-600 dark:text-green-400">{formatCurrency(row.paidRevenue)}</TableCell>
+                      <TableCell className="text-right text-amber-600 dark:text-amber-400">{formatCurrency(row.partialRevenue)}</TableCell>
+                      <TableCell className="text-right text-orange-600 dark:text-orange-400">{formatCurrency(row.unpaidRevenue)}</TableCell>
+                      <TableCell className="text-right text-sky-600 dark:text-sky-400">{formatCurrency(row.consignmentRevenue)}</TableCell>
+                      <TableCell className="text-right text-slate-600 dark:text-slate-300">
+                        {formatCurrency(row.settlementDiscountRevenue)}
                       </TableCell>
                       <TableCell className="text-right font-medium">
                         {formatCurrency(row.totalRevenue)}
                       </TableCell>
-                      <TableCell className="text-right">{row.deliveredOrders}</TableCell>
                       <TableCell className="text-right">{row.totalOrders}</TableCell>
-                      <TableCell className="text-right">
-                        {row.pendingOrders > 0 ? (
-                          <Badge variant="outline" className="text-amber-600">{row.pendingOrders}</Badge>
-                        ) : (
-                          <Badge variant="secondary">0</Badge>
-                        )}
-                      </TableCell>
                       <TableCell className="text-right">{row.uniqueClients}</TableCell>
                       <TableCell className="text-right">{formatCurrency(row.avgOrderValue)}</TableCell>
-                      <TableCell>{row.topProduct}</TableCell>
                     </TableRow>
                   ))
                 )}
@@ -1422,7 +1630,7 @@ export default function KeyAccountKamAnalyticsTab({
             </DialogTitle>
             <DialogDescription>
               {selectedMetric === 'revenue'
-                ? 'Delivered and pending net revenue by agent. Pending includes in-workflow POs and remaining balance on partial-delivered POs (split by fulfilled qty).'
+                ? 'Payment breakdown by agent for the POs they created: paid, partial, unpaid, and consignment.'
                 : selectedMetric === 'orders'
                   ? 'Delivered, in-workflow, and partial-delivered PO counts plus PO line splits (same rules as product analytics).'
                   : 'Unique buying clients per agent in this period (summed per KAM).'}

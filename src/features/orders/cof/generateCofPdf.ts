@@ -282,6 +282,7 @@ export function buildCofHtml(
     overrides?.remainingBalance !== undefined
       ? Math.max(0, overrides.remainingBalance)
       : Math.max(0, total);
+  const logoUrl = escapeHtml(new URL('/logo/B1G_LOGO_BLACK.png', window.location.origin).toString());
 
   const otherSectionHtml =
     others.length > 0
@@ -376,6 +377,15 @@ export function buildCofHtml(
     grid-template-columns: 1fr auto 1fr;
     align-items: end;
     padding-bottom: 4px;
+  }
+  .head .logo {
+    display: flex;
+    align-items: flex-end;
+  }
+  .head .logo img {
+    max-width: 130px;
+    max-height: 38px;
+    object-fit: contain;
   }
   .head .title {
     text-align: center;
@@ -617,7 +627,7 @@ export function buildCofHtml(
 
     <!-- Header -->
     <div class="head">
-      <div></div>
+      <div class="logo"><img src="${logoUrl}" alt="B1G Corporation" /></div>
       <div class="title">CUSTOMER ORDER FORM</div>
       <div class="cof-code">
         B1GSALES-COF-V01-2026__-___

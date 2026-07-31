@@ -37,6 +37,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import DisposalLogManual from '@/features/inventory/warehouse-manual/components/DisposalLogManual';
 
 type DisposalRow = {
   id: string;
@@ -306,12 +308,20 @@ export default function WarehouseDisposalsPage() {
 
   return (
     <div className="container mx-auto py-6 space-y-6">
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2">
-          <PackageX className="h-7 w-7 text-muted-foreground" />
-          <h1 className="text-2xl font-bold tracking-tight">{pageTitle}</h1>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <PackageX className="h-7 w-7 text-muted-foreground" />
+            <h1 className="text-2xl font-bold tracking-tight">{pageTitle}</h1>
+          </div>
+          <p className="text-muted-foreground">{pageDescription}</p>
         </div>
-        <p className="text-muted-foreground">{pageDescription}</p>
+        <PageManualDialog
+          title="Disposal Log Manual"
+          fullManualHref="/warehouse-manual#disposal-log"
+        >
+          <DisposalLogManual embedded />
+        </PageManualDialog>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">

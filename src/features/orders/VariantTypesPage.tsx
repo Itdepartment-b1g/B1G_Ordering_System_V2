@@ -22,6 +22,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
+import VariantTypesManual from '@/features/inventory/warehouse-manual/components/VariantTypesManual';
 
 interface VariantType {
   id: string;
@@ -318,10 +321,19 @@ export default function VariantTypesPage() {
           <h1 className="text-3xl font-bold">Variant Types Management</h1>
           <p className="text-muted-foreground">Manage variant types for future-proofing your product catalog</p>
         </div>
-        <Button onClick={() => setCreateDialogOpen(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          Create Type
-        </Button>
+        <div className="flex gap-2">
+          <PageGettingStartedDialog />
+          <PageManualDialog
+            title="Variant Types Manual"
+            fullManualHref="/warehouse-manual#variant-types"
+          >
+            <VariantTypesManual embedded />
+          </PageManualDialog>
+          <Button onClick={() => setCreateDialogOpen(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            Create Type
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">

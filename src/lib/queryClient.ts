@@ -44,6 +44,9 @@ const NON_PERSISTED_QUERY_KEYS = new Set([
     'batch-lot-adjustments',
     'warehouse-batch-aging',
     'warehouse-stock-returns',
+    'sa-stock-returns',
+    'sa-client-stock-returns',
+    'warehouse-delivery-shortages',
 ]);
 
 export const queryPersistOptions = {

@@ -1,18 +1,18 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
+import { fetchAllPaginated } from '@/lib/supabasePaginate';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
-  Users,
   Building2,
   Shield,
   TrendingUp,
-  UserCheck,
   ShoppingCart,
   BarChart3,
+  Package,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -176,11 +176,10 @@ export function SalesAdminDashboard() {
   const [activeTab, setActiveTab] = useState('overview');
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [stats, setStats] = useState({
-    totalDirectors: 0,
-    totalKAMs: 0,
     totalClients: 0,
     totalOrders: 0,
     pendingOrders: 0,
+    consignmentOrders: 0,
   });
   const [revenueMetrics, setRevenueMetrics] = useState<KeyAccountDashboardRevenueResult>(
     EMPTY_KEY_ACCOUNT_DASHBOARD_REVENUE
@@ -272,9 +271,9 @@ export function SalesAdminDashboard() {
             quantity,
             unit_price,
             total_price,
-            variants (
+            variants:variant_id (
               name,
-              brands (name)
+              brands:brand_id (name)
             )
           `)
           .in('purchase_order_id', deliveredOrderIds);
@@ -300,18 +299,6 @@ export function SalesAdminDashboard() {
   const fetchAdminData = async () => {
     setLoading(true);
     try {
-      // Get company users by role
-      const { data: users, error: usersError } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('company_id', user?.company_id)
-        .in('role', ['sales_director', 'key_account_manager']);
-
-      if (usersError) throw usersError;
-
-      const directors = users?.filter(u => u.role === 'sales_director').length || 0;
-      const kams = users?.filter(u => u.role === 'key_account_manager').length || 0;
-
       // Get clients count
       const { count: clientCount } = await supabase
         .from('key_account_clients')
@@ -319,39 +306,43 @@ export function SalesAdminDashboard() {
         .eq('company_id', user?.company_id)
         .eq('status', 'active');
 
-      // Get orders and revenue
-      const { data: orders, error: ordersError } = await supabase
-        .from('purchase_orders')
-        .select(`
-          id,
-          total_amount,
-          subtotal,
-          status,
-          workflow_status,
-          po_order_kind,
-          source_rebate_id,
-          warehouse_location_id,
-          order_date,
-          key_account_client_id,
-          client:key_account_clients(client_name)
-        `)
-        .eq('company_id', user?.company_id)
-        .eq('company_account_type', 'Key Accounts')
-        .gte('order_date', `${selectedYear}-01-01`)
-        .lte('order_date', `${selectedYear}-12-31`);
+      // Get orders and revenue (paged — PostgREST caps at 1000 rows per request)
+      const orderRows = await fetchAllPaginated<AdminOrderRow>(async (from, to) => {
+        const { data, error } = await supabase
+          .from('purchase_orders')
+          .select(`
+            id,
+            po_number,
+            total_amount,
+            subtotal,
+            status,
+            workflow_status,
+            po_order_kind,
+            source_rebate_id,
+            warehouse_location_id,
+            order_date,
+            key_account_client_id,
+            key_account_payment_status,
+            client:key_account_clients(client_name)
+          `)
+          .eq('company_id', user?.company_id)
+          .eq('company_account_type', 'Key Accounts')
+          .gte('order_date', `${selectedYear}-01-01`)
+          .lte('order_date', `${selectedYear}-12-31`)
+          .order('order_date', { ascending: true })
+          .order('id', { ascending: true })
+          .range(from, to);
+        return { data: (data as AdminOrderRow[] | null) ?? null, error };
+      });
 
-      if (ordersError) throw ordersError;
-
-      const orderRows = (orders || []) as AdminOrderRow[];
       const revenueResult = await loadKeyAccountDashboardRevenue(supabase, orderRows, selectedYear);
       setRevenueMetrics(revenueResult);
 
       setStats({
-        totalDirectors: directors,
-        totalKAMs: kams,
         totalClients: clientCount || 0,
         totalOrders: orderRows.length,
         pendingOrders: revenueResult.pendingOrderCount,
+        consignmentOrders: revenueResult.consignmentOrderCount,
       });
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
@@ -395,29 +386,7 @@ export function SalesAdminDashboard() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <UserCheck className="h-4 w-4" />
-              Directors
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.totalDirectors}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Users className="h-4 w-4" />
-              KAMs
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.totalKAMs}</div>
-          </CardContent>
-        </Card>
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
@@ -440,18 +409,38 @@ export function SalesAdminDashboard() {
             <div className="text-2xl font-bold">{stats.totalOrders}</div>
           </CardContent>
         </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+              <Package className="h-4 w-4" />
+              Consignment POs
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-sky-600">{stats.consignmentOrders}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Float value{' '}
+              {formatCurrency(revenueMetrics.summary.consignmentRevenue)}
+            </p>
+          </CardContent>
+        </Card>
         <KeyAccountDashboardRevenueCard summary={revenueMetrics.summary} />
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <TrendingUp className="h-4 w-4" />
-              Pending POs
+              Outstanding payments
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-amber-600">{stats.pendingOrders}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              In workflow · Pending revenue {formatCurrency(revenueMetrics.summary.pendingRevenue)}
+              Unpaid + partial + consignment ·{' '}
+              {formatCurrency(
+                revenueMetrics.summary.unpaidRevenue +
+                  revenueMetrics.summary.partialRevenue +
+                  revenueMetrics.summary.consignmentRevenue
+              )}
             </p>
           </CardContent>
         </Card>
@@ -461,6 +450,8 @@ export function SalesAdminDashboard() {
         monthlyData={revenueMetrics.monthlyData}
         selectedYear={selectedYear}
         onYearChange={setSelectedYear}
+        orders={revenueMetrics.orders}
+        payments={revenueMetrics.payments}
       />
 
       {/* Product Purchase Breakdown */}

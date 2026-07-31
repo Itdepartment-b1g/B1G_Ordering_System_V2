@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { BarChart3, Clock, LayoutGrid, List, Package, RefreshCw, Search } from 'lucide-react';
 import { type Brand, type Variant } from './InventoryContext';
@@ -20,6 +20,7 @@ import { WarehouseStockBoardSettingsButton } from './components/WarehouseStockBo
 import {
   getDisplayedStock,
   getStockBoardBadgeStyle,
+  getStockBoardLowStockLegendLabel,
   DEFAULT_WAREHOUSE_STOCK_BOARD_SETTINGS,
   type StockBoardViewMode,
   type WarehouseStockBoardSettings,
@@ -40,6 +41,8 @@ import {
   getDatePresetLabel,
   getDateRangeFromPreset,
 } from '@/lib/dateRangePresets';
+import GettingStartedDialog from '@/features/inventory/warehouse-manual/components/GettingStartedDialog';
+import { isGettingStartedDismissed } from '@/features/inventory/warehouse-manual/utils/warehouseGettingStartedDismiss';
 
 /** Order variant-type columns: known types first, then alphabetical. */
 const TYPE_SORT_ORDER: string[] = ['flavor', 'battery', 'POSM', 'posm'];
@@ -71,12 +74,23 @@ function sortTypeEntries(entries: [string, Variant[]][]): [string, Variant[]][] 
 
 function getDisplayedStockForBoard(
   v: Variant,
-  opts: { mode: DashboardViewMode; isMainWarehouseUser: boolean }
+  opts: {
+    mode: DashboardViewMode;
+    isMainWarehouseUser: boolean;
+    poReservedByVariantId?: Record<string, number>;
+  }
 ): number {
   return getDisplayedStock(v, opts);
 }
 
-function totalStock(variants: Variant[], opts: { mode: DashboardViewMode; isMainWarehouseUser: boolean }): number {
+function totalStock(
+  variants: Variant[],
+  opts: {
+    mode: DashboardViewMode;
+    isMainWarehouseUser: boolean;
+    poReservedByVariantId?: Record<string, number>;
+  }
+): number {
   return variants.reduce((s, v) => s + getDisplayedStockForBoard(v, opts), 0);
 }
 
@@ -85,11 +99,13 @@ function VariantRows({
   mode,
   isMainWarehouseUser,
   settings,
+  poReservedByVariantId,
 }: {
   variants: Variant[];
   mode: DashboardViewMode;
   isMainWarehouseUser: boolean;
   settings: WarehouseStockBoardSettings;
+  poReservedByVariantId?: Record<string, number>;
 }) {
   return (
     <div className="flex flex-col min-h-0 bg-background">
@@ -105,7 +121,7 @@ function VariantRows({
             className="shrink-0 rounded-md px-2 py-0.5 text-[11px] font-bold tabular-nums min-w-[2.75rem] text-center"
             style={getStockBoardBadgeStyle(v.status, settings.colors)}
           >
-            {getDisplayedStockForBoard(v, { mode, isMainWarehouseUser })}
+            {getDisplayedStockForBoard(v, { mode, isMainWarehouseUser, poReservedByVariantId })}
           </span>
         </div>
       ))}
@@ -127,6 +143,7 @@ function TypeColumn({
   mode,
   isMainWarehouseUser,
   settings,
+  poReservedByVariantId,
   className,
 }: {
   typeKey: string;
@@ -134,9 +151,10 @@ function TypeColumn({
   mode: DashboardViewMode;
   isMainWarehouseUser: boolean;
   settings: WarehouseStockBoardSettings;
+  poReservedByVariantId?: Record<string, number>;
   className?: string;
 }) {
-  const sum = totalStock(variants, { mode, isMainWarehouseUser });
+  const sum = totalStock(variants, { mode, isMainWarehouseUser, poReservedByVariantId });
   const label = totalLabelForType(typeKey);
 
   return (
@@ -150,6 +168,7 @@ function TypeColumn({
           mode={mode}
           isMainWarehouseUser={isMainWarehouseUser}
           settings={settings}
+          poReservedByVariantId={poReservedByVariantId}
         />
       </div>
       <div className="mt-auto flex shrink-0 items-center justify-between gap-2 border-t border-primary/20 bg-primary px-2 py-2 text-[10px] font-bold uppercase tracking-wide text-primary-foreground">
@@ -170,11 +189,13 @@ function BrandColumn({
   mode,
   isMainWarehouseUser,
   settings,
+  poReservedByVariantId,
 }: {
   brand: Brand;
   mode: DashboardViewMode;
   isMainWarehouseUser: boolean;
   settings: WarehouseStockBoardSettings;
+  poReservedByVariantId?: Record<string, number>;
 }) {
   const typeEntries = sortTypeEntries(getVariantsByTypeEntries(brand));
 
@@ -225,6 +246,7 @@ function BrandColumn({
             mode={mode}
             isMainWarehouseUser={isMainWarehouseUser}
             settings={settings}
+            poReservedByVariantId={poReservedByVariantId}
           />
         ))}
       </div>
@@ -244,6 +266,14 @@ export default function WarehouseInventoryDashboardPage() {
   const [movementDateRangeFilter, setMovementDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'this_year',
   });
+  const [gettingStartedOpen, setGettingStartedOpen] = useState(false);
+
+  useEffect(() => {
+    if (!user?.id || !user?.company_id) return;
+    if (!isGettingStartedDismissed(user.id, user.company_id)) {
+      setGettingStartedOpen(true);
+    }
+  }, [user?.id, user?.company_id]);
 
   const isWarehouse = user?.role === 'warehouse';
   const canEditStockBoardSettings =
@@ -297,6 +327,7 @@ export default function WarehouseInventoryDashboardPage() {
 
   const {
     brands: stockBoardBrands,
+    poReservedByVariantId,
     isLoading: loadingStockBoard,
     isFetching: fetchingStockBoard,
     refetch: refetchStockBoard,
@@ -458,11 +489,13 @@ export default function WarehouseInventoryDashboardPage() {
   const stockScopeHint = useMemo(() => {
     if (isWarehouse && membership.status === 'sub') return 'Showing this sub-warehouse stock.';
     if (isMainWarehouseUser) {
-      if (viewMode === 'available') return 'Showing available stock (main stock minus allocated).';
+      if (viewMode === 'available') {
+        return 'Showing available stock (main stock − allocated − open/pending PO holds).';
+      }
       if (viewMode === 'overall') return 'Showing overall stock (main stock, including allocated).';
-      return 'Showing selected sub-warehouse stock.';
+      return 'Showing selected sub-warehouse stock (minus open/pending PO holds).';
     }
-    return 'Showing available stock.';
+    return 'Showing available stock (location stock − open/pending PO holds).';
   }, [isWarehouse, membership.status, isMainWarehouseUser, viewMode]);
 
   const onRefresh = async () => {
@@ -492,6 +525,7 @@ export default function WarehouseInventoryDashboardPage() {
 
   return (
     <div className="p-8 space-y-6 max-w-full">
+      <GettingStartedDialog open={gettingStartedOpen} onOpenChange={setGettingStartedOpen} />
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
@@ -703,9 +737,7 @@ export default function WarehouseInventoryDashboardPage() {
                     style={{ backgroundColor: stockBoardSettings.colors.lowStock }}
                     aria-hidden
                   />
-                  Low stock (≤
-                  {stockBoardSettings.usePerSkuReorderLevel ? ' SKU or ' : ' '}
-                  {stockBoardSettings.lowStockThreshold})
+                  {getStockBoardLowStockLegendLabel(stockBoardSettings)}
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span
@@ -743,6 +775,7 @@ export default function WarehouseInventoryDashboardPage() {
                 mode={isMainWarehouseUser ? viewMode : 'sub'}
                 isMainWarehouseUser={isMainWarehouseUser}
                 settings={stockBoardSettings}
+                poReservedByVariantId={poReservedByVariantId}
               />
             ))}
         </div>

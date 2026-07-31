@@ -3,10 +3,26 @@ import { getDrBankAccounts } from '@/features/finance/paymentSettingsUtils';
 import type { BankAccount } from '@/types/database.types';
 import type { PurchaseOrder, PurchaseOrderItem } from '../types';
 
+export type DrPdfDispatchLine = {
+  variant_id?: string | null;
+  brand_name?: string | null;
+  variant_name?: string | null;
+  variant_type?: string | null;
+  quantity: number;
+  unit_price?: number;
+};
+
 export type DrPdfOptions = {
   drNumber: string;
   warehouseLocationId: string;
   warehouseLocationName: string;
+  /**
+   * When set (this DR's dispatched lines), quantities come from here instead of
+   * full PO item qty — required for partial / multi-DR print accuracy.
+   */
+  dispatchLines?: DrPdfDispatchLine[];
+  /** When true, overlays a CANCELLED watermark (buyer refused this DR). */
+  cancelled?: boolean;
 };
 
 type DrReceiptInfo = {
@@ -239,6 +255,32 @@ function itemRowsHtml(items: PurchaseOrderItem[]): string {
   return rows.join('');
 }
 
+function dispatchLinesToPoItems(lines: DrPdfDispatchLine[]): PurchaseOrderItem[] {
+  return lines
+    .filter((l) => Number(l.quantity) > 0)
+    .map((l, idx) => ({
+      id: String(l.variant_id || `dispatch-${idx}`),
+      variant_id: String(l.variant_id || ''),
+      brand_name: l.brand_name || '',
+      variant_name: l.variant_name || 'Item',
+      variant_type: l.variant_type || 'flavor',
+      quantity: Number(l.quantity) || 0,
+      unit_price: Number(l.unit_price) || 0,
+      total_price: 0,
+    }));
+}
+
+function resolveDrLineItems(po: PurchaseOrder, options: DrPdfOptions): PurchaseOrderItem[] {
+  if (options.dispatchLines && options.dispatchLines.length > 0) {
+    return dispatchLinesToPoItems(options.dispatchLines);
+  }
+  return itemsForWarehouse(
+    po.items || [],
+    options.warehouseLocationId,
+    po.warehouse_location_id
+  );
+}
+
 function bankSectionHtml(receiptInfo: DrReceiptInfo): string {
   const payment = receiptInfo.payment;
   const banks = getDrBankAccounts(payment ? { bank_accounts: payment.bank_accounts ?? [] } : null);
@@ -267,11 +309,7 @@ function bankSectionHtml(receiptInfo: DrReceiptInfo): string {
 }
 
 function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrReceiptInfo): string {
-  const warehouseItems = itemsForWarehouse(
-    po.items || [],
-    options.warehouseLocationId,
-    po.warehouse_location_id
-  );
+  const warehouseItems = resolveDrLineItems(po, options);
   const delivery = resolveDeliveryDetails(po, receiptInfo);
   const hideWarehouse = shouldHideWarehouseOnDr(po, receiptInfo);
   const whLabel = escapeHtml(options.warehouseLocationName);
@@ -283,13 +321,19 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
     ? ''
     : `<div class="warehouse-badge">DR from: <span>${whLabel}</span></div>`;
   const footerNoteHtml = hideWarehouse ? '' : `<div class="footer-note">${whFooter}</div>`;
-  const bankSection = bankSectionHtml(receiptInfo);
+  const bankSection =
+    acct === 'Key Accounts' ? bankSectionHtml(receiptInfo) : '';
+  const cancelled = !!options.cancelled;
+  const cancelledWatermarkHtml = cancelled
+    ? `<div class="cancelled-watermark" aria-hidden="true">CANCELLED</div>`
+    : '';
+  const logoUrl = escapeHtml(new URL('/logo/B1G_LOGO_BLACK.png', window.location.origin).toString());
 
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Delivery Receipt</title>
+<title>Delivery Receipt${cancelled ? ' (Cancelled)' : ''}</title>
 <style>
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
@@ -349,18 +393,12 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
   }
 
   .logo-block { text-align: center; margin-bottom: 6px; }
-  .logo-b1g {
-    font-size: 42px;
-    font-weight: 900;
-    font-style: italic;
-    letter-spacing: -2px;
-    line-height: 1;
-  }
-  .logo-corp {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.35em;
-    margin-top: 2px;
+  .logo-img {
+    display: block;
+    max-width: 180px;
+    max-height: 52px;
+    margin: 0 auto;
+    object-fit: contain;
   }
 
   .doc-title {
@@ -489,6 +527,23 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
     margin-top: 14px;
   }
 
+  .cancelled-watermark {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 20;
+    font-size: 72px;
+    font-weight: 900;
+    letter-spacing: 0.12em;
+    color: rgba(185, 28, 28, 0.28);
+    transform: rotate(-28deg);
+    text-transform: uppercase;
+    user-select: none;
+  }
+
   @media print {
     @page {
       size: A4 portrait;
@@ -524,9 +579,9 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
   </div>
 
   <div class="page">
+    ${cancelledWatermarkHtml}
     <div class="logo-block">
-      <div class="logo-b1g">B1G</div>
-      <div class="logo-corp">CORPORATION</div>
+      <img class="logo-img" src="${logoUrl}" alt="B1G Corporation" />
     </div>
 
     <div class="doc-title">DELIVERY RECEIPT</div>

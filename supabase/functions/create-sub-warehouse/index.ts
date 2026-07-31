@@ -8,7 +8,7 @@ const corsHeaders = {
 
 /**
  * Creates a new sub-warehouse (location) under an existing warehouse company:
- * - creates a `warehouse_locations` row
+ * - creates a `warehouse_locations` row (with unique `code` for RN-{CODE}-{####})
  * - creates an auth user (role=warehouse) + profiles row (same company_id)
  * - links user to location in `warehouse_location_users`
  *
@@ -16,6 +16,94 @@ const corsHeaders = {
  * - system_administrator (can create for any warehouse company by passing `company_id`)
  * - main warehouse user (can create for their own company only)
  */
+
+function deriveLocationCodeFallback(locationName: string): string {
+  const words = String(locationName || "")
+    .trim()
+    .toUpperCase()
+    .split(/\s+/)
+    .map((w) => w.replace(/[^A-Z]/g, ""))
+    .filter(Boolean);
+  if (words.length === 0) return "LOC";
+
+  let code = "";
+  for (const word of words) {
+    if (code.length >= 3) break;
+    code += word[0];
+  }
+
+  if (code.length === 2 && words.length >= 2 && words[0].length > 1) {
+    const consonants: string[] = [];
+    for (let i = 1; i < words[0].length; i++) {
+      const ch = words[0][i];
+      if ("BCDFGHJKLMNPQRSTVWXYZ".includes(ch)) consonants.push(ch);
+    }
+    if (consonants.length > 0) {
+      code = code[0] + consonants[consonants.length - 1] + code[1];
+    }
+  }
+
+  if (code.length < 3) {
+    const letters = String(locationName || "").toUpperCase().replace(/[^A-Z]/g, "");
+    for (const ch of letters) {
+      if (code.length >= 3) break;
+      if (!code.includes(ch)) code += ch;
+    }
+  }
+
+  while (code.length < 3) code += "X";
+  return code.slice(0, 3);
+}
+
+async function allocateUniqueLocationCode(
+  supabaseClient: ReturnType<typeof createClient>,
+  companyId: string,
+  locationName: string,
+  preferred?: string | null,
+): Promise<string> {
+  const { data: allocated, error: allocErr } = await supabaseClient.rpc(
+    "allocate_warehouse_location_code",
+    {
+      p_company_id: companyId,
+      p_name: locationName,
+      p_preferred: preferred?.trim() || null,
+    },
+  );
+
+  if (!allocErr && allocated) {
+    return String(allocated).toUpperCase().slice(0, 3);
+  }
+
+  // Fallback when RPC/migration not applied yet: derive + uniquify in JS.
+  const { data: existingRows } = await supabaseClient
+    .from("warehouse_locations")
+    .select("code")
+    .eq("company_id", companyId);
+
+  const used = new Set(
+    (existingRows || [])
+      .map((r: { code?: string | null }) => String(r.code || "").toUpperCase())
+      .filter(Boolean),
+  );
+
+  let base = preferred?.trim()
+    ? preferred.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 3)
+    : deriveLocationCodeFallback(locationName);
+  if (!base) base = "LOC";
+
+  let tryCode = base;
+  let suffix = 0;
+  while (used.has(tryCode)) {
+    suffix += 1;
+    if (suffix <= 26) {
+      tryCode = base.slice(0, 2) + String.fromCharCode(64 + suffix);
+    } else {
+      tryCode = base.slice(0, 1) + String(suffix - 26).padStart(2, "0");
+    }
+  }
+  return tryCode;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -69,6 +157,7 @@ serve(async (req) => {
     const {
       company_id,
       location_name,
+      location_code,
       full_name,
       email,
       password,
@@ -138,16 +227,25 @@ serve(async (req) => {
       }
     }
 
-    // 1) Create location
+    // 1) Create location (must include unique `code` — used for RN-{CODE}-{####})
+    const locationName = String(location_name).trim();
+    const locationCode = await allocateUniqueLocationCode(
+      supabaseClient,
+      targetCompanyId,
+      locationName,
+      location_code ? String(location_code) : null,
+    );
+
     const { data: locationRow, error: locationError } = await supabaseClient
       .from("warehouse_locations")
       .insert({
         company_id: targetCompanyId,
-        name: String(location_name).trim(),
+        name: locationName,
+        code: locationCode,
         is_main: false,
         created_by: caller.id,
       })
-      .select("id, company_id, name")
+      .select("id, company_id, name, code")
       .single();
 
     if (locationError || !locationRow) {
@@ -220,6 +318,7 @@ serve(async (req) => {
           location_id: locationRow.id,
           company_id: locationRow.company_id,
           location_name: locationRow.name,
+          location_code: locationRow.code,
           user_id: subUserId,
           email,
           full_name,

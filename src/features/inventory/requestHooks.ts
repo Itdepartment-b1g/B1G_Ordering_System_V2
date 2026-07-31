@@ -298,13 +298,24 @@ export interface PendingMobileSalesAllocation {
 
 const PENDING_FINANCE_STAGES = ['agent_pending', 'finance_pending', 'leader_approved', 'needs_revision'] as const;
 
+/** Roles whose pending client orders soft-hold Allocated Remaining on Main Inventory. */
+const PENDING_ALLOCATION_AGENT_ROLES = [
+  'mobile_sales',
+  'sales_agent',
+  'team_leader',
+  'manager',
+] as const;
+
 function isPendingFinanceOrder(order: { status: string; stage: string | null }) {
     if (order.status !== 'pending') return false;
     const stage = order.stage || 'finance_pending';
     return (PENDING_FINANCE_STAGES as readonly string[]).includes(stage);
 }
 
-/** Mobile sales client orders awaiting finance approval (by variant line item). */
+/**
+ * Pending client orders (mobile sales + team leaders/managers) awaiting finance approval,
+ * grouped by variant line item for Allocated Remaining soft-holds.
+ */
 export function usePendingMobileSalesAllocations(
     enabled: boolean,
     companyIdOverride?: string | null
@@ -322,7 +333,7 @@ export function usePendingMobileSalesAllocations(
                 .from('profiles')
                 .select('id')
                 .eq('company_id', companyId)
-                .eq('role', 'mobile_sales');
+                .in('role', [...PENDING_ALLOCATION_AGENT_ROLES]);
 
             if (agentsError) throw agentsError;
 

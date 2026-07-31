@@ -8,6 +8,7 @@ import {
   DateRangeFilterPopover,
   type DateRangeFilterValue,
 } from '@/features/shared/components/DateRangeFilterPopover';
+import { firstRelation } from '@/features/key-accounts/key-accounts-analytics/keyAccountAnalyticsShared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -43,8 +44,12 @@ import {
   FileText,
   Pencil,
   ChevronDown,
+  History,
 } from 'lucide-react';
 import { PurchaseOrderDeliveryDetailsPanel, keyAccountDeliveryDetailsEnabled } from '@/features/orders/components/PurchaseOrderDeliveryDetailsPanel';
+import { PurchaseOrderHistoryDialog } from '@/features/orders/components/PurchaseOrderHistoryDialog';
+import { logPurchaseOrderEvent } from '@/features/orders/purchaseOrderEventsApi';
+import type { PurchaseOrder } from '@/features/orders/types';
 import { KeyAccountPoWarehouseProgress } from '@/features/key-accounts/components/KeyAccountPoWarehouseProgress';
 import type { KeyAccountPoPaymentStatus, PurchaseOrderKeyAccountPayment } from '@/types/database.types';
 import { uploadKeyAccountPaymentProof } from '@/features/key-accounts/kaPaymentProofUpload';
@@ -119,6 +124,8 @@ type Row = {
   key_account_payment_terms?: string | null;
   key_account_payment_mode?: 'full' | 'split' | null;
   key_account_payment_status?: KeyAccountPoPaymentStatus | null;
+  key_account_payment_terms_source?: 'client' | 'company' | 'custom' | null;
+  key_account_payment_terms_created_by?: string | null;
   client?: {
     client_name: string;
     client_code?: string;
@@ -143,6 +150,7 @@ type Row = {
     is_default: boolean;
   } | null;
   kam?: { full_name: string; email: string } | null;
+  payment_terms_creator?: { full_name: string | null; email: string | null } | null;
   items?: Array<{
     id: string;
     variant_id: string;
@@ -208,6 +216,22 @@ function itemWarehouseName(
   const locId = it.warehouse_location_id || poHeaderLocationId || null;
   if (locId && namesById[locId]) return namesById[locId];
   return '—';
+}
+
+function normalizePoItemRow(item: any): PoItemRow {
+  const variant = firstRelation(item.variants);
+  const brand = firstRelation(variant?.brands);
+  return {
+    ...item,
+    warehouse_locations: firstRelation(item.warehouse_locations) ?? item.warehouse_locations ?? null,
+    variants: variant
+      ? {
+          name: variant.name,
+          variant_type: variant.variant_type,
+          brands: brand ? { name: brand.name } : null,
+        }
+      : null,
+  };
 }
 
 function createInitialTabPages(): Record<TabKey, number> {
@@ -299,6 +323,7 @@ export function KeyAccountPurchaseOrdersPage() {
 
   const [viewOpen, setViewOpen] = useState(false);
   const [active, setActive] = useState<Row | null>(null);
+  const [historyOrder, setHistoryOrder] = useState<Row | null>(null);
 
   const [actingId, setActingId] = useState<string | null>(null);
   const [cofLoadingId, setCofLoadingId] = useState<string | null>(null);
@@ -318,12 +343,15 @@ export function KeyAccountPurchaseOrdersPage() {
 
   const [recordPayOpen, setRecordPayOpen] = useState(false);
   const [newPayAmount, setNewPayAmount] = useState('');
+  const [newPaySettlementDiscount, setNewPaySettlementDiscount] = useState('');
+  const [newPaySettlementReason, setNewPaySettlementReason] = useState('');
   const [newPayMethod, setNewPayMethod] = useState<'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE'>('BANK_TRANSFER');
   const [newPayBank, setNewPayBank] = useState<'Unionbank' | 'BPI' | 'PBCOM'>('BPI');
   const [newPayFile, setNewPayFile] = useState<File | null>(null);
   const [savingPayment, setSavingPayment] = useState(false);
   const [paymentHistoryOpen, setPaymentHistoryOpen] = useState(false);
   const [paymentSummaryPaid, setPaymentSummaryPaid] = useState<number | null>(null);
+  const [paymentSummaryDiscount, setPaymentSummaryDiscount] = useState<number | null>(null);
   const [paymentSummaryLoading, setPaymentSummaryLoading] = useState(false);
   const [linkedWarehouseNamesById, setLinkedWarehouseNamesById] = useState<Record<string, string>>({});
   const [paymentEntryCount, setPaymentEntryCount] = useState(0);
@@ -393,8 +421,9 @@ export function KeyAccountPurchaseOrdersPage() {
     isDirector && (po.workflow_status === 'director_pending' || po.workflow_status === 'kam_pending');
   const canSalesAdminReview = (po: Row) => isSalesAdmin && po.workflow_status === 'admin_pending';
 
-  /** RFPF is persisted only after the PO reaches `warehouse_reserved` (see sales admin actions below). */
-  const canManageRfpf = (po: Row) => isSalesAdmin && po.workflow_status === 'warehouse_reserved';
+  /** Sales Admin may manage RFPF while the PO is still under admin review or already queued for warehouse. */
+  const canManageRfpf = (po: Row) =>
+    isSalesAdmin && (po.workflow_status === 'admin_pending' || po.workflow_status === 'warehouse_reserved');
   const canSaveRfpf = (po: Row) => canManageRfpf(po) && !po.rfpf_number?.trim();
   const canEditRfpf = (po: Row) =>
     canManageRfpf(po) &&
@@ -424,18 +453,34 @@ export function KeyAccountPurchaseOrdersPage() {
 
   const paidTotalForPayments = (list: typeof payments) =>
     list.reduce((s, p) => s + Number(p.amount || 0), 0);
+  const discountTotalForPayments = (list: typeof payments) =>
+    list.reduce((s, p) => s + Number(p.settlement_discount || 0), 0);
+
+  const paymentPaidSoFar =
+    paymentSummaryPaid !== null ? paymentSummaryPaid : paidTotalForPayments(payments);
+  const paymentDiscountSoFar =
+    paymentSummaryDiscount !== null
+      ? paymentSummaryDiscount
+      : discountTotalForPayments(payments);
+  const paymentAppliedSoFar = paymentPaidSoFar + paymentDiscountSoFar;
 
   async function loadPaymentSummary(poId: string) {
     setPaymentSummaryLoading(true);
     try {
       const { data, error } = await supabase
         .from('purchase_order_key_account_payments')
-        .select('amount')
+        .select('amount, settlement_discount')
         .eq('purchase_order_id', poId);
       if (error) throw error;
       const rows = data || [];
       const paid = rows.reduce((s: number, r: { amount: number }) => s + Number(r.amount || 0), 0);
+      const discount = rows.reduce(
+        (s: number, r: { settlement_discount?: number | null }) =>
+          s + Number(r.settlement_discount || 0),
+        0
+      );
       setPaymentSummaryPaid(paid);
+      setPaymentSummaryDiscount(discount);
       setPaymentEntryCount(rows.length);
     } catch (e: any) {
       toast({
@@ -444,6 +489,7 @@ export function KeyAccountPurchaseOrdersPage() {
         description: e?.message || 'Failed to load payment totals',
       });
       setPaymentSummaryPaid(0);
+      setPaymentSummaryDiscount(0);
       setPaymentEntryCount(0);
     } finally {
       setPaymentSummaryLoading(false);
@@ -454,20 +500,8 @@ export function KeyAccountPurchaseOrdersPage() {
     if (!po || !user?.id) return false;
     if (!po.key_account_payment_mode) return false;
     const payStatus = String(po.key_account_payment_status || 'unpaid');
+    // Additional / remaining payments allowed at any workflow_status while unpaid/partial.
     if (!(payStatus === 'partial' || payStatus === 'unpaid')) return false;
-    if (
-      ![
-        'kam_pending',
-        'director_pending',
-        'admin_pending',
-        'approved',
-        'warehouse_reserved',
-        'fulfilled',
-        'partial_delivered',
-        'delivered',
-      ].includes(po.workflow_status)
-    )
-      return false;
     const actorOk =
       po.created_by === user.id ||
       isSalesAdmin ||
@@ -491,8 +525,10 @@ export function KeyAccountPurchaseOrdersPage() {
         .order('created_at', { ascending: true });
       if (error) throw error;
       setPayments((data as any) || []);
-      setPaymentSummaryPaid(paidTotalForPayments((data as any) || []));
-      setPaymentEntryCount(((data as any) || []).length);
+      const rows = (data as any) || [];
+      setPaymentSummaryPaid(paidTotalForPayments(rows));
+      setPaymentSummaryDiscount(discountTotalForPayments(rows));
+      setPaymentEntryCount(rows.length);
     } catch (e: any) {
       toast({
         variant: 'destructive',
@@ -500,6 +536,9 @@ export function KeyAccountPurchaseOrdersPage() {
         description: e?.message || 'Failed to load payment history',
       });
       setPayments([]);
+      setPaymentSummaryPaid(0);
+      setPaymentSummaryDiscount(0);
+      setPaymentEntryCount(0);
     } finally {
       setPaymentsLoading(false);
     }
@@ -536,6 +575,8 @@ export function KeyAccountPurchaseOrdersPage() {
           key_account_payment_terms,
           key_account_payment_mode,
           key_account_payment_status,
+          key_account_payment_terms_source,
+          key_account_payment_terms_created_by,
           director_approved_at,
           director_approved_by,
           admin_approved_at,
@@ -562,7 +603,38 @@ export function KeyAccountPurchaseOrdersPage() {
       const { data, error } = await query;
 
       if (error) throw error;
-      const nextRows = ((data || []) as any[]).map(normalizePoRow);
+
+      const rawRows = (data || []) as any[];
+      const creatorIds = [
+        ...new Set(
+          rawRows
+            .map((r) => r.key_account_payment_terms_created_by)
+            .filter((id): id is string => Boolean(id))
+        ),
+      ];
+
+      const creatorById = new Map<string, { full_name: string | null; email: string | null }>();
+      if (creatorIds.length > 0) {
+        const { data: creators } = await supabase
+          .from('profiles')
+          .select('id, full_name, email')
+          .in('id', creatorIds);
+        for (const profile of creators || []) {
+          creatorById.set(profile.id, {
+            full_name: profile.full_name ?? null,
+            email: profile.email ?? null,
+          });
+        }
+      }
+
+      const nextRows = rawRows
+        .map((row) => ({
+          ...row,
+          payment_terms_creator: row.key_account_payment_terms_created_by
+            ? creatorById.get(row.key_account_payment_terms_created_by) ?? null
+            : null,
+        }))
+        .map(normalizePoRow);
       setRows(nextRows);
       setActive((prev) => {
         if (!prev?.id) return prev;
@@ -769,12 +841,15 @@ export function KeyAccountPurchaseOrdersPage() {
     setRebateSource(null);
     setRecordPayOpen(false);
     setNewPayAmount('');
+    setNewPaySettlementDiscount('');
+    setNewPaySettlementReason('');
     setNewPayMethod('BANK_TRANSFER');
     setNewPayBank('BPI');
     setNewPayFile(null);
     setPayments([]);
     setPaymentHistoryOpen(po.key_account_payment_mode === 'split');
     setPaymentSummaryPaid(null);
+    setPaymentSummaryDiscount(null);
     setPaymentEntryCount(0);
     if (po.key_account_payment_mode) {
       void loadPaymentSummary(po.id);
@@ -793,16 +868,18 @@ export function KeyAccountPurchaseOrdersPage() {
           quantity,
           unit_price,
           total_price,
-          variants (
+          warehouse_locations:warehouse_location_id ( name ),
+          variants:variant_id (
             name,
             variant_type,
-            brands ( name )
+            brands:brand_id ( name )
           )
         `
         )
         .eq('purchase_order_id', po.id);
       if (error) throw error;
-      setActive((prev) => (prev ? { ...prev, items: (items as any) || [] } : prev));
+      const normalized = ((items as any[]) || []).map(normalizePoItemRow);
+      setActive((prev) => (prev ? { ...prev, items: normalized } : prev));
     } catch (e: any) {
       toast({
         variant: 'destructive',
@@ -899,7 +976,7 @@ export function KeyAccountPurchaseOrdersPage() {
     }
   };
 
-  const updateWorkflow = async (poId: string, patch: Partial<Row>) => {
+  const updateWorkflow = async (poId: string, patch: Partial<Row>): Promise<boolean> => {
     setActingId(poId);
     markLocalRefresh();
     try {
@@ -908,8 +985,10 @@ export function KeyAccountPurchaseOrdersPage() {
       await fetchRows(false);
       setViewOpen(false);
       setActive(null);
+      return true;
     } catch (e: any) {
       toast({ variant: 'destructive', title: 'Update failed', description: e?.message || 'Failed to update PO' });
+      return false;
     } finally {
       setActingId(null);
     }
@@ -963,21 +1042,39 @@ export function KeyAccountPurchaseOrdersPage() {
 
   const directorApprove = async () => {
     if (!active || !user?.id) return;
-    await updateWorkflow(active.id, {
+    const poId = active.id;
+    const ok = await updateWorkflow(poId, {
       workflow_status: 'admin_pending',
       director_approved_at: new Date().toISOString(),
       director_approved_by: user.id,
     } as any);
+    if (ok) {
+      void logPurchaseOrderEvent({
+        purchaseOrderId: poId,
+        eventType: 'director_approved',
+        note: 'Approved by sales director',
+        createdBy: user.id,
+      });
+    }
   };
 
   const directorReject = async () => {
     if (!active || !user?.id) return;
-    await updateWorkflow(active.id, {
+    const poId = active.id;
+    const ok = await updateWorkflow(poId, {
       workflow_status: 'rejected',
       status: 'rejected',
       director_approved_at: new Date().toISOString(),
       director_approved_by: user.id,
     } as any);
+    if (ok) {
+      void logPurchaseOrderEvent({
+        purchaseOrderId: poId,
+        eventType: 'rejected',
+        note: 'Rejected by sales director',
+        createdBy: user.id,
+      });
+    }
   };
 
   const salesAdminSaveRfpf = async () => {
@@ -988,7 +1085,7 @@ export function KeyAccountPurchaseOrdersPage() {
         title: 'Cannot save RFPF',
         description: active.rfpf_number?.trim()
           ? 'RFPF is already saved. Use Edit to correct it.'
-          : 'Submit this PO to the warehouse queue first. RFPF can only be saved once workflow status is Warehouse reserved.',
+          : 'RFPF can only be saved while workflow status is Admin pending or Warehouse reserved.',
       });
       return;
     }
@@ -1090,29 +1187,60 @@ export function KeyAccountPurchaseOrdersPage() {
   const salesAdminSubmitToWarehouse = async () => {
     if (!active || !user?.id) return;
 
-    // Release to warehouse queue first; RFPF is entered and saved only after `warehouse_reserved`.
+    // Release to warehouse queue after admin review; RFPF may already be entered before this step.
     // Keep `status` as pending so the existing Warehouse inbox can approve it.
-    await updateWorkflow(active.id, {
+    const poId = active.id;
+    const ok = await updateWorkflow(poId, {
       workflow_status: 'warehouse_reserved',
       admin_approved_at: new Date().toISOString(),
       admin_approved_by: user.id,
       custom_pricing_confirmed: true,
       status: 'pending',
     } as any);
+    if (ok) {
+      void logPurchaseOrderEvent({
+        purchaseOrderId: poId,
+        eventType: 'admin_submitted',
+        note: 'Submitted to warehouse by sales admin',
+        createdBy: user.id,
+      });
+    }
   };
 
   const submitRemainingPayment = async () => {
     if (!active || !user?.company_id) return;
-    const paidSoFar =
-      paymentSummaryPaid !== null ? paymentSummaryPaid : paidTotalForPayments(payments);
-    const remaining = Math.round((Number(active.total_amount) - paidSoFar) * 100) / 100;
-    const raw = parseFloat(String(newPayAmount).replace(/,/g, ''));
-    const amt = Math.round(raw * 100) / 100;
-    if (!Number.isFinite(amt) || amt <= 0) {
+    const remaining = Math.round((Number(active.total_amount) - paymentAppliedSoFar) * 100) / 100;
+    const rawAmt = parseFloat(String(newPayAmount).replace(/,/g, ''));
+    const rawDiscount = parseFloat(String(newPaySettlementDiscount).replace(/,/g, ''));
+    const amt = newPayAmount.trim() === '' ? 0 : Math.round(rawAmt * 100) / 100;
+    const discount =
+      newPaySettlementDiscount.trim() === '' ? 0 : Math.round(rawDiscount * 100) / 100;
+    const reason = newPaySettlementReason.trim();
+
+    if ((!Number.isFinite(amt) || amt < 0) && newPayAmount.trim() !== '') {
       toast({ variant: 'destructive', title: 'Amount', description: 'Enter a valid payment amount.' });
       return;
     }
-    if (amt > remaining + 0.0001) {
+    if (
+      (!Number.isFinite(discount) || discount < 0) &&
+      newPaySettlementDiscount.trim() !== ''
+    ) {
+      toast({
+        variant: 'destructive',
+        title: 'Settlement discount',
+        description: 'Enter a valid settlement discount.',
+      });
+      return;
+    }
+    if (amt <= 0 && discount <= 0) {
+      toast({
+        variant: 'destructive',
+        title: 'Amount required',
+        description: 'Enter a payment amount and/or settlement discount.',
+      });
+      return;
+    }
+    if (amt + discount > remaining + 0.0001) {
       toast({
         variant: 'destructive',
         title: 'Amount too high',
@@ -1120,7 +1248,15 @@ export function KeyAccountPurchaseOrdersPage() {
       });
       return;
     }
-    if (newPayMethod === 'BANK_TRANSFER' && !newPayBank) {
+    if (discount > 0 && !reason) {
+      toast({
+        variant: 'destructive',
+        title: 'Reason required',
+        description: 'Explain why a settlement discount is applied.',
+      });
+      return;
+    }
+    if (amt > 0 && newPayMethod === 'BANK_TRANSFER' && !newPayBank) {
       toast({ variant: 'destructive', title: 'Bank required', description: 'Select a bank.' });
       return;
     }
@@ -1128,7 +1264,7 @@ export function KeyAccountPurchaseOrdersPage() {
     markLocalRefresh();
     try {
       let proofPath: string | null = null;
-      if (newPayFile) {
+      if (newPayFile && amt > 0) {
         try {
           proofPath = await uploadKeyAccountPaymentProof(user.company_id, active.id, newPayFile);
         } catch (upErr: any) {
@@ -1139,18 +1275,25 @@ export function KeyAccountPurchaseOrdersPage() {
           });
         }
       }
+      const method = amt > 0 ? newPayMethod : 'CASH';
       const { error } = await supabase.from('purchase_order_key_account_payments').insert({
         purchase_order_id: active.id,
         company_id: user.company_id,
         amount: amt,
-        payment_method: newPayMethod,
-        bank_type: newPayMethod === 'BANK_TRANSFER' ? newPayBank : null,
+        settlement_discount: discount,
+        settlement_discount_reason: discount > 0 ? reason : null,
+        payment_method: method,
+        bank_type: method === 'BANK_TRANSFER' ? newPayBank : null,
         proof_storage_path: proofPath,
       });
       if (error) throw error;
-      toast({ title: 'Payment recorded' });
+      toast({
+        title: discount > 0 && amt <= 0 ? 'Settlement discount recorded' : 'Payment recorded',
+      });
       setRecordPayOpen(false);
       setNewPayAmount('');
+      setNewPaySettlementDiscount('');
+      setNewPaySettlementReason('');
       setNewPayFile(null);
       setPaymentHistoryOpen(true);
       await loadPaymentSummary(active.id);
@@ -1334,6 +1477,10 @@ export function KeyAccountPurchaseOrdersPage() {
                               <Badge variant="secondary" className="text-xs font-normal">
                                 Rebate top-up
                               </Badge>
+                            ) : String(po.po_order_kind || '') === 'consignment' ? (
+                              <Badge variant="outline" className="text-xs font-normal border-amber-300 text-amber-800 bg-amber-50">
+                                Consignment
+                              </Badge>
                             ) : null}
 
                             {isKeyAccountPaymentNotComplete(po) ? (
@@ -1382,6 +1529,15 @@ export function KeyAccountPurchaseOrdersPage() {
                                   COF
                                 </Button>
                               )}
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setHistoryOrder(po)}
+                                title="View PO history"
+                              >
+                                <History className="h-4 w-4 mr-2" />
+                                History
+                              </Button>
                               <Button variant="ghost" size="sm" onClick={() => void openView(po)}>
                                 <Eye className="h-4 w-4 mr-2" />
                                 View
@@ -1474,6 +1630,10 @@ export function KeyAccountPurchaseOrdersPage() {
                         <Badge variant="secondary">Rebate replacement</Badge>
                       ) : String(active.po_order_kind || '') === 'rebate_topup' ? (
                         <Badge variant="secondary">Rebate top-up</Badge>
+                      ) : String(active.po_order_kind || '') === 'consignment' ? (
+                        <Badge variant="outline" className="border-amber-300 text-amber-800 bg-amber-50">
+                          Consignment
+                        </Badge>
                       ) : null}
                     </div>
                     {rebateSource ? (
@@ -1638,13 +1798,48 @@ export function KeyAccountPurchaseOrdersPage() {
                       </div>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      <div>
-                        <Label className="text-xs text-muted-foreground">Terms</Label>
-                        <p className="text-sm font-medium whitespace-pre-wrap">
-                          {active.key_account_payment_terms || '—'}
-                        </p>
-                      </div>
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Terms</Label>
+                          <p className="font-medium whitespace-pre-wrap">
+                            {active.key_account_payment_terms || '—'}
+                          </p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Terms source</Label>
+                          <div className="mt-0.5">
+                            {active.key_account_payment_terms_source ? (
+                              <Badge variant="outline" className="capitalize">
+                                {active.key_account_payment_terms_source === 'client'
+                                  ? 'Client profile'
+                                  : active.key_account_payment_terms_source === 'company'
+                                    ? 'Company'
+                                    : 'Custom'}
+                              </Badge>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </div>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Term created by</Label>
+                          <div className="font-medium">
+                            {active.key_account_payment_terms_source === 'client'
+                              ? 'Client profile'
+                              : active.payment_terms_creator?.full_name?.trim() ||
+                                active.payment_terms_creator?.email ||
+                                '—'}
+                          </div>
+                          {active.key_account_payment_terms_source !== 'client' &&
+                          active.payment_terms_creator?.email &&
+                          active.payment_terms_creator?.full_name?.trim() ? (
+                            <div className="text-xs text-muted-foreground">
+                              {active.payment_terms_creator.email}
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
                         <div>
                           <span className="text-muted-foreground">
                             {rebateReplacementOrderTotalLabel(
@@ -1667,6 +1862,14 @@ export function KeyAccountPurchaseOrdersPage() {
                           </div>
                         </div>
                         <div>
+                          <span className="text-muted-foreground">Settlement discount</span>
+                          <div className="font-semibold">
+                            {paymentSummaryLoading
+                              ? '…'
+                              : `₱${(paymentSummaryDiscount ?? 0).toFixed(2)}`}
+                          </div>
+                        </div>
+                        <div>
                           <span className="text-muted-foreground">Remaining</span>
                           <div className="font-semibold">
                             ₱
@@ -1675,7 +1878,7 @@ export function KeyAccountPurchaseOrdersPage() {
                               : Math.max(
                                   0,
                                   Math.round(
-                                    (Number(active.total_amount) - (paymentSummaryPaid ?? 0)) * 100
+                                    (Number(active.total_amount) - paymentAppliedSoFar) * 100
                                   ) / 100
                                 ).toFixed(2)}
                           </div>
@@ -1729,16 +1932,30 @@ export function KeyAccountPurchaseOrdersPage() {
                                       </div>
                                     </div>
                                     <div>
-                                      <span className="text-muted-foreground">Amount</span>
+                                      <span className="text-muted-foreground">Cash amount</span>
                                       <div className="font-semibold tabular-nums">
                                         ₱{Number(p.amount).toFixed(2)}
                                       </div>
                                     </div>
+                                    {Number(p.settlement_discount || 0) > 0 ? (
+                                      <div className="sm:col-span-2">
+                                        <span className="text-muted-foreground">Settlement discount</span>
+                                        <div className="font-semibold tabular-nums text-slate-700">
+                                          ₱{Number(p.settlement_discount || 0).toFixed(2)}
+                                        </div>
+                                        {p.settlement_discount_reason ? (
+                                          <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">
+                                            {p.settlement_discount_reason}
+                                          </p>
+                                        ) : null}
+                                      </div>
+                                    ) : null}
                                     <div>
                                       <span className="text-muted-foreground">Method</span>
                                       <div className="font-medium">
-                                        {p.payment_method}
-                                        {p.bank_type ? ` · ${p.bank_type}` : ''}
+                                        {Number(p.amount) > 0
+                                          ? `${p.payment_method}${p.bank_type ? ` · ${p.bank_type}` : ''}`
+                                          : 'Settlement only'}
                                       </div>
                                     </div>
                                     <div>
@@ -1749,13 +1966,12 @@ export function KeyAccountPurchaseOrdersPage() {
                                     </div>
                                   </div>
                                   {p.proof_storage_path ? (
-                                    <div className="space-y-2">
-                                      <Label className="text-xs text-muted-foreground">Payment proof</Label>
-                                      <KeyAccountPaymentProofStoredPreview
-                                        storagePath={p.proof_storage_path}
-                                        compact
-                                      />
-                                    </div>
+                                    <KeyAccountPaymentProofStoredPreview
+                                      storagePath={p.proof_storage_path}
+                                      compact
+                                      label="Payment proof"
+                                      showViewFull
+                                    />
                                   ) : (
                                     <p className="text-xs text-muted-foreground">No proof attached.</p>
                                   )}
@@ -1869,6 +2085,7 @@ export function KeyAccountPurchaseOrdersPage() {
                   <PurchaseOrderDeliveryDetailsPanel
                     purchaseOrderId={active.id}
                     enabled
+                    purchaseOrder={active as any}
                     warehouseNamesById={linkedWarehouseNamesById}
                   />
                 )}
@@ -2003,7 +2220,7 @@ export function KeyAccountPurchaseOrdersPage() {
                             </Button>
                           </div>
                           <p className="text-xs text-muted-foreground">
-                            RFPF is stored only while this PO is in Warehouse reserved status.
+                            RFPF can be saved while this PO is in Admin pending or Warehouse reserved status.
                           </p>
                         </>
                       )}
@@ -2061,6 +2278,16 @@ export function KeyAccountPurchaseOrdersPage() {
           </div>
 
           <div className="shrink-0 border-t px-4 py-4 sm:px-6 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
+            {active && (
+              <Button
+                className="w-full sm:w-auto"
+                variant="outline"
+                onClick={() => setHistoryOrder(active)}
+              >
+                <History className="h-4 w-4 mr-2" />
+                History
+              </Button>
+            )}
             {active && active.company_account_type === 'Key Accounts' && (
               <Button
                 className="w-full sm:w-auto"
@@ -2119,7 +2346,11 @@ export function KeyAccountPurchaseOrdersPage() {
             open={recordPayOpen}
             onOpenChange={(open) => {
               setRecordPayOpen(open);
-              if (!open) setNewPayFile(null);
+              if (!open) {
+                setNewPayFile(null);
+                setNewPaySettlementDiscount('');
+                setNewPaySettlementReason('');
+              }
             }}
           >
         <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
@@ -2138,68 +2369,91 @@ export function KeyAccountPurchaseOrdersPage() {
                   ₱
                   {Math.max(
                     0,
-                    Math.round(
-                      (Number(active.total_amount) -
-                        (paymentSummaryPaid !== null
-                          ? paymentSummaryPaid
-                          : paidTotalForPayments(payments))) *
-                        100
-                    ) / 100
+                    Math.round((Number(active.total_amount) - paymentAppliedSoFar) * 100) / 100
                   ).toFixed(2)}
                 </span>
               </p>
               <div className="space-y-2">
-                <Label>Amount (₱) *</Label>
+                <Label>Cash amount (₱)</Label>
                 <Input
                   type="number"
-                  min={0.01}
+                  min={0}
                   step="0.01"
                   value={newPayAmount}
                   onChange={(e) => setNewPayAmount(e.target.value)}
-                  placeholder="Amount to record"
+                  placeholder="Cash collected (optional if discount only)"
                 />
               </div>
               <div className="space-y-2">
-                <Label>Payment method *</Label>
-                <Select
-                  value={newPayMethod}
-                  onValueChange={(v) =>
-                    setNewPayMethod(v as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE')
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="GCASH">GCash</SelectItem>
-                    <SelectItem value="BANK_TRANSFER">Bank transfer</SelectItem>
-                    <SelectItem value="CASH">Cash</SelectItem>
-                    <SelectItem value="CHEQUE">Cheque</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Label>Settlement discount (₱)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={newPaySettlementDiscount}
+                  onChange={(e) => setNewPaySettlementDiscount(e.target.value)}
+                  placeholder="Write-off / commercial concession"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Use when the client settles for less than the PO total (e.g. market price drop). Not counted as cash.
+                </p>
               </div>
-              {newPayMethod === 'BANK_TRANSFER' && (
+              {Number(newPaySettlementDiscount || 0) > 0 || newPaySettlementDiscount.trim() !== '' ? (
                 <div className="space-y-2">
-                  <Label>Bank *</Label>
-                  <Select value={newPayBank} onValueChange={(v) => setNewPayBank(v as 'Unionbank' | 'BPI' | 'PBCOM')}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Unionbank">Unionbank</SelectItem>
-                      <SelectItem value="BPI">BPI</SelectItem>
-                      <SelectItem value="PBCOM">PBCOM</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Label>Settlement discount reason *</Label>
+                  <Textarea
+                    value={newPaySettlementReason}
+                    onChange={(e) => setNewPaySettlementReason(e.target.value)}
+                    placeholder="e.g. Product market value dropped after 1 month"
+                    rows={3}
+                  />
                 </div>
-              )}
-              <KeyAccountPaymentProofUploadField
-                file={newPayFile}
-                onFileChange={setNewPayFile}
-                inputId="record-po-payment-proof"
-                maxImageHeightClass="max-h-[220px]"
-                iframeHeightClass="h-[220px]"
-              />
+              ) : null}
+              {Number(newPayAmount) > 0 ? (
+                <>
+                  <div className="space-y-2">
+                    <Label>Payment method *</Label>
+                    <Select
+                      value={newPayMethod}
+                      onValueChange={(v) =>
+                        setNewPayMethod(v as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE')
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="GCASH">GCash</SelectItem>
+                        <SelectItem value="BANK_TRANSFER">Bank transfer</SelectItem>
+                        <SelectItem value="CASH">Cash</SelectItem>
+                        <SelectItem value="CHEQUE">Cheque</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {newPayMethod === 'BANK_TRANSFER' && (
+                    <div className="space-y-2">
+                      <Label>Bank *</Label>
+                      <Select value={newPayBank} onValueChange={(v) => setNewPayBank(v as 'Unionbank' | 'BPI' | 'PBCOM')}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Unionbank">Unionbank</SelectItem>
+                          <SelectItem value="BPI">BPI</SelectItem>
+                          <SelectItem value="PBCOM">PBCOM</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  <KeyAccountPaymentProofUploadField
+                    file={newPayFile}
+                    onFileChange={setNewPayFile}
+                    inputId="record-po-payment-proof"
+                    maxImageHeightClass="max-h-[220px]"
+                    iframeHeightClass="h-[220px]"
+                  />
+                </>
+              ) : null}
               <div className="flex justify-end gap-2 pt-2">
                 <Button type="button" variant="outline" onClick={() => setRecordPayOpen(false)}>
                   Cancel
@@ -2211,7 +2465,7 @@ export function KeyAccountPurchaseOrdersPage() {
                       Saving…
                     </>
                   ) : (
-                    'Save payment'
+                    'Save'
                   )}
                 </Button>
               </div>
@@ -2307,6 +2561,17 @@ export function KeyAccountPurchaseOrdersPage() {
         }}
         rebateId={rebateDetailOpen ? rebateDetailId : null}
         onRebateUpdated={() => void refreshPoRebatesForActive()}
+      />
+
+      <PurchaseOrderHistoryDialog
+        purchaseOrderId={historyOrder?.id ?? null}
+        poNumber={historyOrder?.po_number}
+        purchaseOrder={(historyOrder as unknown as PurchaseOrder) ?? null}
+        presentation="key_account"
+        open={!!historyOrder}
+        onOpenChange={(open) => {
+          if (!open) setHistoryOrder(null);
+        }}
       />
     </div>
   );

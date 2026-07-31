@@ -5,9 +5,11 @@ import {
   applyStockBoardSettings,
   fetchMainWarehouseStockBoard,
   fetchLocationWarehouseStockBoard,
+  fetchOpenTransferPoReservedByVariant,
   fetchSubWarehouseUserStockBoard,
   fetchWarehouseStockBoardSettings,
   finalizeStockBoardBrands,
+  resolveStockBoardReservedLocationId,
   WAREHOUSE_STOCK_BOARD_QUERY_KEY,
   WAREHOUSE_STOCK_BOARD_SETTINGS_QUERY_KEY,
   type StockBoardViewMode,
@@ -21,6 +23,11 @@ const STOCK_BOARD_STALE_TIME_MS = 2 * 60 * 1000;
 export type WarehouseStockBoardScope =
   | { kind: 'main'; mode: 'available' | 'overall' }
   | { kind: 'sub'; locationId: string };
+
+type StockBoardQueryData = {
+  brands: Brand[];
+  poReservedByVariantId: Record<string, number>;
+};
 
 function scopeKey(scope: WarehouseStockBoardScope | null): string {
   if (!scope) return 'none';
@@ -67,8 +74,8 @@ export function useWarehouseStockBoard({
     staleTime: STOCK_BOARD_STALE_TIME_MS,
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
-    queryFn: async (): Promise<Brand[]> => {
-      if (!companyId || !scope) return [];
+    queryFn: async (): Promise<StockBoardQueryData> => {
+      if (!companyId || !scope) return { brands: [], poReservedByVariantId: {} };
 
       let brands: Brand[];
       if (membershipStatus === 'sub') {
@@ -79,7 +86,24 @@ export function useWarehouseStockBoard({
         brands = await fetchMainWarehouseStockBoard(companyId);
       }
 
-      return finalizeStockBoardBrands(brands);
+      const reservedLocationId = await resolveStockBoardReservedLocationId({
+        companyId,
+        scope,
+        membershipStatus,
+      });
+
+      // Overall shows physical on-hand; skip PO holds. Available/sub deduct them.
+      const shouldDeductPoHolds =
+        membershipStatus === 'sub' || scope.kind === 'sub' || scope.mode === 'available';
+
+      const poReservedByVariantId = shouldDeductPoHolds
+        ? await fetchOpenTransferPoReservedByVariant(companyId, reservedLocationId)
+        : {};
+
+      return {
+        brands: finalizeStockBoardBrands(brands),
+        poReservedByVariantId,
+      };
     },
   });
 
@@ -94,6 +118,20 @@ export function useWarehouseStockBoard({
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'warehouse_location_inventory' },
+        () => {
+          void qc.invalidateQueries({ queryKey: [WAREHOUSE_STOCK_BOARD_QUERY_KEY, companyId] });
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'warehouse_transfer_reservations' },
+        () => {
+          void qc.invalidateQueries({ queryKey: [WAREHOUSE_STOCK_BOARD_QUERY_KEY, companyId] });
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'warehouse_transfer_soft_reservations' },
         () => {
           void qc.invalidateQueries({ queryKey: [WAREHOUSE_STOCK_BOARD_QUERY_KEY, companyId] });
         }
@@ -117,17 +155,21 @@ export function useWarehouseStockBoard({
     return scope.mode;
   }, [scope]);
 
+  const poReservedByVariantId = query.data?.poReservedByVariantId ?? {};
+
   const brands = useMemo(() => {
-    if (!query.data) return [];
+    if (!query.data?.brands) return [];
     const isMainWarehouseUser = membershipStatus !== 'sub';
-    return applyStockBoardSettings(query.data, settings, {
+    return applyStockBoardSettings(query.data.brands, settings, {
       mode: viewMode,
       isMainWarehouseUser,
+      poReservedByVariantId,
     });
-  }, [query.data, settings, viewMode, membershipStatus]);
+  }, [query.data, settings, viewMode, membershipStatus, poReservedByVariantId]);
 
   return {
     brands,
+    poReservedByVariantId,
     isLoading: query.isLoading,
     isFetching: query.isFetching,
     error: query.error,
@@ -168,6 +210,9 @@ export function useUpdateWarehouseStockBoardSettings() {
     },
     onSuccess: (settings, { companyId }) => {
       qc.setQueryData([WAREHOUSE_STOCK_BOARD_SETTINGS_QUERY_KEY, companyId], settings);
+      void qc.invalidateQueries({
+        queryKey: [WAREHOUSE_STOCK_BOARD_SETTINGS_QUERY_KEY, companyId],
+      });
     },
   });
 }

@@ -21,6 +21,7 @@ const adminMenuItems: MenuItem[] = [
     { title: 'Stock Allocations', url: '/inventory/allocations', description: 'Allocate stock from main inventory to team leaders.' },
     { title: 'Inventory Requests', url: '/inventory/admin-requests', description: 'Approve or reject stock requests escalated to admin.' },
     { title: 'Team Remittances', url: '/inventory/admin-team-remittances', description: 'Review remitted stocks and reconcile team inventory.' },
+    { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', description: 'Return stock to your linked warehouse for inspection (good/damaged + batch).' },
   ]},
   { title: 'Clients', url: '/clients', description: 'Admin-level management of all customer records.', hasSubmenu: true, submenu: [
     { title: 'Clients Database', url: '/clients', description: 'Search, filter, and manage all active clients.' },
@@ -66,6 +67,8 @@ const leaderMenuItems: MenuItem[] = [
     { title: 'Pending Requests', url: '/inventory/pending-requests', description: 'Approve or reject inventory requests from your agents.' },
     { title: 'Team Remittances', url: '/inventory/team-remittances', description: 'Review stock and cash remittances submitted by your team.' },
     { title: 'Cash Deposits', url: '/inventory/cash-deposits', description: 'Record and review cash/cheque deposits for your team.' },
+    { title: 'PO Receiving', url: '/inventory/po-receive', description: 'Receive warehouse transfer POs assigned to you and report delivery shortages.' },
+    { title: 'How to use?', url: '/leader-manual', description: 'Open the team leader manual and usage guides.' },
   ]},
   { title: 'Tasks', url: '/tasks', description: 'Assign and monitor daily tasks for your team.', hasSubmenu: true, submenu: [
     { title: "Today's Tasks", url: '/tasks', description: 'View and manage tasks scheduled for today.' },
@@ -139,6 +142,7 @@ const superAdminMenuItems: MenuItem[] = [
     { title: 'Stock Allocations', url: '/inventory/allocations', description: 'Allocate stock down to companies or teams.' },
     { title: 'Inventory Requests', url: '/inventory/admin-requests', description: 'Approve or reject high-level stock requests.' },
     { title: 'Team Remittances', url: '/inventory/admin-team-remittances', description: 'Audit remittances from teams for compliance.' },
+    { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', description: 'Return stock to your linked warehouse for inspection (good/damaged + batch).' },
   ]},
   { title: 'Clients', url: '/clients', description: 'High-level client management and quality control.', hasSubmenu: true, submenu: [
     { title: 'Clients Database', url: '/clients', description: 'View all clients registered under this tenant.' },
@@ -186,8 +190,12 @@ const warehouseMenuItems: MenuItem[] = [
     hasSubmenu: true,
     submenu: [
       { title: 'Stock Requests', url: '/inventory/stock-requests', description: 'Inbound stock requests by brand; receive creates inventory batches.' },
+      { title: 'Sub Stock Requests', url: '/inventory/sub-stock-requests', description: 'Review and approve stock requests from sub-warehouses.' },
+      { title: 'Request Stock', url: '/inventory/request-stock', description: 'Sub-warehouse requests stock from main; receive confirms receipt.' },
       { title: 'Stock Returns', url: '/inventory/stock-returns', description: 'Inspect sub-warehouse returns; good restocks main batch lots, damaged goes to disposal.' },
+      { title: 'Client Stock Returns', url: '/inventory/client-stock-returns', description: 'Inspect Standard Account returns (RT-…); good restocks main batches, damaged to disposal.' },
       { title: 'Stock Adjustments', url: '/inventory/stock-adjustments', description: 'Audited stock corrections with batch tracking and history.' },
+      { title: 'Delivery Shortages', url: '/inventory/delivery-shortages', description: 'Investigate PO buyer shortfalls and sub-stock receive shortages.' },
       { title: 'Batch View', url: '/inventory/batches', description: 'Browse on-hand stock grouped by batch with brand and variant breakdown.' },
       { title: 'Physical Count', url: '/inventory/physical-count', description: 'Count warehouse stock by batch and lot; sign to confirm; records physical vs system qty without changing stock.' },
       { title: 'Sub Warehouses', url: '/inventory/sub-warehouses', description: 'Create sub-warehouses and allocate stock from main.' },

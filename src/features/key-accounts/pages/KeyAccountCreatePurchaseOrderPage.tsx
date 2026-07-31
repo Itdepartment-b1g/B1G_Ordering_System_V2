@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
@@ -9,6 +10,8 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -19,7 +22,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import {
@@ -30,7 +43,19 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Plus, Trash2, Package, Building2, Store, MapPin, Loader2, Save, CreditCard } from 'lucide-react';
+import {
+  Plus,
+  Trash2,
+  Package,
+  Building2,
+  Store,
+  MapPin,
+  Loader2,
+  Save,
+  CreditCard,
+  Check,
+  ChevronsUpDown,
+} from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import type {
   KeyAccountClient,
@@ -44,6 +69,19 @@ import {
   KeyAccountAddShopDialog,
 } from '@/features/key-accounts/components/KeyAccountShopAddressDialogs';
 import { KeyAccountPaymentProofUploadField } from '@/features/key-accounts/components/KeyAccountPaymentProofPreview';
+import { parsePaymentTerms } from '@/features/key-accounts/keyAccountCodes';
+import { useKeyAccountPaymentSettings } from '@/features/key-accounts/hooks/useKeyAccountPaymentSettings';
+import { useKeyAccountPaymentTermOptions } from '@/features/key-accounts/hooks/useKeyAccountPaymentTermOptions';
+import {
+  getKeyAccountEnabledBankAccounts,
+  getKeyAccountPaymentMethods,
+  KEY_ACCOUNT_PAYMENT_METHOD_LABELS,
+  type KeyAccountPaymentMethod,
+} from '@/features/key-accounts/keyAccountPaymentSettingsUtils';
+
+type PaymentTermsSource = 'client' | 'company';
+
+const CLIENT_PAGE_SIZE = 10;
 
 interface POItem {
   id: string;
@@ -75,27 +113,57 @@ interface Warehouse {
 export function KeyAccountPurchaseOrderPage() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const { settings: paymentSettings, loading: loadingPaymentSettings } = useKeyAccountPaymentSettings();
+  const {
+    options: companyPaymentTermOptions,
+    loading: loadingCompanyPaymentTerms,
+    refetch: refetchCompanyPaymentTerms,
+  } = useKeyAccountPaymentTermOptions(true);
+
+  const availablePaymentMethods = useMemo(
+    () => getKeyAccountPaymentMethods(paymentSettings),
+    [paymentSettings]
+  );
+  const enabledBankAccounts = useMemo(
+    () => getKeyAccountEnabledBankAccounts(paymentSettings),
+    [paymentSettings]
+  );
+  const navigate = useNavigate();
 
   // Loading states
   const [loadingClients, setLoadingClients] = useState(true);
+  const [loadingMoreClients, setLoadingMoreClients] = useState(false);
   const [loadingWarehouses, setLoadingWarehouses] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
   // Data states
   const [clients, setClients] = useState<KeyAccountClient[]>([]);
+  const [clientsHasMore, setClientsHasMore] = useState(false);
+  const [clientSearch, setClientSearch] = useState('');
+  const [clientPickerOpen, setClientPickerOpen] = useState(false);
+  const [selectedClient, setSelectedClient] = useState<KeyAccountClient | null>(null);
+  const kamAssignedClientIdsRef = useRef<string[] | null>(null);
+  const clientFetchGenRef = useRef(0);
   const [shops, setShops] = useState<KeyAccountShop[]>([]);
   const [addresses, setAddresses] = useState<KeyAccountDeliveryAddress[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [linkedWarehouseCompanyId, setLinkedWarehouseCompanyId] = useState<string | null>(null);
   const [brands, setBrands] = useState<any[]>([]);
   const [variants, setVariants] = useState<any[]>([]);
+  /** Available-to-order qty by `${variantId}::${locationId}` */
   const [stockMap, setStockMap] = useState<Record<string, number>>({});
+  /** On-hand (physical) qty by same key — for stock modal breakdown */
+  const [onHandMap, setOnHandMap] = useState<Record<string, number>>({});
+  /** Open PO holds (hard + soft) by same key */
+  const [reservedMap, setReservedMap] = useState<Record<string, number>>({});
+  const [stockLoading, setStockLoading] = useState(false);
 
   // UI state: warehouse stock modal
   const [stockModalOpen, setStockModalOpen] = useState(false);
   const [stockSearch, setStockSearch] = useState('');
   const [shopDialogOpen, setShopDialogOpen] = useState(false);
   const [addressDialogOpen, setAddressDialogOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   // Selection states
   const [selectedClientId, setSelectedClientId] = useState<string>('');
@@ -112,11 +180,19 @@ export function KeyAccountPurchaseOrderPage() {
   const [taxRate, setTaxRate] = useState(0); // Default 12% VAT
   const [discount, setDiscount] = useState(0);
 
-  const [paymentTermsSource, setPaymentTermsSource] = useState<'client' | 'custom'>('client');
-  const [paymentTermsCustom, setPaymentTermsCustom] = useState('');
+  /** Consignment = float stock to client now; payment deferred (warehouse still fulfills). */
+  const [isConsignment, setIsConsignment] = useState(false);
+  const [paymentTermsSource, setPaymentTermsSource] = useState<PaymentTermsSource>('client');
+  const [selectedClientPaymentTerm, setSelectedClientPaymentTerm] = useState('');
+  const [selectedCompanyPaymentTerm, setSelectedCompanyPaymentTerm] = useState('');
+  const [newCompanyPaymentTermInput, setNewCompanyPaymentTermInput] = useState('');
+  const [addingCompanyPaymentTerm, setAddingCompanyPaymentTerm] = useState(false);
+  const [companyPaymentTermDialogOpen, setCompanyPaymentTermDialogOpen] = useState(false);
+  const canAddCompanyPaymentTerms =
+    user?.role === 'sales_head' || user?.role === 'sales_director';
   const [paymentMode, setPaymentMode] = useState<KeyAccountPoPaymentMode>('full');
-  const [paymentMethod, setPaymentMethod] = useState<'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE'>('BANK_TRANSFER');
-  const [bankType, setBankType] = useState<'Unionbank' | 'BPI' | 'PBCOM'>('BPI');
+  const [paymentMethod, setPaymentMethod] = useState<KeyAccountPaymentMethod>('CASH');
+  const [bankType, setBankType] = useState('');
   const [splitFirstAmount, setSplitFirstAmount] = useState('');
   const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
 
@@ -128,7 +204,10 @@ export function KeyAccountPurchaseOrderPage() {
   const [itemUnitPrice, setItemUnitPrice] = useState(0);
 
   // Derived data
-  const selectedClient = clients.find((c) => c.id === selectedClientId);
+  const clientPaymentTerms = useMemo(
+    () => parsePaymentTerms(selectedClient?.payment_terms),
+    [selectedClient?.payment_terms]
+  );
   const selectedShop = shops.find((s) => s.id === selectedShopId);
   const selectedAddress = addresses.find((a) => a.id === selectedAddressId);
   const activeLocationId =
@@ -156,10 +235,21 @@ export function KeyAccountPurchaseOrderPage() {
     return 'bg-emerald-600 text-white';
   };
 
+  const stockKey = (variantId: string, locationId: string) => `${variantId}::${locationId}`;
+
   const getVariantStock = (variantId: string, locationId: string) => {
     if (!variantId || !locationId) return null;
-    const key = `${variantId}::${locationId}`;
-    return stockMap[key] ?? null;
+    return stockMap[stockKey(variantId, locationId)] ?? null;
+  };
+
+  const getVariantOnHand = (variantId: string, locationId: string) => {
+    if (!variantId || !locationId) return null;
+    return onHandMap[stockKey(variantId, locationId)] ?? null;
+  };
+
+  const getVariantReserved = (variantId: string, locationId: string) => {
+    if (!variantId || !locationId) return 0;
+    return reservedMap[stockKey(variantId, locationId)] ?? 0;
   };
 
   const stockedVariantIdsForActiveLocation = useMemo(() => {
@@ -212,15 +302,55 @@ export function KeyAccountPurchaseOrderPage() {
   const total = subtotal + taxAmount - discount;
 
   const resolvedPaymentTerms = useMemo(() => {
-    if (paymentTermsSource === 'custom') return paymentTermsCustom.trim();
-    return (selectedClient?.payment_terms || '').trim();
-  }, [paymentTermsSource, paymentTermsCustom, selectedClient?.payment_terms]);
+    if (paymentTermsSource === 'company') return selectedCompanyPaymentTerm.trim();
+    return selectedClientPaymentTerm.trim();
+  }, [
+    paymentTermsSource,
+    selectedClientPaymentTerm,
+    selectedCompanyPaymentTerm,
+  ]);
 
-  // Fetch initial data
   useEffect(() => {
-    fetchClients();
+    if (paymentTermsSource !== 'company') return;
+    if (companyPaymentTermOptions.length === 1) {
+      setSelectedCompanyPaymentTerm(companyPaymentTermOptions[0].label);
+      return;
+    }
+    if (
+      selectedCompanyPaymentTerm &&
+      !companyPaymentTermOptions.some((o) => o.label === selectedCompanyPaymentTerm)
+    ) {
+      setSelectedCompanyPaymentTerm('');
+    }
+  }, [paymentTermsSource, companyPaymentTermOptions, selectedCompanyPaymentTerm]);
+
+  useEffect(() => {
+    if (loadingPaymentSettings || availablePaymentMethods.length === 0) return;
+    if (!availablePaymentMethods.includes(paymentMethod)) {
+      setPaymentMethod(availablePaymentMethods[0]);
+    }
+  }, [availablePaymentMethods, loadingPaymentSettings, paymentMethod]);
+
+  useEffect(() => {
+    if (paymentMethod !== 'BANK_TRANSFER' || enabledBankAccounts.length === 0) return;
+    if (!enabledBankAccounts.some((bank) => bank.name === bankType)) {
+      setBankType(enabledBankAccounts[0].name);
+    }
+  }, [paymentMethod, enabledBankAccounts, bankType]);
+
+  // Fetch warehouses on mount; clients load via search/pagination effect below
+  useEffect(() => {
     fetchWarehouses();
   }, []);
+
+  // Debounced searchable client list (10 at a time)
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      void fetchClients({ search: clientSearch, append: false });
+    }, clientSearch.trim() ? 300 : 0);
+    return () => window.clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchClients closes over latest user/search
+  }, [clientSearch, user?.company_id, user?.id, user?.role]);
 
   // Fetch shops when client changes
   useEffect(() => {
@@ -229,7 +359,11 @@ export function KeyAccountPurchaseOrderPage() {
       setSelectedShopId('');
       setSelectedAddressId('');
       setPaymentTermsSource('client');
-      setPaymentTermsCustom('');
+      setSelectedCompanyPaymentTerm('');
+      const terms = parsePaymentTerms(
+        clients.find((c) => c.id === selectedClientId)?.payment_terms
+      );
+      setSelectedClientPaymentTerm(terms.length === 1 ? terms[0] : '');
     }
   }, [selectedClientId]);
 
@@ -256,78 +390,171 @@ export function KeyAccountPurchaseOrderPage() {
     setSelectedVariantId('');
   }, [selectedBrandId]);
 
-  // Load stock for all linked warehouse locations (supports single + multi source modes)
-  useEffect(() => {
+  const loadWarehouseAvailableStock = async () => {
     if (!linkedWarehouseCompanyId) {
       setStockMap({});
+      setOnHandMap({});
+      setReservedMap({});
       return;
     }
     if (!variants || variants.length === 0) {
       setStockMap({});
+      setOnHandMap({});
+      setReservedMap({});
       return;
     }
 
-    let cancelled = false;
-    (async () => {
-      try {
-        const variantIds = variants.map((v) => v.id).filter(Boolean);
-        if (variantIds.length === 0) {
-          if (!cancelled) setStockMap({});
-          return;
+    const variantIds = variants.map((v) => v.id).filter(Boolean);
+    if (variantIds.length === 0) {
+      setStockMap({});
+      setOnHandMap({});
+      setReservedMap({});
+      return;
+    }
+
+    setStockLoading(true);
+    try {
+      // Preferred: SECURITY DEFINER RPC (includes soft open POs across linked tenants)
+      const { data: rpcRows, error: rpcErr } = await supabase.rpc(
+        'get_linked_warehouse_available_stock',
+        {
+          p_warehouse_company_id: linkedWarehouseCompanyId,
+          p_variant_ids: variantIds,
         }
+      );
 
-        const [{ data: mainInvData, error: mainInvErr }, { data: locInvData, error: locInvErr }] =
-          await Promise.all([
-            supabase
-              .from('main_inventory')
-              .select('variant_id, stock, allocated_stock')
-              .eq('company_id', linkedWarehouseCompanyId)
-              .in('variant_id', variantIds),
-            supabase
-              .from('warehouse_location_inventory')
-              .select('variant_id, location_id, stock')
-              .eq('company_id', linkedWarehouseCompanyId)
-              .in('variant_id', variantIds),
-          ]);
-
-        if (mainInvErr) throw mainInvErr;
-        if (locInvErr) throw locInvErr;
-        if (cancelled) return;
-
-        const next: Record<string, number> = {};
-
-        if (mainWarehouseLocationId && mainInvData) {
-          for (const row of mainInvData as any[]) {
-            const stock = row.stock || 0;
-            const allocated = row.allocated_stock || 0;
-            const available = Math.max(0, stock - allocated);
-            next[`${row.variant_id}::${mainWarehouseLocationId}`] = available;
-          }
+      if (!rpcErr && Array.isArray(rpcRows)) {
+        const nextAvail: Record<string, number> = {};
+        const nextOnHand: Record<string, number> = {};
+        const nextReserved: Record<string, number> = {};
+        for (const row of rpcRows as any[]) {
+          if (!row?.variant_id || !row?.location_id) continue;
+          const key = stockKey(String(row.variant_id), String(row.location_id));
+          const hard = Math.max(0, Number(row.hard_reserved || 0));
+          const soft = Math.max(0, Number(row.soft_reserved || 0));
+          nextAvail[key] = Math.max(0, Number(row.available || 0));
+          nextOnHand[key] = Math.max(0, Number(row.on_hand || 0));
+          nextReserved[key] = hard + soft;
         }
+        setStockMap(nextAvail);
+        setOnHandMap(nextOnHand);
+        setReservedMap(nextReserved);
+        return;
+      }
 
-        if (locInvData) {
-          for (const row of locInvData as any[]) {
-            next[`${row.variant_id}::${row.location_id}`] = row.stock || 0;
-          }
-        }
+      if (rpcErr) {
+        console.warn('[KA Create PO] available stock RPC unavailable, using fallback', rpcErr.message);
+      }
 
-        setStockMap(next);
-      } catch (e: any) {
-        if (!cancelled) {
-          setStockMap({});
-          toast({
-            variant: 'destructive',
-            title: 'Error loading warehouse stock',
-            description: e?.message || 'Failed to load warehouse stock',
-          });
+      const [
+        { data: mainInvData, error: mainInvErr },
+        { data: locInvData, error: locInvErr },
+        { data: reservedData },
+        { data: softReservedData },
+      ] = await Promise.all([
+        supabase
+          .from('main_inventory')
+          .select('variant_id, stock, allocated_stock')
+          .eq('company_id', linkedWarehouseCompanyId)
+          .in('variant_id', variantIds),
+        supabase
+          .from('warehouse_location_inventory')
+          .select('variant_id, location_id, stock')
+          .eq('company_id', linkedWarehouseCompanyId)
+          .in('variant_id', variantIds),
+        supabase
+          .from('warehouse_transfer_reservations')
+          .select('variant_id, warehouse_location_id, quantity_reserved, quantity_fulfilled, status')
+          .eq('warehouse_company_id', linkedWarehouseCompanyId)
+          .in('variant_id', variantIds)
+          .in('status', ['reserved', 'partial']),
+        supabase
+          .from('warehouse_transfer_soft_reservations')
+          .select('variant_id, warehouse_location_id, quantity_committed, status')
+          .eq('warehouse_company_id', linkedWarehouseCompanyId)
+          .in('variant_id', variantIds)
+          .eq('status', 'active'),
+      ]);
+
+      if (mainInvErr) throw mainInvErr;
+      if (locInvErr) throw locInvErr;
+
+      const reservedByLocVar: Record<string, number> = {};
+      for (const row of reservedData || []) {
+        const remaining = Math.max(
+          0,
+          Number((row as any).quantity_reserved || 0) - Number((row as any).quantity_fulfilled || 0)
+        );
+        if (remaining <= 0) continue;
+        const key = stockKey(String((row as any).variant_id), String((row as any).warehouse_location_id));
+        reservedByLocVar[key] = (reservedByLocVar[key] || 0) + remaining;
+      }
+      for (const row of softReservedData || []) {
+        const committed = Math.max(0, Number((row as any).quantity_committed || 0));
+        if (committed <= 0) continue;
+        const key = stockKey(String((row as any).variant_id), String((row as any).warehouse_location_id));
+        reservedByLocVar[key] = (reservedByLocVar[key] || 0) + committed;
+      }
+
+      const nextAvail: Record<string, number> = {};
+      const nextOnHand: Record<string, number> = {};
+      const nextReserved: Record<string, number> = {};
+
+      if (mainWarehouseLocationId && mainInvData) {
+        for (const row of mainInvData as any[]) {
+          const key = stockKey(String(row.variant_id), mainWarehouseLocationId);
+          const stock = Number(row.stock || 0);
+          const allocated = Number(row.allocated_stock || 0);
+          const reserved = reservedByLocVar[key] || 0;
+          nextOnHand[key] = Math.max(0, stock);
+          nextReserved[key] = reserved;
+          nextAvail[key] = Math.max(0, stock - allocated - reserved);
         }
       }
-    })();
 
-    return () => {
-      cancelled = true;
-    };
+      if (locInvData) {
+        for (const row of locInvData as any[]) {
+          const locId = String(row.location_id);
+          // Main location stock comes from main_inventory (already mapped above).
+          if (mainWarehouseLocationId && locId === mainWarehouseLocationId) continue;
+          const key = stockKey(String(row.variant_id), locId);
+          const stock = Number(row.stock || 0);
+          const reserved = reservedByLocVar[key] || 0;
+          nextOnHand[key] = Math.max(0, stock);
+          nextReserved[key] = reserved;
+          nextAvail[key] = Math.max(0, stock - reserved);
+        }
+      }
+
+      setStockMap(nextAvail);
+      setOnHandMap(nextOnHand);
+      setReservedMap(nextReserved);
+    } catch (e: any) {
+      setStockMap({});
+      setOnHandMap({});
+      setReservedMap({});
+      toast({
+        variant: 'destructive',
+        title: 'Error loading warehouse stock',
+        description: e?.message || 'Failed to load warehouse stock',
+      });
+    } finally {
+      setStockLoading(false);
+    }
+  };
+
+  // Load stock for all linked warehouse locations (supports single + multi source modes)
+  useEffect(() => {
+    void loadWarehouseAvailableStock();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkedWarehouseCompanyId, variants, mainWarehouseLocationId]);
+
+  // Refresh ATP when opening the stock modal so open POs are reflected immediately
+  useEffect(() => {
+    if (!stockModalOpen) return;
+    void loadWarehouseAvailableStock();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stockModalOpen]);
 
   // Single-warehouse mode: keep item locations aligned with the selected warehouse
   useEffect(() => {
@@ -337,47 +564,100 @@ export function KeyAccountPurchaseOrderPage() {
     );
   }, [sourceMode, selectedWarehouseLocationId]);
 
-  async function fetchClients() {
+  async function resolveKamAssignedClientIds(): Promise<string[] | null> {
+    if (user?.role !== 'key_account_manager') return null;
+    if (kamAssignedClientIdsRef.current) return kamAssignedClientIdsRef.current;
+
+    const { data: assignments, error: assignErr } = await supabase
+      .from('kam_client_assignments')
+      .select('client_id')
+      .eq('kam_id', user.id);
+
+    if (assignErr) throw assignErr;
+
+    const clientIds = (assignments ?? []).map((a) => a.client_id).filter(Boolean);
+    kamAssignedClientIdsRef.current = clientIds;
+    return clientIds;
+  }
+
+  async function fetchClients(opts: { search?: string; append?: boolean } = {}) {
     if (!user?.company_id) return;
 
+    const search = (opts.search ?? clientSearch).trim();
+    const append = opts.append ?? false;
+    const offset = append ? clients.length : 0;
+    const fetchGen = append ? clientFetchGenRef.current : ++clientFetchGenRef.current;
+
+    if (append) {
+      setLoadingMoreClients(true);
+    } else {
+      setLoadingClients(true);
+    }
+
     try {
-      // For KAMs, only show assigned clients
-      // For Sales Directors/Admins, show all clients in company
+      const kamClientIds = await resolveKamAssignedClientIds();
+      if (kamClientIds && kamClientIds.length === 0) {
+        if (fetchGen !== clientFetchGenRef.current) return;
+        setClients([]);
+        setClientsHasMore(false);
+        return;
+      }
+
       let query = supabase
         .from('key_account_clients')
         .select('*')
         .eq('company_id', user.company_id)
-        .eq('status', 'active');
+        .eq('status', 'active')
+        .order('client_name')
+        .range(offset, offset + CLIENT_PAGE_SIZE - 1);
 
-      if (user.role === 'key_account_manager') {
-        const { data: assignments, error: assignErr } = await supabase
-          .from('kam_client_assignments')
-          .select('client_id')
-          .eq('kam_id', user.id);
-
-        if (assignErr) throw assignErr;
-
-        const clientIds = (assignments ?? []).map((a) => a.client_id).filter(Boolean);
-        if (clientIds.length === 0) {
-          setClients([]);
-          return;
-        }
-        query = query.in('id', clientIds);
+      if (kamClientIds) {
+        query = query.in('id', kamClientIds);
       }
 
-      const { data, error } = await query.order('client_name');
+      if (search) {
+        // Strip chars that break PostgREST `.or()` filter parsing
+        const safe = search.replace(/[,.()]/g, ' ').replace(/%/g, '').trim();
+        if (safe) {
+          query = query.or(`client_name.ilike.%${safe}%,client_code.ilike.%${safe}%`);
+        }
+      }
+
+      const { data, error } = await query;
 
       if (error) throw error;
-      setClients(data || []);
+      if (fetchGen !== clientFetchGenRef.current) return;
+
+      const rows = (data || []) as KeyAccountClient[];
+      setClients((prev) => {
+        if (!append) return rows;
+        const seen = new Set(prev.map((c) => c.id));
+        return [...prev, ...rows.filter((c) => !seen.has(c.id))];
+      });
+      setClientsHasMore(rows.length === CLIENT_PAGE_SIZE);
     } catch (error: any) {
+      if (fetchGen !== clientFetchGenRef.current) return;
       toast({
         variant: 'destructive',
         title: 'Error loading clients',
         description: error.message,
       });
+      if (!append) {
+        setClients([]);
+        setClientsHasMore(false);
+      }
     } finally {
-      setLoadingClients(false);
+      if (fetchGen === clientFetchGenRef.current) {
+        setLoadingClients(false);
+        setLoadingMoreClients(false);
+      }
     }
+  }
+
+  function handleSelectClient(client: KeyAccountClient) {
+    setSelectedClientId(client.id);
+    setSelectedClient(client);
+    setClientPickerOpen(false);
   }
 
   async function fetchShops(clientId: string) {
@@ -620,6 +900,11 @@ export function KeyAccountPurchaseOrderPage() {
   }
 
   async function handleSubmit() {
+    const finalResolvedPaymentTerms =
+      paymentTermsSource === 'company'
+          ? selectedCompanyPaymentTerm.trim()
+          : selectedClientPaymentTerm.trim();
+
     if (!selectedClientId || !selectedShopId || !selectedAddressId || !linkedWarehouseCompanyId) {
       toast({
         variant: 'destructive',
@@ -664,20 +949,51 @@ export function KeyAccountPurchaseOrderPage() {
       return;
     }
 
-    if (!resolvedPaymentTerms) {
+    if (!isConsignment && !finalResolvedPaymentTerms) {
       toast({
         variant: 'destructive',
         title: 'Payment terms required',
         description:
           paymentTermsSource === 'client'
-            ? 'This client has no saved payment terms. Switch to custom terms or update the client profile.'
-            : 'Enter payment terms for this order.',
+            ? clientPaymentTerms.length > 0
+              ? 'Select one of the client\'s payment terms for this order.'
+              : 'This client has no saved payment terms. Switch to company terms, or update the client profile.'
+            : companyPaymentTermOptions.length > 0
+              ? 'Select a company payment term for this order.'
+              : 'No company payment terms configured. Ask Sales Head/Director to add them.',
       });
       return;
     }
 
-    if (paymentMethod === 'BANK_TRANSFER' && !bankType) {
+    if (!isConsignment && availablePaymentMethods.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: 'No payment methods',
+        description: 'Ask your Sales Head to configure payment methods in Key Account payment settings.',
+      });
+      return;
+    }
+
+    if (!isConsignment && paymentMethod === 'BANK_TRANSFER' && !bankType) {
       toast({ variant: 'destructive', title: 'Bank required', description: 'Select a bank for bank transfer.' });
+      return;
+    }
+
+    if (!isConsignment && !paymentProofFile) {
+      toast({
+        variant: 'destructive',
+        title: 'Payment proof required',
+        description: 'Please upload an image of the payment proof.',
+      });
+      return;
+    }
+
+    if (!expectedDeliveryDate) {
+      toast({
+        variant: 'destructive',
+        title: 'Expected delivery date required',
+        description: 'Please set the expected delivery date.',
+      });
       return;
     }
 
@@ -687,7 +1003,7 @@ export function KeyAccountPurchaseOrderPage() {
     const orderTotalRounded = Math.round(computedTotal * 100) / 100;
 
     let firstPaymentAmount = orderTotalRounded;
-    if (paymentMode === 'split') {
+    if (!isConsignment && paymentMode === 'split') {
       const raw = parseFloat(String(splitFirstAmount).replace(/,/g, ''));
       if (!Number.isFinite(raw) || raw <= 0) {
         toast({
@@ -733,7 +1049,7 @@ export function KeyAccountPurchaseOrderPage() {
         company_account_type: 'Key Accounts',
         workflow_status: isDirector || isSalesHead ? 'admin_pending' : 'kam_pending',
         order_date: orderDate,
-        expected_delivery_date: expectedDeliveryDate || orderDate,
+        expected_delivery_date: expectedDeliveryDate,
         notes: notes,
         subtotal: computedSubtotal,
         tax_rate: taxRate,
@@ -742,8 +1058,24 @@ export function KeyAccountPurchaseOrderPage() {
         total_amount: computedTotal,
         status: 'pending',
         created_by: user?.id,
-        key_account_payment_terms: resolvedPaymentTerms,
-        key_account_payment_mode: paymentMode,
+        po_order_kind: isConsignment ? 'consignment' : 'standard',
+        key_account_payment_terms: finalResolvedPaymentTerms || null,
+        key_account_payment_terms_source: finalResolvedPaymentTerms
+          ? paymentTermsSource
+          : null,
+        key_account_payment_terms_created_by: (() => {
+          if (!finalResolvedPaymentTerms) return null;
+          if (paymentTermsSource === 'company') {
+            const option = companyPaymentTermOptions.find(
+              (o) => o.label === selectedCompanyPaymentTerm
+            );
+            return option?.created_by ?? user?.id ?? null;
+          }
+          return null;
+        })(),
+        // Keep mode so unpaid badge + later "Record payment" work for consignment.
+        key_account_payment_mode: isConsignment ? 'full' : paymentMode,
+        key_account_payment_status: 'unpaid',
       };
 
       // Create the purchase order
@@ -775,36 +1107,48 @@ export function KeyAccountPurchaseOrderPage() {
 
       if (itemsError) throw itemsError;
 
-      let proofPath: string | null = null;
-      if (paymentProofFile && user?.company_id) {
-        try {
-          proofPath = await uploadKeyAccountPaymentProof(user.company_id, poData.id, paymentProofFile);
-        } catch (upErr: any) {
-          toast({
-            variant: 'destructive',
-            title: 'Proof upload failed',
-            description: upErr?.message || 'Payment proof could not be uploaded; saving payment without proof.',
-          });
-        }
-      }
-
-      const { error: payErr } = await supabase.from('purchase_order_key_account_payments').insert({
-        purchase_order_id: poData.id,
-        company_id: user.company_id,
-        amount: paymentMode === 'full' ? orderTotalRounded : firstPaymentAmount,
-        payment_method: paymentMethod,
-        bank_type: paymentMethod === 'BANK_TRANSFER' ? bankType : null,
-        proof_storage_path: proofPath,
+      const { logPurchaseOrderEvent } = await import('@/features/orders/purchaseOrderEventsApi');
+      void logPurchaseOrderEvent({
+        purchaseOrderId: poData.id,
+        eventType: 'created',
+        lines: items.map((item) => ({
+          variant_id: item.variantId,
+          quantity: item.quantity,
+          variant_name: item.variantName,
+          brand_name: item.brandName,
+        })),
+        createdBy: user?.id,
       });
-      if (payErr) throw payErr;
+
+      if (!isConsignment) {
+        if (!user.company_id) {
+          throw new Error('Missing company context for payment proof upload.');
+        }
+        if (!paymentProofFile) {
+          throw new Error('Payment proof is required.');
+        }
+        const proofPath = await uploadKeyAccountPaymentProof(user.company_id, poData.id, paymentProofFile);
+
+        const { error: payErr } = await supabase.from('purchase_order_key_account_payments').insert({
+          purchase_order_id: poData.id,
+          company_id: user.company_id,
+          amount: paymentMode === 'full' ? orderTotalRounded : firstPaymentAmount,
+          payment_method: paymentMethod,
+          bank_type: paymentMethod === 'BANK_TRANSFER' ? bankType : null,
+          proof_storage_path: proofPath,
+        });
+        if (payErr) throw payErr;
+      }
 
       toast({
         title: 'Order created successfully',
-        description: `Purchase Order created for ${selectedClient?.client_name}`,
+        description: isConsignment
+          ? `Consignment PO created for ${selectedClient?.client_name} (payment deferred)`
+          : `Purchase Order created for ${selectedClient?.client_name}`,
       });
 
-      // Reset form
-      resetForm();
+      setConfirmOpen(false);
+      navigate('/key-accounts/purchase-orders');
     } catch (error: any) {
       toast({
         variant: 'destructive',
@@ -816,8 +1160,58 @@ export function KeyAccountPurchaseOrderPage() {
     }
   }
 
+  const paymentMethodLabel =
+    paymentMethod === 'BANK_TRANSFER' && bankType
+      ? `Bank transfer (${bankType})`
+      : KEY_ACCOUNT_PAYMENT_METHOD_LABELS[paymentMethod];
+
+  const firstPaymentPreview =
+    paymentMode === 'full'
+      ? total
+      : Math.round((parseFloat(String(splitFirstAmount).replace(/,/g, '')) || 0) * 100) / 100;
+
+  async function addCompanyPaymentTerm() {
+    const label = newCompanyPaymentTermInput.trim();
+    if (!label || !user?.company_id || !user?.id || !canAddCompanyPaymentTerms) return;
+
+    setAddingCompanyPaymentTerm(true);
+    try {
+      const nextSort =
+        companyPaymentTermOptions.length === 0
+          ? 0
+          : Math.max(...companyPaymentTermOptions.map((o) => o.sort_order)) + 1;
+
+      const { error: insertError } = await supabase
+        .from('key_account_payment_term_options')
+        .insert({
+          company_id: user.company_id,
+          label,
+          is_active: true,
+          sort_order: nextSort,
+          created_by: user.id,
+        });
+
+      if (insertError) throw insertError;
+
+      setNewCompanyPaymentTermInput('');
+      setSelectedCompanyPaymentTerm(label);
+      setCompanyPaymentTermDialogOpen(false);
+      toast({ title: 'Payment term added' });
+      await refetchCompanyPaymentTerms();
+    } catch (err: any) {
+      const message =
+        err?.code === '23505'
+          ? 'That payment term already exists for this company.'
+          : err?.message || 'Failed to add payment term';
+      toast({ variant: 'destructive', title: 'Error', description: message });
+    } finally {
+      setAddingCompanyPaymentTerm(false);
+    }
+  }
+
   function resetForm() {
     setSelectedClientId('');
+    setSelectedClient(null);
     setSelectedShopId('');
     setSelectedAddressId('');
     setOrderDate(new Date().toISOString().split('T')[0]);
@@ -826,18 +1220,27 @@ export function KeyAccountPurchaseOrderPage() {
     setItems([]);
     setTaxRate(0);
     setDiscount(0);
+    setIsConsignment(false);
     setPaymentTermsSource('client');
-    setPaymentTermsCustom('');
+    setSelectedClientPaymentTerm('');
+    setSelectedCompanyPaymentTerm('');
+    setNewCompanyPaymentTermInput('');
     setPaymentMode('full');
-    setPaymentMethod('BANK_TRANSFER');
-    setBankType('BPI');
+    const defaultMethod = availablePaymentMethods[0] ?? 'CASH';
+    setPaymentMethod(defaultMethod);
+    setBankType(
+      defaultMethod === 'BANK_TRANSFER' && enabledBankAccounts[0]
+        ? enabledBankAccounts[0].name
+        : ''
+    );
     setSplitFirstAmount('');
     setPaymentProofFile(null);
     setSourceMode('single');
     setActiveWarehouseTabId('');
   }
 
-  if (loadingClients || loadingWarehouses) {
+  // Clients load inline in the picker; only block the page on warehouses/payment settings.
+  if (loadingWarehouses || loadingPaymentSettings) {
     return (
       <div className="flex items-center justify-center h-96">
         <Loader2 className="h-8 w-8 animate-spin" />
@@ -845,12 +1248,17 @@ export function KeyAccountPurchaseOrderPage() {
     );
   }
 
+  const selectedClientLabel = selectedClient
+    ? `${selectedClient.client_name} (${selectedClient.client_code})`
+    : 'Choose a client...';
+
   return (
     <div className="p-6 space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Create Key Account Order</h1>
         <p className="text-muted-foreground">
-          Create a purchase order for your assigned clients with warehouse fulfillment
+          Create a purchase order for your assigned clients with warehouse fulfillment. Turn on
+          Consignment to float stock without payment proof at create.
         </p>
       </div>
 
@@ -869,18 +1277,91 @@ export function KeyAccountPurchaseOrderPage() {
               {/* Client Select */}
               <div className="space-y-2">
                 <Label>Select Client *</Label>
-                <Select value={selectedClientId} onValueChange={setSelectedClientId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Choose a client..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {clients.map((client) => (
-                      <SelectItem key={client.id} value={client.id}>
-                        {client.client_name} ({client.client_code})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Popover open={clientPickerOpen} onOpenChange={setClientPickerOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={clientPickerOpen}
+                      className="w-full justify-between font-normal"
+                    >
+                      <span
+                        className={cn(
+                          'truncate text-left',
+                          !selectedClient && 'text-muted-foreground'
+                        )}
+                      >
+                        {selectedClientLabel}
+                      </span>
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                    <Command shouldFilter={false}>
+                      <CommandInput
+                        placeholder="Search client name or code..."
+                        value={clientSearch}
+                        onValueChange={setClientSearch}
+                      />
+                      <CommandList>
+                        {loadingClients && clients.length === 0 ? (
+                          <div className="flex items-center justify-center py-6">
+                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                          </div>
+                        ) : (
+                          <>
+                            <CommandEmpty>No client found.</CommandEmpty>
+                            <CommandGroup>
+                              {clients.map((client) => (
+                                <CommandItem
+                                  key={client.id}
+                                  value={`${client.client_name} ${client.client_code || ''}`}
+                                  onSelect={() => handleSelectClient(client)}
+                                >
+                                  <Check
+                                    className={cn(
+                                      'mr-2 h-4 w-4 shrink-0',
+                                      selectedClientId === client.id ? 'opacity-100' : 'opacity-0'
+                                    )}
+                                  />
+                                  <span className="truncate">
+                                    {client.client_name} ({client.client_code})
+                                  </span>
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                            {clientsHasMore && (
+                              <div className="border-t p-1">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="w-full"
+                                  disabled={loadingMoreClients || loadingClients}
+                                  onMouseDown={(e) => {
+                                    // Keep popover open while loading more
+                                    e.preventDefault();
+                                  }}
+                                  onClick={() => void fetchClients({ append: true })}
+                                >
+                                  {loadingMoreClients ? (
+                                    <>
+                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                      Loading...
+                                    </>
+                                  ) : (
+                                    'See more'
+                                  )}
+                                </Button>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
               </div>
 
               {/* Shop Select */}
@@ -1056,11 +1537,36 @@ export function KeyAccountPurchaseOrderPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+                <div className="space-y-1 min-w-0">
+                  <Label htmlFor="consignment-po-toggle" className="text-sm font-medium">
+                    Consignment PO
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Float stock to the client now. Warehouse still fulfills this PO; payment can be recorded later.
+                    Consignment amounts are excluded from revenue/analytics until payment-based recognition is added.
+                  </p>
+                </div>
+                <Switch
+                  id="consignment-po-toggle"
+                  checked={isConsignment}
+                  onCheckedChange={setIsConsignment}
+                  className="mt-0.5 shrink-0"
+                />
+              </div>
+
+              {isConsignment ? (
+                <p className="text-sm rounded-md border border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-100 p-3">
+                  Payment proof is not required at create. Status will stay <span className="font-medium">unpaid</span>{' '}
+                  until you record payment on the PO later.
+                </p>
+              ) : null}
+
               <div className="space-y-2">
-                <Label>Payment terms *</Label>
+                <Label>Payment terms{isConsignment ? ' (optional)' : ' *'}</Label>
                 <Select
                   value={paymentTermsSource}
-                  onValueChange={(v) => setPaymentTermsSource(v as 'client' | 'custom')}
+                  onValueChange={(v) => setPaymentTermsSource(v as PaymentTermsSource)}
                   disabled={!selectedClientId}
                 >
                   <SelectTrigger>
@@ -1068,104 +1574,178 @@ export function KeyAccountPurchaseOrderPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="client">Use client profile terms</SelectItem>
-                    <SelectItem value="custom">Custom terms for this PO</SelectItem>
+                    <SelectItem value="company">Use company payment terms</SelectItem>
                   </SelectContent>
                 </Select>
                 {paymentTermsSource === 'client' ? (
-                  <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
-                    {selectedClient?.payment_terms?.trim()
-                      ? selectedClient.payment_terms.trim()
-                      : 'No payment terms on file for this client — choose custom terms or update the client record.'}
-                  </p>
+                  clientPaymentTerms.length === 0 ? (
+                    <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
+                      No payment terms on file for this client — choose company terms, or update
+                      the client record.
+                    </p>
+                  ) : clientPaymentTerms.length === 1 ? (
+                    <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
+                      {clientPaymentTerms[0]}
+                    </p>
+                  ) : (
+                    <Select
+                      value={selectedClientPaymentTerm || undefined}
+                      onValueChange={setSelectedClientPaymentTerm}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select a client payment term…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {clientPaymentTerms.map((term) => (
+                          <SelectItem key={term} value={term}>
+                            {term}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )
                 ) : (
-                  <Textarea
-                    value={paymentTermsCustom}
-                    onChange={(e) => setPaymentTermsCustom(e.target.value)}
-                    placeholder="e.g. Net 30, COD, 50% down…"
-                    rows={3}
-                  />
+                  <div className="space-y-2">
+                    {loadingCompanyPaymentTerms ? (
+                      <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3 flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading company payment terms…
+                      </p>
+                    ) : (
+                      <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                        {companyPaymentTermOptions.length === 0 ? (
+                          <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3 sm:flex-1 w-full">
+                            No company payment terms yet
+                            {canAddCompanyPaymentTerms
+                              ? ' — use Add term to create one.'
+                              : ' — ask Sales Head/Director to add them.'}
+                          </p>
+                        ) : (
+                          <Select
+                            value={selectedCompanyPaymentTerm || undefined}
+                            onValueChange={setSelectedCompanyPaymentTerm}
+                          >
+                            <SelectTrigger className="sm:flex-1 w-full">
+                              <SelectValue placeholder="Select a company payment term…" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {companyPaymentTermOptions.map((option) => (
+                                <SelectItem key={option.id} value={option.label}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
+                        {canAddCompanyPaymentTerms ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="shrink-0 w-full sm:w-auto"
+                            onClick={() => setCompanyPaymentTermDialogOpen(true)}
+                          >
+                            <Plus className="h-4 w-4 mr-2" />
+                            Add term
+                          </Button>
+                        ) : null}
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Payment mode *</Label>
-                  <Select value={paymentMode} onValueChange={(v) => setPaymentMode(v as KeyAccountPoPaymentMode)}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="full">Full (pay order total now)</SelectItem>
-                      <SelectItem value="split">Split (first installment now)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Payment method *</Label>
-                  <Select
-                    value={paymentMethod}
-                    onValueChange={(v) =>
-                      setPaymentMethod(v as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE')
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="GCASH">GCash</SelectItem>
-                      <SelectItem value="BANK_TRANSFER">Bank transfer</SelectItem>
-                      <SelectItem value="CASH">Cash</SelectItem>
-                      <SelectItem value="CHEQUE">Cheque</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
+              {!isConsignment ? (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Payment mode *</Label>
+                      <Select value={paymentMode} onValueChange={(v) => setPaymentMode(v as KeyAccountPoPaymentMode)}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="full">Full (pay order total now)</SelectItem>
+                          <SelectItem value="split">Split (first installment now)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Payment method *</Label>
+                      {availablePaymentMethods.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">
+                          No payment methods are enabled. Ask your Sales Head to configure them under
+                          Key Account payment settings.
+                        </p>
+                      ) : (
+                        <Select
+                          value={paymentMethod}
+                          onValueChange={(v) => setPaymentMethod(v as KeyAccountPaymentMethod)}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {availablePaymentMethods.map((method) => (
+                              <SelectItem key={method} value={method}>
+                                {KEY_ACCOUNT_PAYMENT_METHOD_LABELS[method]}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
+                  </div>
 
-              {paymentMethod === 'BANK_TRANSFER' && (
-                <div className="space-y-2">
-                  <Label>Bank *</Label>
-                  <Select value={bankType} onValueChange={(v) => setBankType(v as 'Unionbank' | 'BPI' | 'PBCOM')}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Unionbank">Unionbank</SelectItem>
-                      <SelectItem value="BPI">BPI</SelectItem>
-                      <SelectItem value="PBCOM">PBCOM</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
+                  {paymentMethod === 'BANK_TRANSFER' && enabledBankAccounts.length > 0 && (
+                    <div className="space-y-2">
+                      <Label>Bank *</Label>
+                      <Select value={bankType} onValueChange={setBankType}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select bank account" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {enabledBankAccounts.map((bank) => (
+                            <SelectItem key={bank.name} value={bank.name}>
+                              {bank.name} · {bank.account_number}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
 
-              {paymentMode === 'split' && (
-                <div className="space-y-2">
-                  <Label>First payment amount (₱) *</Label>
-                  <Input
-                    type="number"
-                    min={0.01}
-                    step="0.01"
-                    value={splitFirstAmount}
-                    onChange={(e) => setSplitFirstAmount(e.target.value)}
-                    placeholder="Less than order total"
+                  {paymentMode === 'split' && (
+                    <div className="space-y-2">
+                      <Label>First payment amount (₱) *</Label>
+                      <Input
+                        type="number"
+                        min={0.01}
+                        step="0.01"
+                        value={splitFirstAmount}
+                        onChange={(e) => setSplitFirstAmount(e.target.value)}
+                        placeholder="Less than order total"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Order total after tax/discount: <span className="font-medium">₱{total.toFixed(2)}</span>. You can
+                        record the balance later when the PO is warehouse reserved, fulfilled, or delivered.
+                      </p>
+                    </div>
+                  )}
+
+                  {paymentMode === 'full' && (
+                    <p className="text-sm text-muted-foreground">
+                      First payment will be the full order total: <span className="font-medium">₱{total.toFixed(2)}</span>.
+                    </p>
+                  )}
+
+                  <KeyAccountPaymentProofUploadField
+                    file={paymentProofFile}
+                    onFileChange={setPaymentProofFile}
+                    inputId="create-po-payment-proof"
+                    label="Payment proof *"
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Order total after tax/discount: <span className="font-medium">₱{total.toFixed(2)}</span>. You can
-                    record the balance later when the PO is warehouse reserved, fulfilled, or delivered.
-                  </p>
-                </div>
-              )}
-
-              {paymentMode === 'full' && (
-                <p className="text-sm text-muted-foreground">
-                  First payment will be the full order total: <span className="font-medium">₱{total.toFixed(2)}</span>.
-                </p>
-              )}
-
-              <KeyAccountPaymentProofUploadField
-                file={paymentProofFile}
-                onFileChange={setPaymentProofFile}
-                inputId="create-po-payment-proof"
-              />
+                </>
+              ) : null}
             </CardContent>
           </Card>
 
@@ -1174,14 +1754,20 @@ export function KeyAccountPurchaseOrderPage() {
             <DialogContent className="max-w-[95vw] w-[1100px] max-h-[90vh] overflow-hidden flex flex-col">
               <DialogHeader>
                 <DialogTitle>Warehouse stock</DialogTitle>
+                <DialogDescription>
+                  Numbers show <span className="font-medium text-foreground">available to order</span>
+                  {' '}(on hand minus open / pending PO commitments).
+                </DialogDescription>
               </DialogHeader>
 
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div className="text-sm text-muted-foreground">
                   {selectedWarehouse?.location_name ? (
                     <>
-                      Viewing stock for <span className="font-medium text-foreground">{selectedWarehouse.location_name}</span>
+                      Viewing available stock for{' '}
+                      <span className="font-medium text-foreground">{selectedWarehouse.location_name}</span>
                       {selectedWarehouse.is_main ? ' (Main)' : ''}
+                      {stockLoading ? <span className="ml-2 text-xs">(refreshing…)</span> : null}
                     </>
                   ) : (
                     'Select a warehouse to view stock.'
@@ -1207,7 +1793,7 @@ export function KeyAccountPurchaseOrderPage() {
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span className="h-3 w-3 rounded-sm bg-emerald-600" />
-                  In stock
+                  Available
                 </span>
               </div>
 
@@ -1293,11 +1879,18 @@ export function KeyAccountPurchaseOrderPage() {
                                   <div key={typeKey} className="flex min-h-0 min-w-[7.5rem] flex-1 flex-col">
                                     <div className="max-h-[min(55vh,520px)] min-h-[120px] flex-1 overflow-y-auto overflow-x-hidden">
                                       {(list as any[]).map((v) => {
-                                        const s = displayedStockFor(v.id);
+                                        const available = displayedStockFor(v.id);
+                                        const reserved = getVariantReserved(v.id, stockViewLocationId);
+                                        const onHand = getVariantOnHand(v.id, stockViewLocationId);
+                                        const title =
+                                          reserved > 0
+                                            ? `Available ${available.toLocaleString()} (on hand ${(onHand ?? available + reserved).toLocaleString()}, ${reserved.toLocaleString()} held on open POs)`
+                                            : `Available ${available.toLocaleString()}`;
                                         return (
                                           <div
                                             key={v.id}
                                             className="flex items-center gap-2 border-b border-border px-2 py-1.5 text-xs leading-snug min-h-[2.25rem]"
+                                            title={title}
                                           >
                                             <span className="flex-1 min-w-0 text-left font-medium text-foreground break-words">
                                               {v.name}
@@ -1305,10 +1898,10 @@ export function KeyAccountPurchaseOrderPage() {
                                             <span
                                               className={[
                                                 'shrink-0 rounded-md px-2 py-0.5 text-[11px] font-bold tabular-nums min-w-[2.75rem] text-center',
-                                                stockBadgeClass(s),
+                                                stockBadgeClass(available),
                                               ].join(' ')}
                                             >
-                                              {s}
+                                              {available.toLocaleString()}
                                             </span>
                                           </div>
                                         );
@@ -1316,7 +1909,7 @@ export function KeyAccountPurchaseOrderPage() {
                                     </div>
                                     <div className="mt-auto flex shrink-0 items-center justify-between gap-2 border-t border-primary/20 bg-primary px-2 py-2 text-[10px] font-bold uppercase tracking-wide text-primary-foreground">
                                       <span className="min-w-0 leading-tight">{totalLabelForType(typeKey)}:</span>
-                                      <span className="shrink-0 tabular-nums">{sum}</span>
+                                      <span className="shrink-0 tabular-nums">{sum.toLocaleString()}</span>
                                     </div>
                                   </div>
                                 );
@@ -1519,7 +2112,7 @@ export function KeyAccountPurchaseOrderPage() {
               </div>
 
               <div className="space-y-2">
-                <Label>Expected Delivery Date</Label>
+                <Label>Expected Delivery Date *</Label>
                 <Input
                   type="date"
                   value={expectedDeliveryDate}
@@ -1577,7 +2170,7 @@ export function KeyAccountPurchaseOrderPage() {
 
               {/* Submit Button */}
               <Button
-                onClick={handleSubmit}
+                onClick={() => setConfirmOpen(true)}
                 disabled={
                   submitting ||
                   !selectedClientId ||
@@ -1585,22 +2178,17 @@ export function KeyAccountPurchaseOrderPage() {
                   !selectedAddressId ||
                   (sourceMode === 'single' && !selectedWarehouseLocationId) ||
                   (sourceMode === 'multi' && items.some((i) => !i.warehouseLocationId)) ||
-                  items.length === 0
+                  items.length === 0 ||
+                  (!isConsignment && !paymentProofFile) ||
+                  !expectedDeliveryDate
                 }
                 className="w-full"
                 size="lg"
               >
-                {submitting ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Creating Order...
-                  </>
-                ) : (
-                  <>
-                    <Save className="h-4 w-4 mr-2" />
-                    Create Purchase Order
-                  </>
-                )}
+                <>
+                  <Save className="h-4 w-4 mr-2" />
+                  {isConsignment ? 'Create Consignment PO' : 'Create Purchase Order'}
+                </>
               </Button>
             </CardContent>
           </Card>
@@ -1645,6 +2233,166 @@ export function KeyAccountPurchaseOrderPage() {
         </div>
       </div>
 
+      <Dialog
+        open={confirmOpen}
+        onOpenChange={(open) => {
+          if (submitting) return;
+          setConfirmOpen(open);
+        }}
+      >
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Confirm purchase order</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to create this purchase order? Review the summary below before confirming.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 text-sm">
+            <div className="space-y-1 rounded-md border p-3">
+              <p className="font-medium">{selectedClient?.client_name || '—'}</p>
+              <p className="text-muted-foreground">{selectedClient?.client_code}</p>
+              <div className="pt-2 border-t space-y-1">
+                <p>
+                  <span className="text-muted-foreground">Shop:</span> {selectedShop?.shop_name || '—'}
+                </p>
+                <p>
+                  <span className="text-muted-foreground">Address:</span>{' '}
+                  {selectedAddress
+                    ? `${selectedAddress.address_label} — ${selectedAddress.full_address}`
+                    : '—'}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 rounded-md border p-3">
+              <div>
+                <p className="text-muted-foreground text-xs">Order date</p>
+                <p className="font-medium">{orderDate || '—'}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground text-xs">Expected delivery</p>
+                <p className="font-medium">{expectedDeliveryDate || '—'}</p>
+              </div>
+              <div className="col-span-2">
+                <p className="text-muted-foreground text-xs">Warehouse</p>
+                <p className="font-medium">
+                  {sourceMode === 'single'
+                    ? warehouseLabel(selectedWarehouseLocationId)
+                    : 'Multiple warehouses (per line item)'}
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-1 rounded-md border p-3">
+              <p>
+                <span className="text-muted-foreground">Order type:</span>{' '}
+                {isConsignment ? 'Consignment (payment deferred)' : 'Standard'}
+              </p>
+              <p>
+                <span className="text-muted-foreground">Payment terms:</span> {resolvedPaymentTerms || '—'}
+              </p>
+              {isConsignment ? (
+                <p className="text-muted-foreground">
+                  No payment proof required at create. Record payment later on the PO.
+                </p>
+              ) : (
+                <>
+                  <p>
+                    <span className="text-muted-foreground">Payment mode:</span>{' '}
+                    {paymentMode === 'full' ? 'Full payment' : 'Split payment'}
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">Method:</span> {paymentMethodLabel}
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">First payment:</span> ₱{firstPaymentPreview.toFixed(2)}
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">Payment proof:</span>{' '}
+                    {paymentProofFile?.name || '—'}
+                  </p>
+                </>
+              )}
+            </div>
+
+            <div className="rounded-md border overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Item</TableHead>
+                    <TableHead className="text-right">Qty</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {items.map((item) => (
+                    <TableRow key={item.id}>
+                      <TableCell>
+                        <div className="font-medium">{item.variantName}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {item.brandName}
+                          {sourceMode === 'multi' ? ` · ${warehouseLabel(item.warehouseLocationId)}` : ''}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">{item.quantity}</TableCell>
+                      <TableCell className="text-right">₱{item.totalPrice.toFixed(2)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="space-y-1 rounded-md border p-3">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Subtotal</span>
+                <span>₱{subtotal.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Tax ({taxRate}%)</span>
+                <span>₱{taxAmount.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Discount</span>
+                <span>₱{discount.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between font-semibold text-base pt-2 border-t">
+                <span>Total</span>
+                <span>₱{total.toFixed(2)}</span>
+              </div>
+            </div>
+
+            {notes.trim() ? (
+              <div className="rounded-md border p-3">
+                <p className="text-muted-foreground text-xs mb-1">Notes</p>
+                <p className="whitespace-pre-wrap">{notes.trim()}</p>
+              </div>
+            ) : null}
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={submitting}
+              onClick={() => setConfirmOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="button" disabled={submitting} onClick={() => void handleSubmit()}>
+              {submitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Creating Order...
+                </>
+              ) : (
+                'Confirm & Create'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {selectedClientId ? (
         <KeyAccountAddShopDialog
           open={shopDialogOpen}
@@ -1665,6 +2413,59 @@ export function KeyAccountPurchaseOrderPage() {
           onCreated={(address) => void handleAddressCreated(address)}
         />
       ) : null}
+
+      <Dialog
+        open={companyPaymentTermDialogOpen}
+        onOpenChange={(open) => {
+          setCompanyPaymentTermDialogOpen(open);
+          if (!open) setNewCompanyPaymentTermInput('');
+        }}
+      >
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle>Add company payment term</DialogTitle>
+            <DialogDescription>
+              This term is saved to your company catalog and can be reused on future orders.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="company_payment_term_label">Label</Label>
+            <Input
+              id="company_payment_term_label"
+              value={newCompanyPaymentTermInput}
+              onChange={(e) => setNewCompanyPaymentTermInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void addCompanyPaymentTerm();
+                }
+              }}
+              placeholder="e.g. Net 30, COD…"
+              disabled={addingCompanyPaymentTerm}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCompanyPaymentTermDialogOpen(false)}
+              disabled={addingCompanyPaymentTerm}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void addCompanyPaymentTerm()}
+              disabled={addingCompanyPaymentTerm || !newCompanyPaymentTermInput.trim()}
+            >
+              {addingCompanyPaymentTerm ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : null}
+              Add
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

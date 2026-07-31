@@ -332,6 +332,8 @@ export interface KeyAccountPurchaseOrder {
   key_account_payment_terms?: string | null;
   key_account_payment_mode?: KeyAccountPoPaymentMode | null;
   key_account_payment_status?: KeyAccountPoPaymentStatus | null;
+  key_account_payment_terms_source?: 'client' | 'company' | 'custom' | null;
+  key_account_payment_terms_created_by?: string | null;
 }
 
 export interface Brand {
@@ -409,7 +411,11 @@ export interface Supplier {
 
 export type PurchaseOrderFulfillmentType = "supplier" | "warehouse_transfer";
 
-export type PurchaseOrderKind = 'standard' | 'rebate_fulfillment';
+export type PurchaseOrderKind =
+  | 'standard'
+  | 'rebate_fulfillment'
+  | 'rebate_topup'
+  | 'consignment';
 
 export type KeyAccountPoPaymentMode = 'full' | 'split';
 export type KeyAccountPoPaymentStatus = 'unpaid' | 'partial' | 'paid';
@@ -418,9 +424,13 @@ export interface PurchaseOrderKeyAccountPayment {
   id: string;
   purchase_order_id: string;
   company_id: string;
+  /** Cash collected on this row (may be 0 when recording discount-only settlement). */
   amount: number;
+  /** Commercial write-off applied with this row; not cash. */
+  settlement_discount?: number;
+  settlement_discount_reason?: string | null;
   payment_method: "GCASH" | "BANK_TRANSFER" | "CASH" | "CHEQUE";
-  bank_type?: "Unionbank" | "BPI" | "PBCOM" | null;
+  bank_type?: string | null;
   proof_storage_path?: string | null;
   recorded_by?: string | null;
   created_at: string;
@@ -451,8 +461,12 @@ export interface PurchaseOrder {
   key_account_payment_terms?: string | null;
   key_account_payment_mode?: KeyAccountPoPaymentMode | null;
   key_account_payment_status?: KeyAccountPoPaymentStatus | null;
+  key_account_payment_terms_source?: 'client' | 'company' | 'custom' | null;
+  key_account_payment_terms_created_by?: string | null;
   po_order_kind?: PurchaseOrderKind | null;
   source_rebate_id?: string | null;
+  /** Warehouse transfer PO: team leader who receives dispatched stock. */
+  assigned_team_leader_id?: string | null;
 }
 
 export interface PurchaseOrderItem {
@@ -744,6 +758,10 @@ export interface PhysicalCountLineRecord {
   variance: number;
   adjustment_id?: string | null;
   expiration_date?: string | null;
+  box_count?: number | null;
+  units_per_box?: number | null;
+  loose_box_count?: number | null;
+  loose_qty?: number | null;
   created_at: string;
 }
 
@@ -1072,6 +1090,33 @@ export interface CompanyPaymentSettings {
   cheque_enabled: boolean;
   gcash_enabled: boolean;
   bank_transfer_enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KeyAccountPaymentSettings {
+  id: string;
+  company_id: string;
+  bank_accounts: BankAccount[];
+  gcash_number?: string | null;
+  gcash_name?: string | null;
+  gcash_qr_url?: string | null;
+  cash_enabled: boolean;
+  cheque_enabled: boolean;
+  gcash_enabled: boolean;
+  bank_transfer_enabled: boolean;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KeyAccountPaymentTermOption {
+  id: string;
+  company_id: string;
+  label: string;
+  is_active: boolean;
+  sort_order: number;
+  created_by?: string | null;
   created_at: string;
   updated_at: string;
 }

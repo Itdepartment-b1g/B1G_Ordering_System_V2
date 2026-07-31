@@ -27,6 +27,7 @@ import {
     AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Package, FileText } from 'lucide-react';
+import { PoTeamLeaderSelect } from './PoTeamLeaderSelect';
 
 // Types
 import type { Supplier } from '../types';
@@ -72,6 +73,7 @@ interface CreatePurchaseOrderDialogProps {
         tax_rate: number;
         discount: number;
         notes: string;
+        assigned_team_leader_id?: string | null;
     }) => Promise<{ success: boolean; error?: string }>;
 }
 
@@ -111,6 +113,7 @@ export function CreatePurchaseOrderDialog({
     const [taxRate, setTaxRate] = useState(0);
     const [discount, setDiscount] = useState(0);
     const [notes, setNotes] = useState('');
+    const [selectedTeamLeaderId, setSelectedTeamLeaderId] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     // Items State
@@ -118,6 +121,18 @@ export function CreatePurchaseOrderDialog({
 
     // Stock State: map of `${variantId}::${locationId}` to stock quantity
     const [itemStockMap, setItemStockMap] = useState<Record<string, number>>({});
+
+    useEffect(() => {
+        if (!open) {
+            setSelectedTeamLeaderId('');
+        }
+    }, [open]);
+
+    useEffect(() => {
+        if (fulfillmentMode !== 'warehouse_transfer') {
+            setSelectedTeamLeaderId('');
+        }
+    }, [fulfillmentMode]);
 
     // Keep item-level location in sync with source mode and default selection.
     useEffect(() => {
@@ -164,7 +179,12 @@ export function CreatePurchaseOrderDialog({
         let cancelled = false;
         (async () => {
             // Fetch stock from both main_inventory and warehouse_location_inventory
-            const [{ data: mainInvData, error: mainInvError }, { data: locInvData, error: locInvError }] = await Promise.all([
+            const [
+                { data: mainInvData, error: mainInvError },
+                { data: locInvData, error: locInvError },
+                { data: reservedData },
+                { data: softReservedData },
+            ] = await Promise.all([
                 supabase
                     .from('main_inventory')
                     .select('variant_id, stock, allocated_stock')
@@ -175,6 +195,18 @@ export function CreatePurchaseOrderDialog({
                     .select('variant_id, location_id, stock')
                     .eq('company_id', linkedWarehouseCompanyId)
                     .in('variant_id', variantIds),
+                supabase
+                    .from('warehouse_transfer_reservations')
+                    .select('variant_id, warehouse_location_id, quantity_reserved, quantity_fulfilled, status')
+                    .eq('warehouse_company_id', linkedWarehouseCompanyId)
+                    .in('variant_id', variantIds)
+                    .in('status', ['reserved', 'partial']),
+                supabase
+                    .from('warehouse_transfer_soft_reservations')
+                    .select('variant_id, warehouse_location_id, quantity_committed, status')
+                    .eq('warehouse_company_id', linkedWarehouseCompanyId)
+                    .in('variant_id', variantIds)
+                    .eq('status', 'active'),
             ]);
 
             console.log('[CreatePO] Stock fetch debug:', {
@@ -192,30 +224,48 @@ export function CreatePurchaseOrderDialog({
             if (cancelled) return;
 
             const stockMap: Record<string, number> = {};
+            const reservedByLocVar: Record<string, number> = {};
+            for (const row of reservedData || []) {
+                const remaining =
+                    Math.max(0, Number(row.quantity_reserved || 0) - Number(row.quantity_fulfilled || 0));
+                if (remaining <= 0) continue;
+                const key = `${row.variant_id}::${row.warehouse_location_id}`;
+                reservedByLocVar[key] = (reservedByLocVar[key] || 0) + remaining;
+            }
+            for (const row of softReservedData || []) {
+                const committed = Math.max(0, Number(row.quantity_committed || 0));
+                if (committed <= 0) continue;
+                const key = `${row.variant_id}::${row.warehouse_location_id}`;
+                reservedByLocVar[key] = (reservedByLocVar[key] || 0) + committed;
+            }
 
             // Map main inventory stock (location_id = main warehouse id)
-            // Calculate available = stock - allocated_stock
+            // available = stock - allocated_stock - hard reservations - soft (pending PO) commitments
             if (mainWarehouseLocationId && mainInvData) {
                 for (const row of mainInvData) {
                     const key = `${row.variant_id}::${mainWarehouseLocationId}`;
                     const stock = row.stock || 0;
                     const allocated = row.allocated_stock || 0;
-                    stockMap[key] = Math.max(0, stock - allocated);
+                    const reserved = reservedByLocVar[key] || 0;
+                    stockMap[key] = Math.max(0, stock - allocated - reserved);
                 }
                 console.log('[CreatePO] Main inventory mapped:', mainInvData.map(r => {
                     const stock = r.stock || 0;
                     const allocated = r.allocated_stock || 0;
-                    return { var: r.variant_id, stock, allocated, available: stock - allocated, key: `${r.variant_id}::${mainWarehouseLocationId}` };
+                    const key = `${r.variant_id}::${mainWarehouseLocationId}`;
+                    const reserved = reservedByLocVar[key] || 0;
+                    return { var: r.variant_id, stock, allocated, reserved, available: stock - allocated - reserved, key };
                 }));
             } else {
                 console.log('[CreatePO] Main inventory NOT mapped:', { mainWarehouseLocationId: !!mainWarehouseLocationId, hasData: !!mainInvData });
             }
 
-            // Map sub-warehouse inventory stock
+            // Map sub-warehouse inventory stock (minus hard + soft reservations at that location)
             if (locInvData) {
                 for (const row of locInvData) {
                     const key = `${row.variant_id}::${row.location_id}`;
-                    stockMap[key] = row.stock || 0;
+                    const reserved = reservedByLocVar[key] || 0;
+                    stockMap[key] = Math.max(0, (row.stock || 0) - reserved);
                 }
             }
 
@@ -561,6 +611,10 @@ export function CreatePurchaseOrderDialog({
                 return;
             }
         }
+        if (fulfillmentMode === 'warehouse_transfer' && !selectedTeamLeaderId) {
+            toast({ title: 'Error', description: 'Please select a receiving team leader', variant: 'destructive' });
+            return;
+        }
         if (items.length === 0) {
             toast({ title: 'Error', description: 'Please add at least one item', variant: 'destructive' });
             return;
@@ -696,12 +750,15 @@ export function CreatePurchaseOrderDialog({
                 items: itemsPayload,
                 tax_rate: taxRate,
                 discount: discount,
-                notes: notes
+                notes: notes,
+                assigned_team_leader_id:
+                    fulfillmentMode === 'warehouse_transfer' ? selectedTeamLeaderId : null,
             });
 
             if (!success) throw new Error(error);
 
             setItems([]);
+            setSelectedTeamLeaderId('');
             onOpenChange(false);
 
         } catch (err: any) {
@@ -840,6 +897,15 @@ export function CreatePurchaseOrderDialog({
                                             </div>
                                         )}
                                 </div>
+                            )}
+
+                            {fulfillmentMode === 'warehouse_transfer' && (
+                                <PoTeamLeaderSelect
+                                    companyId={user?.company_id}
+                                    value={selectedTeamLeaderId}
+                                    onValueChange={setSelectedTeamLeaderId}
+                                    enabled={open}
+                                />
                             )}
 
                             {fulfillmentMode === 'warehouse_transfer' && (

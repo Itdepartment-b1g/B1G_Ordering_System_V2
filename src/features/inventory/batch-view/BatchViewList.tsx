@@ -41,6 +41,8 @@ import {
   sortBatchInventoryGroups,
   type BatchViewSortKey,
 } from './utils/batchInventorySorting';
+import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import BatchViewManual from '@/features/inventory/warehouse-manual/components/BatchViewManual';
 
 export default function BatchViewList() {
   const { toast } = useToast();
@@ -221,6 +223,12 @@ export default function BatchViewList() {
   return (
     <div className="space-y-4 p-4">
       <div className="flex flex-wrap items-center justify-end gap-2">
+        <PageManualDialog
+          title="Batch View Manual"
+          fullManualHref="/warehouse-manual#batch-view"
+        >
+          <BatchViewManual embedded />
+        </PageManualDialog>
         <Button
           variant="outline"
           onClick={() => refetch()}

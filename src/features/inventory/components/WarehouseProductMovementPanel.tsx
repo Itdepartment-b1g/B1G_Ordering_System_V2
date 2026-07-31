@@ -1,5 +1,16 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ArrowDownLeft, ArrowUpRight, ChevronLeft, ChevronRight, Clock, Package, Recycle, Trash2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import {
+  AlertTriangle,
+  ArrowDownLeft,
+  ArrowUpRight,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Package,
+  Recycle,
+  Trash2,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -14,6 +25,12 @@ import { summarizeWarehouseMovement, type WarehouseProductMovementRow } from '..
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
 const DEFAULT_PAGE_SIZE = PAGE_SIZE_OPTIONS[0];
+
+const METRIC_HEAD_CLASS =
+  'text-right whitespace-nowrap px-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground';
+const LABEL_HEAD_CLASS =
+  'whitespace-nowrap px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground';
+const METRIC_CELL_CLASS = 'text-right tabular-nums px-2';
 
 type WarehouseProductMovementPanelProps = {
   rows: WarehouseProductMovementRow[];
@@ -104,10 +121,11 @@ export function WarehouseProductMovementPanel({
             warehouse reserved or partial delivered; released only when status is fulfilled and
             workflow is delivered. Standard Account: pending while status is pending or approved for
             fulfilled. Pending is filtered by PO order date (same as the PO page). Released,
-            returned in, and disposed use fulfill/dispatch/receipt dates. Available is current
-            on-hand minus allocated. Net (out − in) = released minus returned in for the selected
-            period. Change-item rebates: disputed goods return via Returned in; replacement SKUs
-            ship out under Replacement out (rebate fulfillment PO).
+            returned in, disposed, and shortage write-offs use fulfill/dispatch/receipt/resolve
+            dates. Available is current on-hand minus allocated. Net (out − in − loss) = released
+            minus returned in minus shortage write-offs for the selected period. Change-item rebates:
+            disputed goods return via Returned in; replacement SKUs ship out under Replacement out
+            (rebate fulfillment PO). Shortage write-offs link to Delivery Shortages.
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-3 shrink-0">
@@ -141,7 +159,7 @@ export function WarehouseProductMovementPanel({
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
         <SummaryCard
           icon={<ArrowUpRight className="h-4 w-4" />}
           label="Released (out)"
@@ -177,10 +195,18 @@ export function WarehouseProductMovementPanel({
           accent="red"
         />
         <SummaryCard
+          icon={<AlertTriangle className="h-4 w-4" />}
+          label="Shortage write-off"
+          value={filteredSummary.shortageWriteOff}
+          hint="Buyer shortfall confirmed lost · View delivery shortages"
+          accent="orange"
+          href="/inventory/delivery-shortages?status=resolved"
+        />
+        <SummaryCard
           icon={<Recycle className="h-4 w-4" />}
-          label="Net (out − in)"
+          label="Net (out − in − loss)"
           value={filteredSummary.netMovement}
-          hint="Released minus returned in in this period"
+          hint="Released minus returned in minus shortage write-offs"
         />
       </div>
 
@@ -196,35 +222,65 @@ export function WarehouseProductMovementPanel({
         </div>
       ) : (
         <div className="rounded-md border overflow-x-auto">
-          <Table>
+          <Table className="min-w-[980px] table-fixed w-full">
+            <colgroup>
+              <col className="w-[12%]" />
+              <col className="w-[20%]" />
+              <col className="w-[8%]" />
+              <col className="w-[8%]" />
+              <col className="w-[8%]" />
+              <col className="w-[8%]" />
+              <col className="w-[8%]" />
+              <col className="w-[8%]" />
+              <col className="w-[9%]" />
+              <col className="w-[9%]" />
+            </colgroup>
             <TableHeader>
-              <TableRow>
-                <TableHead>Brand</TableHead>
-                <TableHead>Variant</TableHead>
-                <TableHead className="text-right">Available</TableHead>
-                <TableHead className="text-right">Released</TableHead>
-                <TableHead className="text-right">Replacement out</TableHead>
-                <TableHead className="text-right">Pending</TableHead>
-                <TableHead className="text-right">Returned in</TableHead>
-                <TableHead className="text-right">Disposed</TableHead>
-                <TableHead className="text-right" title="Released minus returned in for the selected date range">
-                  Net (out − in)
+              <TableRow className="hover:bg-transparent">
+                <TableHead className={LABEL_HEAD_CLASS}>Brand</TableHead>
+                <TableHead className={LABEL_HEAD_CLASS}>Variant</TableHead>
+                <TableHead className={METRIC_HEAD_CLASS} title="Available stock (on-hand minus allocated)">
+                  Avail.
+                </TableHead>
+                <TableHead className={METRIC_HEAD_CLASS} title="Released outbound">
+                  Released
+                </TableHead>
+                <TableHead className={METRIC_HEAD_CLASS} title="Change-item rebate replacement shipments">
+                  Repl. out
+                </TableHead>
+                <TableHead className={METRIC_HEAD_CLASS} title="Reserved / awaiting release">
+                  Pending
+                </TableHead>
+                <TableHead className={METRIC_HEAD_CLASS} title="Good rebate returns">
+                  Returned
+                </TableHead>
+                <TableHead className={METRIC_HEAD_CLASS} title="Damaged / unsellable disposals">
+                  Disposed
+                </TableHead>
+                <TableHead className={METRIC_HEAD_CLASS} title="Buyer delivery shortage write-offs">
+                  Write-off
+                </TableHead>
+                <TableHead
+                  className={METRIC_HEAD_CLASS}
+                  title="Released minus returned in minus shortage write-offs"
+                >
+                  Net
                 </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {paginatedRows.map((row) => (
                 <TableRow key={row.variantId}>
-                  <TableCell className="font-medium">{row.brandName}</TableCell>
-                  <TableCell>
-                    <div className="flex flex-col gap-0.5">
-                      <span>{row.variantName}</span>
-                      <span className="text-xs text-muted-foreground">{row.variantType}</span>
+                  <TableCell className="px-3 font-medium truncate max-w-0">{row.brandName}</TableCell>
+                  <TableCell className="px-3 max-w-0">
+                    <div className="flex flex-col gap-0.5 min-w-0">
+                      <span className="truncate">{row.variantName}</span>
+                      <span className="text-xs text-muted-foreground truncate">{row.variantType}</span>
                     </div>
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{num(row.stock)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{num(row.released)}</TableCell>
-                  <TableCell className="text-right tabular-nums">
+                  <TableCell className={METRIC_CELL_CLASS}>{num(row.stock)}</TableCell>
+                  <TableCell className={METRIC_CELL_CLASS}>{num(row.released)}</TableCell>
+                  <TableCell className={METRIC_CELL_CLASS}>
                     {row.rebateReplacementReleased > 0 ? (
                       <Badge variant="secondary" className="font-mono tabular-nums">
                         {num(row.rebateReplacementReleased)}
@@ -233,18 +289,31 @@ export function WarehouseProductMovementPanel({
                       '—'
                     )}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums text-amber-700 dark:text-amber-400">
+                  <TableCell className={cn(METRIC_CELL_CLASS, 'text-amber-700 dark:text-amber-400')}>
                     {row.pendingRelease > 0 ? num(row.pendingRelease) : '—'}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums text-blue-700 dark:text-blue-400">
+                  <TableCell className={cn(METRIC_CELL_CLASS, 'text-blue-700 dark:text-blue-400')}>
                     {row.returnedIn > 0 ? num(row.returnedIn) : '—'}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums text-destructive">
+                  <TableCell className={cn(METRIC_CELL_CLASS, 'text-destructive')}>
                     {row.disposed > 0 ? num(row.disposed) : '—'}
+                  </TableCell>
+                  <TableCell className={METRIC_CELL_CLASS}>
+                    {row.shortageWriteOff > 0 ? (
+                      <Link
+                        to={`/inventory/delivery-shortages?status=resolved&search=${encodeURIComponent(row.variantName)}`}
+                        className="text-orange-700 hover:underline dark:text-orange-400 font-medium"
+                      >
+                        {num(row.shortageWriteOff)}
+                      </Link>
+                    ) : (
+                      '—'
+                    )}
                   </TableCell>
                   <TableCell
                     className={cn(
-                      'text-right tabular-nums font-medium',
+                      METRIC_CELL_CLASS,
+                      'font-medium',
                       row.netMovement > 0 && 'text-emerald-700 dark:text-emerald-400',
                       row.netMovement < 0 && 'text-destructive'
                     )}
@@ -321,12 +390,14 @@ function SummaryCard({
   value,
   hint,
   accent,
+  href,
 }: {
   icon: ReactNode;
   label: string;
   value: number;
   hint: string;
-  accent?: 'teal' | 'amber' | 'blue' | 'red';
+  accent?: 'teal' | 'amber' | 'blue' | 'red' | 'orange';
+  href?: string;
 }) {
   const accentClass =
     accent === 'teal'
@@ -335,18 +406,33 @@ function SummaryCard({
         ? 'text-amber-700 dark:text-amber-400'
         : accent === 'blue'
           ? 'text-blue-700 dark:text-blue-400'
+          : accent === 'orange'
+            ? 'text-orange-700 dark:text-orange-400'
           : accent === 'red'
             ? 'text-destructive'
             : '';
 
-  return (
-    <div className="rounded-lg border bg-card px-3 py-3">
+  const content = (
+    <>
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
         {icon}
         <span>{label}</span>
       </div>
       <div className={cn('mt-1 text-2xl font-bold tabular-nums', accentClass)}>{value.toLocaleString()}</div>
       <p className="mt-0.5 text-[11px] text-muted-foreground">{hint}</p>
-    </div>
+    </>
   );
+
+  if (href) {
+    return (
+      <Link
+        to={href}
+        className="rounded-lg border bg-card px-3 py-3 block transition-colors hover:bg-muted/40 hover:border-orange-200 dark:hover:border-orange-900"
+      >
+        {content}
+      </Link>
+    );
+  }
+
+  return <div className="rounded-lg border bg-card px-3 py-3">{content}</div>;
 }

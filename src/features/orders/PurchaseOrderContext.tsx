@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, ReactNode } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
+import { sendNotification } from '@/features/shared/lib/notification.helpers';
 import type { PurchaseOrder, PurchaseOrderItem, Supplier } from './types';
 import { PurchaseOrderContext } from './hooks';
 
@@ -27,25 +28,32 @@ const PO_ITEMS_SELECT = `
     name,
     is_main
   ),
-  variants (
+  variants:variant_id (
     id,
     name,
     variant_type,
-    brands (
+    brands:brand_id (
       name
     )
   )
 `;
 
 function formatPoItem(item: any): PurchaseOrderItem {
+  const variantRaw = item.variants;
+  const variant = Array.isArray(variantRaw) ? variantRaw[0] : variantRaw;
+  const brandRaw = variant?.brands;
+  const brand = Array.isArray(brandRaw) ? brandRaw[0] : brandRaw;
+  const locRaw = item.warehouse_locations;
+  const warehouseLocation = Array.isArray(locRaw) ? locRaw[0] : locRaw;
+
   return {
     id: item.id,
     variant_id: item.variant_id,
     warehouse_location_id: item.warehouse_location_id ?? null,
-    warehouse_location: item.warehouse_locations ?? null,
-    brand_name: item.variants?.brands?.name || 'Unknown',
-    variant_name: item.variants?.name || 'Unknown',
-    variant_type: item.variants?.variant_type || 'flavor',
+    warehouse_location: warehouseLocation ?? null,
+    brand_name: brand?.name || 'Unknown',
+    variant_name: variant?.name || 'Unknown',
+    variant_type: variant?.variant_type || 'flavor',
     quantity: item.quantity,
     unit_price: parseFloat(item.unit_price),
     total_price: parseFloat(item.total_price),
@@ -64,6 +72,12 @@ function formatPurchaseOrder(order: any, items: any[]): PurchaseOrder {
   const rawShop = Array.isArray(order.shop) ? order.shop[0] : order.shop;
   const rawAddress = Array.isArray(order.address) ? order.address[0] : order.address;
   const rawKam = Array.isArray(order.kam) ? order.kam[0] : order.kam;
+  const rawCreatedByUser = Array.isArray(order.created_by_user)
+    ? order.created_by_user[0]
+    : order.created_by_user;
+  const rawAssignedTeamLeader = Array.isArray(order.assigned_team_leader)
+    ? order.assigned_team_leader[0]
+    : order.assigned_team_leader;
 
   return {
     ...order,
@@ -79,6 +93,8 @@ function formatPurchaseOrder(order: any, items: any[]): PurchaseOrder {
     shop: rawShop ?? null,
     address: rawAddress ?? null,
     kam: rawKam ?? null,
+    created_by_user: rawCreatedByUser ?? null,
+    assigned_team_leader: rawAssignedTeamLeader ?? null,
   };
 }
 
@@ -110,7 +126,7 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
         .select(`
           id, created_at, supplier_id, fulfillment_type, warehouse_company_id, warehouse_location_id, subtotal, tax_rate, tax_amount, discount, total_amount, status, company_id, po_number, order_date, expected_delivery_date, notes, created_by, approved_by, approved_at, updated_at,
           company_account_type, workflow_status, rfpf_number, dr_number, po_order_kind, source_rebate_id,
-          kam_id,
+          kam_id, assigned_team_leader_id,
           key_account_client_id, key_account_shop_id, key_account_address_id,
           warehouse_locations:warehouse_location_id (
             id,
@@ -130,6 +146,8 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
           shop:key_account_shops(shop_name, cor_pdf_path),
           address:key_account_delivery_addresses(address_label,full_address,city,province,zip_code,contact_name,contact_phone,is_default),
           kam:profiles!purchase_orders_kam_id_fkey(full_name,email),
+          created_by_user:profiles!purchase_orders_created_by_fkey(full_name,email),
+          assigned_team_leader:profiles!purchase_orders_assigned_team_leader_id_fkey(full_name,email),
           purchase_order_items (${PO_ITEMS_SELECT})
         `);
 
@@ -157,7 +175,38 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
         return formatPurchaseOrder(orderFields, items);
       });
 
-      setPurchaseOrders(ordersWithItems);
+      // Standard Accounts: warehouse cannot read creator profiles via RLS join.
+      // Reuse get_po_requestor_info (same source as View "Placed by").
+      let enrichedOrders = ordersWithItems;
+      if (user?.role === 'warehouse') {
+        const standardOrders = ordersWithItems.filter(
+          (o) => String(o.company_account_type || 'Standard Accounts') !== 'Key Accounts'
+        );
+        if (standardOrders.length > 0) {
+          const placedByEntries = await Promise.all(
+            standardOrders.map(async (o) => {
+              try {
+                const { data, error } = await supabase.rpc('get_po_requestor_info', {
+                  p_po_id: o.id,
+                });
+                if (error || !data) return [o.id, null] as const;
+                const profile = (data as { profile?: PurchaseOrder['requestor_profile'] }).profile ?? null;
+                return [o.id, profile] as const;
+              } catch {
+                return [o.id, null] as const;
+              }
+            })
+          );
+          const placedByMap = new Map(placedByEntries);
+          enrichedOrders = ordersWithItems.map((o) => {
+            const profile = placedByMap.get(o.id);
+            if (!profile) return o;
+            return { ...o, requestor_profile: profile };
+          });
+        }
+      }
+
+      setPurchaseOrders(enrichedOrders);
     } catch (error) {
       const msg = String((error as any)?.message || '');
       const isAbort =
@@ -234,6 +283,7 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
     tax_rate: number;
     discount: number;
     notes: string;
+    assigned_team_leader_id?: string | null;
   }) => {
     // Retry configuration
     const MAX_RETRIES = 3;
@@ -260,6 +310,9 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
           const hasItemLocations = (orderData.items || []).every((it) => !!it.warehouse_location_id);
           if (!hasHeaderLocation && !hasItemLocations) {
             return { success: false, error: 'Warehouse location is required for internal transfers' };
+          }
+          if (!orderData.assigned_team_leader_id) {
+            return { success: false, error: 'Receiving team leader is required for internal transfers' };
           }
         }
 
@@ -326,6 +379,10 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
             status: 'pending',
             notes: orderData.notes,
             created_by: user.id,
+            assigned_team_leader_id:
+              orderData.fulfillment_type === 'warehouse_transfer'
+                ? orderData.assigned_team_leader_id
+                : null,
           })
           .select()
           .single();
@@ -360,10 +417,59 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
 
         if (itemsError) throw itemsError;
 
-        toast({
-          title: 'Success',
-          description: `Purchase Order ${poNumber} created successfully`,
+        const { logPurchaseOrderEvent } = await import('./purchaseOrderEventsApi');
+        void logPurchaseOrderEvent({
+          purchaseOrderId: newPO.id,
+          eventType: 'created',
+          note: orderData.notes || null,
+          lines: orderData.items.map((item) => ({
+            variant_id: item.variant_id,
+            quantity: item.quantity,
+          })),
+          createdBy: user.id,
         });
+
+        const hubLinked =
+          orderData.fulfillment_type === 'warehouse_transfer' &&
+          !!(orderData.warehouse_company_id || linkedWarehouseCompanyId);
+        const assignedTlId =
+          hubLinked && orderData.assigned_team_leader_id
+            ? orderData.assigned_team_leader_id
+            : null;
+
+        let assignedTlName: string | null = null;
+        if (assignedTlId) {
+          const { data: tlProfile } = await supabase
+            .from('profiles')
+            .select('full_name')
+            .eq('id', assignedTlId)
+            .maybeSingle();
+          assignedTlName = String(tlProfile?.full_name || '').trim() || null;
+
+          if (user.company_id) {
+            void sendNotification({
+              userId: assignedTlId,
+              companyId: user.company_id,
+              type: 'purchase_order_approved',
+              title: 'Purchase Order Assigned',
+              message: `${poNumber} was assigned to you for receiving. Open PO Receiving when the warehouse dispatches stock.`,
+              referenceType: 'purchase_order',
+              referenceId: newPO.id,
+            });
+          }
+        }
+
+        if (assignedTlId) {
+          toast({
+            title: 'PO assigned to Team Leader',
+            description: `${poNumber} is assigned to ${assignedTlName || 'the selected team leader'} for receiving after warehouse fulfills.`,
+          });
+        } else {
+          toast({
+            title: 'Success',
+            description: `Purchase Order ${poNumber} created successfully`,
+          });
+        }
 
         scheduleBackgroundRefresh();
 
@@ -389,7 +495,9 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
 
       const { data: poRow, error: poRowErr } = await supabase
         .from('purchase_orders')
-        .select('fulfillment_type,warehouse_location_id')
+        .select(
+          'po_number,company_id,created_by,assigned_team_leader_id,fulfillment_type,warehouse_company_id,warehouse_location_id'
+        )
         .eq('id', poId)
         .single();
 
@@ -426,14 +534,75 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
 
       console.log('[PO Approval] Success! PO Number:', data.po_number);
 
+      // approve_multi_location_po already writes purchase_order_events; log for other paths.
+      if (rpcName !== 'approve_multi_location_po') {
+        const { logPurchaseOrderEvent } = await import('./purchaseOrderEventsApi');
+        void logPurchaseOrderEvent({
+          purchaseOrderId: poId,
+          eventType: 'approved',
+          createdBy: user.id,
+        });
+      }
+
+      const poNumber = String(data.po_number || poRow?.po_number || 'PO');
+      const notifyCompanyId = (poRow?.company_id as string | null) || user.company_id;
+      const hubLinkedOnPo =
+        poRow?.fulfillment_type === 'warehouse_transfer' && !!poRow?.warehouse_company_id;
+
+      let notifiedCreator = false;
+      let notifiedTl = false;
+
+      if (hubLinkedOnPo && notifyCompanyId) {
+        const createdBy = poRow?.created_by ? String(poRow.created_by) : null;
+        const assignedTlId = poRow?.assigned_team_leader_id
+          ? String(poRow.assigned_team_leader_id)
+          : null;
+
+        if (createdBy && createdBy !== user.id) {
+          void sendNotification({
+            userId: createdBy,
+            companyId: notifyCompanyId,
+            type: 'purchase_order_approved',
+            title: 'Purchase Order Approved',
+            message: `${poNumber} was approved by warehouse and reserved for fulfillment.`,
+            referenceType: 'purchase_order',
+            referenceId: poId,
+          });
+          notifiedCreator = true;
+        }
+
+        if (assignedTlId && assignedTlId !== user.id) {
+          void sendNotification({
+            userId: assignedTlId,
+            companyId: notifyCompanyId,
+            type: 'purchase_order_approved',
+            title: 'PO Approved — Awaiting Dispatch',
+            message: `${poNumber} was approved. Open PO Receiving when the warehouse dispatches stock.`,
+            referenceType: 'purchase_order',
+            referenceId: poId,
+          });
+          notifiedTl = true;
+        }
+      }
+
+      let approveDescription =
+        rpcName === 'approve_warehouse_transfer_po'
+          ? `${poNumber} approved — stock moved from warehouse to client company`
+          : rpcName === 'approve_multi_location_po'
+            ? `${poNumber} approved — reserved for fulfillment by requested warehouses`
+            : `${poNumber} has been approved and added to inventory`;
+
+      if (notifiedCreator && notifiedTl) {
+        approveDescription += '. Creator and team leader were notified.';
+      } else if (notifiedCreator) {
+        approveDescription += '. Creator was notified.';
+      } else if (notifiedTl) {
+        approveDescription += '. Team leader was notified.';
+      }
+
       toast({
         title: 'Purchase Order Approved',
-        description:
-          rpcName === 'approve_warehouse_transfer_po'
-            ? `${data.po_number} approved — stock moved from warehouse to client company`
-            : rpcName === 'approve_multi_location_po'
-              ? `${data.po_number} approved — reserved for fulfillment by requested warehouses`
-            : `${data.po_number} has been approved and added to inventory`,
+        description: approveDescription,
         duration: 5000,
       });
 
@@ -466,6 +635,13 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
 
       if (error) throw error;
 
+      const { logPurchaseOrderEvent } = await import('./purchaseOrderEventsApi');
+      void logPurchaseOrderEvent({
+        purchaseOrderId: poId,
+        eventType: 'rejected',
+        createdBy: user.id,
+      });
+
       toast({ title: 'Purchase Order Rejected', description: 'The PO has been rejected.' });
       scheduleBackgroundRefresh();
       return { success: true };
@@ -475,25 +651,16 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // Resolve linked warehouse hub for admin / super_admin (client company PO creation)
+  // Resolve linked warehouse hub for client companies (any non-warehouse role).
+  // Used for warehouse_transfer PO creation and History visibility.
   useEffect(() => {
-    if (!user?.company_id || !['super_admin', 'admin'].includes(user.role)) {
+    if (!user?.company_id || user.role === 'warehouse') {
       setLinkedWarehouseCompanyId(null);
       return;
     }
 
     let cancelled = false;
     (async () => {
-      const { data: row, error } = await supabase
-        .from('warehouse_company_assignments')
-        .select('warehouse_user_id')
-        .eq('client_company_id', user.company_id)
-        .maybeSingle();
-
-      if (cancelled || error || !row?.warehouse_user_id) {
-        if (!cancelled) setLinkedWarehouseCompanyId(null);
-        return;
-      }
       // Tenant users may not be able to SELECT the warehouse user's profile row due to RLS
       // (different company). Use a SECURITY DEFINER RPC to resolve hub company_id safely.
       const { data: hubCompanyId, error: hubErr } = await supabase.rpc('get_linked_warehouse_company_id', {});
@@ -503,7 +670,7 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
         setLinkedWarehouseCompanyId(null);
         return;
       }
-      setLinkedWarehouseCompanyId(hubCompanyId as any);
+      setLinkedWarehouseCompanyId(hubCompanyId as string);
     })();
 
     return () => {

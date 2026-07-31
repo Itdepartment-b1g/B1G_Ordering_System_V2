@@ -35,11 +35,14 @@ import {
   Network,
   Plus,
   Package2Icon,
+  PackageCheck,
   RotateCcw,
   PackageX,
   Scale,
+  PackageSearch,
   Layers,
   ClipboardCheck,
+  Book,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -89,6 +92,7 @@ const adminMenuItems: MenuItem[] = [
       { title: 'Inventory Requests', url: '/inventory/admin-requests', icon: Send },
       { title: 'TL Stock Requests', url: '/inventory/admin-tl-requests', icon: Users },
       { title: 'Team Remittances', url: '/inventory/admin-team-remittances', icon: Users },
+      { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
     ]
   },
   {
@@ -164,7 +168,7 @@ const salesAdminMenuItems: MenuItem[] = [
     hasSubmenu: true,
     submenu: [
       { title: 'Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
-      { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
+      // { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
     ]
   },
   { title: 'Analytics', url: '/key-accounts/analytics', icon: Brain },
@@ -202,17 +206,19 @@ const salesHeadMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Create Purchase Order', url: '/key-accounts/create-order', icon: Plus },
       { title: 'Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
-      { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
+      // { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
     ]
   },
   { title: 'Analytics', url: '/key-accounts/analytics', icon: Brain },
+  { title: 'Payment Settings', url: '/key-accounts/payment-settings', icon: CreditCard },
+  { title: 'Payment Terms', url: '/key-accounts/payment-terms', icon: FileText },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 
 // Key Account Accounting — view-only PO and transaction details
 const keyAccountAccountingMenuItems: MenuItem[] = [
   { title: 'Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
-  { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
+  // { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 
@@ -237,10 +243,12 @@ const salesDirectorMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Create Purchase Order', url: '/key-accounts/create-order', icon: Plus },
       { title: 'Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
-      { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
+      // { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
     ]
   },
   { title: 'Analytics', url: '/key-accounts/analytics', icon: Brain },
+  { title: 'Payment Settings', url: '/key-accounts/payment-settings', icon: CreditCard },
+  { title: 'Payment Terms', url: '/key-accounts/payment-terms', icon: FileText },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 
@@ -256,7 +264,7 @@ const keyAccountManagerMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Create Purchase Order', url: '/key-accounts/create-order', icon: Plus },
       { title: 'My Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
-      { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
+      // { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
     ]
   },
   { title: 'Profile', url: '/profile', icon: UserCircle },
@@ -294,6 +302,7 @@ const leaderMenuItems: MenuItem[] = [
       { title: 'Pending Requests', url: '/inventory/pending-requests', icon: Send },
       { title: 'Team Remittances', url: '/inventory/team-remittances', icon: ArrowLeft },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: DollarSign },
+      { title: 'PO Receiving', url: '/inventory/po-receive', icon: PackageCheck },
     ]
   },
   {
@@ -314,6 +323,7 @@ const leaderMenuItems: MenuItem[] = [
   { title: 'Order Management', url: '/leader-orders', icon: FileText },
   { title: 'Team Activity', url: '/system-history', icon: History },
   { title: 'Calendar', url: '/calendar', icon: Calendar },
+  { title: 'How to use?', url: '/leader-manual', icon: Book },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 
@@ -354,17 +364,22 @@ const warehouseMenuItems: MenuItem[] = [
     submenu: [
 
       { title: 'Sub Warehouses', url: '/inventory/sub-warehouses', icon: Building2 },
+      { title: 'Request & Allocations', url: '/inventory/request-stock', icon: Send },
+      { title: 'Sub Requests & Allocations ', url: '/inventory/sub-stock-requests', icon: ClipboardList },
       { title: 'Main Inventory', url: '/inventory/main', icon: Package },
-      { title: 'Allocation History', url: '/inventory/allocation-history', icon: Package2Icon },
+      // { title: 'Allocation History', url: '/inventory/allocation-history', icon: Package2Icon },
       { title: 'Stock Requests', url: '/inventory/stock-requests', icon: ClipboardList },
       { title: 'Stock Returns', url: '/inventory/stock-returns', icon: RotateCcw },
+      { title: 'Client Stock Returns', url: '/inventory/client-stock-returns', icon: RotateCcw },
       { title: 'Stock Adjustments', url: '/inventory/stock-adjustments', icon: Scale },
+      { title: 'Delivery Shortages', url: '/inventory/delivery-shortages', icon: PackageSearch },
       { title: 'Batch View', url: '/inventory/batches', icon: Layers },
       { title: 'Physical Count', url: '/inventory/physical-count', icon: ClipboardCheck },
       { title: 'Disposal Log', url: '/inventory/disposals', icon: PackageX },
     ],
   },
   { title: 'Profile', url: '/profile', icon: UserCircle },
+  { title: 'How to use?', url: '/warehouse-manual', icon: Book },
 ];
 
 const managerMenuItems: MenuItem[] = [
@@ -454,6 +469,7 @@ const superAdminMenuItems: MenuItem[] = [
       { title: 'Stock Allocations', url: '/inventory/allocations', icon: Users },
       { title: 'Inventory Requests', url: '/inventory/admin-requests', icon: Send },
       { title: 'Team Remittances', url: '/inventory/admin-team-remittances', icon: Users },
+      { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
     ]
   },
   {
@@ -521,13 +537,15 @@ export function AppSidebar() {
   const navigate = useNavigate();
   const { user, logout, impersonatedCompany, stopImpersonation } = useAuth();
   const { state, setOpenMobile } = useSidebar();
-  const { checkPermission } = usePermissions();
+  const { checkPermission, hasWarehouseHubLink } = usePermissions();
   const isCollapsed = state === 'collapsed';
   const [expandedMenus, setExpandedMenus] = useState<string[]>([]);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
   // Get menu items based on role, then filter by permissions
   const menuItems = useMemo(() => {
+    const canSeeReturnToWarehouse = hasWarehouseHubLink === true;
+
     // Filter menu items based on permissions
     const filterMenuItems = (items: MenuItem[]): MenuItem[] => {
       return items
@@ -538,9 +556,12 @@ export function AppSidebar() {
           }
           // If item has submenu, filter submenu items too
           if (item.hasSubmenu && item.submenu) {
-            const filteredSubmenu = item.submenu.filter(subItem =>
-              checkPermission(subItem.url)
-            );
+            const filteredSubmenu = item.submenu.filter((subItem) => {
+              if (subItem.url === '/inventory/return-to-warehouse' && !canSeeReturnToWarehouse) {
+                return false;
+              }
+              return checkPermission(subItem.url);
+            });
             // Only show parent if it has at least one accessible submenu item
             return filteredSubmenu.length > 0;
           }
@@ -551,7 +572,12 @@ export function AppSidebar() {
           if (item.hasSubmenu && item.submenu) {
             return {
               ...item,
-              submenu: item.submenu.filter(subItem => checkPermission(subItem.url))
+              submenu: item.submenu.filter((subItem) => {
+                if (subItem.url === '/inventory/return-to-warehouse' && !canSeeReturnToWarehouse) {
+                  return false;
+                }
+                return checkPermission(subItem.url);
+              }),
             };
           }
           return item;
@@ -597,7 +623,7 @@ export function AppSidebar() {
 
     // Filter menu items based on permissions
     return filterMenuItems(baseMenuItems);
-  }, [user?.role, checkPermission, impersonatedCompany]);
+  }, [user?.role, checkPermission, impersonatedCompany, hasWarehouseHubLink]);
 
   const toggleSubmenu = (menuTitle: string) => {
     setExpandedMenus(prev =>

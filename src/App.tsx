@@ -14,7 +14,7 @@ import { OrdersPage, PurchaseOrdersPage, MyOrdersPage, OrderProvider, PurchaseOr
 import BrandsPage from "@/features/orders/BrandsPage";
 import VariantTypesPage from "@/features/orders/VariantTypesPage";
 import SuppliersPage from "@/features/orders/SuppliersPage";
-import { MainInventoryPage, WarehouseInventoryDashboardPage, SubWarehousesPage, WarehouseDisposalsPage, WarehouseStockRequestsPage, WarehouseStockReturnsPage, WarehouseStockAdjustmentsPage, WarehouseAllocationHistoryPage, BatchViewPage, PhysicalCountPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, RemittedStocksPage, AdminTeamRemittancesPage, LeaderRemittancePage, LeaderCashDepositsPage, PendingRequestsPage, AdminRequestsPage, LeaderStockRequestPage, MobileSalesStockRequestPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
+import {WarehouseDeliveryShortagesPage, MainInventoryPage, WarehouseInventoryDashboardPage, SubWarehousesPage, SubWarehouseStockRequestPage, MainWarehouseSubStockRequestsPage, WarehouseDisposalsPage, WarehouseStockRequestsPage, WarehouseStockReturnsPage, WarehouseClientStockReturnsPage, StandardAccountReturnToWarehousePage, WarehouseStockAdjustmentsPage, WarehouseAllocationHistoryPage, BatchViewPage, PhysicalCountPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, RemittedStocksPage, AdminTeamRemittancesPage, LeaderRemittancePage, LeaderCashDepositsPage, PendingRequestsPage, AdminRequestsPage, LeaderStockRequestPage, MobileSalesStockRequestPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
 import TLStockRequestPage from "@/features/inventory/TLStockRequestPage";
 import AdminTLRequestsPage from "@/features/inventory/AdminTLRequestsPage";
 import { ClientsPage, MyClientsPage, MyTeamsPage, PendingClientsPage } from "@/features/clients";
@@ -36,7 +36,7 @@ import PaymentSettingsPage from "@/features/finance/PaymentSettingsPage";
 import SystemAdminPage from "@/features/system-admin/SystemAdminPage";
 import ManagementPortal from "@/features/system-admin/ManagementPortal";
 import { WarRoomPage } from "@/features/war-room";
-import { KeyAccountsDashboardWrapper, ClientHierarchyPage, ClientAssignmentPage, KeyAccountTeamPage, KeyAccountPurchaseOrderPage, KeyAccountPurchaseOrdersPage, KeyAccountAnalyticsPage, KeyAccountClientAnalyticsPage, KeyAccountRebatesPage, KeyAccountCreateRebatePage } from "@/features/key-accounts";
+import { KeyAccountsDashboardWrapper, ClientHierarchyPage, ClientAssignmentPage, KeyAccountTeamPage, KeyAccountPurchaseOrderPage, KeyAccountPurchaseOrdersPage, KeyAccountAnalyticsPage, KeyAccountClientAnalyticsPage, KeyAccountRebatesPage, KeyAccountCreateRebatePage, KeyAccountPaymentSettingsPage, KeyAccountPaymentTermsPage } from "@/features/key-accounts";
 import NotFound from "@/features/shared/NotFound";
 import { AgentRemittanceReminder } from "@/features/shared/components/AgentRemittanceReminder";
 import { SupportWidget } from "@/components/SupportWidget";
@@ -48,7 +48,10 @@ import AgentAttendancePage from "@/features/agent-attendance/page/AgentAttendanc
 import AgentAttendanceOverviewPage from "@/features/sales-agents/AgentAttendanceOverviewPage";
 import TeamAttendancesPage from "./features/team-leader/pages/TeamAttendancesPage";
 import LeaderAllocationHistoryPage from "./features/team-leader/pages/LeaderAllocationHistoryPage";
+import LeaderManualPage from "./features/team-leader/pages/LeaderManualPage";
+import LeaderPoReceivePage from "./features/team-leader/pages/LeaderPoReceivePage";
 import SuperAdminAllocationHistoryPage from "@/features/sales-agents/SuperAdminAllocationHistoryPage";
+import WarehouseManualPage from "./features/inventory/WarehouseManualPage";
 const App = () => (
   <PersistQueryClientProvider
     client={queryClient}
@@ -109,6 +112,22 @@ const App = () => (
                       }
                     />
                     <Route
+                      path="/inventory/request-stock"
+                      element={
+                        <ProtectedRoute allowedRoles={["warehouse"]}>
+                          <SubWarehouseStockRequestPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/inventory/sub-stock-requests"
+                      element={
+                        <ProtectedRoute allowedRoles={["warehouse"]}>
+                          <MainWarehouseSubStockRequestsPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
                       path="/inventory/disposals"
                       element={
                         <ProtectedRoute allowedRoles={["warehouse"]}>
@@ -133,10 +152,34 @@ const App = () => (
                       }
                     />
                     <Route
+                      path="/inventory/client-stock-returns"
+                      element={
+                        <ProtectedRoute allowedRoles={["warehouse"]}>
+                          <WarehouseClientStockReturnsPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/inventory/return-to-warehouse"
+                      element={
+                        <ProtectedRoute allowedRoles={["admin", "super_admin"]}>
+                          <StandardAccountReturnToWarehousePage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
                       path="/inventory/stock-adjustments"
                       element={
                         <ProtectedRoute allowedRoles={["warehouse"]}>
                           <WarehouseStockAdjustmentsPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/inventory/delivery-shortages"
+                      element={
+                        <ProtectedRoute allowedRoles={["warehouse"]}>
+                          <WarehouseDeliveryShortagesPage />
                         </ProtectedRoute>
                       }
                     />
@@ -164,6 +207,8 @@ const App = () => (
                         </ProtectedRoute>
                       }
                     />
+                    <Route path="/warehouse-manual" element={<ProtectedRoute allowedRoles={['warehouse']}><WarehouseManualPage /></ProtectedRoute>} />
+                    <Route path="/leader-manual" element={<ProtectedRoute allowedRoles={['team_leader']}><LeaderManualPage /></ProtectedRoute>} />
                     <Route path="/inventory/allocations" element={<ProtectedRoute><StockAllocationsPage /></ProtectedRoute>} />
                     <Route path="/inventory/remitted-stocks" element={<ProtectedRoute><RemittedStocksPage /></ProtectedRoute>} />
                     <Route path="/inventory/admin-team-remittances" element={<ProtectedRoute><AdminTeamRemittancesPage /></ProtectedRoute>} />
@@ -174,6 +219,7 @@ const App = () => (
                     <Route path="/inventory/pending-requests" element={<ProtectedRoute><PendingRequestsPage /></ProtectedRoute>} />
                     <Route path="/inventory/admin-requests" element={<ProtectedRoute><AdminRequestsPage /></ProtectedRoute>} />
                     <Route path="/inventory/tl-stock-requests" element={<ProtectedRoute allowedRoles={['team_leader']}><TLStockRequestPage /></ProtectedRoute>} />
+                    <Route path="/inventory/po-receive" element={<ProtectedRoute allowedRoles={['team_leader']}><LeaderPoReceivePage /></ProtectedRoute>} />
                     <Route path="/inventory/admin-tl-requests" element={<ProtectedRoute allowedRoles={['admin', 'super_admin']}><AdminTLRequestsPage /></ProtectedRoute>} />
                     <Route path="/inventory/leaders" element={<ProtectedRoute><LeaderInventoryPage /></ProtectedRoute>} />
                     <Route path="/leader-inventory" element={<ProtectedRoute><LeaderInventoryPage /></ProtectedRoute>} />
@@ -304,6 +350,22 @@ const App = () => (
                           <KeyAccountPurchaseOrdersPage />
                         </ProtectedRoute>
                       } 
+                    />
+                    <Route
+                      path="/key-accounts/payment-settings"
+                      element={
+                        <ProtectedRoute allowedRoles={['sales_head', 'sales_director']}>
+                          <KeyAccountPaymentSettingsPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/key-accounts/payment-terms"
+                      element={
+                        <ProtectedRoute allowedRoles={['sales_head', 'sales_director']}>
+                          <KeyAccountPaymentTermsPage />
+                        </ProtectedRoute>
+                      }
                     />
                     <Route
                       path="/key-accounts/rebates"

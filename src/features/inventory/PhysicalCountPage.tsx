@@ -45,6 +45,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
+import PhysicalCountManual from '@/features/inventory/warehouse-manual/components/PhysicalCountManual';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 import { PhysicalCountLineTable } from './physical-count/components/PhysicalCountLineTable';
@@ -71,6 +74,10 @@ import {
   type PhysicalCountHistoryFilterKey,
 } from './physical-count/utils/physicalCountHistoryFilters';
 import { getPhysicalCountPerformerName } from './physical-count/utils/physicalCountPerformer';
+import {
+  applyBoxInputsToLine,
+  parseNonNegativeQty,
+} from './physical-count/utils/physicalCountQty';
 import {
   DEFAULT_PHYSICAL_COUNT_HISTORY_SORT_DIRECTION,
   DEFAULT_PHYSICAL_COUNT_HISTORY_SORT_KEY,
@@ -390,6 +397,10 @@ export default function PhysicalCountPage() {
         expirationDate: lot.expirationDate,
         systemQty: lot.quantityRemaining,
         physicalQty: '',
+        boxCount: '',
+        unitsPerBox: '',
+        looseBoxCount: '',
+        looseQty: '',
       })),
     ]);
     setVariantId('');
@@ -427,14 +438,28 @@ export default function PhysicalCountPage() {
   const parsedSubmitLines = useMemo((): PhysicalCountSubmitLine[] | null => {
     const result: PhysicalCountSubmitLine[] = [];
     for (const line of lines) {
-      const physical = Number(line.physicalQty);
-      if (line.physicalQty.trim() === '' || !Number.isFinite(physical) || physical < 0) {
+      const boxCount = parseNonNegativeQty(line.boxCount);
+      const unitsPerBox = parseNonNegativeQty(line.unitsPerBox);
+      if (boxCount === null || unitsPerBox === null) {
         return null;
       }
+
+      const looseEmpty = line.looseBoxCount.trim() === '' && line.looseQty.trim() === '';
+      const looseBoxCount = looseEmpty ? 0 : parseNonNegativeQty(line.looseBoxCount);
+      const looseQty = looseEmpty ? 0 : parseNonNegativeQty(line.looseQty);
+      if (looseBoxCount === null || looseQty === null) {
+        return null;
+      }
+
+      const physical = boxCount * unitsPerBox + looseBoxCount * looseQty;
       result.push({
         variant_id: line.variantId,
         lot_id: line.lotId,
         physical_qty: physical,
+        box_count: boxCount,
+        units_per_box: unitsPerBox,
+        loose_box_count: looseBoxCount,
+        loose_qty: looseQty,
         system_qty_snapshot: line.systemQty,
         brand_name: line.brandName,
         variant_name: line.variantName,
@@ -455,8 +480,9 @@ export default function PhysicalCountPage() {
     }
     if (!parsedSubmitLines || parsedSubmitLines.length === 0) {
       toast({
-        title: 'Enter physical quantities',
-        description: 'Add at least one line with a valid physical quantity.',
+        title: 'Enter box counts',
+        description:
+          'Each line needs boxes and qty/box. Loose boxes/qty are optional (leave both blank or fill both).',
         variant: 'destructive',
       });
       return;
@@ -601,23 +627,32 @@ export default function PhysicalCountPage() {
 
   return (
     <div className="container mx-auto p-4 md:p-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-          <ClipboardCheck className="h-7 w-7" />
-          Physical Count
-        </h1>
-        {viewOnly ? (
-          <p className="text-muted-foreground mt-1 max-w-2xl">
-            View-only access to warehouse physical counts. Counts are submitted by warehouse staff;
-            variances are recorded for audit without changing system stock.
-          </p>
-        ) : (
-          <p className="text-muted-foreground mt-1 max-w-2xl">
-            Count on-hand stock by batch and lot. Select the batch that contains the lots you are
-            counting, enter physical quantities, and sign to confirm. Variances are recorded for
-            audit; system stock is not changed automatically.
-          </p>
-        )}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+            <ClipboardCheck className="h-7 w-7" />
+            Physical Count
+          </h1>
+          {viewOnly ? (
+            <p className="text-muted-foreground mt-1 max-w-2xl">
+              View-only access to warehouse physical counts. Counts are submitted by warehouse staff;
+              variances are recorded for audit without changing system stock.
+            </p>
+          ) : (
+            <p className="text-muted-foreground mt-1 max-w-2xl">
+              Count on-hand stock by batch and lot. Select the batch that contains the lots you are
+              counting, enter physical quantities, and sign to confirm. Variances are recorded for
+              audit; system stock is not changed automatically.
+            </p>
+          )}
+        </div>
+        <PageGettingStartedDialog />
+        <PageManualDialog
+          title="Physical Count Manual"
+          fullManualHref="/warehouse-manual#physical-count"
+        >
+          <PhysicalCountManual embedded />
+        </PageManualDialog>
       </div>
 
       {usesWarehousePicker && (
@@ -805,9 +840,32 @@ export default function PhysicalCountPage() {
 
           <PhysicalCountLineTable
             lines={lines}
-            onPhysicalQtyChange={(lineId, value) =>
+            onBoxCountChange={(lineId, value) =>
               setLines((prev) =>
-                prev.map((l) => (l.id === lineId ? { ...l, physicalQty: value } : l))
+                prev.map((l) =>
+                  l.id === lineId ? applyBoxInputsToLine(l, { boxCount: value }) : l
+                )
+              )
+            }
+            onUnitsPerBoxChange={(lineId, value) =>
+              setLines((prev) =>
+                prev.map((l) =>
+                  l.id === lineId ? applyBoxInputsToLine(l, { unitsPerBox: value }) : l
+                )
+              )
+            }
+            onLooseBoxCountChange={(lineId, value) =>
+              setLines((prev) =>
+                prev.map((l) =>
+                  l.id === lineId ? applyBoxInputsToLine(l, { looseBoxCount: value }) : l
+                )
+              )
+            }
+            onLooseQtyChange={(lineId, value) =>
+              setLines((prev) =>
+                prev.map((l) =>
+                  l.id === lineId ? applyBoxInputsToLine(l, { looseQty: value }) : l
+                )
               )
             }
             onRemoveLine={(lineId) => setLines((prev) => prev.filter((l) => l.id !== lineId))}

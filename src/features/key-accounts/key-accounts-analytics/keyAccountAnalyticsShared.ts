@@ -34,8 +34,16 @@ export function isKeyAccountPartialDeliveredOrder(order: {
   return order.workflow_status === 'partial_delivered';
 }
 
+/** Consignment float POs — included in product demand analytics; dashboard tracks float → paid separately. */
+export function isKeyAccountConsignmentOrder(order: {
+  po_order_kind?: string | null;
+}): boolean {
+  return String(order.po_order_kind || '') === 'consignment';
+}
+
 /**
- * Commercial POs for analytics. Rebate settlement POs with zero amount due are excluded
+ * Commercial POs for analytics (incl. consignment for product demand).
+ * Rebate settlement POs with zero amount due are excluded
  * (disputed credit covers the replacement). Rebate POs with additional client payment are included.
  */
 export function isKeyAccountAnalyticsEligibleOrder(
@@ -185,6 +193,10 @@ export interface KeyAccountProductAnalyticsRow {
   pendingOrders: number;
   pendingQuantity: number;
   pendingRevenue: number;
+  /** Distinct consignment POs that include this product. */
+  consignmentOrders: number;
+  /** Units from consignment POs (subset of quantity). */
+  consignmentQuantity: number;
   orderCount: number;
   clientCount: number;
 }
@@ -418,7 +430,9 @@ type ProductAnalyticsAccumulator = {
   rebatedPendingRevenue: number;
   pendingOrders: number;
   pendingQuantity: number;
+  consignmentQuantity: number;
   orderIds: Set<string>;
+  consignmentOrderIds: Set<string>;
   clientIds: Set<string>;
 };
 
@@ -480,7 +494,8 @@ function accumulateProductAnalyticsContribution(
   orderRevenueById?: Map<string, KeyAccountOrderRevenueAttribution>,
   monthlyRevenueByMonth?: Map<string, KeyAccountOrderRevenueAttribution>,
   orderDateById?: Map<string, string>,
-  monthNames?: readonly string[]
+  monthNames?: readonly string[],
+  isConsignment = false
 ) {
   const key = `${brand}::${variantName}`;
   const existing = productMap.get(key) || {
@@ -494,10 +509,13 @@ function accumulateProductAnalyticsContribution(
     rebatedPendingRevenue: 0,
     pendingOrders: 0,
     pendingQuantity: 0,
+    consignmentQuantity: 0,
     orderIds: new Set<string>(),
+    consignmentOrderIds: new Set<string>(),
     clientIds: new Set<string>(),
   };
 
+  const lineQuantity = split.deliveredQuantity + split.pendingQuantity;
   existing.deliveredOrders += split.deliveredLineItems;
   existing.deliveredQuantity += split.deliveredQuantity;
   existing.grossDeliveredRevenue += split.deliveredRevenue;
@@ -507,6 +525,10 @@ function accumulateProductAnalyticsContribution(
   existing.pendingOrders += split.pendingLineItems;
   existing.pendingQuantity += split.pendingQuantity;
   existing.orderIds.add(purchaseOrderId);
+  if (isConsignment) {
+    existing.consignmentOrderIds.add(purchaseOrderId);
+    existing.consignmentQuantity += lineQuantity;
+  }
   if (clientId) existing.clientIds.add(clientId);
   productMap.set(key, existing);
   if (orderRevenueById) {
@@ -555,11 +577,13 @@ function finalizeProductAnalyticsRows(
         pendingOrders: value.pendingOrders,
         pendingQuantity: value.pendingQuantity,
         pendingRevenue,
+        consignmentOrders: value.consignmentOrderIds.size,
+        consignmentQuantity: value.consignmentQuantity,
         orderCount: value.orderIds.size,
         clientCount: value.clientIds.size,
       };
     })
-    .sort((a, b) => b.revenue - a.revenue);
+    .sort((a, b) => b.revenue - a.revenue || b.quantity - a.quantity);
 }
 
 /** Build product analytics rows with change-item swaps (source line → replacement SKU). */
@@ -650,7 +674,8 @@ export function buildKeyAccountProductAnalyticsRows(input: {
       orderRevenueById,
       trackMonthly ? monthlyRevenueByMonth : undefined,
       trackMonthly ? input.orderDateById : undefined,
-      KEY_ACCOUNT_DASHBOARD_MONTH_NAMES
+      KEY_ACCOUNT_DASHBOARD_MONTH_NAMES,
+      isKeyAccountConsignmentOrder(order)
     );
   });
 
@@ -712,7 +737,8 @@ export function buildKeyAccountProductAnalyticsRows(input: {
         orderRevenueById,
         trackMonthly ? monthlyRevenueByMonth : undefined,
         trackMonthly ? input.orderDateById : undefined,
-        KEY_ACCOUNT_DASHBOARD_MONTH_NAMES
+        KEY_ACCOUNT_DASHBOARD_MONTH_NAMES,
+        isKeyAccountConsignmentOrder(sourceOrder)
       );
     });
   });

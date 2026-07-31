@@ -1,6 +1,17 @@
+import {
+  computePhysicalQtyFromBoxes,
+  formatBoxCountBreakdown,
+  parseNonNegativeQty,
+} from './physical-count/utils/physicalCountQty';
+
 export type ReceiveLotSplit = {
   id: string;
+  /** Computed units: (boxes × qty/box) + (loose boxes × loose qty). */
   quantity: number;
+  boxCount: string;
+  unitsPerBox: string;
+  looseBoxCount: string;
+  looseQty: string;
   manufacturedDate: string;
   expirationDate: string;
   unitCost: string;
@@ -21,14 +32,58 @@ export type ReceiveBatchDefaults = {
   unitCost: string;
 };
 
-export function createReceiveLotSplit(quantity = 0): ReceiveLotSplit {
+export type ReceiveBoxInputFields = Pick<
+  ReceiveLotSplit,
+  'boxCount' | 'unitsPerBox' | 'looseBoxCount' | 'looseQty'
+>;
+
+export function createReceiveLotSplit(): ReceiveLotSplit {
   return {
     id: crypto.randomUUID(),
-    quantity,
+    quantity: 0,
+    boxCount: '',
+    unitsPerBox: '',
+    looseBoxCount: '',
+    looseQty: '',
     manufacturedDate: '',
     expirationDate: '',
     unitCost: '',
   };
+}
+
+/** Recompute split.quantity from box inputs. Invalid/incomplete inputs → 0. */
+export function applyBoxInputsToReceiveSplit(
+  split: ReceiveLotSplit,
+  updates: Partial<ReceiveBoxInputFields> = {}
+): ReceiveLotSplit {
+  const nextBoxCount = updates.boxCount ?? split.boxCount;
+  const nextUnitsPerBox = updates.unitsPerBox ?? split.unitsPerBox;
+  const nextLooseBoxCount = updates.looseBoxCount ?? split.looseBoxCount;
+  const nextLooseQty = updates.looseQty ?? split.looseQty;
+  const computed = computePhysicalQtyFromBoxes(
+    nextBoxCount,
+    nextUnitsPerBox,
+    nextLooseBoxCount,
+    nextLooseQty
+  );
+
+  return {
+    ...split,
+    boxCount: nextBoxCount,
+    unitsPerBox: nextUnitsPerBox,
+    looseBoxCount: nextLooseBoxCount,
+    looseQty: nextLooseQty,
+    quantity: computed === null ? 0 : Number(computed),
+  };
+}
+
+export function getReceiveSplitBoxBreakdown(split: ReceiveLotSplit): string | null {
+  return formatBoxCountBreakdown(
+    split.boxCount,
+    split.unitsPerBox,
+    split.looseBoxCount,
+    split.looseQty
+  );
 }
 
 export function parseUnitCost(value: string): number | null {
@@ -103,12 +158,22 @@ export type ReceiveLotPayload = {
   manufactured_date: string | null;
   expiration_date: string;
   unit_cost: number;
+  box_count: number;
+  units_per_box: number;
+  loose_box_count: number;
+  loose_qty: number;
 };
 
 export type ReceiveVariantPayload = {
   variant_id: string;
   lots: ReceiveLotPayload[];
 };
+
+function parseOptionalNonNegInt(value: string): number | null {
+  const trimmed = value.trim();
+  if (trimmed === '') return null;
+  return parseNonNegativeQty(trimmed);
+}
 
 export function buildReceivePayload(variants: ReceiveVariantItem[]): ReceiveVariantPayload[] {
   return variants
@@ -119,11 +184,26 @@ export function buildReceivePayload(variants: ReceiveVariantItem[]): ReceiveVari
           if (quantity <= 0) return null;
           const unitCost = parseUnitCost(split.unitCost);
           if (unitCost === null || !split.expirationDate.trim()) return null;
+
+          const boxCount = parseOptionalNonNegInt(split.boxCount);
+          const unitsPerBox = parseOptionalNonNegInt(split.unitsPerBox);
+          if (boxCount === null || unitsPerBox === null) return null;
+
+          const looseEmpty =
+            split.looseBoxCount.trim() === '' && split.looseQty.trim() === '';
+          const looseBoxCount = looseEmpty ? 0 : parseOptionalNonNegInt(split.looseBoxCount);
+          const looseQty = looseEmpty ? 0 : parseOptionalNonNegInt(split.looseQty);
+          if (looseBoxCount === null || looseQty === null) return null;
+
           return {
             quantity,
             manufactured_date: split.manufacturedDate.trim() || null,
             expiration_date: split.expirationDate.trim(),
             unit_cost: unitCost,
+            box_count: boxCount,
+            units_per_box: unitsPerBox,
+            loose_box_count: looseBoxCount,
+            loose_qty: looseQty,
           } satisfies ReceiveLotPayload;
         })
         .filter((lot): lot is ReceiveLotPayload => lot !== null);
@@ -136,6 +216,26 @@ export function buildReceivePayload(variants: ReceiveVariantItem[]): ReceiveVari
 
 export function validateReceiveVariants(variants: ReceiveVariantItem[]): string | null {
   for (const variant of variants) {
+    for (const split of variant.splits) {
+      const hasAnyBoxInput =
+        split.boxCount.trim() !== '' ||
+        split.unitsPerBox.trim() !== '' ||
+        split.looseBoxCount.trim() !== '' ||
+        split.looseQty.trim() !== '';
+
+      if (hasAnyBoxInput) {
+        const computed = computePhysicalQtyFromBoxes(
+          split.boxCount,
+          split.unitsPerBox,
+          split.looseBoxCount,
+          split.looseQty
+        );
+        if (computed === null) {
+          return `${variant.variantLabel}: enter Boxes and Qty/box. Loose boxes/qty are optional (leave both blank or fill both).`;
+        }
+      }
+    }
+
     const allocated = getVariantAllocatedQty(variant.splits);
 
     if (allocated > variant.remaining) {
@@ -143,7 +243,7 @@ export function validateReceiveVariants(variants: ReceiveVariantItem[]): string 
     }
 
     if (allocated < variant.remaining) {
-      return `${variant.variantLabel}: assign all ${variant.remaining} remaining unit(s) before confirming (currently ${allocated}).`;
+      return `${variant.variantLabel}: assign all ${variant.remaining} remaining unit(s) before confirming (currently ${allocated}). Use Boxes × Qty/box (+ optional loose).`;
     }
 
     for (const split of variant.splits) {
@@ -171,7 +271,7 @@ export function validateReceiveVariants(variants: ReceiveVariantItem[]): string 
 
   const payload = buildReceivePayload(variants);
   if (payload.length === 0) {
-    return 'Enter at least one quantity to receive with expiration date and unit cost.';
+    return 'Enter boxes to receive at least one quantity with expiration date and unit cost.';
   }
 
   return null;

@@ -7,9 +7,15 @@ import {
   FileText,
   Loader2,
   MoreVertical,
+  Package,
 } from 'lucide-react';
 
 import { formatLotDate } from '@/features/inventory/physical-count/utils/formatLotDate';
+import {
+  LotPackingDialog,
+  type LotPackingDialogTarget,
+} from '@/features/inventory/components/LotPackingDialog';
+import { hasReceivePacking } from '@/features/inventory/utils/formatReceivePacking';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -83,9 +89,11 @@ type AdjustmentViewTarget = {
 function BrandVariantSection({
   brand,
   onViewAdjustments,
+  onViewPacking,
 }: {
   brand: BatchInventoryBrandGroup;
   onViewAdjustments: (lot: BatchInventoryLotLine) => void;
+  onViewPacking: (lot: BatchInventoryLotLine) => void;
 }) {
   return (
     <div className="overflow-hidden rounded-md border bg-white">
@@ -96,6 +104,7 @@ function BrandVariantSection({
             <TableHead>Variant</TableHead>
             <TableHead>Expiration</TableHead>
             <TableHead className="text-right">Qty</TableHead>
+            <TableHead className="text-right w-[100px]">Packing</TableHead>
             <TableHead className="text-right w-[90px]">Adjustments</TableHead>
           </TableRow>
         </TableHeader>
@@ -118,6 +127,24 @@ function BrandVariantSection({
               <TableCell>{formatLotDate(lot.expirationDate)}</TableCell>
               <TableCell className="text-right tabular-nums">
                 {lot.quantity.toLocaleString()}
+              </TableCell>
+              <TableCell className="text-right">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 px-2"
+                  disabled={!hasReceivePacking(lot.packing)}
+                  title={
+                    hasReceivePacking(lot.packing)
+                      ? 'View box packing'
+                      : 'No packing saved for this lot'
+                  }
+                  onClick={() => onViewPacking(lot)}
+                >
+                  <Package className="h-3.5 w-3.5 mr-1" />
+                  View
+                </Button>
               </TableCell>
               <TableCell className="text-right">
                 <Button
@@ -155,6 +182,7 @@ export function BatchViewRow({
   const [adjustmentViewTarget, setAdjustmentViewTarget] = useState<AdjustmentViewTarget | null>(
     null
   );
+  const [packingTarget, setPackingTarget] = useState<LotPackingDialogTarget | null>(null);
 
   const handleViewAdjustments = (lot: BatchInventoryLotLine) => {
     setAdjustmentViewTarget({
@@ -162,6 +190,15 @@ export function BatchViewRow({
       batchId: lot.batchId,
       batchNumber: group.batchNumber,
       variantName: lot.variantName,
+    });
+  };
+
+  const handleViewPacking = (lot: BatchInventoryLotLine) => {
+    setPackingTarget({
+      variantName: lot.variantName,
+      batchNumber: group.batchNumber,
+      packing: lot.packing ?? null,
+      remainingQty: lot.quantity,
     });
   };
 
@@ -321,6 +358,7 @@ export function BatchViewRow({
                     key={brand.brandId}
                     brand={brand}
                     onViewAdjustments={handleViewAdjustments}
+                    onViewPacking={handleViewPacking}
                   />
                 ))}
 
@@ -354,6 +392,14 @@ export function BatchViewRow({
         batchId={adjustmentViewTarget?.batchId ?? null}
         batchNumber={adjustmentViewTarget?.batchNumber ?? ''}
         variantName={adjustmentViewTarget?.variantName ?? ''}
+      />
+
+      <LotPackingDialog
+        open={!!packingTarget}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setPackingTarget(null);
+        }}
+        target={packingTarget}
       />
     </>
   );

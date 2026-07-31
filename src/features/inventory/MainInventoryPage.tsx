@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/features/auth';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -35,6 +35,9 @@ import {
   type MainInventoryVariantSortContext,
   type MainInventoryVariantSortKey,
 } from './utils/mainInventoryVariantSorting';
+import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
+import MainInventoryManual from '@/features/inventory/warehouse-manual/components/MainInventoryManual';
 
 interface ReturnHistoryEntry {
   id: string;
@@ -50,6 +53,17 @@ interface ReturnHistoryEntry {
   isSubWarehouseReturn: boolean;
   locationName?: string | null;  // Sub-warehouse name (e.g., "Bacoor", "Sta Rosa")
 }
+
+type OpenPoReservationDetail = {
+  purchase_order_id: string;
+  po_number: string;
+  quantity_reserved: number;
+  quantity_fulfilled: number;
+  remaining: number;
+  status: string;
+  /** hard = warehouse-approved reservation; soft = pending PO commitment */
+  reservation_kind: 'hard' | 'soft';
+};
 
 export default function MainInventoryPage() {
   const { user } = useAuth();
@@ -122,6 +136,13 @@ export default function MainInventoryPage() {
     brandName: string;
     grossAllocated: number;
     items: PendingMobileSalesAllocation[];
+  } | null>(null);
+
+  const [poReservedDialog, setPoReservedDialog] = useState<{
+    variantName: string;
+    brandName: string;
+    totalReserved: number;
+    items: OpenPoReservationDetail[];
   } | null>(null);
 
   const [batchViewTarget, setBatchViewTarget] = useState<{
@@ -673,6 +694,7 @@ export default function MainInventoryPage() {
 
   const isSubWarehouseUser = isWarehouse && !isMainWarehouseUser;
   const showPendingAllocations = !isWarehouse;
+  const showPoReservedColumn = isWarehouse;
 
   const renderBatchViewButton = (variant: { id: string; name: string }, brandName: string) => {
     if (!isWarehouse) return null;
@@ -708,22 +730,179 @@ export default function MainInventoryPage() {
     return map;
   }, [pendingMobileSalesAllocations]);
 
+  // Open warehouse-transfer PO reservations (approved, not yet dispatched) reduce available-to-dispatch.
+  const [poReservedByVariantId, setPoReservedByVariantId] = useState<Record<string, number>>({});
+  const [poReservedDetailsByVariantId, setPoReservedDetailsByVariantId] = useState<
+    Record<string, OpenPoReservationDetail[]>
+  >({});
+  useEffect(() => {
+    if (!showPoReservedColumn || !user?.company_id) {
+      setPoReservedByVariantId({});
+      setPoReservedDetailsByVariantId({});
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        let hardQuery = supabase
+          .from('warehouse_transfer_reservations')
+          .select(
+            'variant_id,warehouse_location_id,quantity_reserved,quantity_fulfilled,status,purchase_order_id,purchase_orders:purchase_order_id(po_number),warehouse_locations:warehouse_location_id(is_main)'
+          )
+          .eq('warehouse_company_id', user.company_id)
+          .in('status', ['reserved', 'partial']);
+
+        let softQuery = supabase
+          .from('warehouse_transfer_soft_reservations')
+          .select(
+            'variant_id,warehouse_location_id,quantity_committed,status,purchase_order_id,purchase_orders:purchase_order_id(po_number),warehouse_locations:warehouse_location_id(is_main)'
+          )
+          .eq('warehouse_company_id', user.company_id)
+          .eq('status', 'active');
+
+        if (membership.locationId) {
+          hardQuery = hardQuery.eq('warehouse_location_id', membership.locationId);
+          softQuery = softQuery.eq('warehouse_location_id', membership.locationId);
+        }
+
+        const [{ data, error }, { data: softData, error: softError }] = await Promise.all([
+          hardQuery,
+          softQuery,
+        ]);
+        if (error) throw error;
+        if (softError) throw softError;
+        if (cancelled) return;
+
+        const poIds = new Set<string>();
+        for (const row of data || []) {
+          if ((row as any).purchase_order_id) poIds.add(String((row as any).purchase_order_id));
+        }
+        for (const row of softData || []) {
+          if ((row as any).purchase_order_id) poIds.add(String((row as any).purchase_order_id));
+        }
+
+        // Key Account soft POs are often hidden from warehouse RLS — resolve numbers via RPC.
+        const poNumberById: Record<string, string> = {};
+        const poIdList = Array.from(poIds);
+        if (poIdList.length > 0) {
+          const { data: poLabels, error: poLabelErr } = await supabase.rpc(
+            'get_warehouse_transfer_po_numbers',
+            { p_po_ids: poIdList }
+          );
+          if (poLabelErr) {
+            console.warn('[MainInventory] PO number resolve failed', poLabelErr);
+          } else {
+            for (const row of poLabels || []) {
+              const id = String((row as any).purchase_order_id || '');
+              const num = String((row as any).po_number || '').trim();
+              if (id && num) poNumberById[id] = num;
+            }
+          }
+        }
+
+        const resolvePoNumber = (purchaseOrderId: string, nestedPo: any) => {
+          const fromJoin = String(nestedPo?.po_number || '').trim();
+          if (fromJoin) return fromJoin;
+          const fromRpc = poNumberById[purchaseOrderId];
+          if (fromRpc) return fromRpc;
+          return '—';
+        };
+
+        const map: Record<string, number> = {};
+        const detailsMap: Record<string, OpenPoReservationDetail[]> = {};
+        for (const row of data || []) {
+          const loc = Array.isArray((row as any).warehouse_locations)
+            ? (row as any).warehouse_locations[0]
+            : (row as any).warehouse_locations;
+          // Unlinked main accounts: only count reservations at the main warehouse location.
+          if (!membership.locationId && !loc?.is_main) continue;
+          const remaining = Math.max(
+            0,
+            Number((row as any).quantity_reserved || 0) - Number((row as any).quantity_fulfilled || 0)
+          );
+          if (remaining <= 0) continue;
+          const vid = String((row as any).variant_id);
+          map[vid] = (map[vid] || 0) + remaining;
+
+          const po = Array.isArray((row as any).purchase_orders)
+            ? (row as any).purchase_orders[0]
+            : (row as any).purchase_orders;
+          const purchaseOrderId = String((row as any).purchase_order_id);
+          const detail: OpenPoReservationDetail = {
+            purchase_order_id: purchaseOrderId,
+            po_number: resolvePoNumber(purchaseOrderId, po),
+            quantity_reserved: Number((row as any).quantity_reserved || 0),
+            quantity_fulfilled: Number((row as any).quantity_fulfilled || 0),
+            remaining,
+            status: String((row as any).status || 'reserved'),
+            reservation_kind: 'hard',
+          };
+          const list = detailsMap[vid] ?? [];
+          list.push(detail);
+          detailsMap[vid] = list;
+        }
+        for (const row of softData || []) {
+          const loc = Array.isArray((row as any).warehouse_locations)
+            ? (row as any).warehouse_locations[0]
+            : (row as any).warehouse_locations;
+          if (!membership.locationId && !loc?.is_main) continue;
+          const remaining = Math.max(0, Number((row as any).quantity_committed || 0));
+          if (remaining <= 0) continue;
+          const vid = String((row as any).variant_id);
+          map[vid] = (map[vid] || 0) + remaining;
+
+          const po = Array.isArray((row as any).purchase_orders)
+            ? (row as any).purchase_orders[0]
+            : (row as any).purchase_orders;
+          const purchaseOrderId = String((row as any).purchase_order_id);
+          const detail: OpenPoReservationDetail = {
+            purchase_order_id: purchaseOrderId,
+            po_number: resolvePoNumber(purchaseOrderId, po),
+            quantity_reserved: remaining,
+            quantity_fulfilled: 0,
+            remaining,
+            status: 'pending',
+            reservation_kind: 'soft',
+          };
+          const list = detailsMap[vid] ?? [];
+          list.push(detail);
+          detailsMap[vid] = list;
+        }
+        setPoReservedByVariantId(map);
+        setPoReservedDetailsByVariantId(detailsMap);
+      } catch (e) {
+        console.warn('[MainInventory] open PO reserved load failed', e);
+        if (!cancelled) {
+          setPoReservedByVariantId({});
+          setPoReservedDetailsByVariantId({});
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showPoReservedColumn, user?.company_id, membership.locationId, brands]);
+
   const getPendingAllocQuantity = (variantId: string) =>
     (pendingByVariantId.get(variantId) ?? []).reduce((sum, r) => sum + r.quantity, 0);
 
   /** From main_inventory.allocated_stock (gross). */
   const getVariantGrossAllocated = (variant: Variant) => variant.allocatedStock || 0;
 
-  /** Remaining allocated: gross allocated − mobile-sales pending (not yet finance-approved). */
+  /** Remaining allocated: gross allocated − pending field sales orders (not yet finance-approved). */
   const getVariantRemainingAllocated = (variant: Variant) => {
     const gross = getVariantGrossAllocated(variant);
     if (!showPendingAllocations) return gross;
     return Math.max(0, gross - getPendingAllocQuantity(variant.id));
   };
 
+  /** Free stock at main = Total − Allocated (reservation / qty at sub). */
   const getVariantAvailableStock = (variant: Variant) => {
-    return Math.max(0, variant.stock - getVariantGrossAllocated(variant));
+    const poReserved = poReservedByVariantId[variant.id] || 0;
+    return Math.max(0, variant.stock - getVariantGrossAllocated(variant) - poReserved);
   };
+
+  const getVariantPoReserved = (variant: Variant) => poReservedByVariantId[variant.id] || 0;
 
   const getAllocatedStock = (brand: Brand) =>
     brand.allVariants.reduce((sum, v) => sum + getVariantGrossAllocated(v), 0);
@@ -748,6 +927,26 @@ export default function MainInventoryPage() {
       default:
         return stage.replace(/_/g, ' ');
     }
+  };
+
+  const getPoReservationStatusLabel = (status: string) => {
+    if (status === 'partial') return 'Partial';
+    if (status === 'pending') return 'Pending approval';
+    return 'Approved';
+  };
+
+  const getPoReservationKindLabel = (kind?: 'hard' | 'soft') =>
+    kind === 'soft' ? 'Soft reserved' : 'Hard reserved';
+
+  const openPoReservedDialog = (brandName: string, variantName: string, variant: Variant) => {
+    const items = poReservedDetailsByVariantId[variant.id] ?? [];
+    if (items.length === 0) return;
+    setPoReservedDialog({
+      brandName,
+      variantName,
+      totalReserved: getVariantPoReserved(variant),
+      items,
+    });
   };
 
   const openPendingAllocDialog = (brandName: string, variantName: string, variant: Variant) => {
@@ -782,6 +981,44 @@ export default function MainInventoryPage() {
     );
   };
 
+  /** Open transfer PO reservations at main — click to see PO breakdown. */
+  const renderPoReservedCell = (brandName: string, variant: Variant) => {
+    const qty = getVariantPoReserved(variant);
+    if (qty === 0) {
+      return <TableCell className="text-center text-muted-foreground">-</TableCell>;
+    }
+
+    return (
+      <TableCell
+        className="text-violet-700 font-medium text-center cursor-pointer hover:underline hover:bg-violet-50/50"
+        onClick={() => openPoReservedDialog(brandName, variant.name, variant)}
+        title={`${qty} unit${qty === 1 ? '' : 's'} held by open/pending transfer POs — click to view`}
+      >
+        {qty}
+      </TableCell>
+    );
+  };
+
+  const renderAvailableCell = (variant: Variant, available: number) => {
+    if (showPoReservedColumn) {
+      const stock = variant.stock;
+      const allocated = getVariantGrossAllocated(variant);
+      const poReserved = getVariantPoReserved(variant);
+      const title = isSubWarehouseUser
+        ? `${stock} − ${poReserved} = ${available} (stock − PO reserved)`
+        : `${stock} − ${allocated} − ${poReserved} = ${available} (stock − allocated − PO reserved)`;
+      return (
+        <TableCell className="text-green-600 font-medium text-center" title={title}>
+          {available}
+        </TableCell>
+      );
+    }
+
+    return (
+      <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
+    );
+  };
+
   const variantHasNoPrice = (variant: Variant) => {
     const sellingPriceRaw = (variant as { sellingPrice?: number | null }).sellingPrice;
     return (
@@ -798,11 +1035,12 @@ export default function MainInventoryPage() {
   const variantSortContext = useMemo(
     (): MainInventoryVariantSortContext => ({
       getGrossAllocated: getVariantGrossAllocated,
+      getPoReserved: getVariantPoReserved,
       getRemainingAllocated: getVariantRemainingAllocated,
       getAvailable: getVariantAvailableStock,
       hasNoPrice: variantHasNoPrice,
     }),
-    [isWarehouse, pendingByVariantId, showPendingAllocations]
+    [isWarehouse, pendingByVariantId, showPendingAllocations, poReservedByVariantId]
   );
 
   const sortVariantsForSection = <T extends Variant>(sectionId: string, variants: T[]) => {
@@ -834,7 +1072,8 @@ export default function MainInventoryPage() {
     (sum, brand) => sum + brand.allVariants.reduce((s, v) => s + getVariantGrossAllocated(v), 0),
     0
   );
-  const totalAvailableStock = Math.max(0, totalStock - totalGrossAllocatedStock);
+  const totalPoReservedStock = Object.values(poReservedByVariantId).reduce((sum, qty) => sum + qty, 0);
+  const totalAvailableStock = Math.max(0, totalStock - totalGrossAllocatedStock - totalPoReservedStock);
   const lowStockItems = brands.reduce((sum, brand) => {
     const lowFlavors = brand.flavors.filter((f: any) => f.status === 'low-stock').length;
     const lowBatteries = brand.batteries.filter((b: any) => b.status === 'low-stock').length;
@@ -853,6 +1092,17 @@ export default function MainInventoryPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {isWarehouse && (
+            <>
+              <PageGettingStartedDialog />
+              <PageManualDialog
+                title="Main Inventory Manual"
+                fullManualHref="/warehouse-manual#main-inventory"
+              >
+                <MainInventoryManual embedded />
+              </PageManualDialog>
+            </>
+          )}
           {isWarehouse && isMainWarehouseUser && (
             <>
               <Button variant="outline" asChild>
@@ -909,12 +1159,26 @@ export default function MainInventoryPage() {
         <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-4 py-3 text-sm text-amber-950">
           This company is linked to a warehouse. <strong>Stock counts are read-only</strong> here
           and update when you receive inventory through <strong>purchase orders to the warehouse</strong>.
-          You can still edit pricing on each variant.
+          You can still edit pricing on each variant. To send stock back, use{' '}
+          <Link to="/inventory/return-to-warehouse" className="underline font-medium">
+            Return to Warehouse
+          </Link>
+          .
         </div>
       )}
 
       {/* Stats Overview */}
-      <div className={`grid grid-cols-2 ${isSubWarehouseUser ? 'md:grid-cols-3' : 'md:grid-cols-5'} gap-4`}>
+      <div
+        className={`grid grid-cols-2 ${
+          isSubWarehouseUser
+            ? showPoReservedColumn
+              ? 'md:grid-cols-5'
+              : 'md:grid-cols-3'
+            : showPoReservedColumn
+              ? 'md:grid-cols-6'
+              : 'md:grid-cols-5'
+        } gap-4`}
+      >
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-2">
@@ -965,13 +1229,55 @@ export default function MainInventoryPage() {
           </Card>
         )}
 
+        {showPoReservedColumn && (
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2">
+                <ClipboardList className="h-4 w-4 text-violet-600" />
+                <div>
+                  <div className="text-2xl font-bold">{totalPoReservedStock.toLocaleString()}</div>
+                  <div className="text-xs text-muted-foreground">PO Reserved</div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {!isSubWarehouseUser && (
           <Card>
             <CardContent className="p-4">
               <div className="flex items-center gap-2">
                 <CheckCircle className="h-4 w-4 text-emerald-600" />
                 <div>
-                  <div className="text-2xl font-bold">{totalAvailableStock.toLocaleString()}</div>
+                  <div
+                    className="text-2xl font-bold"
+                    title={
+                      showPoReservedColumn
+                        ? `${totalStock} − ${totalGrossAllocatedStock} − ${totalPoReservedStock} = ${totalAvailableStock} (stock − allocated − PO reserved)`
+                        : undefined
+                    }
+                  >
+                    {totalAvailableStock.toLocaleString()}
+                  </div>
+                  <div className="text-xs text-muted-foreground">Available Stock</div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {isSubWarehouseUser && showPoReservedColumn && (
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2">
+                <CheckCircle className="h-4 w-4 text-emerald-600" />
+                <div>
+                  <div
+                    className="text-2xl font-bold"
+                    title={`${totalStock} − ${totalPoReservedStock} = ${totalAvailableStock} (stock − PO reserved)`}
+                  >
+                    {totalAvailableStock.toLocaleString()}
+                  </div>
                   <div className="text-xs text-muted-foreground">Available Stock</div>
                 </div>
               </div>
@@ -1050,7 +1356,7 @@ export default function MainInventoryPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-4">
-                      {isWarehouse && (
+                      {/* {isWarehouse && (
                         <div
                           className="flex items-center gap-2 shrink-0"
                           onClick={(e) => e.stopPropagation()}
@@ -1061,7 +1367,7 @@ export default function MainInventoryPage() {
                             Edit brand
                           </Button>
                         </div>
-                      )}
+                      )} */}
                       <Badge
                         variant={
                           getTotalStock(brand) === 0 ? 'destructive' :
@@ -1115,12 +1421,13 @@ export default function MainInventoryPage() {
                             headClassName="text-blue-800"
                             isSubWarehouseUser={isSubWarehouseUser}
                             isWarehouse={isWarehouse}
+                            showPoReservedColumn={showPoReservedColumn}
                             sortState={getVariantSortState('flavor')}
                             onSort={(key) => handleVariantSort('flavor', key)}
                           />
                           <TableBody>
                             {sortVariantsForSection('flavor', brand.flavors).map((flavor) => {
-                              const available = isSubWarehouseUser ? flavor.stock : getVariantAvailableStock(flavor);
+                              const available = getVariantAvailableStock(flavor);
                               // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
                               const sellingPriceRaw = (flavor as any).sellingPrice;
                               const hasNoPrice = !isWarehouse && (sellingPriceRaw === null || sellingPriceRaw === undefined || (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw)));
@@ -1138,10 +1445,9 @@ export default function MainInventoryPage() {
                                   </TableCell>
                                   <TableCell className="font-semibold text-center">{flavor.stock}</TableCell>
                                   {!isSubWarehouseUser && renderAllocatedCell(flavor)}
+                                  {showPoReservedColumn && renderPoReservedCell(brand.name, flavor)}
                                   {showPendingAllocations && renderPendingAllocatedCell(brand.name, flavor)}
-                                  {!isSubWarehouseUser && (
-                                    <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
-                                  )}
+                                  {(!isSubWarehouseUser || showPoReservedColumn) && renderAvailableCell(flavor, available)}
                                   {!isWarehouse && (
                                     <TableCell className="text-center">
                                       {typeof (flavor as any).sellingPrice === 'number' ? `₱${(flavor as any).sellingPrice.toFixed(2)}` : '-'}
@@ -1287,12 +1593,13 @@ export default function MainInventoryPage() {
                             headClassName="text-green-800"
                             isSubWarehouseUser={isSubWarehouseUser}
                             isWarehouse={isWarehouse}
+                            showPoReservedColumn={showPoReservedColumn}
                             sortState={getVariantSortState('battery')}
                             onSort={(key) => handleVariantSort('battery', key)}
                           />
                           <TableBody>
                             {sortVariantsForSection('battery', brand.batteries).map((battery) => {
-                              const available = isSubWarehouseUser ? battery.stock : getVariantAvailableStock(battery);
+                              const available = getVariantAvailableStock(battery);
                               // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
                               const sellingPriceRaw = (battery as any).sellingPrice;
                               const hasNoPrice = !isWarehouse && (sellingPriceRaw === null || sellingPriceRaw === undefined || (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw)));
@@ -1310,10 +1617,9 @@ export default function MainInventoryPage() {
                                   </TableCell>
                                   <TableCell className="font-semibold text-center">{battery.stock}</TableCell>
                                   {!isSubWarehouseUser && renderAllocatedCell(battery)}
+                                  {showPoReservedColumn && renderPoReservedCell(brand.name, battery)}
                                   {showPendingAllocations && renderPendingAllocatedCell(brand.name, battery)}
-                                  {!isSubWarehouseUser && (
-                                    <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
-                                  )}
+                                  {(!isSubWarehouseUser || showPoReservedColumn) && renderAvailableCell(battery, available)}
                                   {!isWarehouse && (
                                     <TableCell className="text-center">
                                       {typeof (battery as any).sellingPrice === 'number' ? `₱${(battery as any).sellingPrice.toFixed(2)}` : '-'}
@@ -1436,12 +1742,13 @@ export default function MainInventoryPage() {
                             headClassName="text-purple-800"
                             isSubWarehouseUser={isSubWarehouseUser}
                             isWarehouse={isWarehouse}
+                            showPoReservedColumn={showPoReservedColumn}
                             sortState={getVariantSortState('posm')}
                             onSort={(key) => handleVariantSort('posm', key)}
                           />
                           <TableBody>
                             {sortVariantsForSection('posm', (brand as Brand).posms ?? []).map((posm) => {
-                              const available = isSubWarehouseUser ? posm.stock : getVariantAvailableStock(posm);
+                              const available = getVariantAvailableStock(posm);
                               // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
                               const sellingPriceRaw = (posm as any).sellingPrice;
                               const hasNoPrice = !isWarehouse && (sellingPriceRaw === null || sellingPriceRaw === undefined || (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw)));
@@ -1459,10 +1766,9 @@ export default function MainInventoryPage() {
                                   </TableCell>
                                   <TableCell className="font-semibold text-center">{posm.stock}</TableCell>
                                   {!isSubWarehouseUser && renderAllocatedCell(posm)}
+                                  {showPoReservedColumn && renderPoReservedCell(brand.name, posm)}
                                   {showPendingAllocations && renderPendingAllocatedCell(brand.name, posm)}
-                                  {!isSubWarehouseUser && (
-                                    <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
-                                  )}
+                                  {(!isSubWarehouseUser || showPoReservedColumn) && renderAvailableCell(posm, available)}
                                   {!isWarehouse && (
                                     <TableCell className="text-center">
                                       {typeof (posm as any).sellingPrice === 'number' ? `₱${(posm as any).sellingPrice.toFixed(2)}` : '-'}
@@ -1602,12 +1908,13 @@ export default function MainInventoryPage() {
                                 headClassName="text-gray-800"
                                 isSubWarehouseUser={isSubWarehouseUser}
                                 isWarehouse={isWarehouse}
+                                showPoReservedColumn={showPoReservedColumn}
                                 sortState={getVariantSortState(variantType)}
                                 onSort={(key) => handleVariantSort(variantType, key)}
                               />
                               <TableBody>
                                 {sortVariantsForSection(variantType, variants).map((variant) => {
-                                  const available = isSubWarehouseUser ? variant.stock : getVariantAvailableStock(variant);
+                                  const available = getVariantAvailableStock(variant);
                                   const sellingPriceRaw = (variant as any).sellingPrice;
                                   const hasNoPrice = !isWarehouse && (sellingPriceRaw === null || sellingPriceRaw === undefined || (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw)));
                                   
@@ -1624,10 +1931,9 @@ export default function MainInventoryPage() {
                                       </TableCell>
                                       <TableCell className="font-semibold text-center">{variant.stock}</TableCell>
                                       {!isSubWarehouseUser && renderAllocatedCell(variant)}
+                                      {showPoReservedColumn && renderPoReservedCell(brand.name, variant)}
                                       {showPendingAllocations && renderPendingAllocatedCell(brand.name, variant)}
-                                      {!isSubWarehouseUser && (
-                                        <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
-                                      )}
+                                      {(!isSubWarehouseUser || showPoReservedColumn) && renderAvailableCell(variant, available)}
                                       {!isWarehouse && (
                                         <TableCell className="text-center">
                                           {typeof (variant as any).sellingPrice === 'number' ? `₱${(variant as any).sellingPrice.toFixed(2)}` : '-'}
@@ -2297,7 +2603,7 @@ export default function MainInventoryPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Order #</TableHead>
-                    <TableHead>Mobile sales</TableHead>
+                    <TableHead>Created by</TableHead>
                     <TableHead>Client</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Qty</TableHead>
@@ -2332,12 +2638,127 @@ export default function MainInventoryPage() {
                 </TableBody>
               </Table>
             ) : (
-              <p className="text-sm text-muted-foreground py-6 text-center">No pending mobile sales orders for this variant.</p>
+              <p className="text-sm text-muted-foreground py-6 text-center">No pending field sales orders for this variant.</p>
             )}
           </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setPendingAllocDialog(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Open PO reservation breakdown (warehouse users) */}
+      <Dialog open={!!poReservedDialog} onOpenChange={(open) => !open && setPoReservedDialog(null)}>
+        <DialogContent className="max-w-2xl w-[95vw] sm:w-full max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ClipboardList className="h-5 w-5 text-violet-600" />
+              PO Reserved — Transfer POs
+            </DialogTitle>
+            <p className="text-sm text-muted-foreground">
+              {poReservedDialog && (
+                <>
+                  <span className="font-medium text-foreground">{poReservedDialog.brandName}</span>
+                  {' — '}
+                  {poReservedDialog.variantName}
+                  {' · '}
+                  {poReservedDialog.totalReserved} unit
+                  {poReservedDialog.totalReserved === 1 ? '' : 's'} held by open transfer POs
+                </>
+              )}
+            </p>
+            <div className="flex flex-col gap-1.5 pt-1 text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Badge
+                  variant="outline"
+                  className="bg-violet-50 text-violet-800 border-violet-200 text-[10px] font-medium"
+                >
+                  Hard reserved
+                </Badge>
+                <span>- Warehouse-approved, awaiting dispatch</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Badge
+                  variant="outline"
+                  className="bg-sky-50 text-sky-800 border-sky-200 text-[10px] font-medium"
+                >
+                  Soft reserved
+                </Badge>
+                <span>- Pending PO (not warehouse-approved yet)</span>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            {poReservedDialog && poReservedDialog.items.length > 0 ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>PO #</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Reserved</TableHead>
+                    <TableHead className="text-right">Fulfilled</TableHead>
+                    <TableHead className="text-right">Remaining</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {poReservedDialog.items.map((item) => (
+                    <TableRow key={`${item.reservation_kind}-${item.purchase_order_id}-${item.remaining}`}>
+                      <TableCell className="font-mono text-sm whitespace-nowrap">
+                        <Link
+                          to="/purchase-orders"
+                          className="text-violet-700 hover:underline"
+                          onClick={() => setPoReservedDialog(null)}
+                        >
+                          {item.po_number}
+                        </Link>
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="outline"
+                          className={
+                            item.reservation_kind === 'soft'
+                              ? 'bg-sky-50 text-sky-800 border-sky-200 text-xs'
+                              : 'bg-violet-50 text-violet-800 border-violet-200 text-xs'
+                          }
+                        >
+                          {getPoReservationKindLabel(item.reservation_kind)}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="outline"
+                          className={
+                            item.status === 'partial'
+                              ? 'bg-amber-50 text-amber-800 border-amber-200 text-xs'
+                              : item.status === 'pending'
+                                ? 'bg-sky-50 text-sky-800 border-sky-200 text-xs'
+                                : 'bg-emerald-50 text-emerald-800 border-emerald-200 text-xs'
+                          }
+                        >
+                          {getPoReservationStatusLabel(item.status)}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">{item.quantity_reserved}</TableCell>
+                      <TableCell className="text-right">{item.quantity_fulfilled}</TableCell>
+                      <TableCell className="text-right font-semibold text-violet-700">{item.remaining}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : (
+              <p className="text-sm text-muted-foreground py-6 text-center">
+                No open transfer PO reservations for this variant.
+              </p>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPoReservedDialog(null)}>
               Close
             </Button>
           </DialogFooter>

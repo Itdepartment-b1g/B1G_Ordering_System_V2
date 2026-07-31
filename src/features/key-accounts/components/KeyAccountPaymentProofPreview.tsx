@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { FileText, Loader2, X } from 'lucide-react';
+import { Expand, FileText, Loader2, X } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 import {
   getKeyAccountPaymentProofSignedUrl,
   isPaymentProofImage,
@@ -18,6 +20,7 @@ type PaymentProofPreviewContentProps = {
   alt?: string;
   maxImageHeightClass?: string;
   iframeHeightClass?: string;
+  onImageClick?: () => void;
 };
 
 export function PaymentProofPreviewContent({
@@ -27,17 +30,31 @@ export function PaymentProofPreviewContent({
   alt = 'Payment proof preview',
   maxImageHeightClass = 'max-h-[280px]',
   iframeHeightClass = 'h-[280px]',
+  onImageClick,
 }: PaymentProofPreviewContentProps) {
   if (isImage) {
-    return (
-      <div className="border rounded-lg overflow-hidden bg-muted/30 p-2">
-        <img
-          src={previewUrl}
-          alt={alt}
-          className={`w-full h-auto ${maxImageHeightClass} object-contain mx-auto rounded-md`}
-        />
-      </div>
+    const image = (
+      <img
+        src={previewUrl}
+        alt={alt}
+        className={`w-full h-auto ${maxImageHeightClass} object-contain mx-auto rounded-md`}
+      />
     );
+
+    if (onImageClick) {
+      return (
+        <button
+          type="button"
+          className="block w-full border rounded-lg overflow-hidden bg-muted/30 p-2 cursor-pointer hover:opacity-90 transition-opacity"
+          onClick={onImageClick}
+          title="View full size"
+        >
+          {image}
+        </button>
+      );
+    }
+
+    return <div className="border rounded-lg overflow-hidden bg-muted/30 p-2">{image}</div>;
   }
 
   if (isPdf) {
@@ -79,6 +96,7 @@ export function KeyAccountPaymentProofUploadField({
   maxImageHeightClass,
   iframeHeightClass,
 }: KeyAccountPaymentProofUploadFieldProps) {
+  const { toast } = useToast();
   const inputRef = useRef<HTMLInputElement>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
@@ -99,6 +117,25 @@ export function KeyAccountPaymentProofUploadField({
     }
   };
 
+  const handleFileChange = (selected: File | null) => {
+    if (!selected) {
+      onFileChange(null);
+      return;
+    }
+    if (!isPaymentProofImage(selected)) {
+      toast({
+        variant: 'destructive',
+        title: 'Invalid file',
+        description: 'Payment proof must be an image (JPEG, PNG, WebP, or GIF).',
+      });
+      if (inputRef.current) {
+        inputRef.current.value = '';
+      }
+      return;
+    }
+    onFileChange(selected);
+  };
+
   return (
     <div className="space-y-2">
       <Label htmlFor={inputId}>{label}</Label>
@@ -106,8 +143,8 @@ export function KeyAccountPaymentProofUploadField({
         ref={inputRef}
         id={inputId}
         type="file"
-        accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
-        onChange={(e) => onFileChange(e.target.files?.[0] ?? null)}
+        accept="image/jpeg,image/png,image/webp,image/gif"
+        onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
       />
       {file && previewUrl ? (
         <div className="rounded-lg border p-3 space-y-3">
@@ -140,15 +177,24 @@ export function KeyAccountPaymentProofUploadField({
 type KeyAccountPaymentProofStoredPreviewProps = {
   storagePath: string;
   compact?: boolean;
+  label?: string;
+  showViewFull?: boolean;
 };
 
 export function KeyAccountPaymentProofStoredPreview({
   storagePath,
   compact = false,
+  label = 'Payment proof',
+  showViewFull = true,
 }: KeyAccountPaymentProofStoredPreviewProps) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [fullOpen, setFullOpen] = useState(false);
+
+  const isImage = paymentProofPathIsImage(storagePath);
+  const isPdf = paymentProofPathIsPdf(storagePath);
+  const canViewFull = showViewFull && isImage;
 
   useEffect(() => {
     let cancelled = false;
@@ -193,12 +239,49 @@ export function KeyAccountPaymentProofStoredPreview({
   }
 
   return (
-    <PaymentProofPreviewContent
-      previewUrl={previewUrl}
-      isImage={paymentProofPathIsImage(storagePath)}
-      isPdf={paymentProofPathIsPdf(storagePath)}
-      maxImageHeightClass={compact ? 'max-h-[200px]' : 'max-h-[280px]'}
-      iframeHeightClass={compact ? 'h-[200px]' : 'h-[280px]'}
-    />
+    <>
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <Label className="text-xs text-muted-foreground">{label}</Label>
+          {canViewFull ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => setFullOpen(true)}
+            >
+              <Expand className="h-3.5 w-3.5 mr-1" />
+              View full
+            </Button>
+          ) : null}
+        </div>
+        <PaymentProofPreviewContent
+          previewUrl={previewUrl}
+          isImage={isImage}
+          isPdf={isPdf}
+          maxImageHeightClass={compact ? 'max-h-[200px]' : 'max-h-[280px]'}
+          iframeHeightClass={compact ? 'h-[200px]' : 'h-[280px]'}
+          onImageClick={canViewFull ? () => setFullOpen(true) : undefined}
+        />
+      </div>
+
+      <Dialog open={fullOpen} onOpenChange={setFullOpen}>
+        <DialogContent className="max-w-4xl w-[95vw] p-0 overflow-hidden">
+          <DialogHeader className="px-6 pt-6 pb-2">
+            <DialogTitle>{label}</DialogTitle>
+          </DialogHeader>
+          <div className="px-6 pb-6">
+            <div className="rounded-md border bg-muted/20 overflow-auto max-h-[80vh] flex items-center justify-center p-2">
+              <img
+                src={previewUrl}
+                alt={label}
+                className="max-w-full max-h-[75vh] w-auto h-auto object-contain"
+              />
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

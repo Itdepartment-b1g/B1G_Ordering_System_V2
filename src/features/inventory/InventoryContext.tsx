@@ -81,7 +81,8 @@ export const groupBrands = (brandsData: any[]): Brand[] => {
           dspPrice: inventory.dsp_price ?? 0,
           rspPrice: inventory.rsp_price ?? 0,
           status: calculateStatus(inventory.stock, inventory.reorder_level ?? LOW_STOCK_THRESHOLD),
-          reorderLevel: inventory.reorder_level ?? LOW_STOCK_THRESHOLD,
+          reorderLevel:
+            inventory.reorder_level != null ? inventory.reorder_level : undefined,
           mainInventoryId: inventory.id,
         };
       })
@@ -195,7 +196,7 @@ const fetchInventory = async (companyId?: string): Promise<Brand[]> => {
     selling_price: row.selling_price ?? 0,
     dsp_price: row.dsp_price ?? 0,
     rsp_price: row.rsp_price ?? 0,
-    reorder_level: row.reorder_level ?? LOW_STOCK_THRESHOLD,
+    reorder_level: row.reorder_level,
   }));
 };
 

@@ -533,7 +533,7 @@ export function ExecutiveInventoryBoard({
       {stockLayer === 'main' && (
         <p className="text-xs text-muted-foreground">
           {mainMode === 'available'
-            ? 'Available = total stock minus allocated. Alloc = gross allocated to team leaders; Rem = allocated minus pending mobile-sales orders (click Rem to view orders).'
+            ? 'Available = total stock minus allocated. Alloc = gross allocated to team leaders; Rem = allocated minus pending field sales orders (click Rem to view orders).'
             : 'Overall = full main inventory stock. Alloc / Rem columns show allocation breakdown.'}
         </p>
       )}
@@ -627,7 +627,7 @@ export function ExecutiveInventoryBoard({
                 <TableHeader>
                   <TableRow>
                     <TableHead>Order #</TableHead>
-                    <TableHead>Mobile sales</TableHead>
+                    <TableHead>Created by</TableHead>
                     <TableHead>Client</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Qty</TableHead>
@@ -666,7 +666,7 @@ export function ExecutiveInventoryBoard({
               </Table>
             ) : (
               <p className="text-sm text-muted-foreground py-6 text-center">
-                No pending mobile sales orders for this variant.
+                No pending field sales orders for this variant.
               </p>
             )}
           </div>

@@ -70,6 +70,10 @@ export function usePhysicalCountBatchLots({
             expirationDate: (row.expiration_date as string | null) ?? null,
             systemQty: Number(row.quantity_remaining) || 0,
             physicalQty: '',
+            boxCount: '',
+            unitsPerBox: '',
+            looseBoxCount: '',
+            looseQty: '',
           } satisfies PhysicalCountLine;
         })
         .filter(Boolean) as PhysicalCountLine[];

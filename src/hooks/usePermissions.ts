@@ -12,15 +12,11 @@ export function usePermissions() {
 
   // If this tenant is linked to a warehouse hub, we lock the standard catalog
   // (brands & variant management) so only the warehouse controls catalog changes.
-  const { data: hasWarehouseHubLink } = useQuery({
+  const { data: hasWarehouseHubLink, isLoading: hasWarehouseHubLinkLoading } = useQuery({
     queryKey: ['has-warehouse-hub-link', user?.company_id],
     enabled: !!user?.company_id && user?.role !== 'warehouse',
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('warehouse_company_assignments')
-        .select('id')
-        .eq('client_company_id', user!.company_id)
-        .maybeSingle();
+      const { data, error } = await supabase.rpc('get_linked_warehouse_company_id', {});
       if (error) throw error;
       return !!data;
     },
@@ -34,6 +30,25 @@ export function usePermissions() {
     useWarehouseLocationMembership({ userId: user?.id, isWarehouse: isWarehouseRole });
 
   const checkPermission = (route: string): boolean => {
+    // Return-to-warehouse only for hub-linked Standard Account tenants (never warehouse role).
+    // Checked before impersonation bypass so the sidebar stays accurate.
+    if (route === '/inventory/return-to-warehouse') {
+      if (user?.role === 'warehouse') return false;
+      if (!(user?.role === 'admin' || user?.role === 'super_admin' || !!impersonatedCompany)) {
+        return false;
+      }
+      return hasWarehouseHubLink === true;
+    }
+
+    // PO Receiving is only available for team leaders whose tenant is linked to a warehouse hub.
+    if (route === '/inventory/po-receive') {
+      return user?.role === 'team_leader' && hasWarehouseHubLink === true;
+    }
+
+    if (route === '/leader-manual') {
+      return user?.role === 'team_leader' && hasWarehouseHubLink === true;
+    }
+
     // If impersonating, allow full navigation access to the tenant environment.
     // Read-only restrictions are enforced globally via CSS and checkFeature.
     if (impersonatedCompany) {
@@ -75,6 +90,7 @@ export function usePermissions() {
       const mainWarehouseOnlyRoutes = [
         '/inventory/stock-requests',
         '/inventory/stock-adjustments',
+        '/inventory/sub-stock-requests',
         '/finance/payment-settings',
         '/brands',
         '/variant-types',
@@ -82,6 +98,15 @@ export function usePermissions() {
       if (
         mainWarehouseOnlyRoutes.includes(route) &&
         (warehouseMembershipLoading || !warehouseMembership.isMain)
+      ) {
+        return false;
+      }
+
+      // Sub-warehouse request-from-main UI (main users use Sub Stock Requests instead)
+      const subWarehouseOnlyRoutes = ['/inventory/request-stock'];
+      if (
+        subWarehouseOnlyRoutes.includes(route) &&
+        (warehouseMembershipLoading || warehouseMembership.isMain)
       ) {
         return false;
       }
@@ -96,14 +121,19 @@ export function usePermissions() {
         '/inventory/board',
         '/inventory/main',
         '/inventory/sub-warehouses',
+        '/inventory/request-stock',
+        '/inventory/sub-stock-requests',
         '/inventory/disposals',
         '/inventory/allocation-history',
         '/inventory/batches',
         '/inventory/physical-count',
         '/inventory/stock-requests',
         '/inventory/stock-returns',
+        '/inventory/client-stock-returns',
         '/inventory/stock-adjustments',
+        '/inventory/delivery-shortages',
         '/profile',
+        '/warehouse-manual',
       ];
       return warehouseRoutes.includes(route);
     }
@@ -149,6 +179,7 @@ export function usePermissions() {
     isExecutive: user?.role === 'executive',
     isWarehouse: user?.role === 'warehouse',
     hasWarehouseHubLink: hasWarehouseHubLink === true,
+    hasWarehouseHubLinkLoading,
     lockStandardCatalog,
   };
 }

@@ -27,7 +27,7 @@ export type WarehouseStockBoardSettings = {
 
 export const DEFAULT_WAREHOUSE_STOCK_BOARD_SETTINGS: WarehouseStockBoardSettings = {
   lowStockThreshold: LOW_STOCK_THRESHOLD,
-  usePerSkuReorderLevel: true,
+  usePerSkuReorderLevel: false,
   colors: {
     outOfStock: '#dc2626',
     outOfStockText: '#ffffff',
@@ -66,13 +66,21 @@ export function mapStockBoardSettingsRow(row: SettingsRow | null): WarehouseStoc
 }
 
 export function getDisplayedStock(
-  variant: Pick<Variant, 'stock' | 'allocatedStock'>,
-  opts: { mode: StockBoardViewMode; isMainWarehouseUser: boolean }
+  variant: Pick<Variant, 'id' | 'stock' | 'allocatedStock'>,
+  opts: {
+    mode: StockBoardViewMode;
+    isMainWarehouseUser: boolean;
+    /** Open hard + soft transfer PO holds for this variant at the viewed location */
+    poReservedByVariantId?: Record<string, number>;
+  }
 ): number {
-  if (opts.mode === 'sub') return variant.stock;
-  if (!opts.isMainWarehouseUser) return variant.stock;
+  const reserved = Math.max(0, opts.poReservedByVariantId?.[variant.id] || 0);
   if (opts.mode === 'overall') return variant.stock;
-  return Math.max(0, variant.stock - (variant.allocatedStock || 0));
+  if (opts.mode === 'sub' || !opts.isMainWarehouseUser) {
+    return Math.max(0, variant.stock - reserved);
+  }
+  // Main warehouse "available": stock − allocated − open PO holds
+  return Math.max(0, variant.stock - (variant.allocatedStock || 0) - reserved);
 }
 
 export function computeStockBoardStatus(
@@ -88,16 +96,31 @@ export function resolveReorderLevel(
   variant: Variant,
   settings: WarehouseStockBoardSettings
 ): number {
-  if (settings.usePerSkuReorderLevel && variant.reorderLevel != null) {
-    return variant.reorderLevel;
+  const companyThreshold = settings.lowStockThreshold;
+  if (!settings.usePerSkuReorderLevel || variant.reorderLevel == null) {
+    return companyThreshold;
   }
-  return settings.lowStockThreshold;
+  // Per-SKU can be stricter (lower); company threshold still flags everything at/below it.
+  return Math.max(variant.reorderLevel, companyThreshold);
+}
+
+export function getStockBoardLowStockLegendLabel(
+  settings: WarehouseStockBoardSettings
+): string {
+  if (settings.usePerSkuReorderLevel) {
+    return `Low stock (≤ ${settings.lowStockThreshold}, or per-SKU reorder when higher)`;
+  }
+  return `Low stock (≤ ${settings.lowStockThreshold})`;
 }
 
 export function applyStockBoardSettings(
   brands: Brand[],
   settings: WarehouseStockBoardSettings,
-  opts: { mode: StockBoardViewMode; isMainWarehouseUser: boolean }
+  opts: {
+    mode: StockBoardViewMode;
+    isMainWarehouseUser: boolean;
+    poReservedByVariantId?: Record<string, number>;
+  }
 ): Brand[] {
   return brands.map((brand) => {
     const mapVariant = (variant: Variant): Variant => {
@@ -217,7 +240,7 @@ export async function fetchMainWarehouseStockBoard(companyId: string): Promise<B
     selling_price: 0,
     dsp_price: 0,
     rsp_price: 0,
-    reorder_level: row.reorder_level ?? LOW_STOCK_THRESHOLD,
+    reorder_level: row.reorder_level,
   }));
 }
 
@@ -248,7 +271,7 @@ export async function fetchLocationWarehouseStockBoard(
       selling_price: 0,
       dsp_price: 0,
       rsp_price: 0,
-      reorder_level: mainInventory?.reorder_level ?? LOW_STOCK_THRESHOLD,
+      reorder_level: mainInventory?.reorder_level,
     };
   });
 }
@@ -258,6 +281,91 @@ export async function fetchSubWarehouseUserStockBoard(companyId: string): Promis
   if (locErr) throw locErr;
   if (!locId) return [];
   return fetchLocationWarehouseStockBoard(companyId, String(locId));
+}
+
+/**
+ * Open transfer PO holds (hard reservations + soft pending commitments) by variant
+ * for a warehouse location. Used by stock board Available / Sub views.
+ */
+export async function fetchOpenTransferPoReservedByVariant(
+  companyId: string,
+  locationId: string | null
+): Promise<Record<string, number>> {
+  if (!companyId || !locationId) return {};
+
+  let hardQuery = supabase
+    .from('warehouse_transfer_reservations')
+    .select('variant_id, quantity_reserved, quantity_fulfilled, status')
+    .eq('warehouse_company_id', companyId)
+    .eq('warehouse_location_id', locationId)
+    .in('status', ['reserved', 'partial']);
+
+  let softQuery = supabase
+    .from('warehouse_transfer_soft_reservations')
+    .select('variant_id, quantity_committed, status')
+    .eq('warehouse_company_id', companyId)
+    .eq('warehouse_location_id', locationId)
+    .eq('status', 'active');
+
+  const [{ data: hardData, error: hardErr }, { data: softData, error: softErr }] = await Promise.all([
+    hardQuery,
+    softQuery,
+  ]);
+
+  if (hardErr) throw hardErr;
+  // Soft table may not be migrated yet — treat as empty.
+  if (softErr) {
+    const msg = String(softErr.message || '');
+    if (
+      softErr.code !== '42P01' &&
+      softErr.code !== 'PGRST205' &&
+      !msg.includes('warehouse_transfer_soft_reservations')
+    ) {
+      throw softErr;
+    }
+  }
+
+  const map: Record<string, number> = {};
+  for (const row of hardData || []) {
+    const remaining = Math.max(
+      0,
+      Number((row as any).quantity_reserved || 0) - Number((row as any).quantity_fulfilled || 0)
+    );
+    if (remaining <= 0) continue;
+    const vid = String((row as any).variant_id);
+    map[vid] = (map[vid] || 0) + remaining;
+  }
+  for (const row of softData || []) {
+    const remaining = Math.max(0, Number((row as any).quantity_committed || 0));
+    if (remaining <= 0) continue;
+    const vid = String((row as any).variant_id);
+    map[vid] = (map[vid] || 0) + remaining;
+  }
+  return map;
+}
+
+export async function resolveStockBoardReservedLocationId(opts: {
+  companyId: string;
+  scope: { kind: 'main'; mode: 'available' | 'overall' } | { kind: 'sub'; locationId: string };
+  membershipStatus?: string;
+}): Promise<string | null> {
+  if (opts.scope.kind === 'sub') return opts.scope.locationId;
+
+  if (opts.membershipStatus === 'sub') {
+    const { data: locId, error } = await supabase.rpc('get_warehouse_location_id', {});
+    if (error) throw error;
+    return locId ? String(locId) : null;
+  }
+
+  // Main available/overall: holds at the main warehouse location
+  const { data: mainLoc, error } = await supabase
+    .from('warehouse_locations')
+    .select('id')
+    .eq('company_id', opts.companyId)
+    .eq('is_main', true)
+    .maybeSingle();
+  if (error) throw error;
+  return mainLoc?.id ? String(mainLoc.id) : null;
 }
 
 export async function fetchWarehouseStockBoardSettings(

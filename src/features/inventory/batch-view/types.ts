@@ -1,4 +1,5 @@
 import type { InventoryBatchSourceType } from '@/types/database.types';
+import type { LotReceivePacking } from '../utils/formatReceivePacking';
 
 export type BatchInventoryLotLine = {
   lotId: string;
@@ -8,6 +9,8 @@ export type BatchInventoryLotLine = {
   variantType: string | null;
   expirationDate: string | null;
   quantity: number;
+  /** Receive packing from stock request, when available. */
+  packing?: LotReceivePacking | null;
 };
 
 export type BatchInventoryBrandGroup = {

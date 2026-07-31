@@ -37,6 +37,8 @@ import {
   sortWarehouseStockAdjustments,
   type WarehouseStockAdjustmentSortKey,
 } from './utils/warehouseStockAdjustmentSorting';
+import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import StockAdjustmentManual from '@/features/inventory/warehouse-manual/components/StockAdjustmentManual';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -664,10 +666,18 @@ export default function WarehouseStockAdjustmentsPage() {
             For supplier inbound, use <strong>Stock Requests → Receive</strong>.
           </p>
         </div>
-        <Button onClick={openAdjustDialog}>
-          <Plus className="h-4 w-4 mr-2" />
-          New adjustment
-        </Button>
+        <div className="flex gap-2 shrink-0">
+          <PageManualDialog
+            title="Stock Adjustment Manual"
+            fullManualHref="/warehouse-manual#stock-adjustment"
+          >
+            <StockAdjustmentManual embedded />
+          </PageManualDialog>
+          <Button onClick={openAdjustDialog}>
+            <Plus className="h-4 w-4 mr-2" />
+            New adjustment
+          </Button>
+        </div>
       </div>
 
       <Card>

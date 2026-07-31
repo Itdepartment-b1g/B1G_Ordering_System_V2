@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Bell } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -12,10 +13,12 @@ import { useAuth } from '@/features/auth/hooks';
 import { supabase } from '@/lib/supabase';
 import { Notification } from '@/types/database.types';
 import { getNotifications, markNotificationAsRead, markAllNotificationsAsRead } from '@/lib/database.helpers';
+import { getNotificationHref } from '@/features/shared/lib/notification.helpers';
 import { formatDistanceToNow } from 'date-fns';
 
 export function NotificationsDropdown() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -112,6 +115,16 @@ export function NotificationsDropdown() {
     } catch (error) {
       console.error('Error marking all as read:', error);
     }
+  };
+
+  const handleNotificationClick = async (notification: Notification) => {
+    if (!notification.is_read) {
+      await handleMarkAsRead(notification.id);
+    }
+    const href = getNotificationHref(notification, user?.role);
+    if (!href) return;
+    setOpen(false);
+    navigate(href);
   };
 
   // Fetch team members for leaders
@@ -304,16 +317,18 @@ export function NotificationsDropdown() {
             </div>
           ) : (
             <div className="divide-y">
-              {notifications.map((notification) => (
+              {notifications.map((notification) => {
+                const href = getNotificationHref(notification, user?.role);
+                return (
                 <div
                   key={notification.id}
-                  className={`p-4 hover:bg-muted/50 cursor-pointer transition-colors ${!notification.is_read ? 'bg-blue-50/50' : ''
-                    }`}
+                  className={`p-4 hover:bg-muted/50 transition-colors ${
+                    href ? 'cursor-pointer' : 'cursor-default'
+                  } ${!notification.is_read ? 'bg-blue-50/50' : ''}`}
                   onClick={() => {
-                    if (!notification.is_read) {
-                      handleMarkAsRead(notification.id);
-                    }
+                    void handleNotificationClick(notification);
                   }}
+                  role={href ? 'link' : undefined}
                 >
                   <div className="flex items-start gap-3">
                     <div className="text-2xl flex-shrink-0">
@@ -339,7 +354,8 @@ export function NotificationsDropdown() {
                     </div>
                   </div>
                 </div>
-              ))}
+              );
+              })}
             </div>
           )}
         </ScrollArea>

@@ -17,6 +17,10 @@ import { useInventory, type Brand, type Variant } from './InventoryContext';
 import { refetchWarehouseAllocationHistory } from './warehouse-allocation-history/hooks/useWarehouseAllocationHistory';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import { SubWarehouseReturnStockDialog } from './components/SubWarehouseReturnStockDialog';
+import { deriveLocationCode } from './internalStockRequestsStore';
+import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
+import SubwarehouseManual from '@/features/inventory/warehouse-manual/components/SubwarehouseManual';
 
 type LocationRow = {
   id: string;
@@ -345,16 +349,23 @@ export default function SubWarehousesPage() {
           <p className="text-muted-foreground">Create sub-warehouses and allocate stock from the main warehouse.</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <PageGettingStartedDialog />
+          <PageManualDialog
+            title="Sub Warehouses Manual"
+            fullManualHref="/warehouse-manual#subwarehouse"
+          >
+            <SubwarehouseManual embedded />
+          </PageManualDialog>
           <Button variant="outline" onClick={() => void onRefresh()}>
             <RefreshCw className="mr-2 h-4 w-4" />
             Refresh
           </Button>
           {isMainWarehouseUser ? (
             <>
-              <Button variant="outline" onClick={() => setAllocOpen(true)}>
+              {/* <Button variant="outline" onClick={() => setAllocOpen(true)}>
                 <Send className="mr-2 h-4 w-4" />
                 Allocate stock
-              </Button>
+              </Button> */}
               <Button variant="outline" onClick={() => setReturnOpen(true)}>
                 <Undo2 className="mr-2 h-4 w-4" />
                 Submit return
@@ -439,7 +450,24 @@ export default function SubWarehousesPage() {
           <div className="space-y-4 py-2">
             <div className="space-y-2">
               <Label htmlFor="sw-name">Location name</Label>
-              <Input id="sw-name" value={createForm.location_name} onChange={(e) => setCreateForm((f) => ({ ...f, location_name: e.target.value }))} placeholder="e.g. Sub Warehouse - North" />
+              <Input id="sw-name" value={createForm.location_name} onChange={(e) => setCreateForm((f) => ({ ...f, location_name: e.target.value }))} placeholder="e.g. Santa Rosa" />
+              {createForm.location_name.trim() ? (
+                <p className="text-xs text-muted-foreground">
+                  Request code:{' '}
+                  <span className="font-mono font-medium text-foreground">
+                    {deriveLocationCode(createForm.location_name)}
+                  </span>
+                  {' '}
+                  · request numbers look like{' '}
+                  <span className="font-mono">
+                    RN-{deriveLocationCode(createForm.location_name)}-0001
+                  </span>
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  A short location code is generated from the name for stock request numbers.
+                </p>
+              )}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -484,7 +512,7 @@ export default function SubWarehousesPage() {
       </Dialog>
 
       {/* Allocate stock */}
-      <Dialog
+      {/* <Dialog
         open={allocOpen}
         onOpenChange={(open) => {
           setAllocOpen(open);
@@ -657,7 +685,7 @@ export default function SubWarehousesPage() {
             </div>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
+      </Dialog> */}
 
       <SubWarehouseReturnStockDialog
         open={returnOpen}
