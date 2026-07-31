@@ -192,8 +192,9 @@ export function SalesAgentsTab() {
     try {
       setLoading(true);
 
-      // Fetch all users in the company except the logged-in user (RLS will handle company isolation)
-      // AND fetch all approved orders in a SINGLE query (not N+1)
+      // Fetch company users except the logged-in user (RLS handles company isolation).
+      // Exclude warehouse — linked hubs can become visible via delivery-creator profile RLS
+      // but must not appear as manageable users here.
       const [agentsResult, ordersResult] = await Promise.all([
         supabase
           .from('profiles')
@@ -208,6 +209,7 @@ export function SalesAgentsTab() {
             role
           `)
           .neq('id', user.id)
+          .neq('role', 'warehouse')
           .order('created_at', { ascending: false }),
         supabase
           .from('client_orders')
@@ -220,7 +222,9 @@ export function SalesAgentsTab() {
         console.error('Error fetching orders:', ordersResult.error);
       }
 
-      const agentsData = agentsResult.data || [];
+      const agentsData = (agentsResult.data || []).filter(
+        (agent: { role?: string | null }) => agent.role !== 'warehouse'
+      );
       const ordersData = ordersResult.data || [];
 
       // Pre-aggregate orders by agent_id (O(n) instead of O(n*m))
