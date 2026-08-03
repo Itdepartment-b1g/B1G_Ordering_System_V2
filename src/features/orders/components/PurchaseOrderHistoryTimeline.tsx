@@ -10,6 +10,7 @@ import {
   MessageSquareText,
   PackageCheck,
   PackageX,
+  Pencil,
   Receipt,
   Send,
   Truck,
@@ -66,6 +67,8 @@ function eventTitle(
   switch (event.type) {
     case 'created':
       return 'PO created';
+    case 'updated':
+      return 'PO updated';
     case 'director_approved':
       return 'Director approved';
     case 'admin_submitted':
@@ -113,6 +116,13 @@ function eventSummary(
     if (!items?.length) return null;
     const ordered = items.reduce((sum, item) => sum + Math.max(0, item.orderedQuantity), 0);
     return `Ordered ${unitLabel(ordered)} across ${variantLabel(items.length)}`;
+  }
+
+  if (event.type === 'updated') {
+    const qty = linesTotalQty(event.lines);
+    const count = event.lines?.length ?? 0;
+    if (qty > 0) return `Updated order · ${unitLabel(qty)} · ${variantLabel(count)}`;
+    return event.note?.trim() || 'Purchase order updated before warehouse approval';
   }
 
   if (event.type === 'director_approved') {
@@ -195,6 +205,7 @@ function EventIcon({
 }) {
   const iconClass = cn('h-3.5 w-3.5', className);
   if (type === 'created') return <Clock className={iconClass} />;
+  if (type === 'updated') return <Pencil className={iconClass} />;
   if (type === 'director_approved') return <CheckCircle2 className={iconClass} />;
   if (type === 'admin_submitted') return <Send className={iconClass} />;
   if (type === 'approved') return <Send className={iconClass} />;
@@ -249,6 +260,7 @@ function eventTone(type: PurchaseOrderHistoryEvent['type']): {
         iconWrap: 'bg-red-50 text-red-700 border-red-200',
       };
     case 'created':
+    case 'updated':
     default:
       return {
         rail: 'bg-muted-foreground/40',

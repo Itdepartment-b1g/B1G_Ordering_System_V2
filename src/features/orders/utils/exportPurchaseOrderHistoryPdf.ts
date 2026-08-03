@@ -49,6 +49,8 @@ function eventTitle(
   switch (event.type) {
     case 'created':
       return 'PO created';
+    case 'updated':
+      return 'PO updated';
     case 'director_approved':
       return 'Director approved';
     case 'admin_submitted':
@@ -88,6 +90,10 @@ function eventSummary(
   switch (event.type) {
     case 'created':
       return qty > 0 ? `Ordered ${qty.toLocaleString()} unit(s)` : 'Purchase order created';
+    case 'updated':
+      return qty > 0
+        ? `Updated order · ${qty.toLocaleString()} unit(s)`
+        : event.note?.trim() || 'Purchase order updated before warehouse approval';
     case 'director_approved':
       return 'Sales director approved this Key Account PO';
     case 'admin_submitted':

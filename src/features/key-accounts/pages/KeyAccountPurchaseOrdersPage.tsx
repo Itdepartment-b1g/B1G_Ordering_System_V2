@@ -45,7 +45,15 @@ import {
   Pencil,
   ChevronDown,
   History,
+  MoreVertical,
 } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { PurchaseOrderDeliveryDetailsPanel, keyAccountDeliveryDetailsEnabled } from '@/features/orders/components/PurchaseOrderDeliveryDetailsPanel';
 import { PurchaseOrderHistoryDialog } from '@/features/orders/components/PurchaseOrderHistoryDialog';
 import { logPurchaseOrderEvent } from '@/features/orders/purchaseOrderEventsApi';
@@ -62,6 +70,7 @@ import {
   isKeyAccountAccounting,
   isKeyAccountSalesAdmin,
   isKeyAccountSalesHead,
+  canEditKeyAccountPo,
 } from '@/features/key-accounts/keyAccountRoles';
 import { isDeliveredKeyAccountOrder } from '@/features/key-accounts/key-accounts-analytics/keyAccountAnalyticsShared';
 import {
@@ -1045,9 +1054,10 @@ export function KeyAccountPurchaseOrdersPage() {
     await openCofForPo(active);
   };
 
-  const directorApprove = async () => {
-    if (!active || !user?.id) return;
-    const poId = active.id;
+  const directorApprove = async (po?: Row | null) => {
+    const target = po ?? active;
+    if (!target || !user?.id) return;
+    const poId = target.id;
     const ok = await updateWorkflow(poId, {
       workflow_status: 'admin_pending',
       director_approved_at: new Date().toISOString(),
@@ -1063,9 +1073,10 @@ export function KeyAccountPurchaseOrdersPage() {
     }
   };
 
-  const directorReject = async () => {
-    if (!active || !user?.id) return;
-    const poId = active.id;
+  const directorReject = async (po?: Row | null) => {
+    const target = po ?? active;
+    if (!target || !user?.id) return;
+    const poId = target.id;
     const ok = await updateWorkflow(poId, {
       workflow_status: 'rejected',
       status: 'rejected',
@@ -1103,9 +1114,10 @@ export function KeyAccountPurchaseOrdersPage() {
     });
   };
 
-  const ownerApprove = async () => {
-    if (!active || !user?.id || !canOwnerApprove(active)) return;
-    const poId = active.id;
+  const ownerApprove = async (po?: Row | null) => {
+    const target = po ?? active;
+    if (!target || !user?.id || !canOwnerApprove(target)) return;
+    const poId = target.id;
     const nextStatus =
       user.role === 'key_account_manager' ? 'kam_pending' : 'admin_pending';
     const ok = await updateWorkflow(poId, {
@@ -1118,13 +1130,14 @@ export function KeyAccountPurchaseOrdersPage() {
         note: 'Approved by order owner (created on behalf by Sales Admin)',
         createdBy: user.id,
       });
-      notifyCreatorOfOwnerDecision(active, 'approved', nextStatus);
+      notifyCreatorOfOwnerDecision(target, 'approved', nextStatus);
     }
   };
 
-  const ownerReject = async () => {
-    if (!active || !user?.id || !canOwnerApprove(active)) return;
-    const poId = active.id;
+  const ownerReject = async (po?: Row | null) => {
+    const target = po ?? active;
+    if (!target || !user?.id || !canOwnerApprove(target)) return;
+    const poId = target.id;
     const ok = await updateWorkflow(poId, {
       workflow_status: 'rejected',
       status: 'rejected',
@@ -1136,7 +1149,7 @@ export function KeyAccountPurchaseOrdersPage() {
         note: 'Rejected by order owner (created on behalf by Sales Admin)',
         createdBy: user.id,
       });
-      notifyCreatorOfOwnerDecision(active, 'rejected');
+      notifyCreatorOfOwnerDecision(target, 'rejected');
     }
   };
 
@@ -1247,12 +1260,13 @@ export function KeyAccountPurchaseOrdersPage() {
     }
   };
 
-  const salesAdminSubmitToWarehouse = async () => {
-    if (!active || !user?.id) return;
+  const salesAdminSubmitToWarehouse = async (po?: Row | null) => {
+    const target = po ?? active;
+    if (!target || !user?.id) return;
 
     // Release to warehouse queue after admin review; RFPF may already be entered before this step.
     // Keep `status` as pending so the existing Warehouse inbox can approve it.
-    const poId = active.id;
+    const poId = target.id;
     const ok = await updateWorkflow(poId, {
       workflow_status: 'warehouse_reserved',
       admin_approved_at: new Date().toISOString(),
@@ -1584,36 +1598,140 @@ export function KeyAccountPurchaseOrdersPage() {
                           <TableCell className="font-medium">{po.rfpf_number || '—'}</TableCell>
                           <TableCell className="text-right font-semibold">₱{Number(po.total_amount || 0).toLocaleString()}</TableCell>
                           <TableCell className="text-right">
-                            <div className="flex items-center justify-end gap-1 flex-wrap">
-                              {po.company_account_type === 'Key Accounts' && (
+                            <div className="flex items-center justify-end gap-1">
+                              {!isReadOnlyAccounting && canOwnerApprove(po) ? (
                                 <Button
-                                  variant="outline"
                                   size="sm"
-                                  onClick={() => void openCofForPo(po)}
-                                  disabled={cofLoadingId === po.id}
-                                  title="View / Print COF"
+                                  className="h-8"
+                                  disabled={actingId === po.id}
+                                  onClick={() => void ownerApprove(po)}
                                 >
-                                  {cofLoadingId === po.id ? (
-                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                  {actingId === po.id ? (
+                                    <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
                                   ) : (
-                                    <FileText className="h-4 w-4 mr-2" />
+                                    <Check className="h-4 w-4 mr-1.5" />
                                   )}
-                                  COF
+                                  Approve
                                 </Button>
-                              )}
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => setHistoryOrder(po)}
-                                title="View PO history"
-                              >
-                                <History className="h-4 w-4 mr-2" />
-                                History
-                              </Button>
-                              <Button variant="ghost" size="sm" onClick={() => void openView(po)}>
-                                <Eye className="h-4 w-4 mr-2" />
-                                View
-                              </Button>
+                              ) : !isReadOnlyAccounting && canDirectorApprove(po) ? (
+                                <Button
+                                  size="sm"
+                                  className="h-8"
+                                  disabled={actingId === po.id}
+                                  onClick={() => void directorApprove(po)}
+                                >
+                                  {actingId === po.id ? (
+                                    <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                                  ) : (
+                                    <Check className="h-4 w-4 mr-1.5" />
+                                  )}
+                                  Approve
+                                </Button>
+                              ) : !isReadOnlyAccounting && canSubmitToWarehouse(po) ? (
+                                po.rfpf_number?.trim() ? (
+                                  <Button
+                                    size="sm"
+                                    className="h-8"
+                                    disabled={actingId === po.id}
+                                    onClick={() => void salesAdminSubmitToWarehouse(po)}
+                                  >
+                                    {actingId === po.id ? (
+                                      <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                                    ) : (
+                                      <Send className="h-4 w-4 mr-1.5" />
+                                    )}
+                                    Submit
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    size="sm"
+                                    className="h-8"
+                                    onClick={() => void openView(po)}
+                                  >
+                                    <Send className="h-4 w-4 mr-1.5" />
+                                    Review
+                                  </Button>
+                                )
+                              ) : !isReadOnlyAccounting &&
+                                isDeliveredKeyAccountOrder(po) &&
+                                !isRebateDerivedPurchaseOrder(po) ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8"
+                                  onClick={() =>
+                                    navigate(`/key-accounts/rebates/new?poId=${po.id}`)
+                                  }
+                                >
+                                  <RotateCcw className="h-4 w-4 mr-1.5" />
+                                  Rebate
+                                </Button>
+                              ) : null}
+
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    aria-label={`More actions for ${po.po_number}`}
+                                    disabled={actingId === po.id || cofLoadingId === po.id}
+                                  >
+                                    {actingId === po.id || cofLoadingId === po.id ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <MoreVertical className="h-4 w-4" />
+                                    )}
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-52">
+                                  {(canOwnerApprove(po) || canDirectorApprove(po)) &&
+                                    !isReadOnlyAccounting && (
+                                      <>
+                                        <DropdownMenuItem
+                                          className="text-destructive focus:text-destructive"
+                                          onSelect={() =>
+                                            void (canOwnerApprove(po)
+                                              ? ownerReject(po)
+                                              : directorReject(po))
+                                          }
+                                        >
+                                          <X className="mr-2 h-4 w-4" />
+                                          Reject
+                                        </DropdownMenuItem>
+                                        <DropdownMenuSeparator />
+                                      </>
+                                    )}
+                                  {canEditKeyAccountPo(po, user) && (
+                                    <DropdownMenuItem
+                                      onSelect={() =>
+                                        navigate(`/key-accounts/purchase-orders/${po.id}/edit`)
+                                      }
+                                    >
+                                      <Pencil className="mr-2 h-4 w-4" />
+                                      Edit
+                                    </DropdownMenuItem>
+                                  )}
+                                  {po.company_account_type === 'Key Accounts' && (
+                                    <DropdownMenuItem
+                                      disabled={cofLoadingId === po.id}
+                                      onSelect={() => void openCofForPo(po)}
+                                    >
+                                      <FileText className="mr-2 h-4 w-4" />
+                                      COF
+                                    </DropdownMenuItem>
+                                  )}
+                                  <DropdownMenuItem onSelect={() => setHistoryOrder(po)}>
+                                    <History className="mr-2 h-4 w-4" />
+                                    History
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onSelect={() => void openView(po)}>
+                                    <Eye className="mr-2 h-4 w-4" />
+                                    View
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -2358,6 +2476,19 @@ export function KeyAccountPurchaseOrdersPage() {
           </div>
 
           <div className="shrink-0 border-t px-4 py-4 sm:px-6 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
+            {active && canEditKeyAccountPo(active, user) && (
+              <Button
+                className="w-full sm:w-auto"
+                variant="outline"
+                onClick={() => {
+                  setViewOpen(false);
+                  navigate(`/key-accounts/purchase-orders/${active.id}/edit`);
+                }}
+              >
+                <Pencil className="h-4 w-4 mr-2" />
+                Edit
+              </Button>
+            )}
             {active && (
               <Button
                 className="w-full sm:w-auto"

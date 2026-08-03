@@ -66,3 +66,35 @@ export function getKeyAccountRoleLabel(role?: string | null): string {
       return role?.replace(/_/g, ' ') ?? 'User';
   }
 }
+
+/** Editable until warehouse approves fulfillment (status leaves pending). */
+export type KeyAccountPoEditGateInput = {
+  status?: string | null;
+  workflow_status?: string | null;
+  kam_id?: string | null;
+  po_order_kind?: string | null;
+};
+
+export function canEditKeyAccountPo(
+  po: KeyAccountPoEditGateInput | null | undefined,
+  user?: { id?: string | null; role?: string | null } | null
+): boolean {
+  if (!po || !user?.id || !user.role) return false;
+  if (isKeyAccountAccounting(user.role)) return false;
+
+  const status = String(po.status || '').toLowerCase();
+  const workflow = String(po.workflow_status || '').toLowerCase();
+  if (status !== 'pending') return false;
+  if (workflow === 'rejected' || status === 'rejected' || status === 'cancelled') return false;
+
+  const kind = String(po.po_order_kind || '');
+  if (kind === 'rebate_fulfillment' || kind === 'rebate_topup') return false;
+
+  const isPrivilegedEditor =
+    isKeyAccountSalesAdmin(user.role) ||
+    isKeyAccountSalesHead(user.role) ||
+    isKeyAccountDirector(user.role);
+  const isOwner = !!po.kam_id && po.kam_id === user.id;
+
+  return isPrivilegedEditor || isOwner;
+}

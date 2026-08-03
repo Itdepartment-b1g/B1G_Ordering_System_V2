@@ -343,6 +343,14 @@ const App = () => (
                         </ProtectedRoute>
                       } 
                     />
+                    <Route
+                      path="/key-accounts/purchase-orders/:poId/edit"
+                      element={
+                        <ProtectedRoute allowedRoles={['sales_head', 'sales_admin', 'sales_director', 'key_account_manager']}>
+                          <KeyAccountPurchaseOrderPage />
+                        </ProtectedRoute>
+                      }
+                    />
                     <Route 
                       path="/key-accounts/purchase-orders" 
                       element={
