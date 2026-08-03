@@ -161,6 +161,7 @@ type Row = {
     is_default: boolean;
   } | null;
   kam?: { full_name: string; email: string } | null;
+  created_by_user?: { full_name: string | null; email: string | null } | null;
   payment_terms_creator?: { full_name: string | null; email: string | null } | null;
   items?: Array<{
     id: string;
@@ -206,6 +207,9 @@ function normalizePoRow(order: any): Row {
   const rawShop = Array.isArray(order.shop) ? order.shop[0] : order.shop;
   const rawAddress = Array.isArray(order.address) ? order.address[0] : order.address;
   const rawKam = Array.isArray(order.kam) ? order.kam[0] : order.kam;
+  const rawCreatedBy = Array.isArray(order.created_by_user)
+    ? order.created_by_user[0]
+    : order.created_by_user;
 
   return {
     ...order,
@@ -214,6 +218,7 @@ function normalizePoRow(order: any): Row {
     shop: rawShop ?? null,
     address: rawAddress ?? null,
     kam: rawKam ?? null,
+    created_by_user: rawCreatedBy ?? null,
   };
 }
 
@@ -604,7 +609,8 @@ export function KeyAccountPurchaseOrdersPage() {
           client:key_account_clients(client_name, client_code, contact_phone),
           shop:key_account_shops(shop_name, cor_pdf_path, city, province, region),
           address:key_account_delivery_addresses(address_label,full_address,city,province,zip_code,contact_name,contact_phone,is_default),
-          kam:profiles!purchase_orders_kam_id_fkey(full_name,email)
+          kam:profiles!purchase_orders_kam_id_fkey(full_name,email),
+          created_by_user:profiles!purchase_orders_created_by_fkey(full_name,email)
         `
         )
         .eq('company_account_type', 'Key Accounts')
@@ -1959,23 +1965,43 @@ export function KeyAccountPurchaseOrdersPage() {
                   </Card>
                 )}
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="grid grid-cols-2 sm:grid-cols-subgrid sm:col-span-2 gap-3">
-                    <div>
-                      <Label className="text-xs text-muted-foreground">Order date</Label>
-                      <div className="font-medium">{new Date(active.order_date).toLocaleDateString()}</div>
-                    </div>
-                    <div>
-                      <Label className="text-xs text-muted-foreground">Expected</Label>
-                      <div className="font-medium">
-                        {active.expected_delivery_date ? new Date(active.expected_delivery_date).toLocaleDateString() : '—'}
-                      </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Order date</Label>
+                    <div className="font-medium">{new Date(active.order_date).toLocaleDateString()}</div>
+                  </div>
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Expected</Label>
+                    <div className="font-medium">
+                      {active.expected_delivery_date
+                        ? new Date(active.expected_delivery_date).toLocaleDateString()
+                        : '—'}
                     </div>
                   </div>
                   <div>
-                    <Label className="text-xs text-muted-foreground">Created By</Label>
+                    <Label className="text-xs text-muted-foreground">On behalf of</Label>
                     <div className="font-medium">{active.kam?.full_name || '—'}</div>
                     <div className="text-xs text-muted-foreground">{active.kam?.email || ''}</div>
+                  </div>
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Created by</Label>
+                    <div className="font-medium">
+                      {active.created_by_user?.full_name ||
+                        (active.created_by === active.kam_id ? active.kam?.full_name : null) ||
+                        '—'}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {active.created_by_user?.email ||
+                        (active.created_by === active.kam_id ? active.kam?.email : '') ||
+                        ''}
+                    </div>
+                    {active.created_by &&
+                      active.kam_id &&
+                      active.created_by !== active.kam_id && (
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          Created on behalf of order owner
+                        </div>
+                      )}
                   </div>
                 </div>
 
