@@ -27,6 +27,9 @@ export function keyAccountWorkflowLabel(workflowStatus: string | null | undefine
   const ws = String(workflowStatus || '');
   if (ws === 'partial_delivered') return 'Partial delivered';
   if (ws === 'owner_pending') return 'Owner pending';
+  if (ws === 'kam_pending') return 'Awaiting director';
+  if (ws === 'director_pending') return 'Awaiting director';
+  if (ws === 'admin_pending') return 'Awaiting sales admin';
   return ws.replace(/_/g, ' ');
 }
 

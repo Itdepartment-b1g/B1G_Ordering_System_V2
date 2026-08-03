@@ -27,6 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
   Loader2,
   Eye,
@@ -344,6 +345,9 @@ export function KeyAccountPurchaseOrdersPage() {
   const [actingId, setActingId] = useState<string | null>(null);
   const [cofLoadingId, setCofLoadingId] = useState<string | null>(null);
   const [rfpfDraft, setRfpfDraft] = useState('');
+  const [warehouseSubmitMode, setWarehouseSubmitMode] = useState<'without_rfpf' | 'with_rfpf'>(
+    'without_rfpf'
+  );
   const [rfpfRevisions, setRfpfRevisions] = useState<RfpfRevision[]>([]);
   const [rfpfRevisionsLoading, setRfpfRevisionsLoading] = useState(false);
   const [editRfpfOpen, setEditRfpfOpen] = useState(false);
@@ -853,6 +857,7 @@ export function KeyAccountPurchaseOrdersPage() {
   const openView = async (po: Row) => {
     setActive(po);
     setRfpfDraft(po.rfpf_number || '');
+    setWarehouseSubmitMode(po.rfpf_number?.trim() ? 'with_rfpf' : 'without_rfpf');
     setRfpfRevisions([]);
     setEditRfpfOpen(false);
     setEditRfpfDraft('');
@@ -1124,8 +1129,8 @@ export function KeyAccountPurchaseOrdersPage() {
     const target = po ?? active;
     if (!target || !user?.id || !canOwnerApprove(target)) return;
     const poId = target.id;
-    const nextStatus =
-      user.role === 'key_account_manager' ? 'kam_pending' : 'admin_pending';
+    // After the order owner confirms an on-behalf PO, Sales Admin handles RFPF / warehouse submit.
+    const nextStatus = 'admin_pending';
     const ok = await updateWorkflow(poId, {
       workflow_status: nextStatus,
     } as any);
@@ -1266,9 +1271,9 @@ export function KeyAccountPurchaseOrdersPage() {
     }
   };
 
-  const salesAdminSubmitToWarehouse = async (po?: Row | null) => {
+  const salesAdminSubmitToWarehouse = async (po?: Row | null): Promise<boolean> => {
     const target = po ?? active;
-    if (!target || !user?.id) return;
+    if (!target || !user?.id) return false;
 
     // Release to warehouse queue after admin review; RFPF may already be entered before this step.
     // Keep `status` as pending so the existing Warehouse inbox can approve it.
@@ -1284,9 +1289,66 @@ export function KeyAccountPurchaseOrdersPage() {
       void logPurchaseOrderEvent({
         purchaseOrderId: poId,
         eventType: 'admin_submitted',
-        note: 'Submitted to warehouse by sales admin',
+        note:
+          warehouseSubmitMode === 'with_rfpf'
+            ? 'Submitted to warehouse by sales admin (with RFPF)'
+            : 'Submitted to warehouse by sales admin (without RFPF)',
         createdBy: user.id,
       });
+    }
+    return ok;
+  };
+
+  /** Submit from the detail dialog: optionally save RFPF first based on Sales Admin choice. */
+  const salesAdminSubmitFromDialog = async () => {
+    if (!active || !user?.id || !canSubmitToWarehouse(active)) return;
+
+    const withRfpf = warehouseSubmitMode === 'with_rfpf';
+    const existingRfpf = active.rfpf_number?.trim() || '';
+    const draftRfpf = rfpfDraft.trim();
+
+    if (withRfpf && !existingRfpf && !draftRfpf) {
+      toast({
+        variant: 'destructive',
+        title: 'RFPF required',
+        description: 'Enter an RFPF number, or choose Submit without RFPF.',
+      });
+      return;
+    }
+
+    setActingId(active.id);
+    markLocalRefresh();
+    try {
+      if (withRfpf && !existingRfpf && draftRfpf) {
+        const { data, error } = await supabase.rpc('set_key_account_rfpf', {
+          p_po_id: active.id,
+          p_rfpf_number: draftRfpf,
+          p_reason: null,
+        });
+        if (error) throw error;
+        const result = data as { success?: boolean; message?: string };
+        if (!result?.success) {
+          throw new Error(result?.message || 'Failed to save RFPF');
+        }
+        setActive((prev) => (prev ? { ...prev, rfpf_number: draftRfpf } : prev));
+      }
+
+      const ok = await salesAdminSubmitToWarehouse(active);
+      if (!ok) return;
+      toast({
+        title: 'Submitted to warehouse',
+        description: withRfpf
+          ? 'PO queued with RFPF for warehouse fulfillment.'
+          : 'PO queued without RFPF. You can still add RFPF while warehouse reserved.',
+      });
+    } catch (e: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Submit failed',
+        description: e?.message || 'Failed to submit to warehouse',
+      });
+    } finally {
+      setActingId(null);
     }
   };
 
@@ -1634,30 +1696,16 @@ export function KeyAccountPurchaseOrdersPage() {
                                   Approve
                                 </Button>
                               ) : !isReadOnlyAccounting && canSubmitToWarehouse(po) ? (
-                                po.rfpf_number?.trim() ? (
-                                  <Button
-                                    size="sm"
-                                    className="h-8"
-                                    disabled={actingId === po.id}
-                                    onClick={() => void salesAdminSubmitToWarehouse(po)}
-                                  >
-                                    {actingId === po.id ? (
-                                      <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
-                                    ) : (
-                                      <Send className="h-4 w-4 mr-1.5" />
-                                    )}
-                                    Submit
-                                  </Button>
-                                ) : (
-                                  <Button
-                                    size="sm"
-                                    className="h-8"
-                                    onClick={() => void openView(po)}
-                                  >
-                                    <Send className="h-4 w-4 mr-1.5" />
-                                    Review
-                                  </Button>
-                                )
+                                <Button
+                                  size="sm"
+                                  className="h-8"
+                                  onClick={() => void openView(po)}
+                                >
+                                  <Send className="h-4 w-4 mr-1.5" />
+                                  Review
+                                </Button>
+                              ) : null}
+                              {/* Rebate row action — uncomment and replace `: null}` above with this branch to restore:
                               ) : !isReadOnlyAccounting &&
                                 isDeliveredKeyAccountOrder(po) &&
                                 !isRebateDerivedPurchaseOrder(po) ? (
@@ -1673,6 +1721,7 @@ export function KeyAccountPurchaseOrdersPage() {
                                   Rebate
                                 </Button>
                               ) : null}
+                              */}
 
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
@@ -2415,41 +2464,132 @@ export function KeyAccountPurchaseOrdersPage() {
 
                 {isSalesAdmin && (
                   <Card>
-
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base">Sales Admin actions</CardTitle>
+                    </CardHeader>
                     <CardContent className="space-y-3">
-                      {canSalesAdminReview(active) && (
-                        <>
+                      {canSalesAdminReview(active) ? (
+                        <div className="space-y-4">
+                          <div className="space-y-2">
+                            <Label>Submit action</Label>
+                            <RadioGroup
+                              value={warehouseSubmitMode}
+                              onValueChange={(value) =>
+                                setWarehouseSubmitMode(value as 'without_rfpf' | 'with_rfpf')
+                              }
+                              className="gap-3"
+                            >
+                              <div className="flex items-start gap-2 rounded-md border p-3">
+                                <RadioGroupItem
+                                  value="without_rfpf"
+                                  id="submit-without-rfpf"
+                                  className="mt-0.5"
+                                />
+                                <div className="space-y-0.5">
+                                  <Label
+                                    htmlFor="submit-without-rfpf"
+                                    className="font-medium cursor-pointer"
+                                  >
+                                    Submit without RFPF
+                                  </Label>
+                                  <p className="text-xs text-muted-foreground">
+                                    Queue for warehouse now. RFPF can be added later while status is
+                                    Warehouse reserved.
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2 rounded-md border p-3">
+                                <RadioGroupItem
+                                  value="with_rfpf"
+                                  id="submit-with-rfpf"
+                                  className="mt-0.5"
+                                />
+                                <div className="space-y-0.5">
+                                  <Label
+                                    htmlFor="submit-with-rfpf"
+                                    className="font-medium cursor-pointer"
+                                  >
+                                    Submit with RFPF
+                                  </Label>
+                                  <p className="text-xs text-muted-foreground">
+                                    Save RFPF (if needed) and submit to warehouse in one step.
+                                  </p>
+                                </div>
+                              </div>
+                            </RadioGroup>
+                          </div>
+
+                          {warehouseSubmitMode === 'with_rfpf' ? (
+                            active.rfpf_number?.trim() ? (
+                              <div className="rounded-md border px-3 py-2">
+                                <p className="text-xs text-muted-foreground">RFPF Number</p>
+                                <p className="font-mono font-semibold">
+                                  {active.rfpf_number.toUpperCase()}
+                                </p>
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                <Label htmlFor="submit-rfpf-input">RFPF Number *</Label>
+                                <Input
+                                  id="submit-rfpf-input"
+                                  value={rfpfDraft}
+                                  onChange={(e) => setRfpfDraft(e.target.value)}
+                                  placeholder="Enter RFPF..."
+                                />
+                              </div>
+                            )
+                          ) : null}
+
                           <Button
-                            onClick={() => void salesAdminSubmitToWarehouse()}
-                            disabled={!canSubmitToWarehouse(active) || actingId === active.id}
+                            onClick={() => void salesAdminSubmitFromDialog()}
+                            disabled={
+                              actingId === active.id ||
+                              (warehouseSubmitMode === 'with_rfpf' &&
+                                !active.rfpf_number?.trim() &&
+                                !rfpfDraft.trim())
+                            }
                           >
-                            {actingId === active.id ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
-                            Submit to Warehouse
+                            {actingId === active.id ? (
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            ) : (
+                              <Send className="h-4 w-4 mr-2" />
+                            )}
+                            {warehouseSubmitMode === 'with_rfpf'
+                              ? 'Submit with RFPF'
+                              : 'Submit without RFPF'}
                           </Button>
-                        </>
-                      )}
-                      {canSaveRfpf(active) && (
-                        <>
+                        </div>
+                      ) : null}
+
+                      {!canSalesAdminReview(active) && canSaveRfpf(active) ? (
+                        <div className="space-y-3">
                           <div className="space-y-2">
                             <Label>RFPF Number</Label>
-                            <Input value={rfpfDraft} onChange={(e) => setRfpfDraft(e.target.value)} placeholder="Enter RFPF…" />
+                            <Input
+                              value={rfpfDraft}
+                              onChange={(e) => setRfpfDraft(e.target.value)}
+                              placeholder="Enter RFPF..."
+                            />
                           </div>
                           <div className="flex items-center gap-2">
                             <Button
                               onClick={() => void salesAdminSaveRfpf()}
                               disabled={actingId === active.id}
                             >
-                              {actingId === active.id ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                              {actingId === active.id ? (
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              ) : null}
                               Save RFPF
                             </Button>
                           </div>
                           <p className="text-xs text-muted-foreground">
-                            RFPF can be saved while this PO is in Admin pending or Warehouse reserved status.
+                            RFPF can still be saved while this PO is Warehouse reserved.
                           </p>
-                        </>
-                      )}
-                      {canManageRfpf(active) && active.rfpf_number?.trim() && (
-                        <>
+                        </div>
+                      ) : null}
+
+                      {canManageRfpf(active) && active.rfpf_number?.trim() ? (
+                        <div className="space-y-3">
                           <div className="rounded-md border overflow-hidden">
                             <div className="bg-muted/30 px-3 py-1.5 flex items-center justify-between text-muted-foreground font-semibold text-xs">
                               <span>
@@ -2474,7 +2614,9 @@ export function KeyAccountPurchaseOrdersPage() {
                               ) : null}
                             </div>
                             <div className="px-3 py-2">
-                              <div className="text-lg font-bold font-mono">{active.rfpf_number.toUpperCase()}</div>
+                              <div className="text-lg font-bold font-mono">
+                                {active.rfpf_number.toUpperCase()}
+                              </div>
                             </div>
                           </div>
                           {rfpfRevisionsLoading ? (
@@ -2484,7 +2626,9 @@ export function KeyAccountPurchaseOrdersPage() {
                             </div>
                           ) : rfpfRevisions.length > 0 ? (
                             <div className="space-y-2">
-                              <p className="text-xs font-semibold text-muted-foreground">Edit history</p>
+                              <p className="text-xs font-semibold text-muted-foreground">
+                                Edit history
+                              </p>
                               <div className="rounded-md border divide-y">
                                 {rfpfRevisions.map((revision) => (
                                   <RfpfRevisionEntry key={revision.id} revision={revision} />
@@ -2492,8 +2636,8 @@ export function KeyAccountPurchaseOrdersPage() {
                               </div>
                             </div>
                           ) : null}
-                        </>
-                      )}
+                        </div>
+                      ) : null}
                     </CardContent>
                   </Card>
                 )}
