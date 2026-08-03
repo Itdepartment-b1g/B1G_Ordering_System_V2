@@ -16,6 +16,16 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { format } from 'date-fns';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -72,6 +82,7 @@ import {
   isKeyAccountSalesAdmin,
   isKeyAccountSalesHead,
   canEditKeyAccountPo,
+  isKeyAccountOnBehalfPo,
 } from '@/features/key-accounts/keyAccountRoles';
 import { isDeliveredKeyAccountOrder } from '@/features/key-accounts/key-accounts-analytics/keyAccountAnalyticsShared';
 import {
@@ -343,6 +354,7 @@ export function KeyAccountPurchaseOrdersPage() {
   const [historyOrder, setHistoryOrder] = useState<Row | null>(null);
 
   const [actingId, setActingId] = useState<string | null>(null);
+  const [ownerApproveTarget, setOwnerApproveTarget] = useState<Row | null>(null);
   const [cofLoadingId, setCofLoadingId] = useState<string | null>(null);
   const [rfpfDraft, setRfpfDraft] = useState('');
   const [warehouseSubmitMode, setWarehouseSubmitMode] = useState<'without_rfpf' | 'with_rfpf'>(
@@ -1125,8 +1137,14 @@ export function KeyAccountPurchaseOrdersPage() {
     });
   };
 
-  const ownerApprove = async (po?: Row | null) => {
+  const requestOwnerApprove = (po?: Row | null) => {
     const target = po ?? active;
+    if (!target || !canOwnerApprove(target)) return;
+    setOwnerApproveTarget(target);
+  };
+
+  const ownerApprove = async (po?: Row | null) => {
+    const target = po ?? ownerApproveTarget ?? active;
     if (!target || !user?.id || !canOwnerApprove(target)) return;
     const poId = target.id;
     // After the order owner confirms an on-behalf PO, Sales Admin handles RFPF / warehouse submit.
@@ -1142,6 +1160,7 @@ export function KeyAccountPurchaseOrdersPage() {
         createdBy: user.id,
       });
       notifyCreatorOfOwnerDecision(target, 'approved', nextStatus);
+      setOwnerApproveTarget(null);
     }
   };
 
@@ -1600,6 +1619,8 @@ export function KeyAccountPurchaseOrdersPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>PO</TableHead>
+                      <TableHead>Created</TableHead>
+                      <TableHead>Order owner</TableHead>
                       <TableHead>Client</TableHead>
                       <TableHead>Shop</TableHead>
                       <TableHead>Status</TableHead>
@@ -1613,7 +1634,7 @@ export function KeyAccountPurchaseOrdersPage() {
                   <TableBody>
                     {tabRows.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
+                        <TableCell colSpan={11} className="text-center text-muted-foreground py-8">
                           No purchase orders found.
                         </TableCell>
                       </TableRow>
@@ -1646,6 +1667,16 @@ export function KeyAccountPurchaseOrdersPage() {
                             ) : null}
                           </div>
                         </TableCell>
+                          <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                            {po.created_at
+                              ? format(new Date(po.created_at), 'MMM d, yyyy h:mm a')
+                              : '—'}
+                          </TableCell>
+                          <TableCell className="min-w-[10rem]">
+                            <div className="text-sm font-medium text-foreground">
+                              {po.kam?.full_name?.trim() || po.kam?.email?.trim() || '—'}
+                            </div>
+                          </TableCell>
                           <TableCell>{po.client?.client_name || '—'}</TableCell>
                           <TableCell>{po.shop?.shop_name || '—'}</TableCell>
                           <TableCell>
@@ -1672,7 +1703,7 @@ export function KeyAccountPurchaseOrdersPage() {
                                   size="sm"
                                   className="h-8"
                                   disabled={actingId === po.id}
-                                  onClick={() => void ownerApprove(po)}
+                                  onClick={() => requestOwnerApprove(po)}
                                 >
                                   {actingId === po.id ? (
                                     <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
@@ -2027,11 +2058,13 @@ export function KeyAccountPurchaseOrdersPage() {
                         : '—'}
                     </div>
                   </div>
-                  <div>
-                    <Label className="text-xs text-muted-foreground">On behalf of</Label>
-                    <div className="font-medium">{active.kam?.full_name || '—'}</div>
-                    <div className="text-xs text-muted-foreground">{active.kam?.email || ''}</div>
-                  </div>
+                  {isKeyAccountOnBehalfPo(active) ? (
+                    <div>
+                      <Label className="text-xs text-muted-foreground">On behalf of</Label>
+                      <div className="font-medium">{active.kam?.full_name || '—'}</div>
+                      <div className="text-xs text-muted-foreground">{active.kam?.email || ''}</div>
+                    </div>
+                  ) : null}
                   <div>
                     <Label className="text-xs text-muted-foreground">Created by</Label>
                     <div className="font-medium">
@@ -2044,13 +2077,11 @@ export function KeyAccountPurchaseOrdersPage() {
                         (active.created_by === active.kam_id ? active.kam?.email : '') ||
                         ''}
                     </div>
-                    {active.created_by &&
-                      active.kam_id &&
-                      active.created_by !== active.kam_id && (
-                        <div className="text-xs text-muted-foreground mt-0.5">
-                          Created on behalf of order owner
-                        </div>
-                      )}
+                    {isKeyAccountOnBehalfPo(active) ? (
+                      <div className="text-xs text-muted-foreground mt-0.5">
+                        Created on behalf of order owner
+                      </div>
+                    ) : null}
                   </div>
                 </div>
 
@@ -2710,7 +2741,7 @@ export function KeyAccountPurchaseOrdersPage() {
                   {actingId === active.id ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <X className="h-4 w-4 mr-2" />}
                   Reject
                 </Button>
-                <Button className="w-full sm:w-auto" onClick={() => void ownerApprove()} disabled={actingId === active.id}>
+                <Button className="w-full sm:w-auto" onClick={() => requestOwnerApprove()} disabled={actingId === active.id}>
                   {actingId === active.id ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Check className="h-4 w-4 mr-2" />}
                   Approve as owner
                 </Button>
@@ -2739,6 +2770,61 @@ export function KeyAccountPurchaseOrdersPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={!!ownerApproveTarget}
+        onOpenChange={(open) => {
+          if (!open) setOwnerApproveTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Approve on-behalf PO?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to approve this on-behalf PO? It cannot be edited after
+              approval. Please review the PO first.
+              {ownerApproveTarget?.po_number ? (
+                <>
+                  {' '}
+                  ({ownerApproveTarget.po_number})
+                </>
+              ) : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col-reverse sm:flex-row sm:justify-end gap-2">
+            <AlertDialogCancel disabled={actingId === ownerApproveTarget?.id}>Cancel</AlertDialogCancel>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!ownerApproveTarget || actingId === ownerApproveTarget?.id}
+              onClick={() => {
+                const po = ownerApproveTarget;
+                setOwnerApproveTarget(null);
+                if (po) void openView(po);
+              }}
+            >
+              <Eye className="h-4 w-4 mr-2" />
+              Review
+            </Button>
+            <AlertDialogAction
+              disabled={actingId === ownerApproveTarget?.id}
+              onClick={(e) => {
+                e.preventDefault();
+                void ownerApprove(ownerApproveTarget);
+              }}
+            >
+              {actingId === ownerApproveTarget?.id ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Approving…
+                </>
+              ) : (
+                'Yes, approve'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
           <Dialog
             open={recordPayOpen}

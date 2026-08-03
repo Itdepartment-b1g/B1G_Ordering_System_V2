@@ -526,7 +526,8 @@ export function KeyAccountPurchaseOrderPage() {
           toast({
             variant: 'destructive',
             title: 'Cannot edit this PO',
-            description: 'Only pending Key Account orders can be edited before warehouse approval.',
+            description:
+              'On-behalf orders lock after owner approval. Regular orders lock after submit to warehouse.',
           });
           navigate('/key-accounts/purchase-orders');
           return;
@@ -1401,12 +1402,14 @@ export function KeyAccountPurchaseOrderPage() {
       if (isEditMode && poId) {
         const { data: currentPo, error: currentErr } = await supabase
           .from('purchase_orders')
-          .select('id, status, workflow_status, kam_id, po_order_kind, key_account_payment_status')
+          .select('id, status, workflow_status, kam_id, created_by, po_order_kind, key_account_payment_status')
           .eq('id', poId)
           .single();
         if (currentErr) throw currentErr;
         if (!canEditKeyAccountPo(currentPo, user)) {
-          throw new Error('This PO can no longer be edited (warehouse may have approved it).');
+          throw new Error(
+            'This PO can no longer be edited (owner approved, or it was already submitted to warehouse).'
+          );
         }
 
         const { error: poError } = await supabase
