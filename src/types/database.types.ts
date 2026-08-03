@@ -32,6 +32,7 @@ export type PurchaseOrderStatus =
 
 // Key Account workflow specific statuses
 export type KeyAccountWorkflowStatus =
+  | "owner_pending"
   | "kam_pending"
   | "director_pending"
   | "admin_pending"

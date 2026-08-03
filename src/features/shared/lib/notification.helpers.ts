@@ -23,7 +23,17 @@ export function getNotificationHref(
     if (!ref) return null;
 
     switch (ref) {
+        case 'key_account_purchase_order':
+            return '/key-accounts/purchase-orders';
         case 'purchase_order':
+            if (
+                notification.notification_type === 'key_account_order_created' ||
+                notification.notification_type === 'key_account_order_director_approved' ||
+                notification.notification_type === 'key_account_order_admin_approved' ||
+                notification.notification_type === 'key_account_order_rejected'
+            ) {
+                return '/key-accounts/purchase-orders';
+            }
             if (notification.notification_type === 'inventory_allocated') {
                 return role === 'team_leader' ? '/my-inventory' : '/purchase-orders';
             }

@@ -55,6 +55,7 @@ import {
   CreditCard,
   Check,
   ChevronsUpDown,
+  UserRound,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import type {
@@ -62,6 +63,7 @@ import type {
   KeyAccountShop,
   KeyAccountDeliveryAddress,
   KeyAccountPoPaymentMode,
+  UserRole,
 } from '@/types/database.types';
 import { uploadKeyAccountPaymentProof } from '@/features/key-accounts/kaPaymentProofUpload';
 import {
@@ -78,6 +80,24 @@ import {
   KEY_ACCOUNT_PAYMENT_METHOD_LABELS,
   type KeyAccountPaymentMethod,
 } from '@/features/key-accounts/keyAccountPaymentSettingsUtils';
+import {
+  getKeyAccountRoleLabel,
+  isKeyAccountSalesAdmin,
+} from '@/features/key-accounts/keyAccountRoles';
+import { sendNotification } from '@/features/shared/lib/notification.helpers';
+
+type OrderOwnerOption = {
+  id: string;
+  full_name: string | null;
+  email: string | null;
+  role: UserRole;
+};
+
+const ON_BEHALF_OWNER_ROLES: UserRole[] = [
+  'sales_head',
+  'sales_director',
+  'key_account_manager',
+];
 
 type PaymentTermsSource = 'client' | 'company';
 
@@ -129,20 +149,24 @@ export function KeyAccountPurchaseOrderPage() {
     [paymentSettings]
   );
   const navigate = useNavigate();
+  const isSalesAdmin = isKeyAccountSalesAdmin(user?.role);
 
   // Loading states
   const [loadingClients, setLoadingClients] = useState(true);
   const [loadingMoreClients, setLoadingMoreClients] = useState(false);
   const [loadingWarehouses, setLoadingWarehouses] = useState(true);
+  const [loadingOwners, setLoadingOwners] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   // Data states
+  const [orderOwners, setOrderOwners] = useState<OrderOwnerOption[]>([]);
+  const [selectedOwnerId, setSelectedOwnerId] = useState('');
   const [clients, setClients] = useState<KeyAccountClient[]>([]);
   const [clientsHasMore, setClientsHasMore] = useState(false);
   const [clientSearch, setClientSearch] = useState('');
   const [clientPickerOpen, setClientPickerOpen] = useState(false);
   const [selectedClient, setSelectedClient] = useState<KeyAccountClient | null>(null);
-  const kamAssignedClientIdsRef = useRef<string[] | null>(null);
+  const kamAssignedClientIdsRef = useRef<{ kamId: string; clientIds: string[] } | null>(null);
   const clientFetchGenRef = useRef(0);
   const [shops, setShops] = useState<KeyAccountShop[]>([]);
   const [addresses, setAddresses] = useState<KeyAccountDeliveryAddress[]>([]);
@@ -343,6 +367,50 @@ export function KeyAccountPurchaseOrderPage() {
     fetchWarehouses();
   }, []);
 
+  // Sales Admin: load Sales Head / Director / KAM options for create-on-behalf
+  useEffect(() => {
+    if (!isSalesAdmin || !user?.company_id) {
+      setOrderOwners([]);
+      setSelectedOwnerId('');
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setLoadingOwners(true);
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('id, full_name, email, role')
+          .eq('company_id', user.company_id)
+          .in('role', ON_BEHALF_OWNER_ROLES)
+          .eq('status', 'active')
+          .order('full_name', { ascending: true });
+        if (error) throw error;
+        if (cancelled) return;
+        setOrderOwners((data || []) as OrderOwnerOption[]);
+      } catch (e: any) {
+        if (!cancelled) {
+          toast({
+            variant: 'destructive',
+            title: 'Error loading order owners',
+            description: e?.message || 'Failed to load Sales Head / Director / KAM list',
+          });
+          setOrderOwners([]);
+        }
+      } finally {
+        if (!cancelled) setLoadingOwners(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isSalesAdmin, user?.company_id]);
+
+  const selectedOwner = useMemo(
+    () => orderOwners.find((o) => o.id === selectedOwnerId) ?? null,
+    [orderOwners, selectedOwnerId]
+  );
+
   // Debounced searchable client list (10 at a time)
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -350,7 +418,17 @@ export function KeyAccountPurchaseOrderPage() {
     }, clientSearch.trim() ? 300 : 0);
     return () => window.clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchClients closes over latest user/search
-  }, [clientSearch, user?.company_id, user?.id, user?.role]);
+  }, [clientSearch, user?.company_id, user?.id, user?.role, selectedOwnerId]);
+
+  // When Sales Admin changes the on-behalf owner, clear client selection (scope may change)
+  useEffect(() => {
+    if (!isSalesAdmin) return;
+    setSelectedClientId('');
+    setSelectedClient(null);
+    setSelectedShopId('');
+    setSelectedAddressId('');
+    setClients([]);
+  }, [selectedOwnerId, isSalesAdmin]);
 
   // Fetch shops when client changes
   useEffect(() => {
@@ -565,23 +643,45 @@ export function KeyAccountPurchaseOrderPage() {
   }, [sourceMode, selectedWarehouseLocationId]);
 
   async function resolveKamAssignedClientIds(): Promise<string[] | null> {
-    if (user?.role !== 'key_account_manager') return null;
-    if (kamAssignedClientIdsRef.current) return kamAssignedClientIdsRef.current;
+    const kamIdForScope =
+      user?.role === 'key_account_manager'
+        ? user.id
+        : isSalesAdmin && selectedOwner?.role === 'key_account_manager'
+          ? selectedOwner.id
+          : null;
+
+    if (!kamIdForScope) return null;
+
+    if (
+      kamAssignedClientIdsRef.current &&
+      kamAssignedClientIdsRef.current.kamId === kamIdForScope
+    ) {
+      return kamAssignedClientIdsRef.current.clientIds;
+    }
 
     const { data: assignments, error: assignErr } = await supabase
       .from('kam_client_assignments')
       .select('client_id')
-      .eq('kam_id', user.id);
+      .eq('kam_id', kamIdForScope);
 
     if (assignErr) throw assignErr;
 
     const clientIds = (assignments ?? []).map((a) => a.client_id).filter(Boolean);
-    kamAssignedClientIdsRef.current = clientIds;
+    kamAssignedClientIdsRef.current = { kamId: kamIdForScope, clientIds };
     return clientIds;
   }
 
   async function fetchClients(opts: { search?: string; append?: boolean } = {}) {
     if (!user?.company_id) return;
+
+    // Sales Admin must pick an order owner before clients are scoped/loaded.
+    if (isSalesAdmin && !selectedOwnerId) {
+      setClients([]);
+      setClientsHasMore(false);
+      setLoadingClients(false);
+      setLoadingMoreClients(false);
+      return;
+    }
 
     const search = (opts.search ?? clientSearch).trim();
     const append = opts.append ?? false;
@@ -914,6 +1014,15 @@ export function KeyAccountPurchaseOrderPage() {
       return;
     }
 
+    if (isSalesAdmin && !selectedOwnerId) {
+      toast({
+        variant: 'destructive',
+        title: 'Order owner required',
+        description: 'Select Sales Head, Director, or KAM to create this PO on behalf of.',
+      });
+      return;
+    }
+
     if (sourceMode === 'single' && !selectedWarehouseLocationId) {
       toast({
         variant: 'destructive',
@@ -1035,6 +1144,18 @@ export function KeyAccountPurchaseOrderPage() {
       const isSalesHead = user?.role === 'sales_head';
       const isKam = user?.role === 'key_account_manager';
 
+      const kamId = isSalesAdmin
+        ? selectedOwnerId
+        : isKam || isDirector || isSalesHead
+          ? user?.id
+          : null;
+
+      const workflowStatus = isSalesAdmin
+        ? 'owner_pending'
+        : isDirector || isSalesHead
+          ? 'admin_pending'
+          : 'kam_pending';
+
       const orderData = {
         company_id: user?.company_id,
         po_number: poNumber,
@@ -1045,9 +1166,9 @@ export function KeyAccountPurchaseOrderPage() {
         key_account_client_id: selectedClientId,
         key_account_shop_id: selectedShopId,
         key_account_address_id: selectedAddressId,
-        kam_id: isKam || isDirector || isSalesHead ? user?.id : null,
+        kam_id: kamId,
         company_account_type: 'Key Accounts',
-        workflow_status: isDirector || isSalesHead ? 'admin_pending' : 'kam_pending',
+        workflow_status: workflowStatus,
         order_date: orderDate,
         expected_delivery_date: expectedDeliveryDate,
         notes: notes,
@@ -1111,6 +1232,9 @@ export function KeyAccountPurchaseOrderPage() {
       void logPurchaseOrderEvent({
         purchaseOrderId: poData.id,
         eventType: 'created',
+        note: isSalesAdmin && selectedOwner
+          ? `Created by Sales Admin on behalf of ${selectedOwner.full_name || selectedOwner.email || 'order owner'}`
+          : undefined,
         lines: items.map((item) => ({
           variant_id: item.variantId,
           quantity: item.quantity,
@@ -1119,6 +1243,19 @@ export function KeyAccountPurchaseOrderPage() {
         })),
         createdBy: user?.id,
       });
+
+      if (isSalesAdmin && selectedOwnerId && user.company_id) {
+        const ownerName = selectedOwner?.full_name || selectedOwner?.email || 'order owner';
+        void sendNotification({
+          userId: selectedOwnerId,
+          companyId: user.company_id,
+          type: 'key_account_order_created',
+          title: 'PO awaiting your approval',
+          message: `Sales Admin created PO ${poNumber} on your behalf (${ownerName}). Please review and approve.`,
+          referenceType: 'key_account_purchase_order',
+          referenceId: poData.id,
+        });
+      }
 
       if (!isConsignment) {
         if (!user.company_id) {
@@ -1142,9 +1279,11 @@ export function KeyAccountPurchaseOrderPage() {
 
       toast({
         title: 'Order created successfully',
-        description: isConsignment
-          ? `Consignment PO created for ${selectedClient?.client_name} (payment deferred)`
-          : `Purchase Order created for ${selectedClient?.client_name}`,
+        description: isSalesAdmin
+          ? `PO created on behalf of ${selectedOwner?.full_name || 'selected owner'} — pending their approval`
+          : isConsignment
+            ? `Consignment PO created for ${selectedClient?.client_name} (payment deferred)`
+            : `Purchase Order created for ${selectedClient?.client_name}`,
       });
 
       setConfirmOpen(false);
@@ -1257,14 +1396,58 @@ export function KeyAccountPurchaseOrderPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Create Key Account Order</h1>
         <p className="text-muted-foreground">
-          Create a purchase order for your assigned clients with warehouse fulfillment. Turn on
-          Consignment to float stock without payment proof at create.
+          {isSalesAdmin
+            ? 'Create a purchase order on behalf of Sales Head, Director, or KAM. The selected owner must approve before the order continues.'
+            : 'Create a purchase order for your assigned clients with warehouse fulfillment. Turn on Consignment to float stock without payment proof at create.'}
         </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column - Client & Delivery Info */}
         <div className="lg:col-span-2 space-y-6">
+          {isSalesAdmin && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <UserRound className="h-5 w-5" />
+                  Order Owner
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="space-y-2">
+                  <Label>Create on behalf of *</Label>
+                  <Select
+                    value={selectedOwnerId || undefined}
+                    onValueChange={setSelectedOwnerId}
+                    disabled={loadingOwners}
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={
+                          loadingOwners ? 'Loading owners...' : 'Select Sales Head, Director, or KAM'
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {orderOwners.map((owner) => (
+                        <SelectItem key={owner.id} value={owner.id}>
+                          {owner.full_name || owner.email || 'Unnamed'} (
+                          {getKeyAccountRoleLabel(owner.role)})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {selectedOwner && (
+                  <p className="text-sm text-muted-foreground">
+                    Created on behalf of {selectedOwner.full_name || selectedOwner.email} — pending
+                    their approval after submit.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {/* Client Selection */}
           <Card>
             <CardHeader>
@@ -1285,6 +1468,7 @@ export function KeyAccountPurchaseOrderPage() {
                       role="combobox"
                       aria-expanded={clientPickerOpen}
                       className="w-full justify-between font-normal"
+                      disabled={isSalesAdmin && !selectedOwnerId}
                     >
                       <span
                         className={cn(
@@ -2173,6 +2357,7 @@ export function KeyAccountPurchaseOrderPage() {
                 onClick={() => setConfirmOpen(true)}
                 disabled={
                   submitting ||
+                  (isSalesAdmin && !selectedOwnerId) ||
                   !selectedClientId ||
                   !selectedShopId ||
                   !selectedAddressId ||

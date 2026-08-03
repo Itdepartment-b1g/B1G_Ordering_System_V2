@@ -7,6 +7,7 @@ export function firstRelation<T>(value: T | T[] | null | undefined): T | null {
 
 /** Key Account PO workflow statuses counted as pending in product analytics. */
 export const KEY_ACCOUNT_PENDING_WORKFLOW_STATUSES = [
+  'owner_pending',
   'kam_pending',
   'admin_pending',
   'director_pending',

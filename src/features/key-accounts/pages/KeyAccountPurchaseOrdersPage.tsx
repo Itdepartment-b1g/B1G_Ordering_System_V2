@@ -79,8 +79,10 @@ import {
   KeyAccountPaymentProofStoredPreview,
   KeyAccountPaymentProofUploadField,
 } from '@/features/key-accounts/components/KeyAccountPaymentProofPreview';
+import { sendNotification } from '@/features/shared/lib/notification.helpers';
 
 type KeyAccountWorkflowStatus =
+  | 'owner_pending'
   | 'kam_pending'
   | 'director_pending'
   | 'admin_pending'
@@ -419,6 +421,8 @@ export function KeyAccountPurchaseOrdersPage() {
 
   const canDirectorApprove = (po: Row) =>
     isDirector && (po.workflow_status === 'director_pending' || po.workflow_status === 'kam_pending');
+  const canOwnerApprove = (po: Row) =>
+    !!user?.id && po.workflow_status === 'owner_pending' && po.kam_id === user.id;
   const canSalesAdminReview = (po: Row) => isSalesAdmin && po.workflow_status === 'admin_pending';
 
   /** Sales Admin may manage RFPF while the PO is still under admin review or already queued for warehouse. */
@@ -437,6 +441,7 @@ export function KeyAccountPurchaseOrdersPage() {
 
   const isCreatedByCurrentUser = (po: Row) => po.created_by === user?.id;
   const isPendingWorkflow = (po: Row) =>
+    po.workflow_status === 'owner_pending' ||
     po.workflow_status === 'kam_pending' ||
     po.workflow_status === 'director_pending' ||
     po.workflow_status === 'admin_pending';
@@ -597,7 +602,7 @@ export function KeyAccountPurchaseOrdersPage() {
         .order('created_at', { ascending: false });
 
       if (isKAM) {
-        query = query.eq('created_by', user.id);
+        query = query.or(`created_by.eq.${user.id},kam_id.eq.${user.id}`);
       }
 
       const { data, error } = await query;
@@ -1077,6 +1082,64 @@ export function KeyAccountPurchaseOrdersPage() {
     }
   };
 
+  const notifyCreatorOfOwnerDecision = (
+    po: Row,
+    decision: 'approved' | 'rejected',
+    nextStatus?: string
+  ) => {
+    if (!po.created_by || !user?.company_id || po.created_by === user.id) return;
+    const actorName = user.full_name || user.email || 'Order owner';
+    void sendNotification({
+      userId: po.created_by,
+      companyId: user.company_id,
+      type: decision === 'approved' ? 'key_account_order_director_approved' : 'key_account_order_rejected',
+      title: decision === 'approved' ? 'On-behalf PO approved by owner' : 'On-behalf PO rejected by owner',
+      message:
+        decision === 'approved'
+          ? `${actorName} approved PO ${po.po_number}. Status is now ${String(nextStatus || '').replace(/_/g, ' ')}.`
+          : `${actorName} rejected PO ${po.po_number}.`,
+      referenceType: 'key_account_purchase_order',
+      referenceId: po.id,
+    });
+  };
+
+  const ownerApprove = async () => {
+    if (!active || !user?.id || !canOwnerApprove(active)) return;
+    const poId = active.id;
+    const nextStatus =
+      user.role === 'key_account_manager' ? 'kam_pending' : 'admin_pending';
+    const ok = await updateWorkflow(poId, {
+      workflow_status: nextStatus,
+    } as any);
+    if (ok) {
+      void logPurchaseOrderEvent({
+        purchaseOrderId: poId,
+        eventType: 'approved',
+        note: 'Approved by order owner (created on behalf by Sales Admin)',
+        createdBy: user.id,
+      });
+      notifyCreatorOfOwnerDecision(active, 'approved', nextStatus);
+    }
+  };
+
+  const ownerReject = async () => {
+    if (!active || !user?.id || !canOwnerApprove(active)) return;
+    const poId = active.id;
+    const ok = await updateWorkflow(poId, {
+      workflow_status: 'rejected',
+      status: 'rejected',
+    } as any);
+    if (ok) {
+      void logPurchaseOrderEvent({
+        purchaseOrderId: poId,
+        eventType: 'rejected',
+        note: 'Rejected by order owner (created on behalf by Sales Admin)',
+        createdBy: user.id,
+      });
+      notifyCreatorOfOwnerDecision(active, 'rejected');
+    }
+  };
+
   const salesAdminSaveRfpf = async () => {
     if (!active) return;
     if (!canSaveRfpf(active)) {
@@ -1341,7 +1404,7 @@ export function KeyAccountPurchaseOrdersPage() {
               : isDirector
                 ? 'Review assigned KAM POs, or open My PO for orders you created.'
                 : isSalesAdmin
-                  ? 'Final review: submit to warehouse.'
+                  ? 'Create POs on behalf of Sales Head, Director, or KAM; final review and submit to warehouse.'
                   : isSalesHead
                     ? 'Create POs for admin review; Sales Admin submits to warehouse.'
                     : isReadOnlyAccounting
@@ -1349,7 +1412,7 @@ export function KeyAccountPurchaseOrdersPage() {
                       : 'Purchase Orders'}
           </p>
         </div>
-        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto sm:items-center">
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto sm:items-center sm:justify-end sm:ml-auto">
           <Input
             placeholder="Search PO / client / workflow / payment / DR / RFPF…"
             value={q}
@@ -1362,6 +1425,15 @@ export function KeyAccountPurchaseOrdersPage() {
             triggerClassName="w-full sm:w-[220px] justify-between h-10 shrink-0"
             align="end"
           />
+          {(isSalesAdmin || isSalesHead || isDirector || isKAM) && !isReadOnlyAccounting && (
+            <Button
+              className="w-full sm:w-auto shrink-0"
+              onClick={() => navigate('/key-accounts/create-order')}
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Create Purchase Order
+            </Button>
+          )}
         </div>
       </div>
 
@@ -1679,6 +1751,14 @@ export function KeyAccountPurchaseOrdersPage() {
                   workflowStatus={active.workflow_status}
                   fulfillmentType="warehouse_transfer"
                 />
+
+                {active.workflow_status === 'owner_pending' && (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100">
+                    Waiting for order owner
+                    {active.kam?.full_name ? ` (${active.kam.full_name})` : ''} to approve this
+                    Sales Admin–created PO before it continues the approval workflow.
+                  </div>
+                )}
 
                 {isDoneWorkflow(active) && (
                   <Card className="border-dashed">
@@ -2317,6 +2397,23 @@ export function KeyAccountPurchaseOrdersPage() {
                 <RotateCcw className="h-4 w-4 mr-2" />
                 Create rebate
               </Button>
+            )}
+            {active && canOwnerApprove(active) && !isReadOnlyAccounting && (
+              <>
+                <Button
+                  className="w-full sm:w-auto"
+                  variant="outline"
+                  onClick={() => void ownerReject()}
+                  disabled={actingId === active.id}
+                >
+                  {actingId === active.id ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <X className="h-4 w-4 mr-2" />}
+                  Reject
+                </Button>
+                <Button className="w-full sm:w-auto" onClick={() => void ownerApprove()} disabled={actingId === active.id}>
+                  {actingId === active.id ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Check className="h-4 w-4 mr-2" />}
+                  Approve as owner
+                </Button>
+              </>
             )}
             {active && canDirectorApprove(active) && !isReadOnlyAccounting && (
               <>

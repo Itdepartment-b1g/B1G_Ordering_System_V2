@@ -167,6 +167,7 @@ const salesAdminMenuItems: MenuItem[] = [
     icon: ClipboardList,
     hasSubmenu: true,
     submenu: [
+      { title: 'Create Purchase Order', url: '/key-accounts/create-order', icon: Plus },
       { title: 'Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
       // { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
     ]

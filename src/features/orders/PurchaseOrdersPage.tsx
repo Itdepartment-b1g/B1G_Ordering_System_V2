@@ -4049,6 +4049,7 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
       case 'admin_pending':
       case 'director_pending':
       case 'kam_pending':
+      case 'owner_pending':
         return 'bg-amber-500 text-white';
       case 'rejected':
         return 'bg-red-600 text-white';
