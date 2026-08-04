@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
 import removeConsole from "vite-plugin-remove-console";
+import { localSendEmailApi } from "./vite-plugins/local-send-email-api";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -12,6 +13,7 @@ export default defineConfig(({ mode }) => ({
   },
   plugins: [
     react(),
+    mode === "development" && localSendEmailApi(),
     mode === "development" && componentTagger(),
     // Remove ALL console logs in production (including console.error)
     // Note: window.console in main.tsx will still work as it's not removed by the plugin

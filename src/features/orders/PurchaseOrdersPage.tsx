@@ -91,6 +91,7 @@ import {
 } from './utils/purchaseOrderFilters';
 import { KeyAccountPoWarehouseProgress } from '@/features/key-accounts/components/KeyAccountPoWarehouseProgress';
 import { keyAccountWorkflowStatusAfterLocationDispatch } from '@/features/key-accounts/keyAccountDispatchWorkflow';
+import { notifyKeyAccountPoCreatorOfFulfillment } from '@/lib/keyAccountEmail.helpers';
 import { RebateReplacementPricingSummary, RebateReceiveReturnsDialog } from '@/features/key-accounts/rebates';
 import {
   filterRebateReturnLinesForWarehouseUser,
@@ -1753,6 +1754,13 @@ export default function PurchaseOrdersPage() {
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || 'Fulfillment failed');
 
+      void notifyKeyAccountPoCreatorOfFulfillment({
+        order: orderToFulfill,
+        actorUserId: user?.id,
+        warehouseLocationName: fulfillLocationName,
+        warehouseLocationId: locId,
+      });
+
       toast({
         title: 'Fulfilled',
         description: `${data.po_number} fulfilled for your warehouse location.`,
@@ -2949,6 +2957,25 @@ export default function PurchaseOrdersPage() {
                         bucket: KA_DELIVERY_RIDER_PHOTOS_BUCKET,
                         pathPrefix: storageBasePath,
                         fileStem: 'package',
+                      });
+
+                      // Email after proofs exist so creator gets rider + package images.
+                      void notifyKeyAccountPoCreatorOfFulfillment({
+                        order: dispatchPo,
+                        actorUserId: user?.id,
+                        warehouseLocationName: fulfillLocationName,
+                        warehouseLocationId: locId,
+                        items: dispatchLines
+                          .filter((l) => l.ship_qty > 0)
+                          .map((l) => ({
+                            brandName: l.brand_name ?? null,
+                            variantName: l.variant_name ?? null,
+                            quantity: l.ship_qty,
+                          })),
+                        riderPhotoUrl,
+                        riderName: riderName.trim() || null,
+                        riderPlateNumber: riderPlate.trim() || null,
+                        packagePhotoUrls: packageUpload.urls,
                       });
 
                       // 2) Create DR number (WH + first letter of warehouse_locations.name, e.g. Bacoor → WHB)

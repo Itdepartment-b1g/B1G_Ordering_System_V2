@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
@@ -333,10 +333,20 @@ export function KeyAccountPurchaseOrdersPage() {
   const { user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<Row[]>([]);
-  const [q, setQ] = useState('');
+  const [q, setQ] = useState(() => searchParams.get('search')?.trim() || searchParams.get('po')?.trim() || '');
+  const initialTabParam = searchParams.get('tab');
+  const [activeTab, setActiveTab] = useState<TabKey>(() => {
+    const t = String(initialTabParam || '').toLowerCase();
+    if (t === 'pending' || t === 'rebates' || t === 'warehouse' || t === 'done' || t === 'my' || t === 'all') {
+      return t;
+    }
+    // Deep-link from email/search → show matching row across statuses
+    return searchParams.get('search') || searchParams.get('po') ? 'all' : 'pending';
+  });
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'all',
   });
@@ -414,6 +424,7 @@ export function KeyAccountPurchaseOrdersPage() {
 
   const manualRefreshUntilRef = useRef(0);
   const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const deepLinkHandledRef = useRef<string | null>(null);
 
   const markLocalRefresh = () => {
     manualRefreshUntilRef.current = Date.now() + 3000;
@@ -764,6 +775,17 @@ export function KeyAccountPurchaseOrdersPage() {
     };
   }, [user?.id, user?.role]);
 
+  useEffect(() => {
+    const fromUrl = searchParams.get('search')?.trim() || searchParams.get('po')?.trim() || '';
+    if (fromUrl) setQ(fromUrl);
+    const t = String(searchParams.get('tab') || '').toLowerCase();
+    if (t === 'pending' || t === 'rebates' || t === 'warehouse' || t === 'done' || t === 'my' || t === 'all') {
+      setActiveTab(t);
+    } else if (fromUrl) {
+      setActiveTab('all');
+    }
+  }, [searchParams]);
+
   const filtered = useMemo(() => {
     const dateFiltered = rows.filter((r) => {
       // `purchase_orders.order_date` is typically an ISO timestamp.
@@ -1012,6 +1034,25 @@ export function KeyAccountPurchaseOrdersPage() {
       setPoRebates([]);
     }
   };
+
+  // Email "View PO" deep link: filter list + open matching Key Account PO.
+  useEffect(() => {
+    if (loading || rows.length === 0) return;
+    const fromUrl = (searchParams.get('search') || searchParams.get('po') || '').trim();
+    if (!fromUrl) return;
+    if (deepLinkHandledRef.current === fromUrl) return;
+
+    const needle = fromUrl.toLowerCase();
+    const exact =
+      rows.find((r) => String(r.po_number || '').toLowerCase() === needle) ||
+      rows.find((r) => String(r.po_number || '').toLowerCase().includes(needle));
+
+    if (!exact) return;
+    deepLinkHandledRef.current = fromUrl;
+    setQ(fromUrl);
+    setActiveTab('all');
+    void openView(exact);
+  }, [loading, rows, searchParams]);
 
   const updateWorkflow = async (poId: string, patch: Partial<Row>): Promise<boolean> => {
     setActingId(poId);
@@ -1592,7 +1633,7 @@ export function KeyAccountPurchaseOrdersPage() {
         </Card>
       </div>
 
-      <Tabs defaultValue="pending">
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)}>
         <TabsList className="w-full justify-between gap-1 px-4 sm:gap-2 md:gap-4 overflow-x-auto">
           {visibleTabs.map((tab) => (
             <TabsTrigger key={tab.value} value={tab.value} className="px-8 sm:px-4">
