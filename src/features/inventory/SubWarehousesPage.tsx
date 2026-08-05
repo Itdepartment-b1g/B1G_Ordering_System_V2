@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Building2, Loader2, Plus, RefreshCw, Send, Undo2 } from 'lucide-react';
 import { useAuth } from '@/features/auth';
@@ -21,6 +21,7 @@ import { deriveLocationCode } from './internalStockRequestsStore';
 import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
 import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
 import SubwarehouseManual from '@/features/inventory/warehouse-manual/components/SubwarehouseManual';
+import { fetchOpenTransferPoReservedByVariant, getMainWarehouseAllocatableQty } from './warehouseStockBoard';
 
 type LocationRow = {
   id: string;
@@ -149,6 +150,22 @@ export default function SubWarehousesPage() {
       return (data || []) as LocationRow[];
     },
   });
+
+  const mainWarehouseLocationId = useMemo(
+    () => locations.find((loc) => loc.is_main)?.id ?? null,
+    [locations]
+  );
+
+  const { data: poReservedByVariantId = {} } = useQuery({
+    queryKey: ['sub-warehouse-alloc-po-reserved', user?.company_id, mainWarehouseLocationId],
+    enabled: !!user?.company_id && !!mainWarehouseLocationId && allocOpen,
+    queryFn: () => fetchOpenTransferPoReservedByVariant(user!.company_id!, mainWarehouseLocationId),
+  });
+
+  const getAllocatableQty = useCallback(
+    (variant: Variant) => getMainWarehouseAllocatableQty(variant, poReservedByVariantId),
+    [poReservedByVariantId]
+  );
 
   const { data: locationUsers = [] } = useQuery({
     queryKey: ['warehouse-location-users', user?.company_id],
@@ -292,11 +309,11 @@ export default function SubWarehousesPage() {
         toast({ title: 'Invalid SKU', description: 'One of the selected variants could not be found.', variant: 'destructive' });
         return;
       }
-      const available = v.stock - (v.allocatedStock || 0);
+      const available = getAllocatableQty(v);
       if (it.quantity > available) {
         toast({
           title: 'Insufficient stock',
-          description: `${v.name} available is ${available}.`,
+          description: `${v.name} available is ${available} (PO reserved stock cannot be allocated).`,
           variant: 'destructive',
         });
         return;
@@ -611,7 +628,7 @@ export default function SubWarehousesPage() {
                               </h4>
                               <div className="space-y-2 rounded-lg border bg-background p-3">
                                 {list.map((v) => {
-                                  const available = v.stock - (v.allocatedStock || 0);
+                                  const available = getAllocatableQty(v);
                                   return (
                                     <div key={v.id} className="flex items-center justify-between gap-3">
                                       <div className="min-w-0">

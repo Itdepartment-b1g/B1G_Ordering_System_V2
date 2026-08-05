@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Search, Edit, Eye, Loader2, Users, Filter, Building, Mail, Phone, MapPin, FileText, User, Tag, Camera, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Edit, Eye, Loader2, Users, Filter, Building, Mail, Phone, MapPin, FileText, User, Tag, Camera, ChevronLeft, ChevronRight, ExternalLink } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
@@ -70,6 +70,10 @@ interface Client {
   last_order_date?: string | null;
   visit_count: number;
   total_spent: number;
+  location_latitude?: number | null;
+  location_longitude?: number | null;
+  location_accuracy?: number | null;
+  location_captured_at?: string | null;
 }
 
 interface TeamAgent {
@@ -270,7 +274,11 @@ export default function MyTeamsPage() {
           shop_type: client.shop_type,
           last_order_date: client.last_order_date ?? null,
           visit_count: client.visit_logs?.[0]?.count ?? 0,
-          total_spent: orderStats?.total ?? 0
+          total_spent: orderStats?.total ?? 0,
+          location_latitude: client.location_latitude ?? null,
+          location_longitude: client.location_longitude ?? null,
+          location_accuracy: client.location_accuracy ?? null,
+          location_captured_at: client.location_captured_at ?? null,
         };
       });
 
@@ -799,6 +807,8 @@ export default function MyTeamsPage() {
                     onSort={handleClientSort}
                     className="text-center"
                   />
+                  <TableHead className="text-center">Latitude</TableHead>
+                  <TableHead className="text-center">Longitude</TableHead>
                   <SortableTableHead
                     label="Account Type"
                     sortKey="accountType"
@@ -857,7 +867,7 @@ export default function MyTeamsPage() {
               <TableBody>
                 {paginatedClients.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={15} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={17} className="text-center py-8 text-muted-foreground">
                       No clients found
                     </TableCell>
                   </TableRow>
@@ -890,6 +900,38 @@ export default function MyTeamsPage() {
                         </div>
                       </TableCell>
                       <TableCell className="text-center">{client.city || '-'}</TableCell>
+                      <TableCell className="text-center">
+                        {client.location_latitude != null && client.location_longitude != null ? (
+                          <a
+                            href={`https://www.google.com/maps?q=${Number(client.location_latitude)},${Number(client.location_longitude)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs whitespace-nowrap text-primary hover:underline"
+                            title="Open in Google Maps"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {Number(client.location_latitude).toFixed(6)}
+                          </a>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {client.location_latitude != null && client.location_longitude != null ? (
+                          <a
+                            href={`https://www.google.com/maps?q=${Number(client.location_latitude)},${Number(client.location_longitude)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs whitespace-nowrap text-primary hover:underline"
+                            title="Open in Google Maps"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {Number(client.location_longitude).toFixed(6)}
+                          </a>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-center">
                         <Badge variant={client.account_type === 'Key Accounts' ? 'default' : 'secondary'} className="text-xs">
                           {client.account_type === 'Key Accounts' ? 'Key' : 'Standard'}
@@ -1047,6 +1089,37 @@ export default function MyTeamsPage() {
                 <div className="md:col-span-2">
                   <Label className="text-xs text-muted-foreground">Address</Label>
                   <p className="font-medium">{viewingClient.address || '-'}</p>
+                </div>
+                <div className="md:col-span-2">
+                  <Label className="text-xs text-muted-foreground flex items-center gap-1">
+                    <MapPin className="h-3 w-3" />
+                    Location Coordinates
+                  </Label>
+                  {viewingClient.location_latitude != null && viewingClient.location_longitude != null ? (
+                    <div className="space-y-2 mt-1">
+                      <p className="font-medium">
+                        Lat: {Number(viewingClient.location_latitude).toFixed(6)}, Long: {Number(viewingClient.location_longitude).toFixed(6)}
+                      </p>
+                      {viewingClient.location_captured_at && (
+                        <p className="text-xs text-muted-foreground">
+                          Captured on {new Date(viewingClient.location_captured_at).toLocaleString()}
+                          {viewingClient.location_accuracy != null && ` (±${Math.round(viewingClient.location_accuracy)}m accuracy)`}
+                        </p>
+                      )}
+                      <Button variant="outline" size="sm" className="w-full sm:w-auto" asChild>
+                        <a
+                          href={`https://www.google.com/maps?q=${Number(viewingClient.location_latitude)},${Number(viewingClient.location_longitude)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                          View Google Map
+                        </a>
+                      </Button>
+                    </div>
+                  ) : (
+                    <p className="font-medium text-muted-foreground mt-1">Location not captured</p>
+                  )}
                 </div>
                 <div>
                   <Label className="text-xs text-muted-foreground">Contact Person</Label>

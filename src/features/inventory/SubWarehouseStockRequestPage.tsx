@@ -29,7 +29,10 @@ import {
   uploadInternalStockPackagePhotos,
   uploadInternalStockSignature,
 } from './utils/uploadInternalStockDeliveryEvidence';
-import { fetchMainWarehouseStockBoard } from './warehouseStockBoard';
+import {
+  fetchMainWarehouseStockBoard,
+  fetchMainWarehouseAllocatableByVariant,
+} from './warehouseStockBoard';
 import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
 
 export default function SubWarehouseStockRequestPage() {
@@ -67,6 +70,9 @@ export default function SubWarehouseStockRequestPage() {
     void queryClient.invalidateQueries({ queryKey: ['variant-batch-lots'] });
     void queryClient.invalidateQueries({
       queryKey: ['main-warehouse-stock-for-sub-request', user?.company_id],
+    });
+    void queryClient.invalidateQueries({
+      queryKey: ['main-warehouse-allocatable-for-sub-request', user?.company_id],
     });
   };
 
@@ -114,6 +120,13 @@ export default function SubWarehouseStockRequestPage() {
     queryKey: ['main-warehouse-stock-for-sub-request', user?.company_id],
     enabled: !!user?.company_id && requestOpen,
     queryFn: () => fetchMainWarehouseStockBoard(user!.company_id!),
+    staleTime: 30_000,
+  });
+
+  const { data: mainAllocatableByVariantId = {}, isLoading: loadingMainAllocatable } = useQuery({
+    queryKey: ['main-warehouse-allocatable-for-sub-request', user?.company_id, requestOpen],
+    enabled: !!user?.company_id && requestOpen,
+    queryFn: () => fetchMainWarehouseAllocatableByVariant(),
     staleTime: 30_000,
   });
 
@@ -322,7 +335,8 @@ export default function SubWarehouseStockRequestPage() {
         open={requestOpen}
         onOpenChange={setRequestOpen}
         brands={mainBrands}
-        loadingBrands={loadingMainBrands}
+        loadingBrands={loadingMainBrands || loadingMainAllocatable}
+        mainAllocatableByVariantId={mainAllocatableByVariantId}
         sourceLocationName={mainLocationName || 'Main warehouse'}
         submitting={createMutation.isPending}
         onSubmit={async (payload) => {
