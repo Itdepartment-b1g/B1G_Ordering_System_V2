@@ -1575,8 +1575,13 @@ export default function PurchaseOrdersPage() {
 
   const handleOpenFulfillDialog = (order: any) => {
     setOrderToFulfill(order);
-    setFulfillLocationId(membership.locationId ?? null);
-    setFulfillLocationName(null);
+    const locId = membership.locationId ?? null;
+    setFulfillLocationId(locId);
+    setFulfillLocationName(
+      locId
+        ? approveLocationNames[locId] || resolveWarehouseNameForLocation(order, locId)
+        : null
+    );
     if (order?.fulfillment_type === 'warehouse_transfer') {
       openDispatchCaptureForFulfill(order);
       return;
@@ -1757,7 +1762,10 @@ export default function PurchaseOrdersPage() {
       void notifyKeyAccountPoCreatorOfFulfillment({
         order: orderToFulfill,
         actorUserId: user?.id,
-        warehouseLocationName: fulfillLocationName,
+        warehouseLocationName:
+          fulfillLocationName?.trim() ||
+          (locId ? approveLocationNames[locId] : null) ||
+          (locId ? resolveWarehouseNameForLocation(orderToFulfill, locId) : null),
         warehouseLocationId: locId,
       });
 
@@ -2960,10 +2968,14 @@ export default function PurchaseOrdersPage() {
                       });
 
                       // Email after proofs exist so creator gets rider + package images.
+                      const emailWarehouseName =
+                        fulfillLocationName?.trim() ||
+                        approveLocationNames[locId] ||
+                        resolveWarehouseNameForLocation(dispatchPo, locId);
                       void notifyKeyAccountPoCreatorOfFulfillment({
                         order: dispatchPo,
                         actorUserId: user?.id,
-                        warehouseLocationName: fulfillLocationName,
+                        warehouseLocationName: emailWarehouseName,
                         warehouseLocationId: locId,
                         items: dispatchLines
                           .filter((l) => l.ship_qty > 0)

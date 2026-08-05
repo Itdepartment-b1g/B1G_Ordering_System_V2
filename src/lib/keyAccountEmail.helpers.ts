@@ -31,6 +31,10 @@ export interface KeyAccountPoFulfilledEmailParams {
     packagePhotoUrls?: string[] | null;
     /** Absolute URL to open this PO on Key Account Purchase Orders (filtered). */
     poViewUrl?: string | null;
+    /** Timeline timestamps (ISO). */
+    orderedAt?: string | null;
+    approvedAt?: string | null;
+    fulfilledAt?: string | null;
 }
 
 function escapeHtml(value: string): string {
@@ -48,11 +52,55 @@ function safeImageUrl(url: string | null | undefined): string | null {
     return escapeHtml(trimmed);
 }
 
+function sectionHeading(label: string): string {
+    return `<table cellpadding="0" cellspacing="0" style="margin: 0 0 10px 0;">
+                            <tr>
+                                <td style="width: 3px; background: #5B28D6; border-radius: 2px; line-height: 12px; font-size: 0;">&nbsp;</td>
+                                <td style="padding-left: 8px; font-size: 12px; font-weight: 700; color: #6b6b6b; text-transform: uppercase; letter-spacing: 0.06em;">${escapeHtml(label)}</td>
+                            </tr>
+                        </table>`;
+}
+
+/** Compact Manila date/time for email timeline steps. */
+function formatEmailTimelineAt(iso: string | null | undefined): string {
+    const raw = iso?.trim();
+    if (!raw) return '';
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleString('en-PH', {
+        timeZone: 'Asia/Manila',
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+    });
+}
+
 export function generateKeyAccountPoFulfilledHTML(data: KeyAccountPoFulfilledEmailParams): string {
     const greetingName = escapeHtml(data.creatorName?.trim() || 'there');
     const poNumber = escapeHtml(data.poNumber);
-    const locationLine = data.warehouseLocationName?.trim()
-        ? `<p style="margin: 0 0 16px 0; font-size: 14px; color: #444;">Warehouse location: <strong>${escapeHtml(data.warehouseLocationName.trim())}</strong></p>`
+    const warehouseLocationName = data.warehouseLocationName?.trim()
+        ? escapeHtml(data.warehouseLocationName.trim())
+        : null;
+    const poViewUrl =
+        data.poViewUrl?.trim() && /^https?:\/\//i.test(data.poViewUrl.trim())
+            ? escapeHtml(data.poViewUrl.trim())
+            : null;
+
+    const locationBlock = warehouseLocationName
+        ? `<div style="margin-bottom: 20px;"><p style="margin: 0 0 4px 0; font-size: 14px; color: #555;">Warehouse location: <strong style="color:#111;">${warehouseLocationName}</strong></p></div>`
+        : '';
+
+    const ctaBlock = poViewUrl
+        ? `<table cellpadding="0" cellspacing="0" style="margin: 4px 0 28px 0;">
+                        <tr>
+                            <td style="border-radius: 8px; background: #5B28D6;">
+                                <a href="${poViewUrl}" style="display: inline-block; padding: 12px 22px; font-size: 14px; font-weight: 700; color: #ffffff; text-decoration: none; border-radius: 8px;">View Purchase Order &rarr;</a>
+                            </td>
+                        </tr>
+                    </table>`
         : '';
 
     const deliverRows: Array<{ label: string; value: string }> = [];
@@ -74,52 +122,64 @@ export function generateKeyAccountPoFulfilledHTML(data: KeyAccountPoFulfilledEma
         deliverRows.length > 0
             ? `
                     <div style="margin: 0 0 20px 0;">
-                        <p style="margin: 0 0 10px 0; font-size: 13px; color: #666; text-transform: uppercase; letter-spacing: 0.04em;">Deliver to</p>
+                        ${sectionHeading('Deliver to')}
+                        <div style="background: #F3EEFD; border-radius: 8px; padding: 14px 16px;">
                         <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse: collapse; font-size: 14px; color: #333;">
                             ${deliverRows
                                 .map(
                                     (row) => `<tr>
-                                <td style="padding: 6px 12px 6px 0; color: #666; vertical-align: top; width: 88px;">${escapeHtml(row.label)}</td>
-                                <td style="padding: 6px 0; color: #111; vertical-align: top;"><strong>${escapeHtml(row.value)}</strong></td>
+                                <td style="padding: 4px 12px 4px 0; color: #6b6b6b; vertical-align: top; width: 84px; white-space: nowrap;">${escapeHtml(row.label)}</td>
+                                <td style="padding: 4px 0; color: #111; vertical-align: top; font-weight: 600;">${escapeHtml(row.value)}</td>
                             </tr>`
                                 )
                                 .join('')}
                         </table>
+                    </div>
                     </div>`
             : '';
 
     const items = Array.isArray(data.items) ? data.items.filter((it) => Number(it.quantity) > 0) : [];
+    const itemsTotalQty = items.reduce((sum, it) => sum + (Number(it.quantity) || 0), 0);
     const itemsTable =
         items.length > 0
             ? `
                     <div style="margin: 0 0 20px 0;">
-                        <p style="margin: 0 0 10px 0; font-size: 13px; color: #666; text-transform: uppercase; letter-spacing: 0.04em;">Fulfilled items</p>
-                        <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse: collapse; font-size: 14px; color: #333;">
+                        ${sectionHeading('Fulfilled items')}
+                        <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse: collapse; font-size: 14px; color: #333; border: 1px solid #ececec; border-radius: 8px; overflow: hidden;">
                             <thead>
                                 <tr>
-                                    <th align="left" style="padding: 8px 8px 8px 0; border-bottom: 1px solid #e5e5e5; font-weight: 600; color: #666;">Item</th>
-                                    <th align="right" style="padding: 8px 0; border-bottom: 1px solid #e5e5e5; font-weight: 600; color: #666;">Dispatch Qty</th>
+                                    <th align="left" style="padding: 10px 12px; background: #fafafa; border-bottom: 1px solid #ececec; font-size: 11px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.04em;">Item</th>
+                                    <th align="right" style="padding: 10px 12px; background: #fafafa; border-bottom: 1px solid #ececec; font-size: 11px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.04em;">Dispatch Qty</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 ${items
-                                    .map((it) => {
+                                    .map((it, index) => {
                                         const brand = escapeHtml(String(it.brandName || '').trim() || '—');
                                         const variant = escapeHtml(String(it.variantName || '').trim() || '—');
                                         const type = it.variantType?.trim()
                                             ? ` · ${escapeHtml(it.variantType.trim())}`
                                             : '';
                                         const qty = Number(it.quantity) || 0;
-                                        return `<tr>
-                                    <td style="padding: 10px 8px 10px 0; border-bottom: 1px solid #eee; vertical-align: top;">
-                                        <div style="font-weight: 500; color: #111;">${brand}</div>
-                                        <div style="font-size: 13px; color: #666; margin-top: 2px;">${variant}${type}</div>
+                                        const isLast = index === items.length - 1;
+                                        const rowBg = index % 2 === 0 ? '#ffffff' : '#fcfcfd';
+                                        const border = isLast ? '' : 'border-bottom: 1px solid #f1f1f1;';
+                                        return `<tr style="background: ${rowBg};">
+                                    <td style="padding: 12px; ${border} vertical-align: top;">
+                                        <div style="font-weight: 600; color: #111;">${brand}</div>
+                                        <div style="font-size: 13px; color: #777; margin-top: 2px;">${variant}${type}</div>
                                     </td>
-                                    <td align="right" style="padding: 10px 0; border-bottom: 1px solid #eee; vertical-align: top; white-space: nowrap;">${qty.toLocaleString()}</td>
+                                    <td align="right" style="padding: 12px; ${border} vertical-align: top; white-space: nowrap; font-weight: 700; color: #5B28D6;">${qty.toLocaleString()}</td>
                                 </tr>`;
                                     })
                                     .join('')}
                             </tbody>
+                            <tfoot>
+                                <tr>
+                                    <td style="padding: 10px 12px; background:#fafafa; border-top: 1px solid #ececec; font-size: 12px; color: #888;">${items.length} SKU${items.length === 1 ? '' : 's'}</td>
+                                    <td align="right" style="padding: 10px 12px; background:#fafafa; border-top: 1px solid #ececec; font-size: 12px; color: #888;">Total: <strong style="color:#111;">${itemsTotalQty.toLocaleString()}</strong></td>
+                                </tr>
+                            </tfoot>
                         </table>
                     </div>`
             : '';
@@ -131,16 +191,26 @@ export function generateKeyAccountPoFulfilledHTML(data: KeyAccountPoFulfilledEma
         .map((u) => safeImageUrl(u))
         .filter((u): u is string => !!u);
 
-    const riderMetaBits = [riderName && `Name: <strong>${riderName}</strong>`, riderPlate && `Plate: <strong>${riderPlate}</strong>`]
-        .filter(Boolean)
-        .join(' · ');
+    const hasRiderContent = !!(riderPhotoUrl || riderName || riderPlate);
+    const riderAvatar = riderPhotoUrl
+        ? `<img src="${riderPhotoUrl}" alt="Rider" width="52" height="52" style="display:block; width:52px; height:52px; border-radius:50%; object-fit:cover; border: 2px solid #fff; box-shadow: 0 0 0 1px #E3E3E8;" />`
+        : `<div style="width:52px; height:52px; border-radius:50%; background:#EDE7F9; border: 2px solid #fff; box-shadow: 0 0 0 1px #E3E3E8; line-height:52px; text-align:center; font-size:18px; font-weight:700; color:#5B28D6;">${(riderName || 'R').charAt(0).toUpperCase()}</div>`;
 
-    const riderSection = riderPhotoUrl
+    const riderSection = hasRiderContent
         ? `
                     <div style="margin: 0 0 20px 0;">
-                        <p style="margin: 0 0 10px 0; font-size: 13px; color: #666; text-transform: uppercase; letter-spacing: 0.04em;">Driver / rider</p>
-                        ${riderMetaBits ? `<p style="margin: 0 0 10px 0; font-size: 14px; color: #444;">${riderMetaBits}</p>` : ''}
-                        <img src="${riderPhotoUrl}" alt="Rider photo" style="display: block; max-width: 100%; width: 280px; height: auto; border: 1px solid #e5e5e5; border-radius: 6px; background: #fafafa;" />
+                        ${sectionHeading('Driver / rider')}
+                        <table cellpadding="0" cellspacing="0" style="background:#fafafa; border:1px solid #ececec; border-radius: 10px; padding: 12px;">
+                            <tr>
+                                <td style="width: 52px; padding-right: 12px;">
+                                    ${riderAvatar}
+                                </td>
+                                <td style="vertical-align: middle;">
+                                    ${riderName ? `<div style="font-size:14px; font-weight:700; color:#111;">${riderName}</div>` : ''}
+                                    ${riderPlate ? `<div style="font-size:12px; color:#6b6b6b; margin-top:2px;">Plate <span style="font-family: 'SF Mono', Consolas, monospace; font-weight:700; color:#333;">${riderPlate}</span></div>` : ''}
+                                </td>
+                            </tr>
+                        </table>
                     </div>`
         : '';
 
@@ -148,14 +218,15 @@ export function generateKeyAccountPoFulfilledHTML(data: KeyAccountPoFulfilledEma
         packageUrls.length > 0
             ? `
                     <div style="margin: 0 0 20px 0;">
-                        <p style="margin: 0 0 10px 0; font-size: 13px; color: #666; text-transform: uppercase; letter-spacing: 0.04em;">Package photos</p>
+                        ${sectionHeading('Package photos')}
                         <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
                             <tr>
                                 ${packageUrls
                                     .map(
                                         (url, index) => `
                                 <td style="padding: 0 ${index < packageUrls.length - 1 ? '8px' : '0'} 0 0; vertical-align: top; width: ${Math.floor(100 / packageUrls.length)}%;">
-                                    <img src="${url}" alt="Package proof" style="display: block; width: 100%; max-width: 100%; height: auto; border: 1px solid #e5e5e5; border-radius: 6px; background: #fafafa;" />
+                                    <img src="${url}" alt="Package proof" style="display: block; width: 100%; max-width: 100%; height: auto; border: 1px solid #ececec; border-radius: 10px; background: #fafafa;" />
+                                    <div style="margin-top: 5px; font-size: 11px; color: #999; text-align:center;">Photo ${index + 1} of ${packageUrls.length}</div>
                                 </td>`
                                     )
                                     .join('')}
@@ -164,30 +235,80 @@ export function generateKeyAccountPoFulfilledHTML(data: KeyAccountPoFulfilledEma
                     </div>`
             : '';
 
+    const orderedAtLabel = formatEmailTimelineAt(data.orderedAt);
+    const approvedAtLabel = formatEmailTimelineAt(data.approvedAt);
+    const fulfilledAtLabel = formatEmailTimelineAt(data.fulfilledAt);
+    const stepDateHtml = (label: string) =>
+        label
+            ? `<div style="margin-top:4px; font-size:10px; line-height:1.3; font-weight:500; color:#999;">${escapeHtml(label)}</div>`
+            : '';
+
+    const timelineBlock = `<table cellpadding="0" cellspacing="0" width="100%" style="margin: 0 0 28px 0;">
+                            <tr>
+                                <td align="center" style="width: 96px; vertical-align: top;">
+                                    <div style="width:22px;height:22px;border-radius:50%;background:#5B28D6;display:inline-block;line-height:22px;text-align:center;color:#fff;font-size:12px;font-weight:700;">&#10003;</div>
+                                    <div style="margin-top:6px; font-size:11px; font-weight:600; color:#6b6b6b;">Order Placed</div>
+                                    ${stepDateHtml(orderedAtLabel)}
+                                </td>
+                                <td style="padding: 0 4px; vertical-align: top; padding-top: 10px;">
+                                    <div style="height:2px; background:#5B28D6;"></div>
+                                </td>
+                                <td align="center" style="width: 88px; vertical-align: top;">
+                                    <div style="width:22px;height:22px;border-radius:50%;background:#5B28D6;display:inline-block;line-height:22px;text-align:center;color:#fff;font-size:12px;font-weight:700;">&#10003;</div>
+                                    <div style="margin-top:6px; font-size:11px; font-weight:600; color:#6b6b6b;">Approved</div>
+                                    ${stepDateHtml(approvedAtLabel)}
+                                </td>
+                                <td style="padding: 0 4px; vertical-align: top; padding-top: 10px;">
+                                    <div style="height:2px; background:#5B28D6;"></div>
+                                </td>
+                                <td align="center" style="width: 118px; vertical-align: top;">
+                                    <div style="width:22px;height:22px;border-radius:50%;background:#5B28D6;display:inline-block;line-height:22px;text-align:center;color:#fff;font-size:12px;font-weight:700;box-shadow: 0 0 0 4px #F3EEFD;">&#10003;</div>
+                                    <div style="margin-top:6px; font-size:11px; font-weight:700; color:#5B28D6;">Fulfilled</div>
+                                    <div style="margin-top:2px; font-size:10px; font-weight:600; color:#888;">Out for Delivery</div>
+                                    ${stepDateHtml(fulfilledAtLabel)}
+                                </td>
+                            </tr>
+                        </table>`;
+
     return `<!DOCTYPE html>
 <html>
-<head><meta charset="utf-8" /></head>
-<body style="margin: 0; padding: 0; background: #f5f5f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-    <table width="100%" cellpadding="0" cellspacing="0" style="background: #f5f5f5; padding: 24px 12px;">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+</head>
+<body style="margin: 0; padding: 0; background: #f0eefb; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+    <span style="display:none; visibility:hidden; opacity:0; color:transparent; height:0; width:0; overflow:hidden;">PO ${poNumber} has been fulfilled by the warehouse.</span>
+    <table width="100%" cellpadding="0" cellspacing="0" style="background: #f0eefb; padding: 32px 12px;">
         <tr>
             <td align="center">
-                <div style="max-width: 560px; background: #fff; border-radius: 8px; padding: 28px 24px; text-align: left;">
-                    <p style="margin: 0 0 8px 0; font-size: 13px; color: #888; text-transform: uppercase; letter-spacing: 0.04em;">Key Account PO</p>
-                    <h1 style="margin: 0 0 16px 0; font-size: 20px; color: #111;">Warehouse fulfilled your PO</h1>
-                    <p style="margin: 0 0 16px 0; font-size: 15px; color: #333;">Hi ${greetingName},</p>
-                    <p style="margin: 0 0 16px 0; font-size: 15px; color: #333;">
-                        Purchase order ${
-                          data.poViewUrl?.trim() && /^https?:\/\//i.test(data.poViewUrl.trim())
-                            ? `<a href="${escapeHtml(data.poViewUrl.trim())}" style="color: #111; font-weight: 700; text-decoration: underline;">${poNumber}</a>`
-                            : `<strong>${poNumber}</strong>`
-                        } has been fulfilled by the warehouse.
-                    </p>
-                    ${locationLine}
-                    ${deliverToSection}
-                    ${itemsTable}
-                    ${riderSection}
-                    ${packageSection}
-                    <p style="margin: 0; font-size: 13px; color: #999;">You can review this PO in Key Account Purchase Orders.</p>
+                <div style="max-width: 560px; width: 100%;">
+                    <div style="height: 4px; background: linear-gradient(90deg, #5B28D6, #4A1FB0); border-radius: 8px 8px 0 0;"></div>
+                    <div style="background: #fff; border-radius: 0 0 12px 12px; padding: 32px 28px; text-align: left; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+
+                        <table cellpadding="0" cellspacing="0" style="margin: 0 0 18px 0;">
+                            <tr>
+                                <td style="border: 1px solid #E3E3E8; border-radius: 6px; padding: 4px 10px; font-family: 'SF Mono', Consolas, monospace; font-size: 12px; font-weight: 700; color: #444; letter-spacing: 0.02em;">${poNumber}</td>
+                            </tr>
+                        </table>
+
+                        <h1 style="margin: 0 0 6px 0; font-size: 21px; color: #111; font-weight: 700;">Warehouse fulfilled your PO</h1>
+                        <p style="margin: 0 0 22px 0; font-size: 15px; color: #555;">
+                            Hi ${greetingName}, your purchase order has been fulfilled by the ${warehouseLocationName ? `<strong style="color:#111;">${warehouseLocationName}</strong>` : 'warehouse'}.
+                        </p>
+
+                        ${timelineBlock}
+
+                        ${locationBlock}
+                        ${ctaBlock}
+                        ${deliverToSection}
+                        ${itemsTable}
+                        ${riderSection}
+                        ${packageSection}
+
+                        <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #f0f0f0;">
+                            <p style="margin: 0; font-size: 12px; color: #a3a3a3;">You can review this PO anytime in Key Account Purchase Orders.</p>
+                        </div>
+                    </div>
                 </div>
             </td>
         </tr>
@@ -237,6 +358,9 @@ export type NotifyKeyAccountPoCreatorFulfilledOrder = {
     po_number?: string | null;
     company_account_type?: string | null;
     created_by?: string | null;
+    created_at?: string | null;
+    order_date?: string | null;
+    approved_at?: string | null;
     created_by_user?: { full_name?: string | null; email?: string | null } | null;
     client?: { client_name?: string | null } | { client_name?: string | null }[] | null;
     shop?: { shop_name?: string | null } | { shop_name?: string | null }[] | null;
@@ -404,5 +528,8 @@ export async function notifyKeyAccountPoCreatorOfFulfillment(params: {
         riderPlateNumber,
         packagePhotoUrls,
         poViewUrl,
+        orderedAt: order.created_at || order.order_date || null,
+        approvedAt: order.approved_at || null,
+        fulfilledAt: new Date().toISOString(),
     });
 }
