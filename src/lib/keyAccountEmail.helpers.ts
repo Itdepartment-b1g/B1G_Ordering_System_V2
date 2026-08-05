@@ -4,7 +4,16 @@ export interface KeyAccountPoFulfilledEmailItem {
     brandName?: string | null;
     variantName?: string | null;
     variantType?: string | null;
-    quantity: number;
+    variantId?: string | null;
+    /** Ordered qty on the PO line (this warehouse). */
+    orderQty?: number | null;
+    /** Qty dispatched in this fulfillment. */
+    dispatchQty?: number | null;
+    /**
+     * Legacy alias for dispatch qty. Prefer `dispatchQty`.
+     * When only `quantity` is set, it is treated as both order and dispatch qty.
+     */
+    quantity?: number | null;
 }
 
 export interface KeyAccountPoFulfilledEmailParams {
@@ -138,8 +147,21 @@ export function generateKeyAccountPoFulfilledHTML(data: KeyAccountPoFulfilledEma
                     </div>`
             : '';
 
-    const items = Array.isArray(data.items) ? data.items.filter((it) => Number(it.quantity) > 0) : [];
-    const itemsTotalQty = items.reduce((sum, it) => sum + (Number(it.quantity) || 0), 0);
+    const items = Array.isArray(data.items)
+        ? data.items.filter((it) => {
+              const orderQty = Number(it.orderQty ?? it.quantity) || 0;
+              const dispatchQty = Number(it.dispatchQty ?? it.quantity) || 0;
+              return orderQty > 0 || dispatchQty > 0;
+          })
+        : [];
+    const itemsTotalOrderQty = items.reduce(
+        (sum, it) => sum + (Number(it.orderQty ?? it.quantity) || 0),
+        0
+    );
+    const itemsTotalDispatchQty = items.reduce(
+        (sum, it) => sum + (Number(it.dispatchQty ?? it.quantity) || 0),
+        0
+    );
     const itemsTable =
         items.length > 0
             ? `
@@ -149,7 +171,8 @@ export function generateKeyAccountPoFulfilledHTML(data: KeyAccountPoFulfilledEma
                             <thead>
                                 <tr>
                                     <th align="left" style="padding: 10px 12px; background: #fafafa; border-bottom: 1px solid #ececec; font-size: 11px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.04em;">Item</th>
-                                    <th align="right" style="padding: 10px 12px; background: #fafafa; border-bottom: 1px solid #ececec; font-size: 11px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.04em;">Dispatch Qty</th>
+                                    <th align="right" style="padding: 10px 8px; background: #fafafa; border-bottom: 1px solid #ececec; font-size: 11px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap;">Order Qty</th>
+                                    <th align="right" style="padding: 10px 12px; background: #fafafa; border-bottom: 1px solid #ececec; font-size: 11px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap;">Dispatch Qty</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -160,7 +183,8 @@ export function generateKeyAccountPoFulfilledHTML(data: KeyAccountPoFulfilledEma
                                         const type = it.variantType?.trim()
                                             ? ` · ${escapeHtml(it.variantType.trim())}`
                                             : '';
-                                        const qty = Number(it.quantity) || 0;
+                                        const orderQty = Number(it.orderQty ?? it.quantity) || 0;
+                                        const dispatchQty = Number(it.dispatchQty ?? it.quantity) || 0;
                                         const isLast = index === items.length - 1;
                                         const rowBg = index % 2 === 0 ? '#ffffff' : '#fcfcfd';
                                         const border = isLast ? '' : 'border-bottom: 1px solid #f1f1f1;';
@@ -169,7 +193,8 @@ export function generateKeyAccountPoFulfilledHTML(data: KeyAccountPoFulfilledEma
                                         <div style="font-weight: 600; color: #111;">${brand}</div>
                                         <div style="font-size: 13px; color: #777; margin-top: 2px;">${variant}${type}</div>
                                     </td>
-                                    <td align="right" style="padding: 12px; ${border} vertical-align: top; white-space: nowrap; font-weight: 700; color: #5B28D6;">${qty.toLocaleString()}</td>
+                                    <td align="right" style="padding: 12px 8px; ${border} vertical-align: top; white-space: nowrap; font-weight: 600; color: #555;">${orderQty.toLocaleString()}</td>
+                                    <td align="right" style="padding: 12px; ${border} vertical-align: top; white-space: nowrap; font-weight: 700; color: #5B28D6;">${dispatchQty.toLocaleString()}</td>
                                 </tr>`;
                                     })
                                     .join('')}
@@ -177,7 +202,8 @@ export function generateKeyAccountPoFulfilledHTML(data: KeyAccountPoFulfilledEma
                             <tfoot>
                                 <tr>
                                     <td style="padding: 10px 12px; background:#fafafa; border-top: 1px solid #ececec; font-size: 12px; color: #888;">${items.length} SKU${items.length === 1 ? '' : 's'}</td>
-                                    <td align="right" style="padding: 10px 12px; background:#fafafa; border-top: 1px solid #ececec; font-size: 12px; color: #888;">Total: <strong style="color:#111;">${itemsTotalQty.toLocaleString()}</strong></td>
+                                    <td align="right" style="padding: 10px 8px; background:#fafafa; border-top: 1px solid #ececec; font-size: 12px; color: #888;"><strong style="color:#111;">${itemsTotalOrderQty.toLocaleString()}</strong></td>
+                                    <td align="right" style="padding: 10px 12px; background:#fafafa; border-top: 1px solid #ececec; font-size: 12px; color: #888;"><strong style="color:#5B28D6;">${itemsTotalDispatchQty.toLocaleString()}</strong></td>
                                 </tr>
                             </tfoot>
                         </table>
@@ -385,6 +411,7 @@ export type NotifyKeyAccountPoCreatorFulfilledOrder = {
           }[]
         | null;
     items?: Array<{
+        variant_id?: string | null;
         brand_name?: string | null;
         variant_name?: string | null;
         variant_type?: string | null;
@@ -396,6 +423,92 @@ export type NotifyKeyAccountPoCreatorFulfilledOrder = {
 function unwrapRelation<T>(value: T | T[] | null | undefined): T | null {
     if (Array.isArray(value)) return value[0] ?? null;
     return value ?? null;
+}
+
+function emailItemMatchKey(it: {
+    variantId?: string | null;
+    brandName?: string | null;
+    variantName?: string | null;
+}): string {
+    const variantId = it.variantId ? String(it.variantId) : '';
+    if (variantId) return `id:${variantId}`;
+    return `name:${String(it.brandName || '')
+        .trim()
+        .toLowerCase()}|${String(it.variantName || '')
+        .trim()
+        .toLowerCase()}`;
+}
+
+function mapPoItemsForFulfillEmail(
+    items: NotifyKeyAccountPoCreatorFulfilledOrder['items'],
+    warehouseLocationId?: string | null
+): KeyAccountPoFulfilledEmailItem[] {
+    const rows = Array.isArray(items) ? items : [];
+    return rows
+        .filter((it) => {
+            if (!warehouseLocationId) return true;
+            const itemLoc = it.warehouse_location_id ? String(it.warehouse_location_id) : '';
+            // Include header-only lines (no location) and lines for this warehouse.
+            return !itemLoc || itemLoc === String(warehouseLocationId);
+        })
+        .map((it) => {
+            const qty = Number(it.quantity) || 0;
+            return {
+                variantId: it.variant_id ?? null,
+                brandName: it.brand_name ?? null,
+                variantName: it.variant_name ?? null,
+                variantType: it.variant_type ?? null,
+                orderQty: qty,
+                dispatchQty: qty,
+                quantity: qty,
+            };
+        })
+        .filter((it) => (Number(it.orderQty) || 0) > 0);
+}
+
+/**
+ * Merge PO ordered lines with this shipment's dispatch qtys.
+ * Prefers dispatched rows; looks up order qty from the PO when possible.
+ */
+function buildFulfilledEmailItems(params: {
+    orderItems: NotifyKeyAccountPoCreatorFulfilledOrder['items'];
+    warehouseLocationId?: string | null;
+    dispatchItems?: KeyAccountPoFulfilledEmailItem[] | null;
+}): KeyAccountPoFulfilledEmailItem[] {
+    const ordered = mapPoItemsForFulfillEmail(params.orderItems, params.warehouseLocationId);
+    const dispatch = Array.isArray(params.dispatchItems)
+        ? params.dispatchItems.filter((it) => {
+              const dq = Number(it.dispatchQty ?? it.quantity) || 0;
+              return dq > 0;
+          })
+        : [];
+
+    if (dispatch.length === 0) return ordered;
+
+    const orderByKey = new Map<string, KeyAccountPoFulfilledEmailItem>();
+    for (const row of ordered) {
+        orderByKey.set(emailItemMatchKey(row), row);
+    }
+
+    return dispatch.map((ship) => {
+        const key = emailItemMatchKey(ship);
+        const fromOrder = orderByKey.get(key);
+        const dispatchQty = Number(ship.dispatchQty ?? ship.quantity) || 0;
+        const orderQty =
+            Number(ship.orderQty) ||
+            Number(fromOrder?.orderQty) ||
+            Number(fromOrder?.quantity) ||
+            dispatchQty;
+        return {
+            variantId: ship.variantId ?? fromOrder?.variantId ?? null,
+            brandName: ship.brandName ?? fromOrder?.brandName ?? null,
+            variantName: ship.variantName ?? fromOrder?.variantName ?? null,
+            variantType: ship.variantType ?? fromOrder?.variantType ?? null,
+            orderQty,
+            dispatchQty,
+            quantity: dispatchQty,
+        };
+    });
 }
 
 function mapDeliverToFromOrder(order: NotifyKeyAccountPoCreatorFulfilledOrder): Pick<
@@ -426,27 +539,6 @@ function mapDeliverToFromOrder(order: NotifyKeyAccountPoCreatorFulfilledOrder): 
     };
 }
 
-function mapPoItemsForFulfillEmail(
-    items: NotifyKeyAccountPoCreatorFulfilledOrder['items'],
-    warehouseLocationId?: string | null
-): KeyAccountPoFulfilledEmailItem[] {
-    const rows = Array.isArray(items) ? items : [];
-    return rows
-        .filter((it) => {
-            if (!warehouseLocationId) return true;
-            const itemLoc = it.warehouse_location_id ? String(it.warehouse_location_id) : '';
-            // Include header-only lines (no location) and lines for this warehouse.
-            return !itemLoc || itemLoc === String(warehouseLocationId);
-        })
-        .map((it) => ({
-            brandName: it.brand_name ?? null,
-            variantName: it.variant_name ?? null,
-            variantType: it.variant_type ?? null,
-            quantity: Number(it.quantity) || 0,
-        }))
-        .filter((it) => it.quantity > 0);
-}
-
 /**
  * Resolve creator email and notify when a Key Account PO location is fulfilled.
  * Skips non-KA POs, missing email, and when the actor is the creator.
@@ -456,7 +548,7 @@ export async function notifyKeyAccountPoCreatorOfFulfillment(params: {
     actorUserId?: string | null;
     warehouseLocationName?: string | null;
     warehouseLocationId?: string | null;
-    /** When provided (e.g. dispatch ship lines), used instead of order.items. */
+    /** When provided (e.g. dispatch ship lines), merged with PO order qty. */
     items?: KeyAccountPoFulfilledEmailItem[] | null;
     riderPhotoUrl?: string | null;
     riderName?: string | null;
@@ -508,10 +600,11 @@ export async function notifyKeyAccountPoCreatorOfFulfillment(params: {
         return;
     }
 
-    const emailItems =
-        Array.isArray(items) && items.length > 0
-            ? items.filter((it) => Number(it.quantity) > 0)
-            : mapPoItemsForFulfillEmail(order.items, warehouseLocationId);
+    const emailItems = buildFulfilledEmailItems({
+        orderItems: order.items,
+        warehouseLocationId,
+        dispatchItems: items,
+    });
 
     const poNumber = String(order.po_number || order.id);
     const poViewUrl = `${window.location.origin}/key-accounts/purchase-orders?search=${encodeURIComponent(poNumber)}&tab=all`;

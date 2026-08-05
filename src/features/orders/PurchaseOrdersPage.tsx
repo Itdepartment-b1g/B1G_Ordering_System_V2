@@ -2980,8 +2980,10 @@ export default function PurchaseOrdersPage() {
                         items: dispatchLines
                           .filter((l) => l.ship_qty > 0)
                           .map((l) => ({
+                            variantId: l.variant_id,
                             brandName: l.brand_name ?? null,
                             variantName: l.variant_name ?? null,
+                            dispatchQty: l.ship_qty,
                             quantity: l.ship_qty,
                           })),
                         riderPhotoUrl,
