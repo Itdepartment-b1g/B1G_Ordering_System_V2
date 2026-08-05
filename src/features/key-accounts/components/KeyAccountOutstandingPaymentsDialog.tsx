@@ -23,20 +23,51 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { firstRelation } from '../key-accounts-analytics/keyAccountAnalyticsShared';
+import {
+  firstRelation,
+  isKeyAccountConsignmentOrder,
+} from '@/features/key-accounts/key-accounts-analytics/keyAccountAnalyticsShared';
 import {
   AnalyticsTablePagination,
   paginateAnalyticsRows,
-} from '../key-accounts-analytics/AnalyticsTablePagination';
+} from '@/features/key-accounts/key-accounts-analytics/AnalyticsTablePagination';
 import {
+  fetchKeyAccountDashboardPayments,
   formatKeyAccountDashboardCurrency,
-  type KeyAccountDashboardMonthPoRow,
-  type KeyAccountDashboardMonthlyPaymentRow,
-} from './keyAccountDashboardRevenue';
+  splitKeyAccountPoPaymentRevenue,
+} from '@/features/key-accounts/dashboard/keyAccountDashboardRevenue';
+
+export type KeyAccountOutstandingPoInput = {
+  id: string;
+  po_number: string;
+  order_date: string;
+  total_amount: number;
+  po_order_kind?: string | null;
+  key_account_payment_status?: string | null;
+  client?:
+    | { client_name: string | null }
+    | { client_name: string | null }[]
+    | null;
+};
+
+type OutstandingPoRow = {
+  orderId: string;
+  poNumber: string;
+  orderDate: string;
+  clientName: string;
+  isConsignment: boolean;
+  totalAmount: number;
+  paidAmount: number;
+  settlementDiscount: number;
+  remainingBalance: number;
+  consignmentFloat: number;
+  paymentStatus: string;
+};
 
 type PaymentHistoryRow = {
   id: string;
@@ -51,7 +82,6 @@ type PaymentHistoryRow = {
     | null;
 };
 
-/** One visible history line — cash and settlement discount are never combined. */
 type PaymentHistoryDisplayRow = {
   key: string;
   created_at: string;
@@ -60,6 +90,33 @@ type PaymentHistoryDisplayRow = {
   amountLabel: string;
   amountClassName?: string;
 };
+
+type PoKindFilter = 'all' | 'standard' | 'consignment';
+type StatusFilter = 'all' | 'unpaid' | 'partial';
+
+function paymentStatusBadgeClass(status: string) {
+  switch (status) {
+    case 'paid':
+      return 'bg-emerald-600 text-white hover:bg-emerald-600';
+    case 'partial':
+      return 'bg-amber-500 text-white hover:bg-amber-500';
+    case 'consignment':
+      return 'border-sky-300 text-sky-800 bg-sky-50 hover:bg-sky-50';
+    default:
+      return 'bg-slate-500 text-white hover:bg-slate-500';
+  }
+}
+
+function formatOrderDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleDateString();
+}
+
+function formatAmountOrDash(value: number) {
+  if (!value) return '—';
+  return formatKeyAccountDashboardCurrency(value);
+}
 
 function buildPaymentHistoryDisplayRows(payments: PaymentHistoryRow[]): PaymentHistoryDisplayRow[] {
   const rows: PaymentHistoryDisplayRow[] = [];
@@ -101,76 +158,159 @@ function buildPaymentHistoryDisplayRows(payments: PaymentHistoryRow[]): PaymentH
   return rows;
 }
 
-type PoKindFilter = 'all' | 'standard' | 'consignment';
-
-function paymentStatusBadgeClass(status: string) {
-  switch (status) {
-    case 'paid':
-      return 'bg-emerald-600 text-white hover:bg-emerald-600';
-    case 'partial':
-      return 'bg-amber-500 text-white hover:bg-amber-500';
-    case 'consignment':
-      return 'border-sky-300 text-sky-800 bg-sky-50 hover:bg-sky-50';
-    default:
-      return 'bg-slate-500 text-white hover:bg-slate-500';
+function buildOutstandingRows(
+  orders: KeyAccountOutstandingPoInput[],
+  payments: Awaited<ReturnType<typeof fetchKeyAccountDashboardPayments>>
+): OutstandingPoRow[] {
+  const paidByOrderId = new Map<string, number>();
+  const discountByOrderId = new Map<string, number>();
+  for (const payment of payments) {
+    const id = payment.purchase_order_id;
+    paidByOrderId.set(id, (paidByOrderId.get(id) || 0) + (Number(payment.amount) || 0));
+    discountByOrderId.set(
+      id,
+      (discountByOrderId.get(id) || 0) + (Number(payment.settlement_discount) || 0)
+    );
   }
+
+  return orders
+    .map((order) => {
+      const total = Number(order.total_amount) || 0;
+      const isConsignment = isKeyAccountConsignmentOrder(order);
+      const paidRaw = paidByOrderId.get(order.id) || 0;
+      const discountRaw = discountByOrderId.get(order.id) || 0;
+      const split = splitKeyAccountPoPaymentRevenue(total, paidRaw, isConsignment, discountRaw);
+      const status = String(order.key_account_payment_status || 'unpaid');
+      const client = firstRelation(order.client);
+
+      return {
+        orderId: order.id,
+        poNumber: order.po_number || '—',
+        orderDate: order.order_date || '',
+        clientName: client?.client_name || '—',
+        isConsignment,
+        totalAmount: total,
+        paidAmount: split.paidRevenue,
+        settlementDiscount: split.settlementDiscountRevenue,
+        remainingBalance: split.partialRevenue + split.unpaidRevenue,
+        consignmentFloat: split.consignmentRevenue,
+        paymentStatus: status,
+      };
+    })
+    .sort((a, b) => {
+      const aOutstanding = a.isConsignment ? a.consignmentFloat : a.remainingBalance;
+      const bOutstanding = b.isConsignment ? b.consignmentFloat : b.remainingBalance;
+      return bOutstanding - aOutstanding || a.poNumber.localeCompare(b.poNumber);
+    });
 }
 
-function formatOrderDate(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '—';
-  return date.toLocaleDateString();
-}
-
-function formatAmountOrDash(value: number) {
-  if (!value) return '—';
-  return formatKeyAccountDashboardCurrency(value);
-}
-
-export function KeyAccountDashboardRevenueMonthDialog({
+export function KeyAccountOutstandingPaymentsDialog({
   open,
   onOpenChange,
-  monthLabel,
-  year,
-  monthlyRow,
-  poRows,
+  orders,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  monthLabel: string | null;
-  year: number;
-  monthlyRow: KeyAccountDashboardMonthlyPaymentRow | null;
-  poRows: KeyAccountDashboardMonthPoRow[];
+  orders: KeyAccountOutstandingPoInput[];
 }) {
+  const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState<OutstandingPoRow[]>([]);
   const [search, setSearch] = useState('');
   const [poKindFilter, setPoKindFilter] = useState<PoKindFilter>('all');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [poPage, setPoPage] = useState(1);
-  const [historyOrder, setHistoryOrder] = useState<KeyAccountDashboardMonthPoRow | null>(null);
+  const [historyOrder, setHistoryOrder] = useState<OutstandingPoRow | null>(null);
   const [historyPayments, setHistoryPayments] = useState<PaymentHistoryRow[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyPage, setHistoryPage] = useState(1);
 
   useEffect(() => {
+    if (!open) return;
+
+    let cancelled = false;
+    setLoading(true);
+    setSearch('');
+    setPoKindFilter('all');
+    setStatusFilter('all');
     setPoPage(1);
-  }, [search, poKindFilter, monthLabel, year, open]);
+
+    void (async () => {
+      try {
+        const payments = await fetchKeyAccountDashboardPayments(
+          supabase,
+          orders.map((order) => order.id)
+        );
+        if (cancelled) return;
+        setRows(buildOutstandingRows(orders, payments));
+      } catch {
+        if (!cancelled) setRows(buildOutstandingRows(orders, []));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, orders]);
+
+  useEffect(() => {
+    setPoPage(1);
+  }, [search, poKindFilter, statusFilter]);
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return poRows.filter((row) => {
+    return rows.filter((row) => {
       if (poKindFilter === 'consignment' && !row.isConsignment) return false;
       if (poKindFilter === 'standard' && row.isConsignment) return false;
+      if (statusFilter === 'unpaid' && row.paymentStatus !== 'unpaid') return false;
+      if (statusFilter === 'partial' && row.paymentStatus !== 'partial') return false;
       if (!q) return true;
-      const haystack = [row.poNumber, row.clientName, row.paymentStatus]
-        .join(' ')
-        .toLowerCase();
+      const haystack = [row.poNumber, row.clientName, row.paymentStatus].join(' ').toLowerCase();
       return haystack.includes(q);
     });
-  }, [poRows, search, poKindFilter]);
+  }, [rows, search, poKindFilter, statusFilter]);
 
   const pagedRows = useMemo(
     () => paginateAnalyticsRows(filteredRows, poPage),
     [filteredRows, poPage]
   );
+
+  const summary = useMemo(() => {
+    let unpaid = 0;
+    let partial = 0;
+    let remaining = 0;
+    let consignment = 0;
+    let paid = 0;
+    let discount = 0;
+    let total = 0;
+    for (const row of rows) {
+      if (row.paymentStatus === 'partial') partial += 1;
+      else unpaid += 1;
+      remaining += row.isConsignment ? 0 : row.remainingBalance;
+      consignment += row.consignmentFloat;
+      paid += row.paidAmount;
+      discount += row.settlementDiscount;
+      total += row.totalAmount;
+    }
+    return { unpaid, partial, remaining, consignment, paid, discount, total };
+  }, [rows]);
+
+  const filteredTotals = useMemo(() => {
+    let paid = 0;
+    let consignment = 0;
+    let discount = 0;
+    let total = 0;
+    let remaining = 0;
+    for (const row of filteredRows) {
+      paid += row.paidAmount;
+      consignment += row.consignmentFloat;
+      discount += row.settlementDiscount;
+      total += row.totalAmount;
+      remaining += row.isConsignment ? 0 : row.remainingBalance;
+    }
+    return { paid, consignment, discount, total, remaining };
+  }, [filteredRows]);
 
   const historyPaidTotal = useMemo(
     () => historyPayments.reduce((sum, row) => sum + (Number(row.amount) || 0), 0),
@@ -194,13 +334,13 @@ export function KeyAccountDashboardRevenueMonthDialog({
     [historyDisplayRows, historyPage]
   );
 
-  const openPaymentHistory = async (row: KeyAccountDashboardMonthPoRow) => {
+  const openPaymentHistory = async (row: OutstandingPoRow) => {
     setHistoryOrder(row);
     setHistoryPayments([]);
     setHistoryPage(1);
     setHistoryLoading(true);
     try {
-      const rows = await fetchAllPaginated<PaymentHistoryRow>(async (from, to) => {
+      const history = await fetchAllPaginated<PaymentHistoryRow>(async (from, to) => {
         const { data, error } = await supabase
           .from('purchase_order_key_account_payments')
           .select(
@@ -220,7 +360,7 @@ export function KeyAccountDashboardRevenueMonthDialog({
           .range(from, to);
         return { data: (data as PaymentHistoryRow[] | null) ?? null, error };
       });
-      setHistoryPayments(rows);
+      setHistoryPayments(history);
     } catch {
       setHistoryPayments([]);
     } finally {
@@ -243,6 +383,7 @@ export function KeyAccountDashboardRevenueMonthDialog({
           if (!next) {
             setSearch('');
             setPoKindFilter('all');
+            setStatusFilter('all');
             setPoPage(1);
             closePaymentHistory();
           }
@@ -251,49 +392,56 @@ export function KeyAccountDashboardRevenueMonthDialog({
       >
         <DialogContent className="max-w-4xl w-[calc(100vw-2rem)] max-h-[85vh] overflow-y-auto overflow-x-hidden">
           <DialogHeader>
-            <DialogTitle>
-              {monthLabel} {year} — PO breakdown
-            </DialogTitle>
+            <DialogTitle>Unpaid / Partial POs</DialogTitle>
             <DialogDescription>
-              One row per PO. Click a PO # to view payment history. Amount columns are that PO&apos;s
-              contribution to this month&apos;s chart. Remaining shows balance still owed on standard
-              POs; consignment float is under Cons. only.
+              Purchase orders with payment tracking that are not fully paid. Consignment float is
+              under Cons.; remaining balance is for standard POs. Click a PO # for payment history.
             </DialogDescription>
           </DialogHeader>
 
-          {monthlyRow && (
+          {loading ? (
+            <div className="flex items-center justify-center gap-2 py-12 text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              Loading outstanding balances…
+            </div>
+          ) : (
             <div className="space-y-4 text-sm min-w-0">
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
                 <div>
-                  <p className="text-muted-foreground text-xs">Paid</p>
-                  <p className="font-semibold text-emerald-600">
-                    {formatKeyAccountDashboardCurrency(monthlyRow.paidRevenue)}
-                  </p>
+                  <p className="text-muted-foreground text-xs">Unpaid</p>
+                  <p className="font-semibold">{summary.unpaid}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Partial</p>
+                  <p className="font-semibold text-amber-600">{summary.partial}</p>
                 </div>
                 <div>
                   <p className="text-muted-foreground text-xs">Remaining balance</p>
                   <p className="font-semibold text-orange-600">
-                    {formatKeyAccountDashboardCurrency(
-                      monthlyRow.partialRevenue + monthlyRow.unpaidRevenue
-                    )}
+                    {formatKeyAccountDashboardCurrency(summary.remaining)}
                   </p>
                 </div>
                 <div>
                   <p className="text-muted-foreground text-xs">Consignment</p>
                   <p className="font-semibold text-sky-600">
-                    {formatKeyAccountDashboardCurrency(monthlyRow.consignmentRevenue)}
+                    {formatKeyAccountDashboardCurrency(summary.consignment)}
                   </p>
                 </div>
                 <div>
-                  <p className="text-muted-foreground text-xs">Settlement disc.</p>
-                  <p className="font-semibold text-slate-600">
-                    {formatKeyAccountDashboardCurrency(monthlyRow.settlementDiscountRevenue)}
+                  <p className="text-muted-foreground text-xs">Paid so far</p>
+                  <p className="font-semibold text-emerald-600">
+                    {formatKeyAccountDashboardCurrency(summary.paid)}
+                    {summary.discount > 0 ? (
+                      <span className="block text-xs font-normal text-slate-600">
+                        + {formatKeyAccountDashboardCurrency(summary.discount)} disc.
+                      </span>
+                    ) : null}
                   </p>
                 </div>
                 <div>
                   <p className="text-muted-foreground text-xs">Total</p>
                   <p className="font-semibold">
-                    {formatKeyAccountDashboardCurrency(monthlyRow.totalRevenue)}
+                    {formatKeyAccountDashboardCurrency(summary.total)}
                   </p>
                 </div>
               </div>
@@ -305,6 +453,19 @@ export function KeyAccountDashboardRevenueMonthDialog({
                   placeholder="Search PO #, client, status..."
                   className="max-w-md"
                 />
+                <Select
+                  value={statusFilter}
+                  onValueChange={(value) => setStatusFilter(value as StatusFilter)}
+                >
+                  <SelectTrigger className="w-full sm:w-[160px]">
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All statuses</SelectItem>
+                    <SelectItem value="unpaid">Unpaid</SelectItem>
+                    <SelectItem value="partial">Partial</SelectItem>
+                  </SelectContent>
+                </Select>
                 <Select
                   value={poKindFilter}
                   onValueChange={(value) => setPoKindFilter(value as PoKindFilter)}
@@ -338,7 +499,7 @@ export function KeyAccountDashboardRevenueMonthDialog({
                     {pagedRows.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
-                          No purchase orders contribute to this month.
+                          No unpaid or partial purchase orders.
                         </TableCell>
                       </TableRow>
                     ) : (
@@ -373,13 +534,13 @@ export function KeyAccountDashboardRevenueMonthDialog({
                             {row.clientName}
                           </TableCell>
                           <TableCell className="text-right align-top text-emerald-600 tabular-nums">
-                            {formatAmountOrDash(row.paidInMonth)}
+                            {formatAmountOrDash(row.paidAmount)}
                           </TableCell>
                           <TableCell className="text-right align-top text-sky-600 tabular-nums">
-                            {formatAmountOrDash(row.consignmentInMonth)}
+                            {formatAmountOrDash(row.consignmentFloat)}
                           </TableCell>
                           <TableCell className="text-right align-top text-slate-600 tabular-nums">
-                            {formatAmountOrDash(row.settlementDiscountInMonth)}
+                            {formatAmountOrDash(row.settlementDiscount)}
                           </TableCell>
                           <TableCell className="text-right align-top tabular-nums">
                             {formatKeyAccountDashboardCurrency(row.totalAmount)}
@@ -391,7 +552,6 @@ export function KeyAccountDashboardRevenueMonthDialog({
                           </TableCell>
                           <TableCell className="align-top">
                             <Badge
-                              variant={row.paymentStatus === 'consignment' ? 'outline' : 'default'}
                               className={`text-[10px] px-1.5 ${paymentStatusBadgeClass(row.paymentStatus)}`}
                             >
                               {row.paymentStatus.replace(/_/g, ' ')}
@@ -401,6 +561,31 @@ export function KeyAccountDashboardRevenueMonthDialog({
                       ))
                     )}
                   </TableBody>
+                  {filteredRows.length > 0 ? (
+                    <TableFooter>
+                      <TableRow>
+                        <TableCell colSpan={2} className="text-xs font-semibold">
+                          Total ({filteredRows.length} PO{filteredRows.length === 1 ? '' : 's'})
+                        </TableCell>
+                        <TableCell className="text-right text-xs tabular-nums text-emerald-600">
+                          {formatAmountOrDash(filteredTotals.paid)}
+                        </TableCell>
+                        <TableCell className="text-right text-xs tabular-nums text-sky-600">
+                          {formatAmountOrDash(filteredTotals.consignment)}
+                        </TableCell>
+                        <TableCell className="text-right text-xs tabular-nums text-slate-600">
+                          {formatAmountOrDash(filteredTotals.discount)}
+                        </TableCell>
+                        <TableCell className="text-right text-xs font-semibold tabular-nums">
+                          {formatKeyAccountDashboardCurrency(filteredTotals.total)}
+                        </TableCell>
+                        <TableCell className="text-right text-xs font-semibold tabular-nums">
+                          {formatKeyAccountDashboardCurrency(filteredTotals.remaining)}
+                        </TableCell>
+                        <TableCell />
+                      </TableRow>
+                    </TableFooter>
+                  ) : null}
                 </Table>
               </div>
               <AnalyticsTablePagination
@@ -470,9 +655,15 @@ export function KeyAccountDashboardRevenueMonthDialog({
                   </p>
                 </div>
                 <div className="rounded-md border p-3">
-                  <p className="text-xs text-muted-foreground">Remaining balance</p>
+                  <p className="text-xs text-muted-foreground">
+                    {historyOrder?.isConsignment ? 'Consignment float' : 'Remaining balance'}
+                  </p>
                   <p className="text-lg font-semibold">
-                    {formatKeyAccountDashboardCurrency(historyOrder?.remainingBalance || 0)}
+                    {formatKeyAccountDashboardCurrency(
+                      historyOrder?.isConsignment
+                        ? historyOrder.consignmentFloat
+                        : historyOrder?.remainingBalance || 0
+                    )}
                   </p>
                 </div>
               </div>

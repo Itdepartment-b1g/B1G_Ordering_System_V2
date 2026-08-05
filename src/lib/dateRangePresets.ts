@@ -19,8 +19,11 @@ export function getDateRangeFromPreset(
 
   switch (preset) {
     case 'this_month':
+      // Full calendar month (1st → last day), matching dashboard month bars and
+      // custom ranges like Aug 1–Aug 31. Do not end at "today" (month-to-date).
       start.setDate(1);
       start.setHours(0, 0, 0, 0);
+      end.setMonth(now.getMonth() + 1, 0);
       end.setHours(23, 59, 59, 999);
       return { start, end };
 
@@ -46,9 +49,11 @@ export function getDateRangeFromPreset(
       return { start, end };
 
     case 'this_year':
+      // Full calendar year (Jan 1 → Dec 31), matching last_year and dashboard year views.
       start.setMonth(0);
       start.setDate(1);
       start.setHours(0, 0, 0, 0);
+      end.setMonth(11, 31);
       end.setHours(23, 59, 59, 999);
       return { start, end };
 

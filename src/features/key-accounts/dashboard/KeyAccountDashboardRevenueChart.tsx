@@ -125,20 +125,29 @@ export function KeyAccountDashboardRevenueChart({
                     if (!active || !payload?.length) return null;
                     const row = payload[0].payload as KeyAccountDashboardMonthlyPaymentRow;
                     const paid = row.paidRevenue || 0;
-                    const partial = row.partialRevenue || 0;
-                    const unpaid = row.unpaidRevenue || 0;
+                    const remainingBalance =
+                      (row.partialRevenue || 0) + (row.unpaidRevenue || 0);
                     const consignment = row.consignmentRevenue || 0;
                     const settlementDiscount = row.settlementDiscountRevenue || 0;
                     const total =
                       row.totalRevenue ||
-                      paid + partial + unpaid + consignment + settlementDiscount;
+                      paid + remainingBalance + consignment + settlementDiscount;
+                    const remainingOrders =
+                      (row.unpaidOrders || 0) + (row.partialOrders || 0);
 
                     const buckets = [
                       { label: 'Paid', value: paid, color: '#22c55e' },
-                      { label: 'Partial', value: partial, color: '#f59e0b' },
-                      { label: 'Unpaid', value: unpaid, color: '#f97316' },
+                      {
+                        label: 'Remaining balance',
+                        value: remainingBalance,
+                        color: '#f97316',
+                      },
                       { label: 'Consignment', value: consignment, color: '#0ea5e9' },
-                      { label: 'Settlement disc.', value: settlementDiscount, color: '#64748b' },
+                      {
+                        label: 'Settlement disc.',
+                        value: settlementDiscount,
+                        color: '#64748b',
+                      },
                     ];
 
                     return (
@@ -173,12 +182,10 @@ export function KeyAccountDashboardRevenueChart({
                         <p className="text-[10px] text-muted-foreground mt-0.5">
                           Click to view PO breakdown
                         </p>
-                        {(row.unpaidOrders > 0 ||
-                          row.partialOrders > 0 ||
-                          row.consignmentOrders > 0) && (
+                        {(remainingOrders > 0 || row.consignmentOrders > 0) && (
                           <p className="text-xs text-muted-foreground mt-0.5">
-                            {row.unpaidOrders} unpaid · {row.partialOrders} partial ·{' '}
-                            {row.consignmentOrders} consignment
+                            {remainingOrders} with remaining · {row.consignmentOrders}{' '}
+                            consignment
                           </p>
                         )}
                       </div>

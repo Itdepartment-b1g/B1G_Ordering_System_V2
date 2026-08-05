@@ -38,7 +38,7 @@ export function isKeyAccountPartialDeliveredOrder(order: {
 export function isKeyAccountConsignmentOrder(order: {
   po_order_kind?: string | null;
 }): boolean {
-  return String(order.po_order_kind || '') === 'consignment';
+  return String(order.po_order_kind || '').trim().toLowerCase() === 'consignment';
 }
 
 /**
@@ -175,6 +175,17 @@ export interface KeyAccountProductAnalyticsItemRef {
   variants?: KeyAccountRebateReplacementAnalytics['variants'];
 }
 
+/** Per-PO line contribution for one product/variant (qty + net value on that PO). */
+export interface KeyAccountProductAnalyticsPoContribution {
+  orderId: string;
+  quantity: number;
+  grossRevenue: number;
+  rebatedRevenue: number;
+  /** Net PO line value after rebates for this product on this PO. */
+  revenue: number;
+  isConsignment: boolean;
+}
+
 export interface KeyAccountProductAnalyticsRow {
   key: string;
   brand: string;
@@ -199,6 +210,8 @@ export interface KeyAccountProductAnalyticsRow {
   consignmentQuantity: number;
   orderCount: number;
   clientCount: number;
+  /** POs that include this product (for drill-down). */
+  poContributions: KeyAccountProductAnalyticsPoContribution[];
 }
 
 export const KEY_ACCOUNT_DASHBOARD_MONTH_NAMES = [
@@ -419,6 +432,13 @@ export function splitReplacementProductLineItem(input: {
   return null;
 }
 
+type PoContributionAccumulator = {
+  quantity: number;
+  grossRevenue: number;
+  rebatedRevenue: number;
+  isConsignment: boolean;
+};
+
 type ProductAnalyticsAccumulator = {
   brand: string;
   variant: string;
@@ -434,6 +454,7 @@ type ProductAnalyticsAccumulator = {
   orderIds: Set<string>;
   consignmentOrderIds: Set<string>;
   clientIds: Set<string>;
+  poByOrderId: Map<string, PoContributionAccumulator>;
 };
 
 export interface KeyAccountOrderRevenueAttribution {
@@ -513,9 +534,12 @@ function accumulateProductAnalyticsContribution(
     orderIds: new Set<string>(),
     consignmentOrderIds: new Set<string>(),
     clientIds: new Set<string>(),
+    poByOrderId: new Map<string, PoContributionAccumulator>(),
   };
 
   const lineQuantity = split.deliveredQuantity + split.pendingQuantity;
+  const lineGross = split.deliveredRevenue + split.pendingRevenue;
+  const lineRebated = rebateAllocation.delivered + rebateAllocation.pending;
   existing.deliveredOrders += split.deliveredLineItems;
   existing.deliveredQuantity += split.deliveredQuantity;
   existing.grossDeliveredRevenue += split.deliveredRevenue;
@@ -525,6 +549,19 @@ function accumulateProductAnalyticsContribution(
   existing.pendingOrders += split.pendingLineItems;
   existing.pendingQuantity += split.pendingQuantity;
   existing.orderIds.add(purchaseOrderId);
+
+  const poContribution = existing.poByOrderId.get(purchaseOrderId) || {
+    quantity: 0,
+    grossRevenue: 0,
+    rebatedRevenue: 0,
+    isConsignment: false,
+  };
+  poContribution.quantity += lineQuantity;
+  poContribution.grossRevenue += lineGross;
+  poContribution.rebatedRevenue += lineRebated;
+  if (isConsignment) poContribution.isConsignment = true;
+  existing.poByOrderId.set(purchaseOrderId, poContribution);
+
   if (isConsignment) {
     existing.consignmentOrderIds.add(purchaseOrderId);
     existing.consignmentQuantity += lineQuantity;
@@ -559,6 +596,18 @@ function finalizeProductAnalyticsRows(
       const deliveredRevenue = grossDeliveredRevenue - rebatedDeliveredRevenue;
       const pendingRevenue = grossPendingRevenue - rebatedPendingRevenue;
       const revenue = deliveredRevenue + pendingRevenue;
+      const poContributions: KeyAccountProductAnalyticsPoContribution[] = Array.from(
+        value.poByOrderId.entries()
+      )
+        .map(([orderId, po]) => ({
+          orderId,
+          quantity: po.quantity,
+          grossRevenue: po.grossRevenue,
+          rebatedRevenue: po.rebatedRevenue,
+          revenue: po.grossRevenue - po.rebatedRevenue,
+          isConsignment: po.isConsignment,
+        }))
+        .sort((a, b) => b.revenue - a.revenue || b.quantity - a.quantity);
       return {
         key,
         brand: value.brand,
@@ -581,6 +630,7 @@ function finalizeProductAnalyticsRows(
         consignmentQuantity: value.consignmentQuantity,
         orderCount: value.orderIds.size,
         clientCount: value.clientIds.size,
+        poContributions,
       };
     })
     .sort((a, b) => b.revenue - a.revenue || b.quantity - a.quantity);
@@ -768,6 +818,81 @@ export function sumKeyAccountProductRevenueSummary(
     pendingRevenue,
     totalRevenue: deliveredRevenue + pendingRevenue,
   };
+}
+
+/** Brand rollup of variant product analytics rows (deduped POs/clients via order lookup). */
+export interface KeyAccountBrandAnalyticsRow {
+  brand: string;
+  quantity: number;
+  grossRevenue: number;
+  rebatedRevenue: number;
+  revenue: number;
+  consignmentQuantity: number;
+  consignmentOrders: number;
+  orderCount: number;
+  clientCount: number;
+  variantCount: number;
+  variants: KeyAccountProductAnalyticsRow[];
+}
+
+export function buildKeyAccountBrandAnalyticsRows(
+  productRows: KeyAccountProductAnalyticsRow[],
+  getClientId?: (orderId: string) => string | null | undefined
+): KeyAccountBrandAnalyticsRow[] {
+  const byBrand = new Map<string, KeyAccountProductAnalyticsRow[]>();
+  productRows.forEach((row) => {
+    const list = byBrand.get(row.brand) || [];
+    list.push(row);
+    byBrand.set(row.brand, list);
+  });
+
+  return Array.from(byBrand.entries())
+    .map(([brand, variants]) => {
+      const sortedVariants = [...variants].sort(
+        (a, b) => b.revenue - a.revenue || b.quantity - a.quantity
+      );
+      const orderIds = new Set<string>();
+      const consignmentOrderIds = new Set<string>();
+      const clientIds = new Set<string>();
+      let quantity = 0;
+      let grossRevenue = 0;
+      let rebatedRevenue = 0;
+      let revenue = 0;
+      let consignmentQuantity = 0;
+
+      sortedVariants.forEach((variant) => {
+        quantity += variant.quantity;
+        grossRevenue += variant.grossRevenue;
+        rebatedRevenue += variant.rebatedRevenue;
+        revenue += variant.revenue;
+        consignmentQuantity += variant.consignmentQuantity;
+        variant.poContributions.forEach((contribution) => {
+          orderIds.add(contribution.orderId);
+          if (contribution.isConsignment) consignmentOrderIds.add(contribution.orderId);
+          if (getClientId) {
+            const clientId = getClientId(contribution.orderId);
+            if (clientId) clientIds.add(clientId);
+          }
+        });
+      });
+
+      return {
+        brand,
+        quantity,
+        grossRevenue,
+        rebatedRevenue,
+        revenue,
+        consignmentQuantity,
+        consignmentOrders: consignmentOrderIds.size,
+        orderCount: orderIds.size,
+        clientCount: getClientId
+          ? clientIds.size
+          : sortedVariants.reduce((sum, row) => sum + row.clientCount, 0),
+        variantCount: sortedVariants.length,
+        variants: sortedVariants,
+      };
+    })
+    .sort((a, b) => b.revenue - a.revenue || b.quantity - a.quantity);
 }
 
 function netOrderRevenueAttribution(attribution: KeyAccountOrderRevenueAttribution) {
