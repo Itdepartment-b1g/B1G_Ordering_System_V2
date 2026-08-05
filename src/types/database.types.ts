@@ -437,6 +437,29 @@ export interface PurchaseOrderKeyAccountPayment {
   created_at: string;
 }
 
+export type KeyAccountSettlementDiscountRequestStatus = 'pending' | 'approved' | 'rejected';
+
+/** Settlement discount awaiting Sales Head approval (cash may already be recorded). */
+export interface KeyAccountSettlementDiscountRequest {
+  id: string;
+  company_id: string;
+  purchase_order_id: string;
+  settlement_discount: number;
+  settlement_discount_reason: string;
+  status: KeyAccountSettlementDiscountRequestStatus;
+  requested_by: string;
+  approved_by?: string | null;
+  approved_at?: string | null;
+  rejected_by?: string | null;
+  rejected_at?: string | null;
+  rejection_reason?: string | null;
+  payment_id?: string | null;
+  /** Cash payment submitted with this discount; discount attaches here on approve. */
+  source_payment_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface PurchaseOrder {
   id: string;
   company_id: string;

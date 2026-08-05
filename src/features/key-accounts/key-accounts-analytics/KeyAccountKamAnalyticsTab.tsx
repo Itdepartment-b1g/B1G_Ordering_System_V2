@@ -261,23 +261,31 @@ function buildPeriods(orders: AnalyticsOrder[], range?: DateRange) {
     if (diff <= 35) {
       const current = new Date(from);
       while (current <= to) {
-        periods.push({ label: formatShortDate(current), start: startOfDay(current), end: endOfDay(current) });
+        // Copy dates — never push the loop cursor by reference.
+        periods.push({
+          label: formatShortDate(current),
+          start: startOfDay(current),
+          end: endOfDay(current),
+        });
         current.setDate(current.getDate() + 1);
       }
     } else if (diff <= 180) {
       const current = startOfWeek(from);
       while (current <= to) {
-        const start = current < from ? from : current;
-        const end = endOfWeek(current) > to ? to : endOfWeek(current);
+        const start = current < from ? new Date(from) : new Date(current);
+        const weekEnd = endOfWeek(current);
+        const end = weekEnd > to ? new Date(to) : weekEnd;
         periods.push({ label: `Week of ${formatShortDate(start)}`, start, end });
         current.setDate(current.getDate() + 7);
       }
     } else {
       const current = startOfMonth(from);
       while (current <= to) {
-        const start = current < from ? from : current;
-        const end = endOfMonth(current) > to ? to : endOfMonth(current);
-        periods.push({ label: formatMonthYear(start), start, end });
+        const monthStart = startOfMonth(current);
+        const monthEnd = endOfMonth(current);
+        const start = monthStart < from ? new Date(from) : monthStart;
+        const end = monthEnd > to ? new Date(to) : monthEnd;
+        periods.push({ label: formatMonthYear(monthStart), start, end });
         current.setMonth(current.getMonth() + 1);
       }
     }
@@ -299,7 +307,11 @@ function buildPeriods(orders: AnalyticsOrder[], range?: DateRange) {
   const current = startOfMonth(earliest);
   const end = endOfMonth(latest);
   while (current <= end) {
-    periods.push({ label: formatMonthYear(current), start: startOfMonth(current), end: endOfMonth(current) });
+    periods.push({
+      label: formatMonthYear(current),
+      start: startOfMonth(current),
+      end: endOfMonth(current),
+    });
     current.setMonth(current.getMonth() + 1);
   }
   return periods;
@@ -1238,7 +1250,7 @@ export default function KeyAccountKamAnalyticsTab({
                 </div>
               );
             })}
-          </div>
+          </div>  
         </>
       );
     }

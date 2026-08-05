@@ -128,10 +128,67 @@ interface PoLineItem {
 interface PaymentHistoryRow {
   id: string;
   amount: number | null;
+  settlement_discount?: number | null;
   created_at: string;
   payment_method?: string | null;
   bank_type?: string | null;
-  recorder?: { full_name: string | null; email: string | null } | { full_name: string | null; email: string | null }[] | null;
+  recorder?:
+    | { full_name: string | null; email: string | null }
+    | { full_name: string | null; email: string | null }[]
+    | null;
+}
+
+/** One visible history line — cash and settlement discount are never combined. */
+type PaymentHistoryDisplayRow = {
+  key: string;
+  created_at: string;
+  methodLabel: string;
+  recorderName: string;
+  amountLabel: string;
+  amountClassName?: string;
+};
+
+function buildPaymentHistoryDisplayRows(
+  payments: PaymentHistoryRow[],
+  formatCurrency: (value: number) => string
+): PaymentHistoryDisplayRow[] {
+  const rows: PaymentHistoryDisplayRow[] = [];
+  for (const payment of payments) {
+    const recorder = firstRelation(payment.recorder);
+    const recorderName = recorder?.full_name || recorder?.email || '—';
+    const cash = Number(payment.amount) || 0;
+    const discount = Number(payment.settlement_discount) || 0;
+    const createdAt = payment.created_at || '';
+
+    if (cash > 0) {
+      const method = payment.payment_method
+        ? String(payment.payment_method).replace(/_/g, ' ')
+        : '—';
+      const bank = payment.bank_type
+        ? ` · ${String(payment.bank_type).replace(/_/g, ' ')}`
+        : '';
+      rows.push({
+        key: `${payment.id}-cash`,
+        created_at: createdAt,
+        methodLabel: `${method}${bank}`,
+        recorderName,
+        amountLabel: formatCurrency(cash),
+        amountClassName: 'font-medium',
+      });
+    }
+
+    if (discount > 0) {
+      rows.push({
+        key: `${payment.id}-discount`,
+        created_at: createdAt,
+        methodLabel: 'Settlement discount',
+        recorderName,
+        amountLabel: `Disc. ${formatCurrency(discount)}`,
+        amountClassName: 'text-slate-600',
+      });
+    }
+  }
+  return rows;
 }
 
 interface ChartDateRange {
@@ -244,7 +301,7 @@ function presetRange(preset: DatePreset): DateRange | undefined {
   const now = new Date();
   switch (preset) {
     case 'this_month':
-      return { from: startOfMonth(now), to: endOfDay(now) };
+      return { from: startOfMonth(now), to: endOfMonth(now) };
     case 'last_month': {
       const lastMonth = subMonths(now, 1);
       return { from: startOfMonth(lastMonth), to: endOfMonth(lastMonth) };
@@ -383,6 +440,7 @@ export default function KeyAccountClientAnalyticsTab({
   const [dialogPayments, setDialogPayments] = useState<PaymentHistoryRow[]>([]);
   const [itemsLoading, setItemsLoading] = useState(false);
   const [dialogPaidTotal, setDialogPaidTotal] = useState<number | null>(null);
+  const [dialogDiscountTotal, setDialogDiscountTotal] = useState<number | null>(null);
   const [dialogPaymentCount, setDialogPaymentCount] = useState(0);
   const [dialogPaymentLoading, setDialogPaymentLoading] = useState(false);
   const [dialogRebateSource, setDialogRebateSource] = useState<{
@@ -415,10 +473,13 @@ export default function KeyAccountClientAnalyticsTab({
     return map;
   }, [paymentRows]);
 
-  const paidByOrderId = useMemo(() => {
+  /** Cash + approved settlement discount applied against PO total (for remaining balance). */
+  const appliedByOrderId = useMemo(() => {
     const map = new Map<string, number>();
     paymentRows.forEach((row) => {
-      map.set(row.purchase_order_id, (map.get(row.purchase_order_id) || 0) + Number(row.amount || 0));
+      const applied =
+        Number(row.amount || 0) + Number(row.settlement_discount || 0);
+      map.set(row.purchase_order_id, (map.get(row.purchase_order_id) || 0) + applied);
     });
     return map;
   }, [paymentRows]);
@@ -700,6 +761,7 @@ export default function KeyAccountClientAnalyticsTab({
     setItemsDialogOrder(order);
     setDialogPayments([]);
     setDialogPaidTotal(null);
+    setDialogDiscountTotal(null);
     setDialogPaymentCount(0);
     setDialogRebateSource(null);
     setDialogPaymentLoading(true);
@@ -711,6 +773,7 @@ export default function KeyAccountClientAnalyticsTab({
             `
             id,
             amount,
+            settlement_discount,
             created_at,
             payment_method,
             bank_type,
@@ -722,12 +785,19 @@ export default function KeyAccountClientAnalyticsTab({
         if (error) throw error;
         const rows = (data || []) as PaymentHistoryRow[];
         const paid = rows.reduce((sum, r) => sum + Number(r.amount || 0), 0);
+        const discount = rows.reduce(
+          (sum, r) => sum + Number(r.settlement_discount || 0),
+          0
+        );
+        const cashEntries = rows.filter((r) => (Number(r.amount) || 0) > 0).length;
         setDialogPayments(rows);
         setDialogPaidTotal(paid);
-        setDialogPaymentCount(rows.length);
+        setDialogDiscountTotal(discount);
+        setDialogPaymentCount(cashEntries);
       } catch {
         setDialogPayments([]);
         setDialogPaidTotal(0);
+        setDialogDiscountTotal(0);
         setDialogPaymentCount(0);
       } finally {
         setDialogPaymentLoading(false);
@@ -1269,17 +1339,18 @@ export default function KeyAccountClientAnalyticsTab({
       </Card>
 
       <Dialog open={periodDetailOpen} onOpenChange={setPeriodDetailOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle>{selectedPeriodRow?.month} — Client revenue breakdown</DialogTitle>
             <DialogDescription>
               {selectedClientLabel}
-              {' · '}Payment buckets for this month.
+              {' · '}Paid, remaining balance (partial + unpaid), consignment, and settlement discount
+              for this month.
             </DialogDescription>
           </DialogHeader>
           {selectedPeriodRow && (
             <div className="space-y-3 text-sm">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                 <div>
                   <p className="text-muted-foreground text-xs">Paid</p>
                   <p className="font-semibold text-green-600 dark:text-green-400">
@@ -1287,15 +1358,11 @@ export default function KeyAccountClientAnalyticsTab({
                   </p>
                 </div>
                 <div>
-                  <p className="text-muted-foreground text-xs">Partial</p>
-                  <p className="font-semibold text-amber-600 dark:text-amber-400">
-                    {formatCurrency(selectedPeriodRow.partialRevenue)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground text-xs">Unpaid</p>
+                  <p className="text-muted-foreground text-xs">Remaining balance</p>
                   <p className="font-semibold text-orange-600 dark:text-orange-400">
-                    {formatCurrency(selectedPeriodRow.unpaidRevenue)}
+                    {formatCurrency(
+                      selectedPeriodRow.partialRevenue + selectedPeriodRow.unpaidRevenue
+                    )}
                   </p>
                 </div>
                 <div>
@@ -1304,10 +1371,18 @@ export default function KeyAccountClientAnalyticsTab({
                     {formatCurrency(selectedPeriodRow.consignmentRevenue)}
                   </p>
                 </div>
-              </div>
-              <div className="border-t pt-3 flex items-center justify-between">
-                <span className="font-medium">Total</span>
-                <span className="text-lg font-bold">{formatCurrency(selectedPeriodRow.totalRevenue)}</span>
+                <div>
+                  <p className="text-muted-foreground text-xs">Settlement disc.</p>
+                  <p className="font-semibold text-slate-600 dark:text-slate-300">
+                    {formatCurrency(selectedPeriodRow.settlementDiscountRevenue)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Total</p>
+                  <p className="font-semibold">
+                    {formatCurrency(selectedPeriodRow.totalRevenue)}
+                  </p>
+                </div>
               </div>
               <div className="border-t pt-3 space-y-1.5 text-xs text-muted-foreground">
                 <div className="flex justify-between">
@@ -1315,12 +1390,10 @@ export default function KeyAccountClientAnalyticsTab({
                   <span>{selectedPeriodRow.paidOrders}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Partial POs</span>
-                  <span>{selectedPeriodRow.partialOrders}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Unpaid POs</span>
-                  <span>{selectedPeriodRow.unpaidOrders}</span>
+                  <span>Open POs (partial + unpaid)</span>
+                  <span>
+                    {selectedPeriodRow.partialOrders + selectedPeriodRow.unpaidOrders}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span>Consignment POs</span>
@@ -1338,9 +1411,9 @@ export default function KeyAccountClientAnalyticsTab({
                         <TableRow>
                           <TableHead>Client</TableHead>
                           <TableHead className="text-right">Paid</TableHead>
-                          <TableHead className="text-right">Partial</TableHead>
-                          <TableHead className="text-right">Unpaid</TableHead>
+                          <TableHead className="text-right">Remaining</TableHead>
                           <TableHead className="text-right">Consignment</TableHead>
+                          <TableHead className="text-right">Settlement disc.</TableHead>
                           <TableHead className="text-right">Total</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -1358,14 +1431,14 @@ export default function KeyAccountClientAnalyticsTab({
                               <TableCell className="text-right text-green-600 dark:text-green-400">
                                 {formatCurrency(row.paidRevenue)}
                               </TableCell>
-                              <TableCell className="text-right text-amber-600 dark:text-amber-400">
-                                {formatCurrency(row.partialRevenue)}
-                              </TableCell>
                               <TableCell className="text-right text-orange-600 dark:text-orange-400">
-                                {formatCurrency(row.unpaidRevenue)}
+                                {formatCurrency(row.partialRevenue + row.unpaidRevenue)}
                               </TableCell>
                               <TableCell className="text-right text-sky-600 dark:text-sky-400">
                                 {formatCurrency(row.consignmentRevenue)}
+                              </TableCell>
+                              <TableCell className="text-right text-slate-600 dark:text-slate-300">
+                                {formatCurrency(row.settlementDiscountRevenue)}
                               </TableCell>
                               <TableCell className="text-right font-medium">
                                 {formatCurrency(row.totalRevenue)}
@@ -1428,10 +1501,10 @@ export default function KeyAccountClientAnalyticsTab({
                     const amountRevenue = getKeyAccountOrderNetRevenueFromAttribution(
                       orderRevenueById.get(order.id)
                     );
-                    const paidTotal = paidByOrderId.get(order.id) || 0;
+                    const appliedTotal = appliedByOrderId.get(order.id) || 0;
                     const remainingBalance = Math.max(
                       0,
-                      Math.round(((Number(order.total_amount) || 0) - paidTotal) * 100) / 100
+                      Math.round(((Number(order.total_amount) || 0) - appliedTotal) * 100) / 100
                     );
                     return (
                       <TableRow key={order.id}>
@@ -1519,6 +1592,7 @@ export default function KeyAccountClientAnalyticsTab({
             setDialogPayments([]);
             setItemsLoading(false);
             setDialogPaidTotal(null);
+            setDialogDiscountTotal(null);
             setDialogPaymentCount(0);
             setDialogPaymentLoading(false);
             setDialogRebateSource(null);
@@ -1586,8 +1660,13 @@ export default function KeyAccountClientAnalyticsTab({
                 </div>
                 <div className="rounded-md border p-3">
                   <p className="text-xs text-muted-foreground">Paid so far</p>
-                  <p className="text-lg font-semibold">
+                  <p className="text-lg font-semibold text-emerald-600">
                     {formatCurrency(Number(dialogPaidTotal || 0))}
+                    {Number(dialogDiscountTotal || 0) > 0 ? (
+                      <span className="block text-xs font-normal text-slate-600">
+                        + {formatCurrency(Number(dialogDiscountTotal || 0))} disc.
+                      </span>
+                    ) : null}
                   </p>
                 </div>
                 <div className="rounded-md border p-3">
@@ -1597,9 +1676,12 @@ export default function KeyAccountClientAnalyticsTab({
                       Math.max(
                         0,
                         Math.round(
-                          ((Number(itemsDialogOrder?.total_amount || 0) - Number(dialogPaidTotal || 0)) *
-                            100)
-                        ) / 100
+                          ((Number(itemsDialogOrder?.total_amount || 0) -
+                            Number(dialogPaidTotal || 0) -
+                            Number(dialogDiscountTotal || 0)) *
+                            100) /
+                            100
+                        )
                       )
                     )}
                   </p>
@@ -1616,29 +1698,20 @@ export default function KeyAccountClientAnalyticsTab({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {dialogPayments.map((payment) => {
-                      const recorder = firstRelation(payment.recorder);
-                      const method = payment.payment_method
-                        ? String(payment.payment_method).replace(/_/g, ' ')
-                        : '—';
-                      const bank = payment.bank_type
-                        ? ` · ${String(payment.bank_type).replace(/_/g, ' ')}`
-                        : '';
-                      return (
-                        <TableRow key={payment.id}>
-                          <TableCell className="font-medium">
-                            {payment.created_at
-                              ? new Date(payment.created_at).toLocaleString()
-                              : '—'}
-                          </TableCell>
-                          <TableCell>{`${method}${bank}`}</TableCell>
-                          <TableCell>{recorder?.full_name || recorder?.email || '—'}</TableCell>
-                          <TableCell className="text-right font-medium">
-                            {formatCurrency(Number(payment.amount || 0))}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
+                    {buildPaymentHistoryDisplayRows(dialogPayments, formatCurrency).map((row) => (
+                      <TableRow key={row.key}>
+                        <TableCell className="font-medium">
+                          {row.created_at ? new Date(row.created_at).toLocaleString() : '—'}
+                        </TableCell>
+                        <TableCell>{row.methodLabel}</TableCell>
+                        <TableCell>{row.recorderName}</TableCell>
+                        <TableCell
+                          className={`text-right tabular-nums ${row.amountClassName || ''}`}
+                        >
+                          {row.amountLabel}
+                        </TableCell>
+                      </TableRow>
+                    ))}
                   </TableBody>
                 </Table>
               </div>
