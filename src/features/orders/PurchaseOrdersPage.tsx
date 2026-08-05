@@ -1277,9 +1277,15 @@ export default function PurchaseOrdersPage() {
 
     let cancelled = false;
     setLoadingApproveStock(true);
+    const excludePoId = String(orderToApprove.id);
     (async () => {
-      const [{ data: locRows, error: locErr }, { data: invRows, error: invErr }, { data: mainInvRows, error: mainInvErr }] =
-        await Promise.all([
+      const [
+        { data: locRows, error: locErr },
+        { data: invRows, error: invErr },
+        { data: mainInvRows, error: mainInvErr },
+        { data: reservedData, error: reservedErr },
+        { data: softReservedData, error: softReservedErr },
+      ] = await Promise.all([
         supabase
           .from('warehouse_locations')
           .select('id,name,is_main')
@@ -1291,17 +1297,33 @@ export default function PurchaseOrdersPage() {
           .eq('company_id', user.company_id)
           .in('location_id', locationIds)
           .in('variant_id', variantIds),
-        // Main Warehouse "location" stock lives in main_inventory (available = stock - allocated_stock).
+        // Main Warehouse "location" stock lives in main_inventory.
         supabase
           .from('main_inventory')
           .select('variant_id,stock,allocated_stock')
           .eq('company_id', user.company_id)
           .in('variant_id', variantIds),
+        // Hard PO reserves (approved but not yet fulfilled)
+        supabase
+          .from('warehouse_transfer_reservations')
+          .select('purchase_order_id,variant_id,warehouse_location_id,quantity_reserved,quantity_fulfilled,status')
+          .eq('warehouse_company_id', user.company_id)
+          .in('variant_id', variantIds)
+          .in('status', ['reserved', 'partial']),
+        // Soft (pending) PO commitments
+        supabase
+          .from('warehouse_transfer_soft_reservations')
+          .select('purchase_order_id,variant_id,warehouse_location_id,quantity_committed,status')
+          .eq('warehouse_company_id', user.company_id)
+          .in('variant_id', variantIds)
+          .eq('status', 'active'),
       ]);
       if (cancelled) return;
       if (locErr) throw locErr;
       if (invErr) throw invErr;
       if (mainInvErr) throw mainInvErr;
+      if (reservedErr) throw reservedErr;
+      if (softReservedErr) throw softReservedErr;
 
       const nameMap: Record<string, string> = {};
       const mainLocIds: string[] = [];
@@ -1312,17 +1334,44 @@ export default function PurchaseOrdersPage() {
       }
       setApproveLocationNames(nameMap);
 
-      const stockMap: Record<string, number> = {};
-      for (const r of (invRows as any[]) || []) {
-        stockMap[locVarKey(String(r.location_id), String(r.variant_id))] = Number(r.stock || 0);
+      // Match approve_multi_location_po: exclude this PO so its own soft commitment is not double-counted.
+      const reservedByLocVar: Record<string, number> = {};
+      for (const row of (reservedData as any[]) || []) {
+        if (String(row.purchase_order_id) === excludePoId) continue;
+        const remaining = Math.max(
+          0,
+          Number(row.quantity_reserved || 0) - Number(row.quantity_fulfilled || 0)
+        );
+        if (remaining <= 0) continue;
+        const key = locVarKey(String(row.warehouse_location_id), String(row.variant_id));
+        reservedByLocVar[key] = (reservedByLocVar[key] || 0) + remaining;
+      }
+      for (const row of (softReservedData as any[]) || []) {
+        if (String(row.purchase_order_id) === excludePoId) continue;
+        const committed = Math.max(0, Number(row.quantity_committed || 0));
+        if (committed <= 0) continue;
+        const key = locVarKey(String(row.warehouse_location_id), String(row.variant_id));
+        reservedByLocVar[key] = (reservedByLocVar[key] || 0) + committed;
       }
 
-      // Fill in "available" for main locations from main_inventory.
+      const stockMap: Record<string, number> = {};
+      // Sub-warehouse: available = stock - hard - soft (other POs)
+      for (const r of (invRows as any[]) || []) {
+        const key = locVarKey(String(r.location_id), String(r.variant_id));
+        const reserved = reservedByLocVar[key] || 0;
+        stockMap[key] = Math.max(0, Number(r.stock || 0) - reserved);
+      }
+
+      // Main: available = stock - allocated_stock - hard - soft (other POs)
       for (const r of (mainInvRows as any[]) || []) {
         const variantId = String(r.variant_id);
-        const available = Math.max(0, Number(r.stock || 0) - Number(r.allocated_stock || 0));
         for (const mainLocId of mainLocIds) {
-          stockMap[locVarKey(mainLocId, variantId)] = available;
+          const key = locVarKey(mainLocId, variantId);
+          const reserved = reservedByLocVar[key] || 0;
+          stockMap[key] = Math.max(
+            0,
+            Number(r.stock || 0) - Number(r.allocated_stock || 0) - reserved
+          );
         }
       }
       setApproveStockByLocVar(stockMap);

@@ -26,6 +26,7 @@ import {
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { cn } from '@/lib/utils';
 import type { Brand, Variant } from '../InventoryContext';
+import { getMainWarehouseAllocatableQty } from '../warehouseStockBoard';
 import {
   InternalStockDeliveryProofFields,
   isInternalStockDeliveryProofComplete,
@@ -66,6 +67,8 @@ type MainWarehouseAllocateDialogProps = {
   loadingLocations?: boolean;
   brands: Brand[];
   loadingBrands?: boolean;
+  /** Open hard + soft transfer PO holds at main warehouse, by variant id. */
+  poReservedByVariantId?: Record<string, number>;
   submitting?: boolean;
   onSubmit: (payload: MainAllocateSubmitPayload) => void | Promise<void>;
 };
@@ -85,14 +88,14 @@ function normalizeTypeLabel(typeKey: string): string {
   return typeKey.toUpperCase();
 }
 
-function getMainAvailableQty(variant: Pick<Variant, 'stock' | 'allocatedStock'>): number {
-  return Math.max(0, variant.stock - (variant.allocatedStock || 0));
-}
-
-function findVariantAvailable(brands: Brand[], variantId: string): number {
+function findVariantAvailable(
+  brands: Brand[],
+  variantId: string,
+  poReservedByVariantId: Record<string, number>
+): number {
   for (const brand of brands) {
     const variant = brand.allVariants?.find((v) => v.id === variantId);
-    if (variant) return getMainAvailableQty(variant);
+    if (variant) return getMainWarehouseAllocatableQty(variant, poReservedByVariantId);
   }
   return Number.POSITIVE_INFINITY;
 }
@@ -179,6 +182,7 @@ export function MainWarehouseAllocateDialog({
   loadingLocations = false,
   brands,
   loadingBrands = false,
+  poReservedByVariantId = {},
   submitting = false,
   onSubmit,
 }: MainWarehouseAllocateDialogProps) {
@@ -257,7 +261,7 @@ export function MainWarehouseAllocateDialog({
       if (!qty || qty <= 0) continue;
       const variant = selectedBrand.allVariants.find((v) => v.id === variantId);
       if (!variant) continue;
-      const available = getMainAvailableQty(variant);
+      const available = getMainWarehouseAllocatableQty(variant, poReservedByVariantId);
       const quantity = Math.min(qty, available);
       if (quantity <= 0) continue;
       lines.push({
@@ -276,7 +280,7 @@ export function MainWarehouseAllocateDialog({
       for (const line of lines) {
         const idx = next.findIndex((x) => x.variantId === line.variantId);
         if (idx >= 0) {
-          const available = findVariantAvailable(brands, line.variantId);
+          const available = findVariantAvailable(brands, line.variantId, poReservedByVariantId);
           const merged = Math.min(
             available === Number.POSITIVE_INFINITY
               ? next[idx].quantity + line.quantity
@@ -329,8 +333,8 @@ export function MainWarehouseAllocateDialog({
           <DialogHeader>
             <DialogTitle>Allocate to Sub Warehouse</DialogTitle>
             <p className="text-sm text-muted-foreground font-normal pt-1">
-              Push stock without a sub request. Sub must still confirm receive before their
-              on-hand increases.
+              Push stock without a sub request. Batch lots leave main on allocate; the sub
+              warehouse inventory updates only when they confirm receive with proof and signature.
             </p>
           </DialogHeader>
 
@@ -428,7 +432,10 @@ export function MainWarehouseAllocateDialog({
                           <AccordionContent>
                             <div className="space-y-2 pb-2">
                               {variants.map((variant) => {
-                                const available = getMainAvailableQty(variant);
+                                const available = getMainWarehouseAllocatableQty(
+                                  variant,
+                                  poReservedByVariantId
+                                );
                                 const qty = quantities[variant.id] ?? 0;
                                 return (
                                   <div
@@ -497,7 +504,7 @@ export function MainWarehouseAllocateDialog({
               ) : (
                 <ul className="rounded-md border divide-y">
                   {cart.map((line) => {
-                    const available = findVariantAvailable(brands, line.variantId);
+                    const available = findVariantAvailable(brands, line.variantId, poReservedByVariantId);
                     const max =
                       available === Number.POSITIVE_INFINITY
                         ? Math.max(line.quantity, 99999)

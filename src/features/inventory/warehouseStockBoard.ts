@@ -83,6 +83,15 @@ export function getDisplayedStock(
   return Math.max(0, variant.stock - (variant.allocatedStock || 0) - reserved);
 }
 
+/** Main warehouse qty that can be allocated (excludes open transfer PO holds). */
+export function getMainWarehouseAllocatableQty(
+  variant: { id: string; stock: number; allocatedStock?: number },
+  poReservedByVariantId: Record<string, number> = {}
+): number {
+  const reserved = Math.max(0, poReservedByVariantId[variant.id] || 0);
+  return Math.max(0, variant.stock - (variant.allocatedStock || 0) - reserved);
+}
+
 export function computeStockBoardStatus(
   displayedStock: number,
   reorderLevel: number
@@ -340,6 +349,23 @@ export async function fetchOpenTransferPoReservedByVariant(
     if (remaining <= 0) continue;
     const vid = String((row as any).variant_id);
     map[vid] = (map[vid] || 0) + remaining;
+  }
+  return map;
+}
+
+/** Main allocatable qty via RPC (works for sub-warehouse users blocked by PO-hold RLS). */
+export async function fetchMainWarehouseAllocatableByVariant(
+  variantIds?: string[]
+): Promise<Record<string, number>> {
+  const { data, error } = await supabase.rpc('get_main_warehouse_allocatable_by_variant', {
+    p_variant_ids: variantIds?.length ? variantIds : null,
+  });
+  if (error) throw error;
+
+  const map: Record<string, number> = {};
+  for (const row of (data as { variant_id: string; allocatable: number }[]) || []) {
+    const vid = String(row.variant_id);
+    map[vid] = Math.max(0, Number(row.allocatable || 0));
   }
   return map;
 }
