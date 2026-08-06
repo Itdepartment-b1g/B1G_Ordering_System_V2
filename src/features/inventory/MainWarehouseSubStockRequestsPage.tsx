@@ -105,7 +105,11 @@ import {
   MainWarehouseAllocateDialog,
   type MainAllocateSubmitPayload,
 } from './components/MainWarehouseAllocateDialog';
-import { fetchMainWarehouseStockBoard } from './warehouseStockBoard';
+import {
+  fetchMainWarehouseStockBoard,
+  fetchOpenTransferPoReservedByVariant,
+  resolveStockBoardReservedLocationId,
+} from './warehouseStockBoard';
 import { Input } from '@/components/ui/input';
 import {
   DateRangeFilterPopover,
@@ -705,6 +709,20 @@ export default function MainWarehouseSubStockRequestsPage() {
     queryKey: ['main-warehouse-stock-for-allocate', user?.company_id],
     enabled: !!user?.company_id && mainAllocateOpen,
     queryFn: () => fetchMainWarehouseStockBoard(user!.company_id!),
+    staleTime: 30_000,
+  });
+
+  const { data: mainAllocatePoReservedByVariantId = {} } = useQuery({
+    queryKey: ['main-warehouse-allocate-po-reserved', user?.company_id, mainAllocateOpen],
+    enabled: !!user?.company_id && mainAllocateOpen,
+    queryFn: async () => {
+      const locationId = await resolveStockBoardReservedLocationId({
+        companyId: user!.company_id!,
+        scope: { kind: 'main', mode: 'available' },
+      });
+      if (!locationId) return {};
+      return fetchOpenTransferPoReservedByVariant(user!.company_id!, locationId);
+    },
     staleTime: 30_000,
   });
 
@@ -2335,6 +2353,7 @@ export default function MainWarehouseSubStockRequestsPage() {
         loadingLocations={loadingSubLocations}
         brands={mainStockBrands}
         loadingBrands={loadingMainStockBrands}
+        poReservedByVariantId={mainAllocatePoReservedByVariantId}
         submitting={mainAllocateMutation.isPending}
         onSubmit={async (payload) => {
           await mainAllocateMutation.mutateAsync(payload);
