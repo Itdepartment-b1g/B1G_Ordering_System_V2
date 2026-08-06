@@ -1784,7 +1784,7 @@ export function KeyAccountPurchaseOrdersPage() {
             triggerClassName="w-full sm:w-[220px] justify-between h-10 shrink-0"
             align="end"
           />
-          {(isSalesAdmin || isSalesHead || isDirector || isKAM) && !isReadOnlyAccounting && (
+          {/* {(isSalesAdmin || isSalesHead || isDirector || isKAM) && !isReadOnlyAccounting && (
             <Button
               className="w-full sm:w-auto shrink-0"
               onClick={() => navigate('/key-accounts/create-order')}
@@ -1792,7 +1792,7 @@ export function KeyAccountPurchaseOrdersPage() {
               <Plus className="h-4 w-4 mr-2" />
               Create Purchase Order
             </Button>
-          )}
+          )} */}
         </div>
       </div>
 
