@@ -18,6 +18,25 @@ function fmtQty(value: number): string {
   return Number(value).toLocaleString();
 }
 
+function formatOptionalQty(value: number | null | undefined): string {
+  if (value == null) return '—';
+  return fmtQty(value);
+}
+
+function formatLoose(
+  looseBoxCount: number | null | undefined,
+  looseQty: number | null | undefined
+): string {
+  const hasLoose =
+    (looseBoxCount != null && looseBoxCount > 0) || (looseQty != null && looseQty > 0);
+  if (!hasLoose) return '—';
+  return `${formatOptionalQty(looseBoxCount)} × ${formatOptionalQty(looseQty)}`;
+}
+
+function formatVariance(value: number): string {
+  return `${value > 0 ? '+' : ''}${fmtQty(value)}`;
+}
+
 function formatCountedAt(iso: string): string {
   try {
     return format(new Date(iso), 'MMM d, yyyy h:mm a');
@@ -103,6 +122,17 @@ function buildPhysicalCountReceiptHtml(
   );
   const title = `Physical Count Receipt – ${batchNumber}`;
 
+  const totals = detail.lines.reduce(
+    (acc, line) => {
+      acc.system += line.system_qty_snapshot || 0;
+      acc.boxes += line.box_count ?? 0;
+      acc.physical += line.physical_qty || 0;
+      acc.variance += line.variance || 0;
+      return acc;
+    },
+    { system: 0, boxes: 0, physical: 0, variance: 0 }
+  );
+
   const itemRows =
     detail.lines.length > 0
       ? detail.lines
@@ -110,7 +140,12 @@ function buildPhysicalCountReceiptHtml(
             (line) => `
         <tr>
           <td class="col-desc">${escapeHtml(lineDescription(line))}</td>
+          <td class="col-qty">${escapeHtml(fmtQty(line.system_qty_snapshot))}</td>
+          <td class="col-qty">${escapeHtml(formatOptionalQty(line.box_count))}</td>
+          <td class="col-qty">${escapeHtml(formatOptionalQty(line.units_per_box))}</td>
+          <td class="col-qty">${escapeHtml(formatLoose(line.loose_box_count, line.loose_qty))}</td>
           <td class="col-qty">${escapeHtml(fmtQty(line.physical_qty))}</td>
+          <td class="col-qty">${escapeHtml(formatVariance(line.variance))}</td>
           <td class="col-blank">&nbsp;</td>
         </tr>`
           )
@@ -118,6 +153,23 @@ function buildPhysicalCountReceiptHtml(
       : `<tr>
           <td class="col-desc">&nbsp;</td>
           <td class="col-qty">&nbsp;</td>
+          <td class="col-qty">&nbsp;</td>
+          <td class="col-qty">&nbsp;</td>
+          <td class="col-qty">&nbsp;</td>
+          <td class="col-qty">&nbsp;</td>
+          <td class="col-qty">&nbsp;</td>
+          <td class="col-blank">&nbsp;</td>
+        </tr>`;
+
+  const totalsRow = `
+        <tr class="totals-row">
+          <td class="col-desc">TOTALS</td>
+          <td class="col-qty">${escapeHtml(fmtQty(totals.system))}</td>
+          <td class="col-qty">${escapeHtml(fmtQty(totals.boxes))}</td>
+          <td class="col-qty">—</td>
+          <td class="col-qty">—</td>
+          <td class="col-qty">${escapeHtml(fmtQty(totals.physical))}</td>
+          <td class="col-qty">${escapeHtml(formatVariance(totals.variance))}</td>
           <td class="col-blank">&nbsp;</td>
         </tr>`;
 
@@ -237,26 +289,36 @@ function buildPhysicalCountReceiptHtml(
   .items-table thead th {
     text-align: left;
     font-weight: 800;
-    font-size: 12px;
-    padding: 6px 4px;
+    font-size: 10px;
+    padding: 6px 3px;
     border-bottom: 2px solid #000;
+    white-space: nowrap;
   }
   .items-table thead th.col-qty,
   .items-table thead th.col-blank { text-align: right; }
   .items-table tbody td {
-    padding: 7px 4px;
+    padding: 6px 3px;
     border-bottom: 1px solid #ccc;
     vertical-align: top;
+    font-size: 10px;
   }
+  .items-table .col-desc { width: auto; }
   .items-table .col-qty {
     text-align: right;
     font-variant-numeric: tabular-nums;
-    width: 90px;
+    width: 52px;
   }
   .items-table .col-blank {
     text-align: right;
-    width: 110px;
+    width: 72px;
     min-height: 22px;
+  }
+  .items-table .totals-row td {
+    font-weight: 800;
+    border-top: 2px solid #000;
+    border-bottom: 1px solid #000;
+    padding-top: 8px;
+    padding-bottom: 8px;
   }
 
   .delivery-section {
@@ -372,12 +434,18 @@ function buildPhysicalCountReceiptHtml(
       <thead>
         <tr>
           <th class="col-desc">Description</th>
-          <th class="col-qty">Quantity</th>
+          <th class="col-qty">System</th>
+          <th class="col-qty">Boxes</th>
+          <th class="col-qty">Qty/box</th>
+          <th class="col-qty">Loose</th>
+          <th class="col-qty">Physical Qty</th>
+          <th class="col-qty">Net Variance</th>
           <th class="col-blank">&nbsp;</th>
         </tr>
       </thead>
       <tbody>
         ${itemRows}
+        ${detail.lines.length > 0 ? totalsRow : ''}
       </tbody>
     </table>
 
