@@ -298,7 +298,7 @@ function buildPackingSlipHtml(
     <div class="logo-block">
       <img class="logo-img" src="${logoUrl}" alt="B1G" />
     </div>
-    <div class="doc-title">PREPARING ORDER / PACKING SLIP</div>
+    <div class="doc-title">PREPARED ORDER</div>
     <div class="doc-sub">${companyLabel}</div>
     <div class="meta-row">
       <div><span class="label">Allocation #</span> <span class="value">${alNo}</span></div>

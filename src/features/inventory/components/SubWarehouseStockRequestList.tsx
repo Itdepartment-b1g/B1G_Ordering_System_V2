@@ -66,9 +66,14 @@ import {
   exportInternalStockRequestReportPdf,
 } from '../utils/exportInternalStockRequestReportPdf';
 import {
+  canExportInternalStockDeliveryReceipt,
   exportInternalStockDeliveryReceiptPdf,
   type DeliveryReceiptWaveEvent,
 } from '../utils/exportInternalStockDeliveryReceiptPdf';
+import {
+  canExportInternalStockPackingSlip,
+  exportInternalStockPackingSlipPdf,
+} from '../utils/exportInternalStockPackingSlipPdf';
 
 const STATUS_LABELS: Record<SubWarehouseStockRequestStatus, string> = {
   pending_approval: 'Pending approval',
@@ -381,14 +386,20 @@ function RequestRowActionsMenu({
   onHistory,
   onReceive,
   onExportPdf,
+  onPrintPackingSlip,
+  onPrintDeliveryReceipt,
 }: {
   request: SubWarehouseStockRequest;
   onHistory: (request: SubWarehouseStockRequest) => void;
   onReceive: (request: SubWarehouseStockRequest) => void;
   onExportPdf: (request: SubWarehouseStockRequest) => void;
+  onPrintPackingSlip: (request: SubWarehouseStockRequest) => void;
+  onPrintDeliveryReceipt: (request: SubWarehouseStockRequest) => void;
 }) {
   const canReceive = canReceiveRequest(request);
   const canExport = canExportInternalStockRequestReport(request);
+  const canPrintPacking = canExportInternalStockPackingSlip(request);
+  const canPrintDr = canExportInternalStockDeliveryReceipt(request);
   const isPartialFollowUp = request.status === 'partially_received' && canReceive;
 
   return (
@@ -399,7 +410,7 @@ function RequestRowActionsMenu({
           <span className="sr-only">Open actions</span>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-52">
+      <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuItem onClick={() => onHistory(request)}>
           <History className="mr-2 h-4 w-4" />
           View history
@@ -408,6 +419,18 @@ function RequestRowActionsMenu({
           <DropdownMenuItem onClick={() => onExportPdf(request)}>
             <FileDown className="mr-2 h-4 w-4" />
             Export PDF
+          </DropdownMenuItem>
+        ) : null}
+        {canPrintPacking ? (
+          <DropdownMenuItem onClick={() => onPrintPackingSlip(request)}>
+            <Package className="mr-2 h-4 w-4" />
+            Print packing slip
+          </DropdownMenuItem>
+        ) : null}
+        {canPrintDr ? (
+          <DropdownMenuItem onClick={() => onPrintDeliveryReceipt(request)}>
+            <Truck className="mr-2 h-4 w-4" />
+            Print Delivery Receipt
           </DropdownMenuItem>
         ) : null}
         {canReceive ? (
@@ -520,6 +543,17 @@ export function SubWarehouseStockRequestList({
 
   const { pageCount, safePage, pagedItems } = getListPaginationSlice(filtered, page, pageSize);
 
+  const resolveFullRequest = async (
+    request: SubWarehouseStockRequest
+  ): Promise<SubWarehouseStockRequest> => {
+    try {
+      const full = await fetchInternalStockRequestById(request.id);
+      return full ?? request;
+    } catch {
+      return request;
+    }
+  };
+
   const handleExportReceivePdf = async (request: SubWarehouseStockRequest) => {
     if (!canExportInternalStockRequestReport(request)) {
       toast({
@@ -531,7 +565,9 @@ export function SubWarehouseStockRequestList({
     }
 
     try {
-      await exportInternalStockRequestReportPdf(request);
+      // List rows are lite (events omitted). Load full request so the PDF timeline has history.
+      const full = await resolveFullRequest(request);
+      await exportInternalStockRequestReportPdf(full);
       toast({
         title: 'PDF opened',
         description: `${request.requestNumber} — use Print / Save PDF.`,
@@ -545,12 +581,65 @@ export function SubWarehouseStockRequestList({
     }
   };
 
+  const handlePrintPackingSlip = async (request: SubWarehouseStockRequest) => {
+    if (!canExportInternalStockPackingSlip(request)) {
+      toast({
+        title: 'Nothing to print',
+        description: 'Packing slip is available for main allocations that are ready to deliver.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    try {
+      const full = await resolveFullRequest(request);
+      await exportInternalStockPackingSlipPdf(full);
+      toast({
+        title: 'Packing slip opened',
+        description: `${request.requestNumber} — use Print / Save PDF.`,
+      });
+    } catch (error) {
+      toast({
+        title: 'Could not print packing slip',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handlePrintDeliveryReceipt = async (request: SubWarehouseStockRequest) => {
+    if (!canExportInternalStockDeliveryReceipt(request)) {
+      toast({
+        title: 'Nothing to print',
+        description: 'Delivery Receipt is available after main has delivered.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    try {
+      const full = await resolveFullRequest(request);
+      await exportInternalStockDeliveryReceiptPdf(full);
+      toast({
+        title: 'Delivery Receipt opened',
+        description: `${request.requestNumber} — use Print / Save PDF.`,
+      });
+    } catch {
+      toast({
+        title: 'Export failed',
+        description: 'Could not open the Delivery Receipt.',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const handlePrintDeliveryReceiptForEvent = async (
     request: SubWarehouseStockRequest,
     event: DeliveryReceiptWaveEvent
   ) => {
     try {
-      await exportInternalStockDeliveryReceiptPdf(request, { event });
+      const full = await resolveFullRequest(request);
+      await exportInternalStockDeliveryReceiptPdf(full, { event });
       toast({
         title: 'Delivery Receipt opened',
         description: `${event.drNumber?.trim() || request.drNumber || request.requestNumber} — use Print / Save PDF.`,
@@ -702,6 +791,8 @@ export function SubWarehouseStockRequestList({
                       onHistory={(r) => void openHistory(r)}
                       onReceive={onReceive}
                       onExportPdf={(r) => void handleExportReceivePdf(r)}
+                      onPrintPackingSlip={(r) => void handlePrintPackingSlip(r)}
+                      onPrintDeliveryReceipt={(r) => void handlePrintDeliveryReceipt(r)}
                     />
                   </div>
                 </div>
@@ -809,6 +900,8 @@ export function SubWarehouseStockRequestList({
                           onHistory={(r) => void openHistory(r)}
                           onReceive={onReceive}
                           onExportPdf={(r) => void handleExportReceivePdf(r)}
+                          onPrintPackingSlip={(r) => void handlePrintPackingSlip(r)}
+                          onPrintDeliveryReceipt={(r) => void handlePrintDeliveryReceipt(r)}
                         />
                       </div>
                     </TableCell>
