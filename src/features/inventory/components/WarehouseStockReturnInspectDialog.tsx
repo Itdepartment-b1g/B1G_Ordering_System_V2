@@ -40,6 +40,8 @@ type WarehouseStockReturnInspectDialogProps = {
   onOpenChange: (open: boolean) => void;
   requestNumber: string;
   fromLocationName: string;
+  /** Notes submitted with the return request (read-only). */
+  requestNotes?: string | null;
   items: InspectRequestItem[];
   onItemsChange: (items: InspectRequestItem[]) => void;
   mainLots: InspectMainLotOption[];
@@ -58,6 +60,7 @@ export function WarehouseStockReturnInspectDialog({
   onOpenChange,
   requestNumber,
   fromLocationName,
+  requestNotes,
   items,
   onItemsChange,
   mainLots,
@@ -153,6 +156,13 @@ export function WarehouseStockReturnInspectDialog({
         </DialogHeader>
 
         <div className="flex-1 min-h-0 overflow-auto space-y-4">
+          {requestNotes?.trim() ? (
+            <div className="rounded-md border bg-muted/40 px-3 py-2 space-y-1">
+              <p className="text-xs font-medium text-muted-foreground">Return notes</p>
+              <p className="text-sm whitespace-pre-wrap">{requestNotes.trim()}</p>
+            </div>
+          ) : null}
+
           {loadingLots ? (
             <p className="text-sm text-muted-foreground text-center py-8">Loading main batch lots…</p>
           ) : items.length === 0 ? (

@@ -171,7 +171,7 @@ const App = () => (
                     <Route
                       path="/inventory/return-to-warehouse"
                       element={
-                        <ProtectedRoute allowedRoles={["admin", "super_admin"]}>
+                        <ProtectedRoute allowedRoles={["admin", "super_admin", "team_leader"]}>
                           <StandardAccountReturnToWarehousePage />
                         </ProtectedRoute>
                       }

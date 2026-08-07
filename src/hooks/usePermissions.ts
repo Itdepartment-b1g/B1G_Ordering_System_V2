@@ -31,10 +31,18 @@ export function usePermissions() {
 
   const checkPermission = (route: string): boolean => {
     // Return-to-warehouse only for hub-linked Standard Account tenants (never warehouse role).
+    // Admins return unallocated main stock; team leaders return their own allocated stock.
     // Checked before impersonation bypass so the sidebar stays accurate.
     if (route === '/inventory/return-to-warehouse') {
       if (user?.role === 'warehouse') return false;
-      if (!(user?.role === 'admin' || user?.role === 'super_admin' || !!impersonatedCompany)) {
+      if (
+        !(
+          user?.role === 'admin' ||
+          user?.role === 'super_admin' ||
+          user?.role === 'team_leader' ||
+          !!impersonatedCompany
+        )
+      ) {
         return false;
       }
       return hasWarehouseHubLink === true;
