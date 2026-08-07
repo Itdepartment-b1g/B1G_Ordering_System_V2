@@ -49,11 +49,7 @@ const ACCEPTED_PROOF_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gi
 const MAX_PROOF_IMAGE_BYTES = 5 * 1024 * 1024;
 
 function normalizeTypeLabel(typeKey: string): string {
-  const t = typeKey.toLowerCase();
-  if (t === 'flavor') return 'PODS';
-  if (t === 'battery') return 'DEVICE';
-  if (t === 'posm') return 'POSM';
-  return typeKey.toUpperCase();
+  return typeKey?.trim() || 'unknown';
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -71,6 +67,8 @@ export interface StandardAccountReturnToWarehouseDialogProps {
   companyId: string | null;
   userId: string | null;
   userFullName?: string | null;
+  /** main = company unallocated stock; leader = this user's agent_inventory */
+  inventorySource?: 'main' | 'leader';
   onSuccess?: () => void | Promise<void>;
 }
 
@@ -80,6 +78,7 @@ export function StandardAccountReturnToWarehouseDialog({
   companyId,
   userId,
   userFullName,
+  inventorySource = 'main',
   onSuccess,
 }: StandardAccountReturnToWarehouseDialogProps) {
   const { toast } = useToast();
@@ -134,11 +133,49 @@ export function StandardAccountReturnToWarehouseDialog({
   }, [open, locations, destinationLocationId]);
 
   const { data: rows = [], isLoading } = useQuery({
-    queryKey: ['sa-return-available-inventory', companyId],
-    enabled: open && !!companyId,
+    queryKey: ['sa-return-available-inventory', companyId, inventorySource, userId],
+    enabled: open && !!companyId && (inventorySource === 'main' || !!userId),
     staleTime: 0,
     refetchOnMount: 'always',
     queryFn: async (): Promise<InventoryReturnRow[]> => {
+      if (inventorySource === 'leader') {
+        const { data, error } = await supabase
+          .from('agent_inventory')
+          .select(
+            `
+            variant_id,
+            stock,
+            variant:variants (
+              name,
+              variant_type,
+              brand:brands ( name )
+            )
+          `
+          )
+          .eq('company_id', companyId!)
+          .eq('agent_id', userId!)
+          .gt('stock', 0);
+        if (error) throw error;
+
+        return (data ?? [])
+          .map((row) => {
+            const r = row as Record<string, unknown>;
+            const variant = Array.isArray(r.variant) ? r.variant[0] : r.variant;
+            const brand =
+              variant && (Array.isArray(variant.brand) ? variant.brand[0] : variant.brand);
+            const available = Math.max(0, Number(r.stock) || 0);
+            if (available <= 0) return null;
+            return {
+              variant_id: r.variant_id as string,
+              brandName: (brand as { name?: string })?.name ?? 'Unknown Brand',
+              variantName: (variant as { name?: string })?.name ?? String(r.variant_id),
+              variantType: (variant as { variant_type?: string })?.variant_type ?? 'unknown',
+              available,
+            } satisfies InventoryReturnRow;
+          })
+          .filter(Boolean) as InventoryReturnRow[];
+      }
+
       const { data, error } = await supabase
         .from('main_inventory')
         .select(
@@ -247,6 +284,10 @@ export function StandardAccountReturnToWarehouseDialog({
       setFormError('Add your signature to confirm this return.');
       return;
     }
+    if (!notes.trim()) {
+      setFormError('Notes are required. Include expiration and manufactured dates when possible.');
+      return;
+    }
     if (!companyId) {
       setFormError('Missing company context.');
       return;
@@ -285,7 +326,7 @@ export function StandardAccountReturnToWarehouseDialog({
 
       const { data, error } = await supabase.rpc('create_standard_account_stock_return_request', {
         p_items: items,
-        p_notes: notes.trim() || null,
+        p_notes: notes.trim(),
         p_created_by: userId,
         p_destination_location_id: destinationLocationId,
         p_signature_url: signature.url,
@@ -294,11 +335,18 @@ export function StandardAccountReturnToWarehouseDialog({
         p_proof_image_path: proof.path,
       });
       if (error) throw error;
-      const result = data as { success?: boolean; error?: string; request_number?: string };
+      const result = data as {
+        success?: boolean;
+        error?: string;
+        request_number?: string;
+        status?: string;
+      };
       if (!result?.success) throw new Error(result?.error ?? 'Failed to create return');
 
       const dest = locations.find((l) => l.id === destinationLocationId);
       const destName = dest?.name ?? 'warehouse';
+      const returnStatus =
+        result.status ?? (inventorySource === 'leader' ? 'pending_approval' : 'pending_receive');
 
       const { data: companyRow } = await supabase
         .from('companies')
@@ -308,9 +356,9 @@ export function StandardAccountReturnToWarehouseDialog({
 
       void exportStandardAccountReturnPdf({
         requestNumber: result.request_number ?? 'RT',
-        status: 'pending_receive',
+        status: returnStatus,
         createdAt: new Date().toISOString(),
-        notes: notes.trim() || null,
+        notes: notes.trim(),
         clientCompanyName: companyRow?.company_name ?? null,
         destinationLocationName: dest?.name ?? null,
         destinationIsMain: dest?.is_main ?? null,
@@ -334,13 +382,18 @@ export function StandardAccountReturnToWarehouseDialog({
 
       toast({
         title: 'Return submitted',
-        description: `${result.request_number} sent to ${destName} for inspection. PDF opened for print/save.`,
+        description:
+          returnStatus === 'pending_approval'
+            ? `${result.request_number} submitted for super admin approval. PDF opened for print/save.`
+            : `${result.request_number} sent to ${destName} for inspection. PDF opened for print/save.`,
       });
       onOpenChange(false);
       await queryClient.invalidateQueries({ queryKey: ['sa-stock-returns'] });
       await queryClient.invalidateQueries({ queryKey: ['sa-client-stock-returns'] });
       await queryClient.invalidateQueries({ queryKey: ['inventory'] });
       await queryClient.invalidateQueries({ queryKey: ['sa-return-available-inventory'] });
+      await queryClient.invalidateQueries({ queryKey: ['agent-inventory'] });
+      await queryClient.invalidateQueries({ queryKey: ['my-inventory'] });
       await onSuccess?.();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to create return';
@@ -362,9 +415,9 @@ export function StandardAccountReturnToWarehouseDialog({
           <DialogHeader>
             <DialogTitle>Return stock to warehouse</DialogTitle>
             <DialogDescription>
-              Choose main or a sub-warehouse, select products, attach a proof photo, and sign.
-              Stock is held when submitted; the warehouse inspects good vs damaged and picks the
-              batch lot.
+              {inventorySource === 'leader'
+                ? 'Choose main or a sub-warehouse, select products from your inventory, attach a proof photo, and sign. Your stock and company allocated stock are deducted when submitted; the warehouse inspects good vs damaged and picks the batch lot.'
+                : 'Choose main or a sub-warehouse, select products, attach a proof photo, and sign. Stock is held when submitted; the warehouse inspects good vs damaged and picks the batch lot.'}
             </DialogDescription>
           </DialogHeader>
 
@@ -411,9 +464,11 @@ export function StandardAccountReturnToWarehouseDialog({
                 <div className="flex items-center justify-center py-12 text-muted-foreground">
                   <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading inventory…
                 </div>
-              ) : byBrand.length === 0 ? (
+                  ) : byBrand.length === 0 ? (
                 <div className="py-12 text-center text-sm text-muted-foreground">
-                  No available stock to return.
+                  {inventorySource === 'leader'
+                    ? 'No stock in your inventory to return.'
+                    : 'No available stock to return.'}
                 </div>
               ) : (
                 <Accordion type="multiple" className="w-full">
@@ -550,14 +605,20 @@ export function StandardAccountReturnToWarehouseDialog({
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="sa-return-notes">Notes (optional)</Label>
+              <Label htmlFor="sa-return-notes">
+                Notes <span className="text-destructive">*</span>
+              </Label>
               <Textarea
                 id="sa-return-notes"
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="Reason for return…"
-                rows={2}
+                rows={3}
+                required
               />
+              <p className="text-xs italic text-muted-foreground">
+                Please include the expiration date and manufactured date of this item if possible.
+              </p>
             </div>
 
             {formError && <p className="text-sm text-destructive">{formError}</p>}
@@ -574,7 +635,8 @@ export function StandardAccountReturnToWarehouseDialog({
                 summary.lineCount === 0 ||
                 !destinationLocationId ||
                 !proofImageDataUrl ||
-                !signatureDataUrl
+                !signatureDataUrl ||
+                !notes.trim()
               }
             >
               {submitting && <Loader2 className="h-4 w-4 animate-spin mr-2" />}

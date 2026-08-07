@@ -4,7 +4,22 @@ export type StandardAccountReturnPdfLine = {
   brandName?: string | null;
   variantName?: string | null;
   returnQuantity: number;
-  inspectedQuantity?: number | null;
+  /** When null/undefined, Good cell is left blank for handwriting. */
+  qtyGood?: number | null;
+  /** When null/undefined, Damaged cell is left blank for handwriting. */
+  qtyDamaged?: number | null;
+  /** Destination batch label(s) for good units; blank when unset. */
+  batchLabel?: string | null;
+};
+
+export type StandardAccountReturnPdfReceiptLine = {
+  warehouseVariantId?: string | null;
+  brandName?: string | null;
+  variantName?: string | null;
+  qtyGood: number;
+  qtyDamaged: number;
+  batchNumber?: string | null;
+  expirationDate?: string | null;
 };
 
 export type StandardAccountReturnPdfInput = {
@@ -17,6 +32,10 @@ export type StandardAccountReturnPdfInput = {
   destinationIsMain?: boolean | null;
   createdByName?: string | null;
   signatureUrl?: string | null;
+  /** Override footer line; defaults to SA return wording. */
+  footerNote?: string | null;
+  /** Label for the company/from field; defaults to COMPANY. */
+  companyFieldLabel?: string | null;
   lines: StandardAccountReturnPdfLine[];
 };
 
@@ -31,13 +50,19 @@ export type StandardAccountReturnPdfSource = {
   client_company?: { company_name: string } | null;
   destination_location?: { name: string; is_main?: boolean | null } | null;
   created_by_user?: { full_name: string } | null;
+  footerNote?: string | null;
+  companyFieldLabel?: string | null;
   items: Array<{
+    warehouse_variant_id?: string | null;
     return_quantity: number;
     inspected_quantity?: number | null;
     variant?: {
       name: string;
       brand?: { name: string } | null;
     } | null;
+  }>;
+  receipts?: Array<{
+    lines: StandardAccountReturnPdfReceiptLine[];
   }>;
 };
 
@@ -64,12 +89,46 @@ function formatDateTime(iso: string): string {
   }
 }
 
+function formatLotDate(date: string | null | undefined): string | null {
+  if (!date) return null;
+  try {
+    const parsed = new Date(date);
+    if (Number.isNaN(parsed.getTime())) return date;
+    return parsed.toLocaleDateString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
+  } catch {
+    return date;
+  }
+}
+
+function formatBatchLabel(
+  batchNumber: string | null | undefined,
+  expirationDate: string | null | undefined,
+  qtyGood?: number
+): string {
+  const batch = batchNumber?.trim() || '—';
+  const exp = formatLotDate(expirationDate);
+  const base = exp ? `${batch} · exp ${exp}` : batch;
+  if (qtyGood != null && qtyGood > 0) return `${base} (${qtyGood})`;
+  return base;
+}
+
 function fmtQty(n: number): string {
   return Number(n || 0).toLocaleString();
 }
 
+function fmtQtyOrBlank(n: number | null | undefined): string {
+  if (n == null) return '&nbsp;';
+  return fmtQty(n);
+}
+
 function statusLabel(status: string | null | undefined): string {
   switch (status) {
+    case 'pending_approval':
+      return 'Pending approval';
     case 'pending_receive':
       return 'Pending inspect';
     case 'partially_received':
@@ -144,22 +203,47 @@ async function makeSignatureTransparent(src: string): Promise<string> {
   }
 }
 
+function productKey(brandName: string | null | undefined, variantName: string | null | undefined): string {
+  return `${(brandName ?? '').trim().toLowerCase()}::${(variantName ?? '').trim().toLowerCase()}`;
+}
+
+/** True when inspection columns should be filled (not left blank for handwriting). */
+function shouldFillInspection(status: string | null | undefined, hasReceiptLines: boolean): boolean {
+  if (status === 'fully_received' || status === 'partially_received') return true;
+  return hasReceiptLines;
+}
+
 function itemRowsHtml(lines: StandardAccountReturnPdfLine[]): {
   html: string;
-  showInspected: boolean;
+  totalGood: number;
+  totalDamaged: number;
+  hasFilledInspection: boolean;
 } {
-  const showInspected = lines.some((l) => l.inspectedQuantity != null);
+  let totalGood = 0;
+  let totalDamaged = 0;
+  let hasFilledInspection = false;
+
   const rows = lines.map((line) => {
     const name = `${line.brandName ? `${line.brandName} — ` : ''}${line.variantName || 'Item'}`;
+    if (line.qtyGood != null) {
+      totalGood += Number(line.qtyGood) || 0;
+      hasFilledInspection = true;
+    }
+    if (line.qtyDamaged != null) {
+      totalDamaged += Number(line.qtyDamaged) || 0;
+      hasFilledInspection = true;
+    }
+    const batchCell = line.batchLabel?.trim()
+      ? escapeHtml(line.batchLabel.trim())
+      : '&nbsp;';
+
     return `
       <tr>
         <td class="col-desc">${escapeHtml(name)}</td>
         <td class="col-qty">${fmtQty(line.returnQuantity)}</td>
-        ${
-          showInspected
-            ? `<td class="col-qty">${fmtQty(Number(line.inspectedQuantity ?? 0))}</td>`
-            : ''
-        }
+        <td class="col-qty">${fmtQtyOrBlank(line.qtyGood)}</td>
+        <td class="col-qty">${fmtQtyOrBlank(line.qtyDamaged)}</td>
+        <td class="col-batch">${batchCell}</td>
       </tr>`;
   });
 
@@ -168,20 +252,18 @@ function itemRowsHtml(lines: StandardAccountReturnPdfLine[]): {
       <tr>
         <td class="col-desc">&nbsp;</td>
         <td class="col-qty">&nbsp;</td>
-        ${showInspected ? '<td class="col-qty">&nbsp;</td>' : ''}
+        <td class="col-qty">&nbsp;</td>
+        <td class="col-qty">&nbsp;</td>
+        <td class="col-batch">&nbsp;</td>
       </tr>`);
   }
 
-  return { html: rows.join(''), showInspected };
+  return { html: rows.join(''), totalGood, totalDamaged, hasFilledInspection };
 }
 
 function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
   const itemResult = itemRowsHtml(input.lines);
   const totalReturned = input.lines.reduce((s, l) => s + Number(l.returnQuantity || 0), 0);
-  const totalInspected = input.lines.reduce(
-    (s, l) => s + Number(l.inspectedQuantity ?? 0),
-    0
-  );
   const rtNo = escapeHtml(input.requestNumber);
   const dest = escapeHtml(destinationLabel(input));
   const status = escapeHtml(statusLabel(input.status));
@@ -190,6 +272,10 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
   const signatureImgHtml = input.signatureUrl
     ? `<img class="sig-img" src="${escapeHtml(input.signatureUrl)}" alt="Return signature" />`
     : `<span class="sline"></span>`;
+
+  const totalsExtra = itemResult.hasFilledInspection
+    ? ` · Good: ${fmtQty(itemResult.totalGood)} · Damaged: ${fmtQty(itemResult.totalDamaged)}`
+    : '';
 
   return `<!doctype html>
 <html lang="en">
@@ -311,11 +397,12 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
   .items-table thead th {
     text-align: left;
     font-weight: 800;
-    font-size: 12px;
+    font-size: 11px;
     padding: 6px 4px;
     border-bottom: 2px solid #000;
   }
-  .items-table thead th.col-qty { text-align: right; }
+  .items-table thead th.col-qty,
+  .items-table thead th.col-batch { text-align: right; }
   .items-table tbody td {
     padding: 7px 4px;
     border-bottom: 1px solid #ccc;
@@ -324,7 +411,13 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
   .items-table .col-qty {
     text-align: right;
     font-variant-numeric: tabular-nums;
-    width: 90px;
+    width: 72px;
+  }
+  .items-table .col-batch {
+    text-align: right;
+    font-size: 10px;
+    width: 140px;
+    font-family: ui-monospace, monospace;
   }
 
   .totals-note {
@@ -437,7 +530,9 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
         <tr>
           <th class="col-desc">Description</th>
           <th class="col-qty">Returned</th>
-          ${itemResult.showInspected ? '<th class="col-qty">Inspected</th>' : ''}
+          <th class="col-qty">Good</th>
+          <th class="col-qty">Damaged</th>
+          <th class="col-batch">Batch (good)</th>
         </tr>
       </thead>
       <tbody>
@@ -445,11 +540,7 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
       </tbody>
     </table>
     <div class="totals-note">
-      Total returned: ${fmtQty(totalReturned)} unit(s)${
-        itemResult.showInspected
-          ? ` · Inspected: ${fmtQty(totalInspected)} unit(s)`
-          : ''
-      }
+      Total returned: ${fmtQty(totalReturned)} unit(s)${totalsExtra}
     </div>
 
     <div class="delivery-section">
@@ -457,7 +548,7 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
       ${
         input.clientCompanyName?.trim()
           ? `<div class="delivery-field">
-        <span class="flabel">COMPANY:</span>
+        <span class="flabel">${escapeHtml((input.companyFieldLabel?.trim() || 'COMPANY').toUpperCase())}:</span>
         <span class="fvalue">${escapeHtml(input.clientCompanyName.trim())}</span>
       </div>`
           : ''
@@ -493,7 +584,7 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
     </div>
 
     <div class="footer-note">
-      Standard Account return to warehouse · ${escapeHtml(formatDateTime(new Date().toISOString()))}
+      ${escapeHtml(input.footerNote?.trim() || 'Standard Account return to warehouse')} · ${escapeHtml(formatDateTime(new Date().toISOString()))}
     </div>
   </div>
 </body>
@@ -516,10 +607,48 @@ export async function exportStandardAccountReturnPdf(
   );
 }
 
+function flattenReceiptLines(
+  receipts: StandardAccountReturnPdfSource['receipts']
+): StandardAccountReturnPdfReceiptLine[] {
+  if (!receipts?.length) return [];
+  return receipts.flatMap((r) => r.lines ?? []);
+}
+
 function mapSourceToInput(
   source: StandardAccountReturnPdfSource,
   evidence: { signatureUrl: string | null }
 ): StandardAccountReturnPdfInput {
+  const receiptLines = flattenReceiptLines(source.receipts);
+  const fillInspection = shouldFillInspection(source.status, receiptLines.length > 0);
+
+  type Agg = {
+    qtyGood: number;
+    qtyDamaged: number;
+    batchParts: string[];
+  };
+
+  const byVariantId = new Map<string, Agg>();
+  const byProductKey = new Map<string, Agg>();
+
+  const bump = (map: Map<string, Agg>, key: string, line: StandardAccountReturnPdfReceiptLine) => {
+    if (!key) return;
+    const existing = map.get(key) ?? { qtyGood: 0, qtyDamaged: 0, batchParts: [] };
+    existing.qtyGood += Number(line.qtyGood) || 0;
+    existing.qtyDamaged += Number(line.qtyDamaged) || 0;
+    const goodQty = Number(line.qtyGood) || 0;
+    if (goodQty > 0) {
+      existing.batchParts.push(
+        formatBatchLabel(line.batchNumber, line.expirationDate, goodQty)
+      );
+    }
+    map.set(key, existing);
+  };
+
+  for (const line of receiptLines) {
+    if (line.warehouseVariantId) bump(byVariantId, line.warehouseVariantId, line);
+    bump(byProductKey, productKey(line.brandName, line.variantName), line);
+  }
+
   return {
     requestNumber: source.request_number,
     status: source.status,
@@ -530,12 +659,39 @@ function mapSourceToInput(
     destinationIsMain: source.destination_location?.is_main ?? null,
     createdByName: source.created_by_user?.full_name ?? null,
     signatureUrl: evidence.signatureUrl,
-    lines: source.items.map((item) => ({
-      brandName: item.variant?.brand?.name ?? null,
-      variantName: item.variant?.name ?? null,
-      returnQuantity: item.return_quantity,
-      inspectedQuantity: item.inspected_quantity ?? null,
-    })),
+    footerNote: source.footerNote ?? null,
+    companyFieldLabel: source.companyFieldLabel ?? null,
+    lines: source.items.map((item) => {
+      const brandName = item.variant?.brand?.name ?? null;
+      const variantName = item.variant?.name ?? null;
+      const base: StandardAccountReturnPdfLine = {
+        brandName,
+        variantName,
+        returnQuantity: item.return_quantity,
+      };
+
+      if (!fillInspection) {
+        // Pending (or no inspection yet): leave Good / Damaged / Batch blank for handwriting.
+        return base;
+      }
+
+      const agg =
+        (item.warehouse_variant_id
+          ? byVariantId.get(item.warehouse_variant_id)
+          : undefined) ?? byProductKey.get(productKey(brandName, variantName));
+
+      if (!agg) {
+        // Inspected status but no matching receipt line — still avoid printing misleading 0s.
+        return base;
+      }
+
+      return {
+        ...base,
+        qtyGood: agg.qtyGood,
+        qtyDamaged: agg.qtyDamaged,
+        batchLabel: agg.batchParts.length > 0 ? agg.batchParts.join('; ') : null,
+      };
+    }),
   };
 }
 

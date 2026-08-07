@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { Eye, FileText, Loader2, MoreHorizontal, RotateCcw, Search, XCircle } from 'lucide-react';
+import { CheckCircle2, Eye, FileText, Loader2, MoreHorizontal, RotateCcw, Search, XCircle } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -57,10 +57,27 @@ import {
 } from '@/components/ui/alert-dialog';
 
 type ReturnStatus =
+  | 'pending_approval'
   | 'pending_receive'
   | 'partially_received'
   | 'fully_received'
   | 'cancelled';
+
+type SaReturnReceiptLine = {
+  warehouse_variant_id: string | null;
+  qty_good: number;
+  qty_damaged: number;
+  variant: { name: string; brand: { name: string } | null } | null;
+  destination_lot: {
+    expiration_date: string | null;
+    batch: { batch_number: string } | null;
+  } | null;
+};
+
+type SaReturnReceipt = {
+  id: string;
+  lines: SaReturnReceiptLine[];
+};
 
 type SaReturnRow = {
   id: string;
@@ -68,6 +85,8 @@ type SaReturnRow = {
   status: ReturnStatus;
   notes: string | null;
   created_at: string;
+  created_by: string | null;
+  source_agent_id: string | null;
   signature_url: string | null;
   signature_path: string | null;
   proof_image_url: string | null;
@@ -76,13 +95,16 @@ type SaReturnRow = {
   created_by_user: { full_name: string } | null;
   items: Array<{
     id: string;
+    warehouse_variant_id: string;
     return_quantity: number;
     inspected_quantity: number;
     variant: { name: string; brand: { name: string } | null } | null;
   }>;
+  receipts: SaReturnReceipt[];
 };
 
 const STATUS_LABELS: Record<ReturnStatus, string> = {
+  pending_approval: 'Pending approval',
   pending_receive: 'Pending inspect',
   partially_received: 'Partially inspected',
   fully_received: 'Fully inspected',
@@ -93,6 +115,7 @@ const STATUS_VARIANT: Record<
   ReturnStatus,
   'default' | 'secondary' | 'outline' | 'destructive'
 > = {
+  pending_approval: 'default',
   pending_receive: 'secondary',
   partially_received: 'default',
   fully_received: 'outline',
@@ -123,6 +146,7 @@ function mapRow(raw: Record<string, unknown>): SaReturnRow {
       : null;
     return {
       id: row.id as string,
+      warehouse_variant_id: row.warehouse_variant_id as string,
       return_quantity: row.return_quantity as number,
       inspected_quantity: row.inspected_quantity as number,
       variant: variant
@@ -131,12 +155,56 @@ function mapRow(raw: Record<string, unknown>): SaReturnRow {
     };
   });
 
+  const receipts = ((raw.receipts as unknown[]) ?? []).map((receipt) => {
+    const r = receipt as Record<string, unknown>;
+    const lines = ((r.lines as unknown[]) ?? []).map((line) => {
+      const l = line as Record<string, unknown>;
+      const variant = firstRelation(
+        l.warehouse_variant as SaReturnReceiptLine['variant'] | SaReturnReceiptLine['variant'][]
+      );
+      const brand = variant?.brand
+        ? firstRelation(variant.brand as { name: string } | { name: string }[])
+        : null;
+      const destinationLot = firstRelation(
+        l.destination_lot as
+          | SaReturnReceiptLine['destination_lot']
+          | SaReturnReceiptLine['destination_lot'][]
+      );
+      const batch = destinationLot?.batch
+        ? firstRelation(
+            destinationLot.batch as { batch_number: string } | { batch_number: string }[]
+          )
+        : null;
+      return {
+        warehouse_variant_id: (l.warehouse_variant_id as string | null) ?? null,
+        qty_good: Number(l.qty_good) || 0,
+        qty_damaged: Number(l.qty_damaged) || 0,
+        variant: variant
+          ? { name: variant.name, brand: brand ? { name: brand.name } : null }
+          : null,
+        destination_lot: destinationLot
+          ? {
+              expiration_date: (destinationLot.expiration_date as string | null) ?? null,
+              batch: batch ? { batch_number: batch.batch_number } : null,
+            }
+          : null,
+      } satisfies SaReturnReceiptLine;
+    });
+
+    return {
+      id: r.id as string,
+      lines,
+    } satisfies SaReturnReceipt;
+  });
+
   return {
     id: raw.id as string,
     request_number: raw.request_number as string,
     status: raw.status as ReturnStatus,
     notes: (raw.notes as string | null) ?? null,
     created_at: raw.created_at as string,
+    created_by: (raw.created_by as string | null) ?? null,
+    source_agent_id: (raw.source_agent_id as string | null) ?? null,
     signature_url: (raw.signature_url as string | null) ?? null,
     signature_path: (raw.signature_path as string | null) ?? null,
     proof_image_url: (raw.proof_image_url as string | null) ?? null,
@@ -144,6 +212,7 @@ function mapRow(raw: Record<string, unknown>): SaReturnRow {
     destination_location: destinationLocation,
     created_by_user: createdBy,
     items,
+    receipts,
   };
 }
 
@@ -152,6 +221,10 @@ export default function StandardAccountReturnToWarehousePage() {
   const { hasWarehouseHubLink } = usePermissions();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const isTeamLeader = user?.role === 'team_leader';
+  const isCompanyAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+  const inventorySource = isTeamLeader ? 'leader' : 'main';
+  const [approvingId, setApprovingId] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -168,12 +241,12 @@ export default function StandardAccountReturnToWarehousePage() {
   const [exportingPdfId, setExportingPdfId] = useState<string | null>(null);
 
   const { data: returns = [], isLoading, error: returnsError } = useQuery({
-    queryKey: ['sa-stock-returns', user?.company_id],
+    queryKey: ['sa-stock-returns', user?.company_id, user?.id, isTeamLeader],
     enabled: !!user?.company_id && hasWarehouseHubLink,
     staleTime: 0,
     refetchOnMount: 'always',
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from('standard_account_stock_return_requests')
         .select(
           `
@@ -182,6 +255,8 @@ export default function StandardAccountReturnToWarehousePage() {
           status,
           notes,
           created_at,
+          created_by,
+          source_agent_id,
           signature_url,
           signature_path,
           proof_image_url,
@@ -193,17 +268,39 @@ export default function StandardAccountReturnToWarehousePage() {
           created_by_user:profiles!created_by ( full_name ),
           items:standard_account_stock_return_request_items (
             id,
+            warehouse_variant_id,
             return_quantity,
             inspected_quantity,
             client_variant:variants!client_variant_id (
               name,
               brand:brands ( name )
             )
+          ),
+          receipts:standard_account_stock_return_receipts (
+            id,
+            lines:standard_account_stock_return_receipt_lines (
+              warehouse_variant_id,
+              qty_good,
+              qty_damaged,
+              warehouse_variant:variants!warehouse_variant_id (
+                name,
+                brand:brands ( name )
+              ),
+              destination_lot:inventory_batch_lots!destination_lot_id (
+                expiration_date,
+                batch:inventory_batches ( batch_number )
+              )
+            )
           )
         `
         )
-        .eq('client_company_id', user!.company_id!)
-        .order('created_at', { ascending: false });
+        .eq('client_company_id', user!.company_id!);
+
+      if (isTeamLeader && user?.id) {
+        query = query.or(`source_agent_id.eq.${user.id},created_by.eq.${user.id}`);
+      }
+
+      const { data, error } = await query.order('created_at', { ascending: false });
       if (error) throw error;
       return ((data ?? []) as Record<string, unknown>[]).map(mapRow);
     },
@@ -269,10 +366,34 @@ export default function StandardAccountReturnToWarehousePage() {
         : { data: null };
 
       await exportStandardAccountReturnPdfFromSource({
-        ...row,
+        request_number: row.request_number,
+        status: row.status,
+        created_at: row.created_at,
+        notes: row.notes,
+        signature_url: row.signature_url,
+        signature_path: row.signature_path,
         client_company: companyRow?.company_name
           ? { company_name: companyRow.company_name }
           : null,
+        destination_location: row.destination_location,
+        created_by_user: row.created_by_user,
+        items: row.items.map((item) => ({
+          warehouse_variant_id: item.warehouse_variant_id,
+          return_quantity: item.return_quantity,
+          inspected_quantity: item.inspected_quantity,
+          variant: item.variant,
+        })),
+        receipts: row.receipts.map((receipt) => ({
+          lines: receipt.lines.map((line) => ({
+            warehouseVariantId: line.warehouse_variant_id,
+            brandName: line.variant?.brand?.name ?? null,
+            variantName: line.variant?.name ?? null,
+            qtyGood: line.qty_good,
+            qtyDamaged: line.qty_damaged,
+            batchNumber: line.destination_lot?.batch?.batch_number ?? null,
+            expirationDate: line.destination_lot?.expiration_date ?? null,
+          })),
+        })),
       });
       toast({
         title: 'PDF opened',
@@ -289,8 +410,37 @@ export default function StandardAccountReturnToWarehousePage() {
     }
   };
 
+  const handleApprove = async (row: SaReturnRow) => {
+    setApprovingId(row.id);
+    try {
+      const { data, error } = await supabase.rpc('approve_standard_account_stock_return_request', {
+        p_request_id: row.id,
+        p_approved_by: user?.id ?? null,
+      });
+      if (error) throw error;
+      const result = data as { success?: boolean; error?: string; request_number?: string };
+      if (!result?.success) throw new Error(result?.error ?? 'Approve failed');
+
+      toast({
+        title: 'Return approved',
+        description: `${result.request_number ?? row.request_number} sent to warehouse for inspection.`,
+      });
+      await queryClient.refetchQueries({ queryKey: ['sa-stock-returns'] });
+      await queryClient.invalidateQueries({ queryKey: ['sa-client-stock-returns'] });
+    } catch (err: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: err instanceof Error ? err.message : 'Failed to approve return',
+      });
+    } finally {
+      setApprovingId(null);
+    }
+  };
+
   const handleCancel = async () => {
     if (!cancelTarget) return;
+    const wasPendingApproval = cancelTarget.status === 'pending_approval';
     setCancelSubmitting(true);
     try {
       const { data, error } = await supabase.rpc('cancel_standard_account_stock_return_request', {
@@ -303,12 +453,21 @@ export default function StandardAccountReturnToWarehousePage() {
       if (!result?.success) throw new Error(result?.error ?? 'Cancel failed');
 
       toast({
-        title: 'Return cancelled',
-        description: `${result.request_number ?? 'Return'} cancelled; stock restored to your inventory.`,
+        title: wasPendingApproval ? 'Return rejected' : 'Return cancelled',
+        description: `${result.request_number ?? 'Return'} ${
+          wasPendingApproval ? 'rejected' : 'cancelled'
+        }; stock restored${
+          cancelTarget.source_agent_id
+            ? ' to TL inventory (and main stock / allocated)'
+            : ' to main inventory'
+        }.`,
       });
       setCancelTarget(null);
       await queryClient.refetchQueries({ queryKey: ['sa-stock-returns'] });
       await queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      await queryClient.invalidateQueries({ queryKey: ['agent-inventory'] });
+      await queryClient.invalidateQueries({ queryKey: ['my-inventory'] });
+      await queryClient.invalidateQueries({ queryKey: ['sa-return-available-inventory'] });
     } catch (err: unknown) {
       toast({
         variant: 'destructive',
@@ -341,8 +500,9 @@ export default function StandardAccountReturnToWarehousePage() {
             Return to Warehouse
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Send stock back to your linked warehouse. Numbers look like RT-202607-0001. Warehouse
-            inspects good vs damaged and chooses the batch.
+            {isTeamLeader
+              ? 'Return stock from your inventory. Super admin must approve before the warehouse can inspect. Reject/cancel restores your inventory plus company stock and allocated totals.'
+              : 'Send unallocated main stock to the warehouse, or approve team leader returns waiting for you. Warehouse inspects good vs damaged and chooses the batch.'}
           </p>
         </div>
         <Button onClick={() => setCreateOpen(true)}>
@@ -376,6 +536,7 @@ export default function StandardAccountReturnToWarehousePage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All statuses</SelectItem>
+                <SelectItem value="pending_approval">Pending approval</SelectItem>
                 <SelectItem value="pending_receive">Pending inspect</SelectItem>
                 <SelectItem value="partially_received">Partially inspected</SelectItem>
                 <SelectItem value="fully_received">Fully inspected</SelectItem>
@@ -467,7 +628,20 @@ export default function StandardAccountReturnToWarehousePage() {
                               )}
                               Print PDF
                             </DropdownMenuItem>
-                            {row.status === 'pending_receive' && (
+                            {isCompanyAdmin && row.status === 'pending_approval' && (
+                              <DropdownMenuItem
+                                disabled={approvingId === row.id}
+                                onClick={() => void handleApprove(row)}
+                              >
+                                {approvingId === row.id ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                                )}
+                                Approve
+                              </DropdownMenuItem>
+                            )}
+                            {(row.status === 'pending_approval' || row.status === 'pending_receive') && (
                               <>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem
@@ -475,7 +649,9 @@ export default function StandardAccountReturnToWarehousePage() {
                                   onClick={() => setCancelTarget(row)}
                                 >
                                   <XCircle className="mr-2 h-4 w-4" />
-                                  Cancel
+                                  {row.status === 'pending_approval' && isCompanyAdmin
+                                    ? 'Reject'
+                                    : 'Cancel'}
                                 </DropdownMenuItem>
                               </>
                             )}
@@ -508,6 +684,7 @@ export default function StandardAccountReturnToWarehousePage() {
         companyId={user?.company_id ?? null}
         userId={user?.id ?? null}
         userFullName={user?.full_name ?? null}
+        inventorySource={inventorySource}
       />
 
       <Dialog
@@ -642,17 +819,24 @@ export default function StandardAccountReturnToWarehousePage() {
       <AlertDialog open={!!cancelTarget} onOpenChange={(o) => !o && setCancelTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Cancel {cancelTarget?.request_number}?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {cancelTarget?.status === 'pending_approval' && isCompanyAdmin
+                ? `Reject ${cancelTarget?.request_number}?`
+                : `Cancel ${cancelTarget?.request_number}?`}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              Stock will be restored to your main inventory. This only works if the warehouse has
-              not started inspection.
+              {cancelTarget?.source_agent_id
+                ? 'Stock will be restored to the team leader inventory, and company main stock + allocated stock will be restored. This only works before warehouse inspection.'
+                : 'Stock will be restored to main inventory. This only works if the warehouse has not started inspection.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={cancelSubmitting}>Keep return</AlertDialogCancel>
             <AlertDialogAction onClick={handleCancel} disabled={cancelSubmitting}>
               {cancelSubmitting && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-              Cancel return
+              {cancelTarget?.status === 'pending_approval' && isCompanyAdmin
+                ? 'Reject return'
+                : 'Cancel return'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
