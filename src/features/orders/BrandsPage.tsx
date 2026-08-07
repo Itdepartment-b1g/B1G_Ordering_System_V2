@@ -26,6 +26,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
 import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
 import BrandsAndVariantsManual from '@/features/inventory/warehouse-manual/components/BrandsAndVariantsManual';
+import ReferenceNamingCatalogDialog from '@/features/orders/components/ReferenceNamingCatalogDialog';
 
 interface Brand {
   id: string;
@@ -559,6 +560,7 @@ export default function BrandsPage() {
           >
             <BrandsAndVariantsManual embedded />
           </PageManualDialog>
+          {user?.role === 'warehouse' && <ReferenceNamingCatalogDialog />}
           <Button onClick={() => setCreateBrandDialogOpen(true)}>
             <Plus className="h-4 w-4 mr-2" />
             Create Brand
