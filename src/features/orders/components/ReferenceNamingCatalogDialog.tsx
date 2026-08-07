@@ -127,8 +127,9 @@ export default function ReferenceNamingCatalogDialog() {
         <DialogHeader>
           <DialogTitle>Reference naming</DialogTitle>
           <DialogDescription>
-            Use these names as a guide when creating your warehouse catalog. You choose which names
-            to adopt. All reference brands and variants are listed, including those with zero stock.
+            This naming standard is from Moto Sales. Keep brand and variant names the same so
+            stocking and transfers stay clear and consistent across companies. Use these as a guide
+            when creating your warehouse catalog — you choose which names to adopt.
           </DialogDescription>
         </DialogHeader>
 
