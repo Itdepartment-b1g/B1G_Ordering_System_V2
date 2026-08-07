@@ -81,6 +81,23 @@ export function isInternalStockDeliveryProofComplete(
   );
 }
 
+export function isInternalStockPackageProofComplete(
+  value: InternalStockDeliveryProofValue
+): boolean {
+  return value.packagePhotos.length > 0 || !!value.proofImageDataUrl;
+}
+
+export function isInternalStockRiderSignatureProofComplete(
+  value: InternalStockDeliveryProofValue
+): boolean {
+  return (
+    !!value.riderName.trim() &&
+    !!value.riderPlate.trim() &&
+    !!value.riderPhotoDataUrl &&
+    !!value.signatureDataUrl
+  );
+}
+
 export function validateInternalStockProofFile(file: File): string | null {
   return validatePackageProofFile(file);
 }
@@ -220,6 +237,7 @@ export function InternalStockDeliveryProofFields({
   onRiderPhotoError,
   onProofError,
   labels,
+  mode = 'full',
 }: {
   value: InternalStockDeliveryProofValue;
   onChange: (partial: Partial<InternalStockDeliveryProofValue>) => void;
@@ -228,10 +246,15 @@ export function InternalStockDeliveryProofFields({
   onRiderPhotoError?: (error: string | null) => void;
   onProofError?: (error: string | null) => void;
   labels?: InternalStockDeliveryProofLabels;
+  /** full = rider + package + signature; package = package only; rider = rider + signature */
+  mode?: 'full' | 'package' | 'rider';
 }) {
   const reactId = useId();
   const prefix = labels?.idPrefix || reactId;
   const [signatureOpen, setSignatureOpen] = useState(false);
+  const showRider = mode === 'full' || mode === 'rider';
+  const showPackage = mode === 'full' || mode === 'package';
+  const showSignature = mode === 'full' || mode === 'rider';
 
   const handleRiderPick = async (file: File | null) => {
     onRiderPhotoError?.(null);
@@ -266,90 +289,98 @@ export function InternalStockDeliveryProofFields({
         </p>
       ) : null}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="space-y-2">
-          <Label htmlFor={`${prefix}-rider-name`}>Rider name (required)</Label>
-          <Input
-            id={`${prefix}-rider-name`}
-            value={value.riderName}
-            onChange={(e) => onChange({ riderName: e.target.value })}
-            placeholder="e.g. Juan Dela Cruz"
-            className="h-10"
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor={`${prefix}-rider-plate`}>Plate number (required)</Label>
-          <Input
-            id={`${prefix}-rider-plate`}
-            value={value.riderPlate}
-            onChange={(e) => onChange({ riderPlate: e.target.value })}
-            placeholder="e.g. ABC-1234"
-            className="h-10"
-          />
-        </div>
-      </div>
-
-      <ImageUploadField
-        label="Rider photo (required)"
-        emptyTitle="Upload rider photo"
-        alt="Rider"
-        dataUrl={value.riderPhotoDataUrl}
-        fileName={value.riderPhotoName}
-        error={riderPhotoError ?? null}
-        onPick={(file) => void handleRiderPick(file)}
-        onClear={() => onChange({ riderPhotoDataUrl: '', riderPhotoName: '' })}
-      />
-
-      <MultiProofPhotoField
-        label={labels?.proofLabel || 'Package photos'}
-        emptyTitle={labels?.proofUploadTitle || 'Upload package photo'}
-        recommendedHint="Recommended"
-        value={value.packagePhotos}
-        onChange={handlePackageChange}
-        error={proofError ?? null}
-      />
-
-      <div className="space-y-2">
-        <Label>Signature (required)</Label>
-        {!value.signatureDataUrl ? (
-          <Button
-            type="button"
-            variant="outline"
-            className="w-full h-10"
-            onClick={() => setSignatureOpen(true)}
-          >
-            <PenTool className="h-4 w-4 mr-2" />
-            Add signature
-          </Button>
-        ) : (
-          <div className="rounded-md border p-3 space-y-3 bg-muted/20">
-            <img
-              src={value.signatureDataUrl}
-              alt={labels?.signatureAlt || 'Signature'}
-              className="max-h-28 mx-auto bg-white rounded-md"
-            />
-            <div className="flex gap-2 justify-end">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => onChange({ signatureDataUrl: '' })}
-              >
-                <X className="h-4 w-4 mr-1" />
-                Clear
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setSignatureOpen(true)}
-              >
-                Re-sign
-              </Button>
+      {showRider ? (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <Label htmlFor={`${prefix}-rider-name`}>Rider name (required)</Label>
+              <Input
+                id={`${prefix}-rider-name`}
+                value={value.riderName}
+                onChange={(e) => onChange({ riderName: e.target.value })}
+                placeholder="e.g. Juan Dela Cruz"
+                className="h-10"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor={`${prefix}-rider-plate`}>Plate number (required)</Label>
+              <Input
+                id={`${prefix}-rider-plate`}
+                value={value.riderPlate}
+                onChange={(e) => onChange({ riderPlate: e.target.value })}
+                placeholder="e.g. ABC-1234"
+                className="h-10"
+              />
             </div>
           </div>
-        )}
-      </div>
+
+          <ImageUploadField
+            label="Rider photo (required)"
+            emptyTitle="Upload rider photo"
+            alt="Rider"
+            dataUrl={value.riderPhotoDataUrl}
+            fileName={value.riderPhotoName}
+            error={riderPhotoError ?? null}
+            onPick={(file) => void handleRiderPick(file)}
+            onClear={() => onChange({ riderPhotoDataUrl: '', riderPhotoName: '' })}
+          />
+        </>
+      ) : null}
+
+      {showPackage ? (
+        <MultiProofPhotoField
+          label={labels?.proofLabel || 'Package photos'}
+          emptyTitle={labels?.proofUploadTitle || 'Upload package photo'}
+          recommendedHint="Recommended"
+          value={value.packagePhotos}
+          onChange={handlePackageChange}
+          error={proofError ?? null}
+        />
+      ) : null}
+
+      {showSignature ? (
+        <div className="space-y-2">
+          <Label>Signature (required)</Label>
+          {!value.signatureDataUrl ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full h-10"
+              onClick={() => setSignatureOpen(true)}
+            >
+              <PenTool className="h-4 w-4 mr-2" />
+              Add signature
+            </Button>
+          ) : (
+            <div className="rounded-md border p-3 space-y-3 bg-muted/20">
+              <img
+                src={value.signatureDataUrl}
+                alt={labels?.signatureAlt || 'Signature'}
+                className="max-h-28 mx-auto bg-white rounded-md"
+              />
+              <div className="flex gap-2 justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onChange({ signatureDataUrl: '' })}
+                >
+                  <X className="h-4 w-4 mr-1" />
+                  Clear
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setSignatureOpen(true)}
+                >
+                  Re-sign
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : null}
 
       <Dialog open={signatureOpen} onOpenChange={setSignatureOpen}>
         <DialogContent className="max-w-md">

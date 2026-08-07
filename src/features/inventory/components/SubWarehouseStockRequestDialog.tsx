@@ -25,6 +25,7 @@ import { getMainWarehouseAllocatableQty } from '../warehouseStockBoard';
 export type SubWarehouseStockRequestStatus =
   | 'pending_approval'
   | 'approved'
+  | 'ready_to_deliver'
   | 'pending_receive'
   | 'partially_received'
   | 'fully_received'
@@ -86,6 +87,8 @@ export type SubWarehouseRequestHistoryEvent =
       note?: string;
       byName?: string;
       lines?: SubWarehouseReleaseLine[];
+      proofImageDataUrl?: string;
+      proofImageUrls?: string[];
     }
   | {
       id: string;

@@ -12,6 +12,7 @@ export const INTERNAL_STOCK_REQUESTS_QUERY_KEY = 'internal-stock-requests';
 export type InternalStockRequestStatus =
   | 'pending_approval'
   | 'approved'
+  | 'ready_to_deliver'
   | 'pending_receive'
   | 'partially_received'
   | 'fully_received'
@@ -136,6 +137,36 @@ function assertRpcOk<T extends { success?: boolean; error?: string }>(result: T,
   return result;
 }
 
+/**
+ * List views do not need signed proof/signature blobs — drop them to cut JSON size and render cost.
+ * Detail / PDF / packing slip should call fetchInternalStockRequestById for full attachments.
+ */
+export function slimInternalStockRequestForList(
+  request: SubWarehouseStockRequest
+): SubWarehouseStockRequest {
+  if (!request.history?.length) return request;
+  return {
+    ...request,
+    history: request.history.map((event) => {
+      if (
+        !('proofImageDataUrl' in event) &&
+        !('proofImageUrls' in event) &&
+        !('signatureDataUrl' in event) &&
+        !('riderPhotoUrl' in event)
+      ) {
+        return event;
+      }
+      return {
+        ...event,
+        proofImageDataUrl: undefined,
+        proofImageUrls: undefined,
+        signatureDataUrl: undefined,
+        riderPhotoUrl: undefined,
+      };
+    }),
+  };
+}
+
 async function attachOpenDiscrepancyCounts(
   requests: SubWarehouseStockRequest[]
 ): Promise<SubWarehouseStockRequest[]> {
@@ -166,18 +197,52 @@ export async function fetchInternalStockRequests(options?: {
   status?: InternalStockRequestStatus | 'all';
   fromLocationId?: string | 'all';
   search?: string;
+  /** Keep proof/signature URLs on events (default false for list speed). */
+  includeAttachments?: boolean;
 }): Promise<SubWarehouseStockRequest[]> {
+  const includeEvents = options?.includeAttachments === true;
   const { data, error } = await supabase.rpc('list_internal_stock_requests_for_caller', {
     p_from_location_id:
       options?.fromLocationId && options.fromLocationId !== 'all'
         ? options.fromLocationId
         : null,
     p_status: options?.status && options.status !== 'all' ? options.status : null,
+    p_include_events: includeEvents,
   });
 
+  const finalize = (mapped: SubWarehouseStockRequest[]) => {
+    const withCounts = attachOpenDiscrepancyCounts(mapped);
+    if (includeEvents) return withCounts;
+    return withCounts.then((rows) => rows.map(slimInternalStockRequestForList));
+  };
+
   if (error) {
-    // Fallback for environments that have not applied the list RPC yet.
-    console.warn('[internalStockRequests] list RPC failed, falling back to direct select', error);
+    // Fallback: older DBs without p_include_events, then direct select.
+    console.warn('[internalStockRequests] list RPC failed, retrying without events flag', error);
+    const retry = await supabase.rpc('list_internal_stock_requests_for_caller', {
+      p_from_location_id:
+        options?.fromLocationId && options.fromLocationId !== 'all'
+          ? options.fromLocationId
+          : null,
+      p_status: options?.status && options.status !== 'all' ? options.status : null,
+    });
+    if (!retry.error) {
+      let mapped = ((Array.isArray(retry.data) ? retry.data : []) as InternalStockRequestRow[]).map(
+        mapInternalStockRequestRow
+      );
+      if (options?.search?.trim()) {
+        const q = options.search.trim().toLowerCase();
+        mapped = mapped.filter(
+          (r) =>
+            r.requestNumber.toLowerCase().includes(q) ||
+            (r.drNumber || '').toLowerCase().includes(q) ||
+            r.fromLocationName.toLowerCase().includes(q)
+        );
+      }
+      return finalize(mapped);
+    }
+
+    console.warn('[internalStockRequests] list RPC failed, falling back to direct select', retry.error);
     let query = supabase
       .from('internal_stock_requests')
       .select(REQUEST_SELECT)
@@ -195,7 +260,7 @@ export async function fetchInternalStockRequests(options?: {
 
     const fallback = await query;
     if (fallback.error) throw fallback.error;
-    return attachOpenDiscrepancyCounts(
+    return finalize(
       ((fallback.data ?? []) as InternalStockRequestRow[]).map(mapInternalStockRequestRow)
     );
   }
@@ -213,7 +278,7 @@ export async function fetchInternalStockRequests(options?: {
     );
   }
 
-  return attachOpenDiscrepancyCounts(mapped);
+  return finalize(mapped);
 }
 
 export async function fetchInternalStockRequestById(requestId: string) {
@@ -247,6 +312,7 @@ export async function createInternalStockRequest(input: {
   );
 }
 
+/** @deprecated Prefer createMainStockAllocation + deliverMainStockAllocation. */
 export async function createAndDeliverMainStockAllocation(input: {
   fromLocationId: string;
   items: Array<{ variant_id: string; quantity: number }>;
@@ -284,6 +350,62 @@ export async function createAndDeliverMainStockAllocation(input: {
       status?: string;
     },
     'Failed to allocate stock to sub warehouse'
+  );
+}
+
+export async function createMainStockAllocation(input: {
+  fromLocationId: string;
+  items: Array<{ variant_id: string; quantity: number }>;
+  proofImageUrl: string;
+  proofImagePath?: string;
+  proofImageUrls?: string[];
+  proofImagePaths?: string[];
+  notes?: string;
+}) {
+  const { data, error } = await supabase.rpc('create_main_stock_allocation', {
+    p_from_location_id: input.fromLocationId,
+    p_items: input.items,
+    p_proof_image_url: input.proofImageUrl,
+    p_proof_image_path: input.proofImagePath ?? null,
+    p_proof_image_urls: input.proofImageUrls ?? null,
+    p_proof_image_paths: input.proofImagePaths ?? null,
+    p_notes: input.notes ?? null,
+  });
+  if (error) throw error;
+  return assertRpcOk(
+    data as {
+      success: boolean;
+      error?: string;
+      request_id?: string;
+      request_number?: string;
+      status?: string;
+    },
+    'Failed to create stock allocation'
+  );
+}
+
+export async function deliverMainStockAllocation(input: {
+  requestId: string;
+  signatureUrl: string;
+  riderName: string;
+  riderPlateNumber: string;
+  riderPhotoUrl: string;
+  signaturePath?: string;
+  riderPhotoPath?: string;
+}) {
+  const { data, error } = await supabase.rpc('deliver_main_stock_allocation', {
+    p_request_id: input.requestId,
+    p_signature_url: input.signatureUrl,
+    p_signature_path: input.signaturePath ?? null,
+    p_rider_name: input.riderName,
+    p_rider_plate_number: input.riderPlateNumber,
+    p_rider_photo_url: input.riderPhotoUrl,
+    p_rider_photo_path: input.riderPhotoPath ?? null,
+  });
+  if (error) throw error;
+  return assertRpcOk(
+    data as { success: boolean; error?: string; status?: string; dr_number?: string },
+    'Failed to deliver allocation'
   );
 }
 

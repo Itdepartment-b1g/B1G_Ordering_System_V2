@@ -16,6 +16,7 @@ export const DEFAULT_MAIN_SUB_STOCK_REQUEST_SORT_DIRECTION: MainSubStockRequestS
 const STATUS_SORT_LABELS: Record<SubWarehouseStockRequest['status'], string> = {
   pending_approval: 'Pending approval',
   approved: 'Approved',
+  ready_to_deliver: 'Ready to deliver',
   pending_receive: 'Pending receive',
   partially_received: 'Partially received',
   fully_received: 'Fully received',

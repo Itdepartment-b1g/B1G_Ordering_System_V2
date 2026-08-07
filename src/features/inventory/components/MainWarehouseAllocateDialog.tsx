@@ -1,7 +1,6 @@
 /**
- * Main Warehouse: allocate/deliver stock to a Sub Warehouse without a prior request.
- * Combines destination + item cart + deliver proof/signature, then calls
- * create_and_deliver_main_stock_allocation.
+ * Main Warehouse: create a stock allocation to a Sub Warehouse (package photo first).
+ * Deliver with rider details is a separate step after printing the packing slip.
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Loader2, Minus, Plus, Search, Trash2 } from 'lucide-react';
@@ -29,7 +28,7 @@ import type { Brand, Variant } from '../InventoryContext';
 import { getMainWarehouseAllocatableQty } from '../warehouseStockBoard';
 import {
   InternalStockDeliveryProofFields,
-  isInternalStockDeliveryProofComplete,
+  isInternalStockPackageProofComplete,
   useInternalStockDeliveryProof,
 } from './InternalStockDeliveryProofFields';
 
@@ -52,12 +51,7 @@ export type MainAllocateSubmitPayload = {
   fromLocationId: string;
   notes: string;
   items: Array<{ variant_id: string; quantity: number }>;
-  signatureUrl: string;
-  proofImageUrl: string;
   packagePhotos: import('@/features/shared/components/MultiProofPhotoField').PackageProofPhotoItem[];
-  riderName: string;
-  riderPlateNumber: string;
-  riderPhotoUrl: string;
 };
 
 type MainWarehouseAllocateDialogProps = {
@@ -304,7 +298,7 @@ export function MainWarehouseAllocateDialog({
   const canSubmit =
     !!locationId &&
     cart.length > 0 &&
-    isInternalStockDeliveryProofComplete(deliveryProof.value) &&
+    isInternalStockPackageProofComplete(deliveryProof.value) &&
     !submitting;
 
   const handleSubmit = async () => {
@@ -317,12 +311,7 @@ export function MainWarehouseAllocateDialog({
         variant_id: line.variantId,
         quantity: line.quantity,
       })),
-      signatureUrl: proof.signatureDataUrl,
-      proofImageUrl: proof.proofImageDataUrl,
       packagePhotos: proof.packagePhotos,
-      riderName: proof.riderName.trim(),
-      riderPlateNumber: proof.riderPlate.trim(),
-      riderPhotoUrl: proof.riderPhotoDataUrl,
     });
   };
 
@@ -333,8 +322,8 @@ export function MainWarehouseAllocateDialog({
           <DialogHeader>
             <DialogTitle>Allocate to Sub Warehouse</DialogTitle>
             <p className="text-sm text-muted-foreground font-normal pt-1">
-              Push stock without a sub request. Batch lots leave main on allocate; the sub
-              warehouse inventory updates only when they confirm receive with proof and signature.
+              Create the allocation with a package photo first. Batch lots leave main on create;
+              print the packing slip for the boxes, then deliver with rider details when ready.
             </p>
           </DialogHeader>
 
@@ -561,23 +550,19 @@ export function MainWarehouseAllocateDialog({
               />
             </section>
 
-            {/* Rider & proof */}
+            {/* Package photo */}
             <section className="shrink-0">
               <InternalStockDeliveryProofFields
+                mode="package"
                 value={deliveryProof.value}
                 onChange={deliveryProof.patch}
-                riderPhotoError={deliveryProof.riderPhotoError}
                 proofError={deliveryProof.proofError}
-                onRiderPhotoError={deliveryProof.setRiderPhotoError}
                 onProofError={deliveryProof.setProofError}
                 labels={{
                   idPrefix: 'main-alloc',
-                  sectionTitle: 'Rider & proof',
-                  signatureAlt: 'Allocation signature',
-                  signatureDialogTitle: 'Sign allocation',
-                  signatureCanvasTitle: 'Allocation signature',
-                  signatureCanvasDescription:
-                    'Draw your signature to confirm this allocation delivery',
+                  sectionTitle: 'Package photo',
+                  proofLabel: 'Package photos (required)',
+                  proofUploadTitle: 'Upload package photo',
                 }}
               />
             </section>
@@ -596,10 +581,10 @@ export function MainWarehouseAllocateDialog({
               {submitting ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Allocating…
+                  Creating…
                 </>
               ) : (
-                'Allocate & deliver'
+                'Create allocation'
               )}
             </Button>
           </DialogFooter>

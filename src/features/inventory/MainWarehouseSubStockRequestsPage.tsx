@@ -66,19 +66,26 @@ import { SubWarehouseRequestHistoryTimeline } from './components/SubWarehouseReq
 import {
   InternalStockDeliveryProofFields,
   isInternalStockDeliveryProofComplete,
+  isInternalStockRiderSignatureProofComplete,
   useInternalStockDeliveryProof,
 } from './components/InternalStockDeliveryProofFields';
 import {
   INTERNAL_STOCK_REQUESTS_QUERY_KEY,
   allocateInternalStockRequestRemaining,
   approveInternalStockRequest,
-  createAndDeliverMainStockAllocation,
+  createMainStockAllocation,
   deliverInternalStockRequest,
+  deliverMainStockAllocation,
   fetchInternalStockRequestById,
   fetchInternalStockRequests,
   rejectInternalStockRequest,
 } from './internalStockRequestsApi';
 import { countRequestsByStatus } from './internalStockRequestsMappers';
+import {
+  broadcastInternalStockRequestsChanged,
+  refetchInternalStockRequestLists,
+  useInternalStockRequestsRealtime,
+} from './useInternalStockRequestsRealtime';
 import {
   canExportMainRequestPdf,
   exportMainSubStockRequestPdf,
@@ -89,8 +96,14 @@ import {
   type DeliveryReceiptWaveEvent,
 } from './utils/exportInternalStockDeliveryReceiptPdf';
 import {
+  canExportInternalStockPackingSlip,
+  exportInternalStockPackingSlipPdf,
+} from './utils/exportInternalStockPackingSlipPdf';
+import {
   attachInternalStockProofImageUrls,
   prepareInternalStockDeliveryUploads,
+  prepareInternalStockPackageUploads,
+  prepareInternalStockRiderSignatureUploads,
 } from './utils/uploadInternalStockDeliveryEvidence';
 import {
   DEFAULT_MAIN_SUB_STOCK_REQUEST_SORT_DIRECTION,
@@ -134,6 +147,7 @@ import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 const STATUS_LABELS: Record<SubWarehouseStockRequestStatus, string> = {
   pending_approval: 'Pending approval',
   approved: 'Approved',
+  ready_to_deliver: 'Ready to deliver',
   pending_receive: 'Pending receive',
   partially_received: 'Partially received',
   fully_received: 'Fully received',
@@ -145,6 +159,7 @@ type StatusFilter = 'all' | SubWarehouseStockRequestStatus;
 type ListTab = 'requests' | 'allocations';
 
 const ALLOCATION_STATUS_FILTERS: SubWarehouseStockRequestStatus[] = [
+  'ready_to_deliver',
   'pending_receive',
   'partially_received',
   'fully_received',
@@ -163,6 +178,14 @@ function StatusBadge({ status }: { status: SubWarehouseStockRequestStatus }) {
     return (
       <Badge variant="secondary" className="gap-1 border-blue-200 bg-blue-50 text-blue-800">
         <CheckCircle2 className="h-3 w-3" />
+        {STATUS_LABELS[status]}
+      </Badge>
+    );
+  }
+  if (status === 'ready_to_deliver') {
+    return (
+      <Badge variant="secondary" className="gap-1 border-violet-200 bg-violet-50 text-violet-900">
+        <Package className="h-3 w-3" />
         {STATUS_LABELS[status]}
       </Badge>
     );
@@ -307,6 +330,7 @@ function MainItemChips({
             {item.variantName} ×{item.requestedQuantity}
             {request.status !== 'pending_approval' &&
             request.status !== 'approved' &&
+            request.status !== 'ready_to_deliver' &&
             request.status !== 'rejected'
               ? ` · D ${getItemDeliveredQty(item)} · R ${getItemReceivedQty(item)}`
               : ''}
@@ -368,6 +392,7 @@ function MainRequestActionsMenu({
   onAllocate,
   onExportPdf,
   onPrintDeliveryReceipt,
+  onPrintPackingSlip,
 }: {
   request: SubWarehouseStockRequest;
   onView: (request: SubWarehouseStockRequest) => void;
@@ -377,14 +402,18 @@ function MainRequestActionsMenu({
   onAllocate: (request: SubWarehouseStockRequest) => void;
   onExportPdf: (request: SubWarehouseStockRequest) => void;
   onPrintDeliveryReceipt: (request: SubWarehouseStockRequest) => void;
+  onPrintPackingSlip: (request: SubWarehouseStockRequest) => void;
 }) {
   const canApprove = request.status === 'pending_approval';
-  const canDeliver = request.status === 'approved';
+  const canDeliver =
+    request.status === 'approved' ||
+    (request.status === 'ready_to_deliver' && request.initiationType === 'main_allocation');
   const canReject = request.status === 'pending_approval' || request.status === 'approved';
   const canAllocate = requestCanAllocateRemaining(request);
   const canInvestigate = requestHasOpenShortages(request);
   const canExport = canExportMainRequestPdf(request);
   const canPrintDr = canExportInternalStockDeliveryReceipt(request);
+  const canPrintPacking = canExportInternalStockPackingSlip(request);
 
   return (
     <DropdownMenu>
@@ -403,6 +432,12 @@ function MainRequestActionsMenu({
           <DropdownMenuItem onClick={() => onExportPdf(request)}>
             <FileDown className="mr-2 h-4 w-4" />
             Export PDF
+          </DropdownMenuItem>
+        ) : null}
+        {canPrintPacking ? (
+          <DropdownMenuItem onClick={() => onPrintPackingSlip(request)}>
+            <Package className="mr-2 h-4 w-4" />
+            Print packing slip
           </DropdownMenuItem>
         ) : null}
         {canPrintDr ? (
@@ -474,19 +509,22 @@ export default function MainWarehouseSubStockRequestsPage() {
   const {
     data: requests = [],
     isLoading: loadingRequests,
+    isFetching: fetchingRequests,
     error: requestsError,
   } = useQuery({
-    queryKey: [INTERNAL_STOCK_REQUESTS_QUERY_KEY, 'main', user?.company_id, 'rpc-v1'],
+    queryKey: [INTERNAL_STOCK_REQUESTS_QUERY_KEY, 'main', user?.company_id, 'rpc-v2-lite'],
     enabled: !!user?.company_id,
-    staleTime: 15_000,
-    refetchOnMount: true,
+    staleTime: 0,
+    gcTime: 5 * 60_000,
+    placeholderData: (prev) => prev,
+    refetchOnMount: 'always',
     refetchOnWindowFocus: true,
     queryFn: () => fetchInternalStockRequests(),
   });
 
   /** List refresh for this page — do not await on mutation success (blocks dialog close). */
   const refreshRequestList = () => {
-    void queryClient.invalidateQueries({ queryKey: [INTERNAL_STOCK_REQUESTS_QUERY_KEY] });
+    void refetchInternalStockRequestLists(queryClient);
   };
 
   /** Inventory caches — background only; InventoryContext realtime also picks these up. */
@@ -498,49 +536,13 @@ export default function MainWarehouseSubStockRequestsPage() {
   const schedulePostMutationRefresh = () => {
     refreshRequestList();
     refreshInventoryCaches();
+    void broadcastInternalStockRequestsChanged(user?.company_id);
   };
 
-  // Live updates when sub creates/receives (or any status change on company requests).
-  useEffect(() => {
-    if (!user?.company_id) return;
-
-    const companyId = user.company_id;
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const scheduleRefresh = () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        void queryClient.invalidateQueries({ queryKey: [INTERNAL_STOCK_REQUESTS_QUERY_KEY] });
-      }, 250);
-    };
-
-    const channel = supabase
-      .channel(`internal-stock-requests-main-${companyId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'internal_stock_requests',
-        },
-        (payload) => {
-          const row = (payload.new ?? payload.old) as { company_id?: string } | null;
-          // Skip other companies when payload includes company_id; RLS already scopes events.
-          if (row?.company_id && row.company_id !== companyId) return;
-          scheduleRefresh();
-        }
-      )
-      .subscribe((status) => {
-        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          console.error('[MainSubStockRequests] realtime subscription failed:', status);
-        }
-      });
-
-    return () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      void supabase.removeChannel(channel);
-    };
-  }, [user?.company_id, queryClient]);
+  useInternalStockRequestsRealtime({
+    enabled: !!user?.company_id,
+    companyId: user?.company_id,
+  });
 
   const [viewMode, setViewMode] = useState<ListViewMode>('rows');
   const [listTab, setListTab] = useState<ListTab>('requests');
@@ -566,10 +568,30 @@ export default function MainWarehouseSubStockRequestsPage() {
   const [allocateQtys, setAllocateQtys] = useState<Record<string, string>>({});
   const [mainAllocateOpen, setMainAllocateOpen] = useState(false);
 
-  const detailRequest = useMemo(
+  const listDetailFallback = useMemo(
     () => requests.find((r) => r.id === detailRequestId) ?? null,
     [requests, detailRequestId]
   );
+
+  const { data: detailRequestFetched } = useQuery({
+    queryKey: [INTERNAL_STOCK_REQUESTS_QUERY_KEY, 'detail', detailRequestId],
+    enabled: !!detailRequestId,
+    staleTime: 0,
+    queryFn: () => fetchInternalStockRequestById(detailRequestId!),
+  });
+
+  const detailRequest = detailRequestFetched ?? listDetailFallback;
+
+  const resolveFullRequest = async (
+    request: SubWarehouseStockRequest
+  ): Promise<SubWarehouseStockRequest> => {
+    try {
+      const full = await fetchInternalStockRequestById(request.id);
+      return full ?? request;
+    } catch {
+      return request;
+    }
+  };
 
   const handleExportPdf = async (request: SubWarehouseStockRequest) => {
     if (!canExportMainRequestPdf(request)) {
@@ -582,7 +604,8 @@ export default function MainWarehouseSubStockRequestsPage() {
     }
 
     try {
-      await exportMainSubStockRequestPdf(request);
+      const full = await resolveFullRequest(request);
+      await exportMainSubStockRequestPdf(full);
       toast({
         title: 'PDF opened',
         description: `${request.requestNumber} — use Print / Save PDF.`,
@@ -607,7 +630,8 @@ export default function MainWarehouseSubStockRequestsPage() {
     }
 
     try {
-      await exportInternalStockDeliveryReceiptPdf(request);
+      const full = await resolveFullRequest(request);
+      await exportInternalStockDeliveryReceiptPdf(full);
       toast({
         title: 'Delivery Receipt opened',
         description: `${request.requestNumber} — use Print / Save PDF.`,
@@ -626,7 +650,8 @@ export default function MainWarehouseSubStockRequestsPage() {
     event: DeliveryReceiptWaveEvent
   ) => {
     try {
-      await exportInternalStockDeliveryReceiptPdf(request, { event });
+      const full = await resolveFullRequest(request);
+      await exportInternalStockDeliveryReceiptPdf(full, { event });
       toast({
         title: 'Delivery Receipt opened',
         description: `${event.drNumber?.trim() || request.drNumber || request.requestNumber} — use Print / Save PDF.`,
@@ -635,6 +660,19 @@ export default function MainWarehouseSubStockRequestsPage() {
       toast({
         title: 'Export failed',
         description: 'Could not open the Delivery Receipt.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handlePrintPackingSlip = async (request: SubWarehouseStockRequest) => {
+    try {
+      const full = await resolveFullRequest(request);
+      await exportInternalStockPackingSlipPdf(full);
+    } catch (error) {
+      toast({
+        title: 'Could not print packing slip',
+        description: error instanceof Error ? error.message : 'Unknown error',
         variant: 'destructive',
       });
     }
@@ -729,23 +767,17 @@ export default function MainWarehouseSubStockRequestsPage() {
   const mainAllocateMutation = useMutation({
     mutationFn: async (payload: MainAllocateSubmitPayload) => {
       if (!user?.company_id) throw new Error('Missing company');
-      const uploaded = await prepareInternalStockDeliveryUploads({
+      const uploaded = await prepareInternalStockPackageUploads({
         companyId: user.company_id,
-        riderPhotoDataUrl: payload.riderPhotoUrl,
         packagePhotos: payload.packagePhotos,
-        signatureDataUrl: payload.signatureUrl,
       });
-      const result = await createAndDeliverMainStockAllocation({
+      const result = await createMainStockAllocation({
         fromLocationId: payload.fromLocationId,
         items: payload.items,
-        signatureUrl: uploaded.signature.url,
-        signaturePath: uploaded.signature.path,
         proofImageUrl: uploaded.packages.firstUrl,
         proofImagePath: uploaded.packages.firstPath,
-        riderName: payload.riderName,
-        riderPlateNumber: payload.riderPlateNumber,
-        riderPhotoUrl: uploaded.rider.url,
-        riderPhotoPath: uploaded.rider.path,
+        proofImageUrls: uploaded.packages.urls,
+        proofImagePaths: uploaded.packages.paths,
         notes: payload.notes || undefined,
       });
       const requestId =
@@ -753,7 +785,7 @@ export default function MainWarehouseSubStockRequestsPage() {
       if (requestId) {
         await attachInternalStockProofImageUrls({
           requestId,
-          eventType: 'delivered',
+          eventType: 'main_allocated',
           proofImageUrls: uploaded.packages.urls,
           proofImagePaths: uploaded.packages.paths,
         });
@@ -764,15 +796,9 @@ export default function MainWarehouseSubStockRequestsPage() {
       setMainAllocateOpen(false);
       const requestNumber =
         typeof result?.request_number === 'string' ? result.request_number : 'Allocation';
-      const drNumber =
-        typeof result?.dr_number === 'string' && result.dr_number.trim()
-          ? result.dr_number.trim()
-          : undefined;
       toast({
-        title: 'Allocated & delivered',
-        description: drNumber
-          ? `${requestNumber} delivered (${drNumber}). Pending receive at the sub warehouse.`
-          : `${requestNumber} is now pending receive at the sub warehouse.`,
+        title: 'Allocation created',
+        description: `${requestNumber} is ready to deliver. Print the packing slip for the boxes.`,
       });
       schedulePostMutationRefresh();
 
@@ -782,12 +808,12 @@ export default function MainWarehouseSubStockRequestsPage() {
       void (async () => {
         try {
           const match = await fetchInternalStockRequestById(requestId);
-          if (match) await exportInternalStockDeliveryReceiptPdf(match);
+          if (match) await exportInternalStockPackingSlipPdf(match);
         } catch {
           toast({
-            title: 'Delivery Receipt',
+            title: 'Packing slip',
             description:
-              'Allocated, but the receipt could not be opened automatically. Use Print Delivery Receipt.',
+              'Allocation created, but the packing slip could not be opened automatically. Use Print packing slip.',
             variant: 'destructive',
           });
         }
@@ -927,6 +953,32 @@ export default function MainWarehouseSubStockRequestsPage() {
       }
       if (!user?.company_id) throw new Error('Missing company');
       const proof = deliverProof.value;
+      const isMainReadyToDeliver =
+        deliverTarget.initiationType === 'main_allocation' &&
+        deliverTarget.status === 'ready_to_deliver';
+
+      if (isMainReadyToDeliver) {
+        if (!isInternalStockRiderSignatureProofComplete(proof)) {
+          throw new Error('Rider details and signature are required');
+        }
+        const uploaded = await prepareInternalStockRiderSignatureUploads({
+          companyId: user.company_id,
+          requestId: deliverTarget.id,
+          riderPhotoDataUrl: proof.riderPhotoDataUrl,
+          riderPhotoName: proof.riderPhotoName,
+          signatureDataUrl: proof.signatureDataUrl,
+        });
+        return deliverMainStockAllocation({
+          requestId: deliverTarget.id,
+          signatureUrl: uploaded.signature.url,
+          signaturePath: uploaded.signature.path,
+          riderName: proof.riderName.trim(),
+          riderPlateNumber: proof.riderPlate.trim(),
+          riderPhotoUrl: uploaded.rider.url,
+          riderPhotoPath: uploaded.rider.path,
+        });
+      }
+
       if (!isInternalStockDeliveryProofComplete(proof)) {
         throw new Error('Rider details, package photos, and signature are required');
       }
@@ -1151,7 +1203,10 @@ export default function MainWarehouseSubStockRequestsPage() {
   };
 
   const openDeliverDialog = (request: SubWarehouseStockRequest) => {
-    if (request.status !== 'approved') return;
+    const canDeliver =
+      request.status === 'approved' ||
+      (request.status === 'ready_to_deliver' && request.initiationType === 'main_allocation');
+    if (!canDeliver) return;
     deliverProof.reset();
     setDeliverTarget(request);
   };
@@ -1160,9 +1215,22 @@ export default function MainWarehouseSubStockRequestsPage() {
     setDeliverTarget(null);
   };
 
+  const isDeliverMainAllocation =
+    deliverTarget?.initiationType === 'main_allocation' &&
+    deliverTarget?.status === 'ready_to_deliver';
+
   const handleConfirmDeliver = () => {
     if (!deliverTarget) return;
-    if (!isInternalStockDeliveryProofComplete(deliverProof.value)) {
+    if (isDeliverMainAllocation) {
+      if (!isInternalStockRiderSignatureProofComplete(deliverProof.value)) {
+        toast({
+          title: 'Delivery proof incomplete',
+          description: 'Rider name, plate, photo, and signature are required.',
+          variant: 'destructive',
+        });
+        return;
+      }
+    } else if (!isInternalStockDeliveryProofComplete(deliverProof.value)) {
       toast({
         title: 'Delivery proof incomplete',
         description: 'Rider name, plate, photo, delivery proof, and signature are required.',
@@ -1292,7 +1360,7 @@ export default function MainWarehouseSubStockRequestsPage() {
     <div className="p-8 space-y-6">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Sub Stock Requests & Allocations</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Stock Transfer</h1>
           <p className="text-muted-foreground">
             Review stock requests from sub-warehouses, or allocate stock directly. Approve, then
             deliver, or monitor receive status and shortages.
@@ -1391,6 +1459,9 @@ export default function MainWarehouseSubStockRequestsPage() {
               <CardTitle className="flex items-center gap-2">
                 <Package className="h-5 w-5" />
                 {listTab === 'allocations' ? 'Main allocations' : 'Incoming requests'}
+                {fetchingRequests && requests.length > 0 ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                ) : null}
               </CardTitle>
               <p className="text-sm text-muted-foreground font-normal mt-1">
                 {listTab === 'allocations'
@@ -1471,7 +1542,7 @@ export default function MainWarehouseSubStockRequestsPage() {
           </div>
         </CardHeader>
         <CardContent>
-          {loadingRequests ? (
+          {loadingRequests && requests.length === 0 ? (
             <div className="flex items-center justify-center py-16 text-muted-foreground">
               <Loader2 className="h-6 w-6 animate-spin mr-2" />
               Loading requests…
@@ -1483,6 +1554,12 @@ export default function MainWarehouseSubStockRequestsPage() {
                   ? 'No allocations yet. Use Allocate to Sub Warehouse to push stock.'
                   : 'No stock requests from sub-warehouses yet.'
                 : 'No items match this filter.'}
+              {fetchingRequests ? (
+                <span className="mt-2 flex items-center justify-center gap-1.5 text-xs">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Refreshing…
+                </span>
+              ) : null}
             </p>
           ) : viewMode === 'cards' ? (
             <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1526,6 +1603,7 @@ export default function MainWarehouseSubStockRequestsPage() {
                             onAllocate={openAllocateDialog}
                             onExportPdf={(r) => void handleExportPdf(r)}
                             onPrintDeliveryReceipt={(r) => void handlePrintDeliveryReceipt(r)}
+                            onPrintPackingSlip={(r) => void handlePrintPackingSlip(r)}
                           />
                         </div>
                         {requestHasOpenShortages(req) ? (
@@ -1691,6 +1769,7 @@ export default function MainWarehouseSubStockRequestsPage() {
                               onAllocate={openAllocateDialog}
                               onExportPdf={(r) => void handleExportPdf(r)}
                               onPrintDeliveryReceipt={(r) => void handlePrintDeliveryReceipt(r)}
+                              onPrintPackingSlip={(r) => void handlePrintPackingSlip(r)}
                             />
                           </div>
                         </TableCell>
@@ -1855,6 +1934,16 @@ export default function MainWarehouseSubStockRequestsPage() {
                     Export PDF
                   </Button>
                 ) : null}
+                {canExportInternalStockPackingSlip(detailRequest) ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void handlePrintPackingSlip(detailRequest)}
+                  >
+                    <Package className="mr-2 h-4 w-4" />
+                    Print packing slip
+                  </Button>
+                ) : null}
                 {canExportInternalStockDeliveryReceipt(detailRequest) ? (
                   <Button
                     type="button"
@@ -1892,6 +1981,12 @@ export default function MainWarehouseSubStockRequestsPage() {
                       Deliver
                     </Button>
                   </>
+                ) : null}
+                {detailRequest.status === 'ready_to_deliver' &&
+                detailRequest.initiationType === 'main_allocation' ? (
+                  <Button type="button" onClick={() => openDeliverDialog(detailRequest)}>
+                    Deliver
+                  </Button>
                 ) : null}
                 {detailRequest.status === 'partially_received' &&
                 requestCanAllocateRemaining(detailRequest) ? (
@@ -2097,7 +2192,11 @@ export default function MainWarehouseSubStockRequestsPage() {
       >
         <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Deliver request — {deliverTarget?.requestNumber}</DialogTitle>
+            <DialogTitle>
+              {isDeliverMainAllocation
+                ? `Deliver allocation — ${deliverTarget?.requestNumber}`
+                : `Deliver request — ${deliverTarget?.requestNumber}`}
+            </DialogTitle>
           </DialogHeader>
           {deliverTarget ? (
             <div className="space-y-4 py-1">
@@ -2113,6 +2212,11 @@ export default function MainWarehouseSubStockRequestsPage() {
                   </p>
                 ) : null}
                 {deliverTarget.notes ? <p>Notes: {deliverTarget.notes}</p> : null}
+                {isDeliverMainAllocation ? (
+                  <p>
+                    Package photos were captured at allocation. Add rider details to dispatch.
+                  </p>
+                ) : null}
               </div>
 
               <div className="space-y-2">
@@ -2147,6 +2251,7 @@ export default function MainWarehouseSubStockRequestsPage() {
               </div>
 
               <InternalStockDeliveryProofFields
+                mode={isDeliverMainAllocation ? 'rider' : 'full'}
                 value={deliverProof.value}
                 onChange={deliverProof.patch}
                 riderPhotoError={deliverProof.riderPhotoError}
@@ -2155,6 +2260,7 @@ export default function MainWarehouseSubStockRequestsPage() {
                 onProofError={deliverProof.setProofError}
                 labels={{
                   idPrefix: 'deliver',
+                  sectionTitle: isDeliverMainAllocation ? 'Rider & signature' : undefined,
                   signatureAlt: 'Delivery signature',
                   signatureDialogTitle: 'Sign to deliver',
                   signatureCanvasTitle: 'Delivery signature',
@@ -2172,7 +2278,9 @@ export default function MainWarehouseSubStockRequestsPage() {
               type="button"
               onClick={handleConfirmDeliver}
               disabled={
-                !isInternalStockDeliveryProofComplete(deliverProof.value) ||
+                (isDeliverMainAllocation
+                  ? !isInternalStockRiderSignatureProofComplete(deliverProof.value)
+                  : !isInternalStockDeliveryProofComplete(deliverProof.value)) ||
                 deliverMutation.isPending
               }
             >

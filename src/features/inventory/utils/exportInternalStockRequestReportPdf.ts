@@ -51,6 +51,8 @@ function statusLabel(status: SubWarehouseStockRequest['status']): string {
       return 'Pending approval';
     case 'approved':
       return 'Approved (awaiting delivery)';
+    case 'ready_to_deliver':
+      return 'Ready to deliver';
     case 'pending_receive':
       return 'Pending receive';
     case 'partially_received':
@@ -167,10 +169,10 @@ function eventSummary(
   if (event.type === 'main_allocated') {
     const qty = linesTotalQty(event.lines);
     if (qty > 0) {
-      return `Allocated ${qty.toLocaleString()} unit(s) · pending receive`;
+      return `Allocated ${qty.toLocaleString()} unit(s) · awaiting delivery`;
     }
     const allocated = request.items.reduce((s, i) => s + Math.max(0, i.requestedQuantity), 0);
-    return `Allocated ${allocated.toLocaleString()} unit(s) · pending receive`;
+    return `Allocated ${allocated.toLocaleString()} unit(s) · awaiting delivery`;
   }
   if (event.type === 'approved') {
     return 'Approved — awaiting delivery';
@@ -282,7 +284,8 @@ function renderEventAttachments(
     event.type === 'delivered' ||
     event.type === 'approved_released' ||
     event.type === 'remaining_released' ||
-    event.type === 'receive_confirmed';
+    event.type === 'receive_confirmed' ||
+    event.type === 'main_allocated';
   const showSignature =
     event.type === 'delivered' ||
     event.type === 'approved_released' ||
