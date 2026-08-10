@@ -15,6 +15,7 @@ import {
 import { ChevronsUpDown, Expand, FileText, Loader2, PackageCheck, Receipt, Truck, XCircle } from 'lucide-react';
 import type { PurchaseOrder } from '../types';
 import { generateAndOpenDrPdf } from '../dr/generateDrPdf';
+import { enrichDispatchLinesWithLots } from '../dr/fetchDeliveryDispatchLots';
 import { generateAndOpenReceiveReceiptPdf } from '../dr/generateReceiveReceiptPdf';
 import { PoBuyerReceiveDialog, type PoReceiveLine } from './PoBuyerReceiveDialog';
 import { PoBuyerCancelDialog } from './PoBuyerCancelDialog';
@@ -182,11 +183,12 @@ export function PurchaseOrderDeliveryDetailsPanel({
             quantity: item.quantity_dispatched,
           };
         });
+      const linesWithLots = await enrichDispatchLinesWithLots(row.id, dispatchLines);
       await generateAndOpenDrPdf(purchaseOrder, {
         drNumber: row.dr_number,
         warehouseLocationId: row.warehouse_location_id,
         warehouseLocationName: warehouseName,
-        dispatchLines,
+        dispatchLines: linesWithLots,
         cancelled: row.status === 'cancelled',
       });
     } catch (e) {

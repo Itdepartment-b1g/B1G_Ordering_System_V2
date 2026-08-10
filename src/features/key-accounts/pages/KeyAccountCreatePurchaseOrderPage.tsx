@@ -2021,232 +2021,6 @@ export function KeyAccountPurchaseOrderPage() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <CreditCard className="h-5 w-5" />
-                Payment
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-start justify-between gap-4 rounded-md border p-3">
-                <div className="space-y-1 min-w-0">
-                  <Label htmlFor="consignment-po-toggle" className="text-sm font-medium">
-                    Consignment PO
-                  </Label>
-                  <p className="text-xs text-muted-foreground">
-                    Float stock to the client now. Warehouse still fulfills this PO; payment can be recorded later.
-                    Consignment amounts are excluded from revenue/analytics until payment-based recognition is added.
-                  </p>
-                </div>
-                <Switch
-                  id="consignment-po-toggle"
-                  checked={isConsignment}
-                  onCheckedChange={setIsConsignment}
-                  className="mt-0.5 shrink-0"
-                />
-              </div>
-
-              {isConsignment ? (
-                <p className="text-sm rounded-md border border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-100 p-3">
-                  Payment proof is not required at create. Status will stay <span className="font-medium">unpaid</span>{' '}
-                  until you record payment on the PO later.
-                </p>
-              ) : null}
-
-              <div className="space-y-2">
-                <Label>Payment terms{isConsignment ? ' (optional)' : ' *'}</Label>
-                <Select
-                  value={paymentTermsSource}
-                  onValueChange={(v) => setPaymentTermsSource(v as PaymentTermsSource)}
-                  disabled={!selectedClientId}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Choose how to set terms…" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="client">Use client profile terms</SelectItem>
-                    <SelectItem value="company">Use company payment terms</SelectItem>
-                  </SelectContent>
-                </Select>
-                {paymentTermsSource === 'client' ? (
-                  clientPaymentTerms.length === 0 ? (
-                    <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
-                      No payment terms on file for this client — choose company terms, or update
-                      the client record.
-                    </p>
-                  ) : clientPaymentTerms.length === 1 ? (
-                    <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
-                      {clientPaymentTerms[0]}
-                    </p>
-                  ) : (
-                    <Select
-                      value={selectedClientPaymentTerm || undefined}
-                      onValueChange={setSelectedClientPaymentTerm}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a client payment term…" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {clientPaymentTerms.map((term) => (
-                          <SelectItem key={term} value={term}>
-                            {term}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )
-                ) : (
-                  <div className="space-y-2">
-                    {loadingCompanyPaymentTerms ? (
-                      <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3 flex items-center gap-2">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Loading company payment terms…
-                      </p>
-                    ) : (
-                      <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
-                        {companyPaymentTermOptions.length === 0 ? (
-                          <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3 sm:flex-1 w-full">
-                            No company payment terms yet
-                            {canAddCompanyPaymentTerms
-                              ? ' — use Add term to create one.'
-                              : ' — ask Sales Head/Director to add them.'}
-                          </p>
-                        ) : (
-                          <Select
-                            value={selectedCompanyPaymentTerm || undefined}
-                            onValueChange={setSelectedCompanyPaymentTerm}
-                          >
-                            <SelectTrigger className="sm:flex-1 w-full">
-                              <SelectValue placeholder="Select a company payment term…" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {companyPaymentTermOptions.map((option) => (
-                                <SelectItem key={option.id} value={option.label}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        )}
-                        {canAddCompanyPaymentTerms ? (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="shrink-0 w-full sm:w-auto"
-                            onClick={() => setCompanyPaymentTermDialogOpen(true)}
-                          >
-                            <Plus className="h-4 w-4 mr-2" />
-                            Add term
-                          </Button>
-                        ) : null}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {!isConsignment ? (
-                <>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Payment mode *</Label>
-                      <Select value={paymentMode} onValueChange={(v) => setPaymentMode(v as KeyAccountPoPaymentMode)}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="full">Full (pay order total now)</SelectItem>
-                          <SelectItem value="split">Split (first installment now)</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Payment method *</Label>
-                      {availablePaymentMethods.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">
-                          No payment methods are enabled. Ask your Sales Head to configure them under
-                          Key Account payment settings.
-                        </p>
-                      ) : (
-                        <Select
-                          value={paymentMethod}
-                          onValueChange={(v) => setPaymentMethod(v as KeyAccountPaymentMethod)}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {availablePaymentMethods.map((method) => (
-                              <SelectItem key={method} value={method}>
-                                {KEY_ACCOUNT_PAYMENT_METHOD_LABELS[method]}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      )}
-                    </div>
-                  </div>
-
-                  {paymentMethod === 'BANK_TRANSFER' && enabledBankAccounts.length > 0 && (
-                    <div className="space-y-2">
-                      <Label>Bank *</Label>
-                      <Select value={bankType} onValueChange={setBankType}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select bank account" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {enabledBankAccounts.map((bank) => (
-                            <SelectItem key={bank.name} value={bank.name}>
-                              {bank.name} · {bank.account_number}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
-
-                  {paymentMode === 'split' && (
-                    <div className="space-y-2">
-                      <Label>First payment amount (₱) *</Label>
-                      <Input
-                        type="number"
-                        min={0.01}
-                        step="0.01"
-                        value={splitFirstAmount}
-                        onChange={(e) => setSplitFirstAmount(e.target.value)}
-                        placeholder="Less than order total"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Order total after tax/discount: <span className="font-medium">₱{total.toFixed(2)}</span>. You can
-                        record the balance later when the PO is warehouse reserved, fulfilled, or delivered.
-                      </p>
-                    </div>
-                  )}
-
-                  {paymentMode === 'full' && (
-                    <p className="text-sm text-muted-foreground">
-                      First payment will be the full order total: <span className="font-medium">₱{total.toFixed(2)}</span>.
-                    </p>
-                  )}
-
-                  <KeyAccountPaymentProofUploadField
-                    file={paymentProofFile}
-                    onFileChange={setPaymentProofFile}
-                    inputId="create-po-payment-proof"
-                    label={requiresPaymentProof ? 'Payment proof *' : 'Payment proof (optional)'}
-                  />
-                  {isEditMode && editHasPayments && (
-                    <p className="text-xs text-muted-foreground">
-                      Existing payment records are kept. Upload a new proof only if you need to add
-                      another payment later from the PO view.
-                    </p>
-                  )}
-                </>
-              ) : null}
-            </CardContent>
-          </Card>
-
           {/* Warehouse stock modal (dashboard-style) */}
           <Dialog open={stockModalOpen} onOpenChange={setStockModalOpen}>
             <DialogContent className="max-w-[95vw] w-[1100px] max-h-[90vh] overflow-hidden flex flex-col">
@@ -2588,6 +2362,232 @@ export function KeyAccountPurchaseOrderPage() {
                     : 'No items added yet. Select products above to add to your order.'}
                 </div>
               )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <CreditCard className="h-5 w-5" />
+                Payment
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+                <div className="space-y-1 min-w-0">
+                  <Label htmlFor="consignment-po-toggle" className="text-sm font-medium">
+                    Consignment PO
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Float stock to the client now. Warehouse still fulfills this PO; payment can be recorded later.
+                    Consignment amounts are excluded from revenue/analytics until payment-based recognition is added.
+                  </p>
+                </div>
+                <Switch
+                  id="consignment-po-toggle"
+                  checked={isConsignment}
+                  onCheckedChange={setIsConsignment}
+                  className="mt-0.5 shrink-0"
+                />
+              </div>
+
+              {isConsignment ? (
+                <p className="text-sm rounded-md border border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-100 p-3">
+                  Payment proof is not required at create. Status will stay <span className="font-medium">unpaid</span>{' '}
+                  until you record payment on the PO later.
+                </p>
+              ) : null}
+
+              <div className="space-y-2">
+                <Label>Payment terms{isConsignment ? ' (optional)' : ' *'}</Label>
+                <Select
+                  value={paymentTermsSource}
+                  onValueChange={(v) => setPaymentTermsSource(v as PaymentTermsSource)}
+                  disabled={!selectedClientId}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose how to set terms…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="client">Use client profile terms</SelectItem>
+                    <SelectItem value="company">Use company payment terms</SelectItem>
+                  </SelectContent>
+                </Select>
+                {paymentTermsSource === 'client' ? (
+                  clientPaymentTerms.length === 0 ? (
+                    <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
+                      No payment terms on file for this client — choose company terms, or update
+                      the client record.
+                    </p>
+                  ) : clientPaymentTerms.length === 1 ? (
+                    <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
+                      {clientPaymentTerms[0]}
+                    </p>
+                  ) : (
+                    <Select
+                      value={selectedClientPaymentTerm || undefined}
+                      onValueChange={setSelectedClientPaymentTerm}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select a client payment term…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {clientPaymentTerms.map((term) => (
+                          <SelectItem key={term} value={term}>
+                            {term}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )
+                ) : (
+                  <div className="space-y-2">
+                    {loadingCompanyPaymentTerms ? (
+                      <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3 flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading company payment terms…
+                      </p>
+                    ) : (
+                      <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                        {companyPaymentTermOptions.length === 0 ? (
+                          <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3 sm:flex-1 w-full">
+                            No company payment terms yet
+                            {canAddCompanyPaymentTerms
+                              ? ' — use Add term to create one.'
+                              : ' — ask Sales Head/Director to add them.'}
+                          </p>
+                        ) : (
+                          <Select
+                            value={selectedCompanyPaymentTerm || undefined}
+                            onValueChange={setSelectedCompanyPaymentTerm}
+                          >
+                            <SelectTrigger className="sm:flex-1 w-full">
+                              <SelectValue placeholder="Select a company payment term…" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {companyPaymentTermOptions.map((option) => (
+                                <SelectItem key={option.id} value={option.label}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
+                        {canAddCompanyPaymentTerms ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="shrink-0 w-full sm:w-auto"
+                            onClick={() => setCompanyPaymentTermDialogOpen(true)}
+                          >
+                            <Plus className="h-4 w-4 mr-2" />
+                            Add term
+                          </Button>
+                        ) : null}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {!isConsignment ? (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Payment mode *</Label>
+                      <Select value={paymentMode} onValueChange={(v) => setPaymentMode(v as KeyAccountPoPaymentMode)}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="full">Full (pay order total now)</SelectItem>
+                          <SelectItem value="split">Split (first installment now)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Payment method *</Label>
+                      {availablePaymentMethods.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">
+                          No payment methods are enabled. Ask your Sales Head to configure them under
+                          Key Account payment settings.
+                        </p>
+                      ) : (
+                        <Select
+                          value={paymentMethod}
+                          onValueChange={(v) => setPaymentMethod(v as KeyAccountPaymentMethod)}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {availablePaymentMethods.map((method) => (
+                              <SelectItem key={method} value={method}>
+                                {KEY_ACCOUNT_PAYMENT_METHOD_LABELS[method]}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
+                  </div>
+
+                  {paymentMethod === 'BANK_TRANSFER' && enabledBankAccounts.length > 0 && (
+                    <div className="space-y-2">
+                      <Label>Bank *</Label>
+                      <Select value={bankType} onValueChange={setBankType}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select bank account" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {enabledBankAccounts.map((bank) => (
+                            <SelectItem key={bank.name} value={bank.name}>
+                              {bank.name} · {bank.account_number}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+
+                  {paymentMode === 'split' && (
+                    <div className="space-y-2">
+                      <Label>First payment amount (₱) *</Label>
+                      <Input
+                        type="number"
+                        min={0.01}
+                        step="0.01"
+                        value={splitFirstAmount}
+                        onChange={(e) => setSplitFirstAmount(e.target.value)}
+                        placeholder="Less than order total"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Order total after tax/discount: <span className="font-medium">₱{total.toFixed(2)}</span>. You can
+                        record the balance later when the PO is warehouse reserved, fulfilled, or delivered.
+                      </p>
+                    </div>
+                  )}
+
+                  {paymentMode === 'full' && (
+                    <p className="text-sm text-muted-foreground">
+                      First payment will be the full order total: <span className="font-medium">₱{total.toFixed(2)}</span>.
+                    </p>
+                  )}
+
+                  <KeyAccountPaymentProofUploadField
+                    file={paymentProofFile}
+                    onFileChange={setPaymentProofFile}
+                    inputId="create-po-payment-proof"
+                    label={requiresPaymentProof ? 'Payment proof *' : 'Payment proof (optional)'}
+                  />
+                  {isEditMode && editHasPayments && (
+                    <p className="text-xs text-muted-foreground">
+                      Existing payment records are kept. Upload a new proof only if you need to add
+                      another payment later from the PO view.
+                    </p>
+                  )}
+                </>
+              ) : null}
             </CardContent>
           </Card>
         </div>
