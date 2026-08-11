@@ -1334,6 +1334,8 @@ export function KeyAccountPurchaseOrderPage() {
     }
 
     setSubmitting(true);
+    /** Set only for brand-new POs so a failed payment/items step can roll the row back. */
+    let createdPoId: string | null = null;
 
     try {
       const isDirector = user?.role === 'sales_director';
@@ -1515,6 +1517,7 @@ export function KeyAccountPurchaseOrderPage() {
         .single();
 
       if (poError) throw poError;
+      createdPoId = poData.id;
 
       const { error: itemsError } = await supabase.from('purchase_order_items').insert(
         orderItems.map((item) => ({
@@ -1524,6 +1527,28 @@ export function KeyAccountPurchaseOrderPage() {
       );
 
       if (itemsError) throw itemsError;
+
+      // Require initial payment before treating the create as successful (non-consignment).
+      // If payment fails, the catch block deletes this PO so it does not remain in the list.
+      if (!isConsignment) {
+        if (!user.company_id) {
+          throw new Error('Missing company context for payment proof upload.');
+        }
+        if (!paymentProofFile) {
+          throw new Error('Payment proof is required.');
+        }
+        const proofPath = await uploadKeyAccountPaymentProof(user.company_id, poData.id, paymentProofFile);
+
+        const { error: payErr } = await supabase.from('purchase_order_key_account_payments').insert({
+          purchase_order_id: poData.id,
+          company_id: user.company_id,
+          amount: paymentMode === 'full' ? orderTotalRounded : firstPaymentAmount,
+          payment_method: paymentMethod,
+          bank_type: paymentMethod === 'BANK_TRANSFER' ? bankType : null,
+          proof_storage_path: proofPath,
+        });
+        if (payErr) throw payErr;
+      }
 
       void logPurchaseOrderEvent({
         purchaseOrderId: poData.id,
@@ -1553,25 +1578,8 @@ export function KeyAccountPurchaseOrderPage() {
         });
       }
 
-      if (!isConsignment) {
-        if (!user.company_id) {
-          throw new Error('Missing company context for payment proof upload.');
-        }
-        if (!paymentProofFile) {
-          throw new Error('Payment proof is required.');
-        }
-        const proofPath = await uploadKeyAccountPaymentProof(user.company_id, poData.id, paymentProofFile);
-
-        const { error: payErr } = await supabase.from('purchase_order_key_account_payments').insert({
-          purchase_order_id: poData.id,
-          company_id: user.company_id,
-          amount: paymentMode === 'full' ? orderTotalRounded : firstPaymentAmount,
-          payment_method: paymentMethod,
-          bank_type: paymentMethod === 'BANK_TRANSFER' ? bankType : null,
-          proof_storage_path: proofPath,
-        });
-        if (payErr) throw payErr;
-      }
+      // Clear so catch does not delete a successfully created PO.
+      createdPoId = null;
 
       toast({
         title: 'Order created successfully',
@@ -1585,6 +1593,15 @@ export function KeyAccountPurchaseOrderPage() {
       setConfirmOpen(false);
       navigate('/key-accounts/purchase-orders');
     } catch (error: any) {
+      if (createdPoId) {
+        const { error: rollbackErr } = await supabase
+          .from('purchase_orders')
+          .delete()
+          .eq('id', createdPoId);
+        if (rollbackErr) {
+          console.error('Failed to roll back incomplete Key Account PO:', createdPoId, rollbackErr);
+        }
+      }
       toast({
         variant: 'destructive',
         title: isEditMode ? 'Error updating order' : 'Error creating order',
