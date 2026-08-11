@@ -90,6 +90,7 @@ import {
   type ReceiveVariantItem,
 } from './warehouseStockReceiveShared';
 import { generateAndOpenStockRequestReceivePdf } from './utils/exportWarehouseStockRequestReceivePdf';
+import { generateAndOpenStockRequestPdf } from './utils/exportWarehouseStockRequestPdf';
 import { formatReceivePacking } from './utils/formatReceivePacking';
 import { WarehouseStockReceiveDialog } from './components/WarehouseStockReceiveDialog';
 
@@ -204,6 +205,27 @@ function getRequestBrandLabel(req: StockRequestRow): string {
   if (names.length === 0) return '—';
   if (names.length === 1) return names[0];
   return `${names.length} brands`;
+}
+
+function canExportPendingRequestPdf(req: StockRequestRow): boolean {
+  return req.status === 'pending_receive' && req.items.length > 0;
+}
+
+async function exportPendingStockRequestPdf(req: StockRequestRow): Promise<void> {
+  await generateAndOpenStockRequestPdf({
+    requestNumber: req.request_number,
+    statusLabel: STATUS_LABELS[req.status],
+    createdAt: req.created_at,
+    expectedDeliveryDate: req.expected_delivery_date,
+    createdByName: req.created_by_user?.full_name ?? null,
+    notes: req.notes,
+    lines: req.items.map((item) => ({
+      brandName: item.variant?.brand?.name ?? null,
+      variantName: item.variant?.name ?? null,
+      orderedQuantity: item.ordered_quantity,
+      receivedQuantity: item.received_quantity,
+    })),
+  });
 }
 
 
@@ -949,6 +971,14 @@ export default function WarehouseStockRequestsPage() {
                                 <Eye className="mr-2 h-4 w-4" />
                                 View
                               </DropdownMenuItem>
+                              {canExportPendingRequestPdf(req) && (
+                                <DropdownMenuItem
+                                  onClick={() => void exportPendingStockRequestPdf(req)}
+                                >
+                                  <FileDown className="mr-2 h-4 w-4" />
+                                  Export PDF
+                                </DropdownMenuItem>
+                              )}
                               {canReceive && (
                                 <DropdownMenuItem onClick={() => openReceiveDialog(req)}>
                                   <Truck className="mr-2 h-4 w-4" />
@@ -1229,7 +1259,21 @@ export default function WarehouseStockRequestsPage() {
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{selectedRequest?.request_number}</DialogTitle>
+            <DialogTitle className="flex flex-wrap items-center justify-between gap-2 pr-8">
+              <span>{selectedRequest?.request_number}</span>
+              {selectedRequest && canExportPendingRequestPdf(selectedRequest) && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={() => void exportPendingStockRequestPdf(selectedRequest)}
+                >
+                  <FileDown className="h-3.5 w-3.5 mr-1" />
+                  Export PDF
+                </Button>
+              )}
+            </DialogTitle>
           </DialogHeader>
           {selectedRequest && (
             <div className="space-y-4 text-sm">

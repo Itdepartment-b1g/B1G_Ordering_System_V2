@@ -3,6 +3,12 @@ import { getDrBankAccounts } from '@/features/finance/paymentSettingsUtils';
 import type { BankAccount } from '@/types/database.types';
 import type { PurchaseOrder, PurchaseOrderItem } from '../types';
 
+export type DrPdfDispatchLot = {
+  batchNumber?: string | null;
+  expirationDate?: string | null;
+  quantity: number;
+};
+
 export type DrPdfDispatchLine = {
   variant_id?: string | null;
   brand_name?: string | null;
@@ -10,6 +16,8 @@ export type DrPdfDispatchLine = {
   variant_type?: string | null;
   quantity: number;
   unit_price?: number;
+  /** When set, PDF expands one row per lot (multi-batch support). */
+  lots?: DrPdfDispatchLot[];
 };
 
 export type DrPdfOptions = {
@@ -23,6 +31,11 @@ export type DrPdfOptions = {
   dispatchLines?: DrPdfDispatchLine[];
   /** When true, overlays a CANCELLED watermark (buyer refused this DR). */
   cancelled?: boolean;
+  /**
+   * Show Batch + Expiry columns. Defaults to current user role === warehouse.
+   * Buyers / other roles get Description | Qty only.
+   */
+  showLotColumns?: boolean;
 };
 
 type DrReceiptInfo = {
@@ -110,14 +123,34 @@ async function fetchDrReceiptInfoFallback(po: PurchaseOrder): Promise<DrReceiptI
   return payment ? { payment } : {};
 }
 
+async function resolveShowLotColumns(explicit?: boolean): Promise<boolean> {
+  if (typeof explicit === 'boolean') return explicit;
+  try {
+    const { data: authData } = await supabase.auth.getUser();
+    const uid = authData.user?.id;
+    if (!uid) return false;
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', uid)
+      .maybeSingle();
+    return String(profile?.role || '') === 'warehouse';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Opens a new browser tab with an HTML/CSS Delivery Receipt (DR), populated
  * from the given PO and dispatch metadata. Uses the browser print dialog to
  * save as PDF or send to a printer (same pattern as COF).
  */
 export async function generateAndOpenDrPdf(po: PurchaseOrder, options: DrPdfOptions) {
-  const receiptInfo = await fetchDrReceiptInfo(po);
-  const html = buildDrHtml(po, options, receiptInfo);
+  const [receiptInfo, showLotColumns] = await Promise.all([
+    fetchDrReceiptInfo(po),
+    resolveShowLotColumns(options.showLotColumns),
+  ]);
+  const html = buildDrHtml(po, { ...options, showLotColumns }, receiptInfo);
 
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -233,13 +266,97 @@ function resolveDeliveryDetails(po: PurchaseOrder, info: DrReceiptInfo): Deliver
   };
 }
 
-function itemRowsHtml(items: PurchaseOrderItem[]): string {
-  const aggregated = aggregateItems(items);
-  const rows = aggregated.map((r) => {
-    const name = `${r.brand_name ? r.brand_name + ' — ' : ''}${r.variant_name}`;
+function formatExpiry(value: string | null | undefined): string {
+  if (!value?.trim()) return '—';
+  try {
+    return new Date(value).toLocaleDateString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
+  } catch {
+    return value;
+  }
+}
+
+type DrPdfRow = {
+  description: string;
+  batchNumber: string;
+  expirationDate: string;
+  quantity: number;
+};
+
+function expandDispatchRows(
+  items: PurchaseOrderItem[],
+  dispatchLines?: DrPdfDispatchLine[],
+  showLotColumns = false
+): DrPdfRow[] {
+  if (dispatchLines && dispatchLines.length > 0) {
+    const rows: DrPdfRow[] = [];
+    for (const line of dispatchLines) {
+      if (Number(line.quantity) <= 0) continue;
+      const description = `${line.brand_name ? `${line.brand_name} — ` : ''}${line.variant_name || 'Item'}`;
+      const lots = (line.lots || []).filter((lot) => Number(lot.quantity) > 0);
+
+      // Buyers: one row per item (no batch/expiry split).
+      if (!showLotColumns || lots.length === 0) {
+        rows.push({
+          description,
+          batchNumber: '—',
+          expirationDate: '—',
+          quantity: Number(line.quantity) || 0,
+        });
+        continue;
+      }
+
+      let lotTotal = 0;
+      for (const lot of lots) {
+        const qty = Number(lot.quantity) || 0;
+        lotTotal += qty;
+        rows.push({
+          description,
+          batchNumber: lot.batchNumber?.trim() || '—',
+          expirationDate: formatExpiry(lot.expirationDate),
+          quantity: qty,
+        });
+      }
+      const remainder = Math.max(0, Number(line.quantity) || 0) - lotTotal;
+      if (remainder > 0) {
+        rows.push({
+          description,
+          batchNumber: '—',
+          expirationDate: '—',
+          quantity: remainder,
+        });
+      }
+    }
+    return rows;
+  }
+
+  return aggregateItems(items).map((r) => ({
+    description: `${r.brand_name ? `${r.brand_name} — ` : ''}${r.variant_name}`,
+    batchNumber: '—',
+    expirationDate: '—',
+    quantity: Number(r.quantity) || 0,
+  }));
+}
+
+function itemRowsHtml(
+  items: PurchaseOrderItem[],
+  dispatchLines?: DrPdfDispatchLine[],
+  showLotColumns = false
+): string {
+  const lotCells = (batchNumber: string, expirationDate: string) =>
+    showLotColumns
+      ? `<td class="col-batch">${escapeHtml(batchNumber)}</td>
+        <td class="col-exp">${escapeHtml(expirationDate)}</td>`
+      : '';
+
+  const rows = expandDispatchRows(items, dispatchLines, showLotColumns).map((r) => {
     return `
       <tr>
-        <td class="col-desc">${escapeHtml(name)}</td>
+        <td class="col-desc">${escapeHtml(r.description)}</td>
+        ${lotCells(r.batchNumber, r.expirationDate)}
         <td class="col-qty">${fmtQty(r.quantity)}</td>
       </tr>`;
   });
@@ -248,6 +365,7 @@ function itemRowsHtml(items: PurchaseOrderItem[]): string {
     rows.push(`
       <tr>
         <td class="col-desc">&nbsp;</td>
+        ${showLotColumns ? '<td class="col-batch">&nbsp;</td><td class="col-exp">&nbsp;</td>' : ''}
         <td class="col-qty">&nbsp;</td>
       </tr>`);
   }
@@ -328,6 +446,26 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
     ? `<div class="cancelled-watermark" aria-hidden="true">CANCELLED</div>`
     : '';
   const logoUrl = escapeHtml(new URL('/logo/B1G_LOGO_BLACK.png', window.location.origin).toString());
+  const showLotColumns = !!options.showLotColumns;
+  const expandedRows = expandDispatchRows(warehouseItems, options.dispatchLines, showLotColumns);
+  const itemsBodyHtml = itemRowsHtml(warehouseItems, options.dispatchLines, showLotColumns);
+  const totalQuantity = expandedRows.reduce((sum, row) => sum + Math.max(0, Number(row.quantity) || 0), 0);
+  const lotHeaderHtml = showLotColumns
+    ? '<th class="col-batch">Batch</th><th class="col-exp">Expiry</th>'
+    : '';
+  const lotColCss = showLotColumns
+    ? `
+  .items-table .col-batch {
+    width: 130px;
+    font-family: ui-monospace, monospace;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+  .items-table .col-exp {
+    width: 100px;
+    white-space: nowrap;
+  }`
+    : '';
 
   return `<!doctype html>
 <html lang="en">
@@ -448,6 +586,23 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
     text-align: right;
     font-variant-numeric: tabular-nums;
     width: 90px;
+  }
+  ${lotColCss}
+
+  .total-qty-row {
+    display: flex;
+    justify-content: flex-start;
+    align-items: baseline;
+    gap: 10px;
+    margin: 4px 0 8px;
+    font-size: 10px;
+  }
+  .total-qty-row .label { font-weight: 800; }
+  .total-qty-row .value {
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    min-width: 90px;
+    text-align: right;
   }
 
   .delivery-section {
@@ -595,13 +750,19 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
       <thead>
         <tr>
           <th class="col-desc">Description</th>
+          ${lotHeaderHtml}
           <th class="col-qty">Quantity</th>
         </tr>
       </thead>
       <tbody>
-        ${itemRowsHtml(warehouseItems)}
+        ${itemsBodyHtml}
       </tbody>
     </table>
+
+    <div class="total-qty-row">
+      <span class="label">Total Quantity:</span>
+      <span class="value">${fmtQty(totalQuantity)}</span>
+    </div>
 
     <div class="delivery-section">
       <div class="section-label">Delivery Details:</div>

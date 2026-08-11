@@ -56,7 +56,8 @@ import {
   generateAndOpenKeyAccountCofPdf,
   orderToKeyAccountPoForCof,
 } from '@/features/key-accounts/cof/generateKeyAccountCofPdf';
-import { generateAndOpenDrPdf } from './dr/generateDrPdf';
+import { generateAndOpenDrPdf, type DrPdfDispatchLine } from './dr/generateDrPdf';
+import { enrichDispatchLinesWithLots } from './dr/fetchDeliveryDispatchLots';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
   import { Textarea } from '@/components/ui/textarea';
@@ -476,14 +477,7 @@ export default function PurchaseOrdersPage() {
     if (!drMeta?.dr_number) return;
     try {
       // Prefer this DR's dispatched lines (partial multi-DR) over full PO qty
-      let dispatchLines:
-        | Array<{
-            variant_id: string;
-            brand_name?: string | null;
-            variant_name?: string | null;
-            quantity: number;
-          }>
-        | undefined;
+      let dispatchLines: DrPdfDispatchLine[] | undefined;
 
       const { data: deliveryRow } = await supabase
         .from('purchase_order_deliveries')
@@ -516,6 +510,9 @@ export default function PurchaseOrdersPage() {
               quantity: Number(item.quantity_dispatched) || 0,
             };
           });
+        if (dispatchLines.length > 0) {
+          dispatchLines = await enrichDispatchLinesWithLots(deliveryRow.id, dispatchLines);
+        }
       }
 
       await generateAndOpenDrPdf(order, {
@@ -3179,15 +3176,19 @@ export default function PurchaseOrdersPage() {
                       const pdfDrNumber = drNumber;
                       const pdfLocId = locId;
                       const pdfWhName = whName;
-                      const pdfDispatchLines = fulfilledItems.map((it) => {
-                        const fromUi = dispatchLines.find((l) => l.variant_id === it.variant_id);
-                        return {
-                          variant_id: it.variant_id,
-                          brand_name: fromUi?.brand_name ?? null,
-                          variant_name: fromUi?.variant_name ?? null,
-                          quantity: it.quantity,
-                        };
-                      });
+                      const pdfDeliveryId = deliveryRow.id as string;
+                      const pdfDispatchLines = await enrichDispatchLinesWithLots(
+                        pdfDeliveryId,
+                        fulfilledItems.map((it) => {
+                          const fromUi = dispatchLines.find((l) => l.variant_id === it.variant_id);
+                          return {
+                            variant_id: it.variant_id,
+                            brand_name: fromUi?.brand_name ?? null,
+                            variant_name: fromUi?.variant_name ?? null,
+                            quantity: it.quantity,
+                          };
+                        })
+                      );
 
                       setMyLocationDrByPo((prev) => ({
                         ...prev,

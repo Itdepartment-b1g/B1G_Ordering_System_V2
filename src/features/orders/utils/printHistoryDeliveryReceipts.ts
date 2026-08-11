@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabase';
 import { formatShortfallReasonLabel, type ShortfallReason } from '@/features/orders/deliveryDiscrepancyShared';
 import type { PurchaseOrder } from '../types';
 import { generateAndOpenDrPdf } from '../dr/generateDrPdf';
+import { enrichDispatchLinesWithLots } from '../dr/fetchDeliveryDispatchLots';
 import { generateAndOpenReceiveReceiptPdf } from '../dr/generateReceiveReceiptPdf';
 
 function resolveWarehouseName(
@@ -83,11 +84,13 @@ export async function printDrReceiptForDelivery(
 
   if (dispatchLines.length === 0) throw new Error('No dispatched items on this DR');
 
+  const linesWithLots = await enrichDispatchLinesWithLots(deliveryId, dispatchLines);
+
   await generateAndOpenDrPdf(purchaseOrder, {
     drNumber: delivery.drNumber,
     warehouseLocationId: delivery.warehouseLocationId,
     warehouseLocationName: delivery.warehouseLocationName,
-    dispatchLines,
+    dispatchLines: linesWithLots,
     cancelled: delivery.status === 'cancelled',
   });
 }
