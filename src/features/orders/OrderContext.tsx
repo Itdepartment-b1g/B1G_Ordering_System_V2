@@ -438,182 +438,150 @@ export function OrderProvider({ children }: { children: ReactNode }) {
 
   const addOrder = async (order: Order, preGeneratedOrderNumber?: string) => {
     try {
-      console.log('📝 Creating order:', order);
+      console.log('📝 Creating order (atomic):', order);
 
-      // 1. Fetch client's account_type
-      const { data: clientData, error: clientError } = await supabase
-        .from('clients')
-        .select('account_type, company_id')
-        .eq('id', order.clientId)
-        .single();
-
-      if (clientError) {
-        console.error('Error fetching client account type:', clientError);
-        throw clientError;
+      if (!order.items?.length) {
+        throw new Error('Order must include at least one item');
       }
 
-      const clientAccountType = clientData?.account_type || 'Standard Accounts';
-      const companyId = clientData?.company_id;
-      console.log('👤 Client account type:', clientAccountType, 'Company ID:', companyId);
-
-      if (!companyId) {
-        throw new Error('Could not determine company_id for the order');
-      }
-
-      // 2. Generate unique order number from database function (or use pre-generated one)
-      let generatedOrderNumber: string;
-      if (preGeneratedOrderNumber) {
-        generatedOrderNumber = preGeneratedOrderNumber;
-        console.log('🔢 Using pre-generated order number:', generatedOrderNumber);
-      } else {
-        const { data: orderNumberData, error: numberError } = await supabase
-          .rpc('generate_order_number', { p_company_id: companyId });
-
-        if (numberError) {
-          console.error('Error generating order number:', numberError);
-          throw numberError;
-        }
-
-        generatedOrderNumber = orderNumberData as string;
-        console.log('🔢 Generated order number:', generatedOrderNumber);
-      }
-
-      // 3. Insert into client_orders table
-      const { data: newOrder, error: orderError } = await supabase
-        .from('client_orders')
-        .insert({
-          company_id: companyId,
-          order_number: generatedOrderNumber, // Use database-generated number
-          agent_id: order.agentId,
-          client_id: order.clientId,
-          client_account_type: clientAccountType,
-          order_date: order.date,
-          subtotal: order.subtotal,
-          tax_rate: 0,
-          tax_amount: order.tax,
-          discount: order.discount,
-          total_amount: order.total,
-          notes: order.notes,
-          signature_url: (order as any).signatureUrl || null, // Include signature URL if provided
-          payment_method: (order as any).paymentMethod || null, // Include payment method if provided
-          bank_type: (order as any).bankType || null, // Include bank type if payment method is BANK_TRANSFER
-          payment_proof_url: (order as any).paymentProofUrl || null, // Include payment proof URL if provided
-          payment_mode: (order as any).paymentMode || 'FULL',
-          payment_splits: (order as any).paymentSplits
-            ? (order as any).paymentSplits.map((s: any) => ({
-                method: s.method,
-                bank: s.bank ?? null,
-                amount: s.amount,
-                proof_url: s.proofUrl ?? null,
-              }))
-            : null,
-          status: 'pending',
-          stage: (order as any).stage || 'agent_pending', // Use stage from order (finance_pending for team leader bank transfers)
-          remitted: (order as any).remitted ?? false, // FOC (total=0) orders are marked remitted on creation
-          pricing_strategy: (order as any).pricingStrategy || 'rsp'
-        } as any)
-        .select('id, order_number, created_at')
-        .single();
-
-      if (orderError) {
-        console.error('Error creating order:', orderError);
-        throw orderError;
-      }
-
-      if (!newOrder) {
-        throw new Error('Failed to create order - no ID returned');
-      }
-
-      console.log('✅ Order created with ID:', newOrder.id, 'Number:', newOrder.order_number);
-
-      // Notifications: order created (non-blocking)
-      try {
-        // Notify admins/finance/super admins in this company
-        await sendNotificationToCompanyRoles({
-          companyId,
-          roles: ['admin', 'finance', 'super_admin', 'system_administrator'],
-          type: 'order_created',
-          title: 'New Order Created',
-          message: `${order.agentName || 'A sales agent'} created order #${newOrder.order_number}.`,
-          referenceType: 'client_order',
-          referenceId: newOrder.id,
-        });
-
-        // Notify leader (if any)
-        const { data: leaderRow } = await supabase
-          .from('leader_teams')
-          .select('leader_id')
-          .eq('agent_id', order.agentId)
-          .maybeSingle();
-
-        if (leaderRow?.leader_id) {
-          await sendNotification({
-            userId: leaderRow.leader_id,
-            companyId,
-            type: 'order_created',
-            title: 'New Order Created',
-            message: `${order.agentName || 'Your team member'} created order #${newOrder.order_number}.`,
-            referenceType: 'client_order',
-            referenceId: newOrder.id,
-          });
-        }
-      } catch (e) {
-        console.warn('Order created notification failed (non-blocking):', e);
-      }
-
-      // 3. Batch fetch agent inventory prices for all items
-      const variantIds = order.items.map(i => i.id);
+      // Enrich line prices from agent inventory (special pricing uses customPrice)
+      const variantIds = order.items.map((i) => i.id);
       const { data: agentInventoryItems } = await supabase
         .from('agent_inventory')
         .select('variant_id, selling_price, dsp_price, rsp_price, allocated_price')
         .eq('agent_id', order.agentId)
         .in('variant_id', variantIds);
 
-      // Create lookup map for O(1) access
-      const inventoryMap = new Map();
-      (agentInventoryItems || []).forEach((item: any) => {
-        inventoryMap.set(item.variant_id, item);
-      });
+      const inventoryMap = new Map(
+        (agentInventoryItems || []).map((item: any) => [item.variant_id, item])
+      );
 
-      const orderItemsWithPrices = order.items.map((item) => {
+      const rpcItems = order.items.map((item) => {
         const agentInv = inventoryMap.get(item.id);
-
-        // For special pricing, use custom price if provided
         let finalSellingPrice = item.sellingPrice ?? agentInv?.selling_price ?? null;
         if (order.pricingStrategy === 'special' && item.customPrice !== undefined) {
           finalSellingPrice = item.customPrice;
         }
 
         return {
-          company_id: companyId,
-          client_order_id: newOrder.id,
           variant_id: item.id,
           quantity: item.quantity,
           unit_price: item.unitPrice,
           selling_price: finalSellingPrice,
           dsp_price: item.dspPrice ?? agentInv?.dsp_price ?? null,
           rsp_price: item.rspPrice ?? agentInv?.rsp_price ?? null,
-          total_price: item.total
+          total_price: item.total,
         };
       });
 
-      const { error: itemsError } = await supabase
-        .from('client_order_items')
-        .insert(orderItemsWithPrices as any);
+      const paymentSplits = (order as any).paymentSplits
+        ? (order as any).paymentSplits.map((s: any) => ({
+            method: s.method,
+            bank: s.bank ?? null,
+            amount: s.amount,
+            proof_url: s.proofUrl ?? null,
+          }))
+        : null;
 
-      if (itemsError) {
-        console.error('Error creating order items:', itemsError);
-        throw itemsError;
+      // Single DB transaction: insert order + items + deduct all agent stock (all-or-nothing)
+      const { data: rpcResult, error: rpcError } = await supabase.rpc(
+        'create_client_order_atomic' as any,
+        {
+          p_agent_id: order.agentId,
+          p_client_id: order.clientId,
+          p_items: rpcItems,
+          p_order_date: order.date,
+          p_subtotal: order.subtotal,
+          p_tax_amount: order.tax,
+          p_discount: order.discount,
+          p_total_amount: order.total,
+          p_notes: order.notes || null,
+          p_signature_url: (order as any).signatureUrl || null,
+          p_payment_method: (order as any).paymentMethod || null,
+          p_bank_type: (order as any).bankType || null,
+          p_payment_proof_url: (order as any).paymentProofUrl || null,
+          p_payment_mode: (order as any).paymentMode || 'FULL',
+          p_payment_splits: paymentSplits,
+          p_stage: (order as any).stage || 'agent_pending',
+          p_remitted: (order as any).remitted ?? false,
+          p_pricing_strategy: (order as any).pricingStrategy || 'rsp',
+          p_order_number: preGeneratedOrderNumber || null,
+        }
+      );
+
+      if (rpcError) {
+        console.error('Error creating order (atomic RPC):', rpcError);
+        throw rpcError;
       }
 
-      console.log('✅ Order items created:', orderItemsWithPrices.length);
+      const result = rpcResult as {
+        success?: boolean;
+        message?: string;
+        data?: {
+          id: string;
+          order_number: string;
+          created_at?: string;
+          company_id?: string;
+          client_account_type?: string;
+        };
+      } | null;
 
-      // 4. Auto-create cash deposit for team leaders with CASH/CHEQUE payments
+      if (!result?.success || !result.data?.id || !result.data?.order_number) {
+        throw new Error(result?.message || 'Failed to create order');
+      }
+
+      const newOrder = {
+        id: result.data.id,
+        order_number: result.data.order_number,
+        created_at: result.data.created_at || new Date().toISOString(),
+      };
+      const companyId = result.data.company_id;
+      const clientAccountType = result.data.client_account_type || 'Standard Accounts';
+      const generatedOrderNumber = newOrder.order_number;
+
+      console.log('✅ Order created atomically:', newOrder.id, generatedOrderNumber);
+
+      // Notifications: order created (non-blocking; after successful commit)
+      if (companyId) {
+        try {
+          await sendNotificationToCompanyRoles({
+            companyId,
+            roles: ['admin', 'finance', 'super_admin', 'system_administrator'],
+            type: 'order_created',
+            title: 'New Order Created',
+            message: `${order.agentName || 'A sales agent'} created order #${generatedOrderNumber}.`,
+            referenceType: 'client_order',
+            referenceId: newOrder.id,
+          });
+
+          const { data: leaderRow } = await supabase
+            .from('leader_teams')
+            .select('leader_id')
+            .eq('agent_id', order.agentId)
+            .maybeSingle();
+
+          if (leaderRow?.leader_id) {
+            await sendNotification({
+              userId: leaderRow.leader_id,
+              companyId,
+              type: 'order_created',
+              title: 'New Order Created',
+              message: `${order.agentName || 'Your team member'} created order #${generatedOrderNumber}.`,
+              referenceType: 'client_order',
+              referenceId: newOrder.id,
+            });
+          }
+        } catch (e) {
+          console.warn('Order created notification failed (non-blocking):', e);
+        }
+      }
+
+      // Auto-create cash deposit for team leaders with CASH/CHEQUE (non-blocking side effect)
       const isTeamLeader = user?.role === 'team_leader';
-      if (isTeamLeader && newOrder.id) {
+      if (isTeamLeader && newOrder.id && companyId) {
         const paymentMode = (order as any).paymentMode || 'FULL';
         const paymentMethod = (order as any).paymentMethod;
-        const paymentSplits = (order as any).paymentSplits || [];
+        const splits = (order as any).paymentSplits || [];
 
         let cashAmount = 0;
         let chequeAmount = 0;
@@ -621,7 +589,6 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         let hasCheque = false;
 
         if (paymentMode === 'FULL') {
-          // Full payment: check payment method
           if (paymentMethod === 'CASH') {
             cashAmount = order.total;
             hasCash = true;
@@ -629,9 +596,8 @@ export function OrderProvider({ children }: { children: ReactNode }) {
             chequeAmount = order.total;
             hasCheque = true;
           }
-        } else if (paymentMode === 'SPLIT' && paymentSplits.length > 0) {
-          // Split payment: calculate cash and cheque portions
-          paymentSplits.forEach((split: any) => {
+        } else if (paymentMode === 'SPLIT' && splits.length > 0) {
+          splits.forEach((split: any) => {
             if (split.method === 'CASH') {
               cashAmount += split.amount || 0;
               hasCash = true;
@@ -642,37 +608,33 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           });
         }
 
-        // Create cash deposit if there's a cash portion
         if (hasCash && cashAmount > 0) {
           try {
-            const cashRefNumber = `ORDER-CASH-${new Date().toISOString().split('T')[0].replace(/-/g, '')}-${newOrder.order_number.substring(newOrder.order_number.length - 6)}`;
-            
+            const cashRefNumber = `ORDER-CASH-${new Date().toISOString().split('T')[0].replace(/-/g, '')}-${generatedOrderNumber.substring(generatedOrderNumber.length - 6)}`;
+
             const { data: cashDeposit, error: cashDepositError } = await supabase
               .from('cash_deposits')
               .insert({
                 company_id: companyId,
-                agent_id: order.agentId, // Team leader's own ID
+                agent_id: order.agentId,
                 performed_by: order.agentId,
                 amount: cashAmount,
-                bank_account: 'Cash Remittance', // Placeholder - leader will update later
+                bank_account: 'Cash Remittance',
                 reference_number: cashRefNumber,
                 deposit_date: new Date().toISOString().split('T')[0],
                 status: 'pending_verification',
-                deposit_type: 'CASH'
+                deposit_type: 'CASH',
               })
               .select('id')
               .single();
 
             if (cashDepositError) {
               console.error('Error creating cash deposit:', cashDepositError);
-              // Don't throw - non-blocking, order is already created
             } else if (cashDeposit?.id) {
-              // Link order to cash deposit
               await supabase
                 .from('client_orders')
                 .update({ deposit_id: cashDeposit.id })
                 .eq('id', newOrder.id);
-
               console.log('✅ Cash deposit created for team leader order:', cashDeposit.id);
             }
           } catch (e) {
@@ -680,43 +642,35 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           }
         }
 
-        // Create cheque deposit if there's a cheque portion
         if (hasCheque && chequeAmount > 0) {
           try {
-            const chequeRefNumber = `ORDER-CHEQUE-${new Date().toISOString().split('T')[0].replace(/-/g, '')}-${newOrder.order_number.substring(newOrder.order_number.length - 6)}`;
-            
+            const chequeRefNumber = `ORDER-CHEQUE-${new Date().toISOString().split('T')[0].replace(/-/g, '')}-${generatedOrderNumber.substring(generatedOrderNumber.length - 6)}`;
+
             const { data: chequeDeposit, error: chequeDepositError } = await supabase
               .from('cash_deposits')
               .insert({
                 company_id: companyId,
-                agent_id: order.agentId, // Team leader's own ID
+                agent_id: order.agentId,
                 performed_by: order.agentId,
                 amount: chequeAmount,
-                bank_account: 'Cheque Remittance', // Placeholder - leader will update later
+                bank_account: 'Cheque Remittance',
                 reference_number: chequeRefNumber,
                 deposit_date: new Date().toISOString().split('T')[0],
                 status: 'pending_verification',
-                deposit_type: 'CHEQUE'
+                deposit_type: 'CHEQUE',
               })
               .select('id')
               .single();
 
             if (chequeDepositError) {
               console.error('Error creating cheque deposit:', chequeDepositError);
-              // Don't throw - non-blocking, order is already created
             } else if (chequeDeposit?.id) {
-              // For split payments with both cash and cheque, we can only link to one deposit_id
-              // If cash deposit was already created, we'll link to cash (cheque will be separate)
-              // If only cheque, link to cheque deposit
               if (!hasCash || cashAmount === 0) {
                 await supabase
                   .from('client_orders')
                   .update({ deposit_id: chequeDeposit.id })
                   .eq('id', newOrder.id);
               }
-              // Note: If both cash and cheque exist, the order is linked to cash deposit
-              // The cheque deposit exists separately and can be tracked
-
               console.log('✅ Cheque deposit created for team leader order:', chequeDeposit.id);
             }
           } catch (e) {
@@ -725,58 +679,6 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      // 5. Deduct stock from agent inventory (for pending orders)
-      console.log('📉 Deducting from agent inventory...');
-      for (const item of order.items) {
-        // Get current agent inventory stock
-        const { data: agentInv, error: getError } = await supabase
-          .from('agent_inventory')
-          .select('stock, id')
-          .eq('agent_id', order.agentId)
-          .eq('variant_id', item.id)
-          .maybeSingle();
-
-        if (getError) {
-          console.error('Error fetching agent inventory:', getError);
-          throw getError;
-        }
-
-        if (!agentInv) {
-          throw new Error(`Agent inventory not found for variant ${item.id}`);
-        }
-
-        const currentStock = agentInv.stock as number;
-        const newStock = currentStock - item.quantity;
-
-        if (currentStock < item.quantity) {
-          throw new Error(`Insufficient agent inventory. Available: ${currentStock}, Required: ${item.quantity}`);
-        }
-
-        console.log(`📊 Current stock: ${currentStock}, Deducting: ${item.quantity}, New stock: ${newStock}`);
-
-        // Update agent inventory
-        const { data: updateResult, error: updateError } = await supabase
-          .from('agent_inventory')
-          .update({
-            stock: newStock,
-            updated_at: new Date().toISOString()
-          } as any)
-          .eq('agent_id', order.agentId)
-          .eq('variant_id', item.id)
-          .select();
-
-        if (updateError) {
-          console.error('Error updating agent inventory:', updateError);
-          throw updateError;
-        }
-
-        console.log(`✅ Deducted ${item.quantity} from agent inventory. Update result:`, updateResult);
-      }
-
-      console.log('✅ All agent inventory updates complete');
-
-      // Optimistically add the order to local state immediately
-      // This ensures the order shows up right away without waiting for real-time subscription
       const optimisticOrder: Order = {
         id: newOrder.id,
         orderNumber: generatedOrderNumber,
@@ -786,7 +688,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         clientName: order.clientName,
         clientAccountType: clientAccountType,
         date: order.date,
-        createdAt: newOrder.created_at || new Date().toISOString(),
+        createdAt: newOrder.created_at,
         items: order.items,
         subtotal: order.subtotal,
         tax: order.tax,
@@ -794,7 +696,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         total: order.total,
         notes: order.notes || '',
         status: 'pending',
-        stage: 'agent_pending',
+        stage: ((order as any).stage || 'agent_pending') as Order['stage'],
         signatureUrl: (order as any).signatureUrl,
         paymentMethod: (order as any).paymentMethod,
         bankType: (order as any).bankType,
@@ -804,17 +706,13 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         pricingStrategy: (order as any).pricingStrategy,
       };
 
-      // Add to local state immediately
-      setOrders(prev => [optimisticOrder, ...prev]);
+      setOrders((prev) => [optimisticOrder, ...prev]);
 
-      // Also trigger a refetch to ensure we have the complete order data with all relations
-      // This will replace the optimistic order with the full data from the database
       setTimeout(() => {
         fetchOrders();
       }, 500);
 
-      // Return the generated order number so the UI can show it
-      return newOrder.order_number;
+      return generatedOrderNumber;
     } catch (err) {
       console.error('Error adding order:', err);
       throw err;

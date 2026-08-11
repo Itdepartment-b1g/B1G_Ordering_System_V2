@@ -1,14 +1,15 @@
 -- ============================================================================
 -- CREATE CLIENT ORDER V2 FUNCTION
 -- ============================================================================
--- This function handles the entire order creation process in a single transaction:
--- 1. Generates a unique order number
--- 2. Inserts the order record
--- 3. Inserts the order items
--- 4. Deducts stock hierarchically:
---    a. Global Stock (main_inventory)
---    b. Agent Stock (agent_inventory)
---    c. Recursive Supervisor Stock (Leaders/Managers)
+-- LEGACY / unused by the app frontend.
+-- Live create path uses create_client_order_atomic (see
+-- supabase/create_client_order_atomic_function.sql and migration
+-- 20260811120000_create_client_order_atomic.sql), which matches the previous
+-- agent-inventory-only deduction behavior and is called from OrderContext.addOrder.
+--
+-- This v2 function also deducts main_inventory + supervisor stock at create time,
+-- which would DOUBLE-deduct main stock vs approve_order_and_verify_deposit.
+-- Do not switch the app to v2 without reconciling that.
 -- ============================================================================
 
 DROP FUNCTION IF EXISTS create_client_order_v2(UUID, UUID, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, DATE);

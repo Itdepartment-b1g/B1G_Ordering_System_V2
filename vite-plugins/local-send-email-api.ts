@@ -18,32 +18,19 @@ function readJsonBody(req: Connect.IncomingMessage): Promise<unknown> {
   });
 }
 
-function logEmailDetails(params: {
+function logEmailSummary(params: {
   to: string;
   subject: string;
-  html: string;
-  from?: string;
   messageId?: string;
-  status?: 'sending' | 'sent' | 'failed';
+  status: 'sent' | 'failed';
   error?: string;
 }) {
-  const { to, subject, html, from, messageId, status = 'sending', error } = params;
-  const title =
-    status === 'sent' ? 'EMAIL SENT' : status === 'failed' ? 'EMAIL FAILED' : 'EMAIL DETAILS';
-
-  console.log('');
-  console.log('==========');
-  console.log(title);
-  console.log('==========');
-  console.log(`To:        ${to}`);
-  console.log(`Subject:   ${subject}`);
-  if (from) console.log(`From:      ${from}`);
-  if (messageId) console.log(`MessageId: ${messageId}`);
-  if (error) console.log(`Error:     ${error}`);
-  console.log('HTML:');
-  console.log(html);
-  console.log('==========');
-  console.log('');
+  const { to, subject, messageId, status, error } = params;
+  if (status === 'sent') {
+    console.log(`📧 Email sent → ${to} | ${subject}${messageId ? ` | ${messageId}` : ''}`);
+  } else {
+    console.error(`❌ Email failed → ${to} | ${subject}${error ? ` | ${error}` : ''}`);
+  }
 }
 
 /**
@@ -148,8 +135,9 @@ export function localSendEmailApi(): Plugin {
             html,
           });
 
-          logEmailDetails({
-            ...emailPayload,
+          logEmailSummary({
+            to: emailPayload.to,
+            subject: emailPayload.subject,
             messageId: info.messageId,
             status: 'sent',
           });
@@ -166,8 +154,9 @@ export function localSendEmailApi(): Plugin {
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : 'Failed to send email';
           if (emailPayload) {
-            logEmailDetails({
-              ...emailPayload,
+            logEmailSummary({
+              to: emailPayload.to,
+              subject: emailPayload.subject,
               status: 'failed',
               error: message,
             });
