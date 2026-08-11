@@ -1374,7 +1374,7 @@ export default function MainWarehouseSubStockRequestsPage() {
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" className="gap-2" onClick={() => setMainAllocateOpen(true)}>
             <Send className="h-4 w-4" />
-            Allocate to Sub Warehouse
+            Transfer to Sub-warehouse
           </Button>
           <PageGettingStartedDialog />
           <PageManualDialog

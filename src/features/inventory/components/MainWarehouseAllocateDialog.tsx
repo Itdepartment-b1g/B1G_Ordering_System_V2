@@ -584,7 +584,7 @@ export function MainWarehouseAllocateDialog({
                   Creating…
                 </>
               ) : (
-                'Create allocation'
+                'Create transfer'
               )}
             </Button>
           </DialogFooter>
