@@ -42,6 +42,8 @@ import {
   getDateRangeFromPreset,
 } from '@/lib/dateRangePresets';
 import GettingStartedDialog from '@/features/inventory/warehouse-manual/components/GettingStartedDialog';
+import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import DashboardManual from '@/features/inventory/warehouse-manual/components/DashboardManual';
 import { isGettingStartedDismissed } from '@/features/inventory/warehouse-manual/utils/warehouseGettingStartedDismiss';
 
 /** Order variant-type columns: known types first, then alphabetical. */
@@ -645,6 +647,12 @@ export default function WarehouseInventoryDashboardPage() {
               </div>
             </>
           )}
+          <PageManualDialog
+            title="Dashboard Manual"
+            fullManualHref="/warehouse-manual#dashboard"
+          >
+            <DashboardManual embedded />
+          </PageManualDialog>
           <Button variant="outline" size="sm" asChild>
             <Link to="/inventory/main">
               <List className="mr-2 h-4 w-4" aria-hidden />

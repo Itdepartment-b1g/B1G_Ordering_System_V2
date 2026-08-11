@@ -8,6 +8,8 @@ type GettingStartedManualProps = {
 };
 
 const MANUAL_SECTION_ROUTES: Record<string, string> = {
+  dashboard: "/inventory/board",
+  "request-stock": "/inventory/request-stock",
   "variant-types": "/variant-types",
   "brands-and-variants": "/brands",
   "payment-settings": "/finance/payment-settings",
@@ -115,7 +117,7 @@ export default function GettingStartedManual({
         <span>
           7. Handle{" "}
           <ManualSectionLink sectionId="sub-stock-requests">
-            Sub Stock Requests
+            Stock Transfer
           </ManualSectionLink>{" "}
           — approve and release stock from main warehouse to sub-warehouses
         </span>
@@ -135,19 +137,21 @@ export default function GettingStartedManual({
         <p className="text-sm text-gray-500">Shorter path if you are assigned to a sub-warehouse location.</p>
         <hr className="my-2 border-gray-500"/>
         <span>
-          1. Submit a stock request to the main warehouse — see{" "}
-          <ManualSectionLink sectionId="sub-stock-requests">
-            Sub Stock Requests
+          1. Submit a stock request to the main warehouse — use{" "}
+          <ManualSectionLink sectionId="request-stock">
+            Request Stock
           </ManualSectionLink>{" "}
-          for how main approves and delivers (use{" "}
-          <span className="text-blue-500">Request Stock</span> in the sidebar on your sub account)
+          on your sub account (main approves and delivers via{" "}
+          <ManualSectionLink sectionId="sub-stock-requests">
+            Stock Transfer
+          </ManualSectionLink>
+          )
         </span>
         <span>
-          2. Wait for the main warehouse to approve and release the stock via{" "}
-          <ManualSectionLink sectionId="sub-stock-requests">
-            Sub Stock Requests
+          2. Wait for the main warehouse to approve and deliver, then confirm receive on{" "}
+          <ManualSectionLink sectionId="request-stock">
+            Request Stock
           </ManualSectionLink>
-          , then receive the stock on your end
         </span>
         <span>
           3. For returns or audits, use{" "}
@@ -167,6 +171,12 @@ export default function GettingStartedManual({
         <TitleSection>After setup — Daily operations</TitleSection>
         <p>Once your warehouse is set up, these are common day-to-day tasks:</p>
         <hr className="my-2 border-gray-500"/>
+        <span>
+          <ManualSectionLink sectionId="dashboard">
+            Dashboard
+          </ManualSectionLink>{" "}
+          — stock board, movement, FSN, and batch aging at a glance
+        </span>
         <span>
           <ManualSectionLink sectionId="batch-view">
             Batch View

@@ -1378,7 +1378,7 @@ export default function MainWarehouseSubStockRequestsPage() {
           </Button>
           <PageGettingStartedDialog />
           <PageManualDialog
-            title="Sub Stock Requests & Allocations Manual"
+            title="Stock Transfer Manual"
             fullManualHref="/warehouse-manual#sub-stock-requests"
           >
             <SubStockRequestsManual embedded />

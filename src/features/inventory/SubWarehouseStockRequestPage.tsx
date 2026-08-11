@@ -39,6 +39,8 @@ import {
   fetchMainWarehouseAllocatableByVariant,
 } from './warehouseStockBoard';
 import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
+import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import RequestStockManual from '@/features/inventory/warehouse-manual/components/RequestStockManual';
 
 export default function SubWarehouseStockRequestPage() {
   const { toast } = useToast();
@@ -281,6 +283,12 @@ export default function SubWarehouseStockRequestPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <PageGettingStartedDialog />
+          <PageManualDialog
+            title="Request Stock Manual"
+            fullManualHref="/warehouse-manual#request-stock"
+          >
+            <RequestStockManual embedded />
+          </PageManualDialog>
           <Button onClick={() => setRequestOpen(true)} disabled={!myLocationId}>
             <Plus className="mr-2 h-4 w-4" />
             New stock request

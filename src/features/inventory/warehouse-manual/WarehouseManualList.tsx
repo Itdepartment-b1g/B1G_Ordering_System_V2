@@ -2,6 +2,8 @@ import { useEffect } from "react";
 import { useLocation } from "react-router-dom";
 import ManualNav from "./components/ManualNav";
 import GettingStartedManual from "./components/GettingStartedManual";
+import DashboardManual from "./components/DashboardManual";
+import RequestStockManual from "./components/RequestStockManual";
 import BatchViewManual from "./components/BatchViewManual";
 import BrandsAndVariantsManual from "./components/BrandsAndVariantsManual";
 import ClientStockReturnsManual from "./components/ClientStockReturnsManual";
@@ -45,6 +47,8 @@ export default function WarehouseManualList() {
         <br />
 
         <GettingStartedManual />
+        <DashboardManual />
+        <RequestStockManual />
         <VariantTypesManual />
         <BrandsAndVariantsManual />
         <PaymentSettingsManual />

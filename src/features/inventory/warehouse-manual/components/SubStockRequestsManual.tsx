@@ -11,14 +11,14 @@ export default function SubStockRequestsManual({ embedded = false }: SubStockReq
       {!embedded && (
         <div className="flex flex-col items-center">
           <ContentSection>
-            SUB STOCK REQUESTS & ALLOCATIONS
+            STOCK TRANSFER
           </ContentSection>
           <p className="text-sm text-gray-500">Main Warehouse</p>
         </div>
       )}
 
       <InstructionBorder>
-        <TitleSection>How Sub Stock Requests Works?</TitleSection>
+        <TitleSection>How Stock Transfer Works?</TitleSection>
         <p>
           Sub stock requests are raised by a sub-warehouse asking the main warehouse for stock.
           Main warehouse handles each request in two steps: <span className="text-blue-500">Approve</span>, then{" "}
@@ -61,7 +61,7 @@ export default function SubStockRequestsManual({ embedded = false }: SubStockReq
           <span>
             1. Go to{" "}
             <Link to="/inventory/sub-stock-requests" className="text-blue-500">
-              Sub Stock Requests & Allocations
+              Stock Transfer
             </Link>
           </span>
         )}
@@ -117,7 +117,7 @@ export default function SubStockRequestsManual({ embedded = false }: SubStockReq
           <span>
             1. Go to{" "}
             <Link to="/inventory/sub-stock-requests" className="text-blue-500">
-              Sub Stock Requests &amp; Allocations
+              Stock Transfer
             </Link>{" "}
             and click <span className="text-blue-500">Allocate to Sub Warehouse</span>
           </span>
