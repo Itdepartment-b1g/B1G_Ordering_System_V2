@@ -1459,9 +1459,6 @@ export default function MainWarehouseSubStockRequestsPage() {
               <CardTitle className="flex items-center gap-2">
                 <Package className="h-5 w-5" />
                 {listTab === 'allocations' ? 'Main allocations' : 'Incoming requests'}
-                {fetchingRequests && requests.length > 0 ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                ) : null}
               </CardTitle>
               <p className="text-sm text-muted-foreground font-normal mt-1">
                 {listTab === 'allocations'
