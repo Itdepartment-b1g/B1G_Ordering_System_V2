@@ -302,32 +302,38 @@ export async function fetchOpenTransferPoReservedByVariant(
 ): Promise<Record<string, number>> {
   if (!companyId || !locationId) return {};
 
-  let hardQuery = supabase
-    .from('warehouse_transfer_reservations')
-    .select('variant_id, quantity_reserved, quantity_fulfilled, status')
-    .eq('warehouse_company_id', companyId)
-    .eq('warehouse_location_id', locationId)
-    .in('status', ['reserved', 'partial']);
+  const hardData = await fetchAllPaginated(async (from, to) => {
+    const { data, error } = await supabase
+      .from('warehouse_transfer_reservations')
+      .select('id, variant_id, quantity_reserved, quantity_fulfilled, status')
+      .eq('warehouse_company_id', companyId)
+      .eq('warehouse_location_id', locationId)
+      .in('status', ['reserved', 'partial'])
+      .order('id')
+      .range(from, to);
+    return { data, error };
+  });
 
-  let softQuery = supabase
-    .from('warehouse_transfer_soft_reservations')
-    .select('variant_id, quantity_committed, status')
-    .eq('warehouse_company_id', companyId)
-    .eq('warehouse_location_id', locationId)
-    .eq('status', 'active');
-
-  const [{ data: hardData, error: hardErr }, { data: softData, error: softErr }] = await Promise.all([
-    hardQuery,
-    softQuery,
-  ]);
-
-  if (hardErr) throw hardErr;
-  // Soft table may not be migrated yet — treat as empty.
-  if (softErr) {
-    const msg = String(softErr.message || '');
+  let softData: { variant_id?: string; quantity_committed?: number }[] = [];
+  try {
+    softData = await fetchAllPaginated(async (from, to) => {
+      const { data, error } = await supabase
+        .from('warehouse_transfer_soft_reservations')
+        .select('id, variant_id, quantity_committed, status')
+        .eq('warehouse_company_id', companyId)
+        .eq('warehouse_location_id', locationId)
+        .eq('status', 'active')
+        .order('id')
+        .range(from, to);
+      return { data, error };
+    });
+  } catch (softErr: any) {
+    // Soft table may not be migrated yet — treat as empty.
+    const msg = String(softErr?.message || softErr || '');
+    const code = softErr?.code;
     if (
-      softErr.code !== '42P01' &&
-      softErr.code !== 'PGRST205' &&
+      code !== '42P01' &&
+      code !== 'PGRST205' &&
       !msg.includes('warehouse_transfer_soft_reservations')
     ) {
       throw softErr;
