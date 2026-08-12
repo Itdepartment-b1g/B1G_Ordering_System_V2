@@ -180,12 +180,14 @@ function buildDeliveryReceiptHtml(
         <tr>
           <td class="col-desc">${escapeHtml(row.desc)}</td>
           <td class="col-qty">${fmtQty(row.qty)}</td>
+          <td class="col-blank">&nbsp;</td>
         </tr>`
           )
           .join('')
       : `<tr>
           <td class="col-desc">&nbsp;</td>
           <td class="col-qty">&nbsp;</td>
+          <td class="col-blank">&nbsp;</td>
         </tr>`;
 
   return `<!doctype html>
@@ -297,7 +299,8 @@ function buildDeliveryReceiptHtml(
     padding: 6px 4px;
     border-bottom: 2px solid #000;
   }
-  .items-table thead th.col-qty { text-align: right; }
+  .items-table thead th.col-qty,
+  .items-table thead th.col-blank { text-align: right; }
   .items-table tbody td {
     padding: 7px 4px;
     border-bottom: 1px solid #ccc;
@@ -307,6 +310,11 @@ function buildDeliveryReceiptHtml(
     text-align: right;
     font-variant-numeric: tabular-nums;
     width: 90px;
+  }
+  .items-table .col-blank {
+    text-align: right;
+    width: 72px;
+    min-height: 22px;
   }
 
   .delivery-section {
@@ -416,6 +424,7 @@ function buildDeliveryReceiptHtml(
         <tr>
           <th class="col-desc">Description</th>
           <th class="col-qty">Quantity</th>
+          <th class="col-blank">&nbsp;</th>
         </tr>
       </thead>
       <tbody>
