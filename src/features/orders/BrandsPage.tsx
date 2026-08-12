@@ -97,22 +97,40 @@ export default function BrandsPage() {
 
   const { toast } = useToast();
 
-  // Fetch brands, variants, and variant types
+  // Fetch brands, variants, and variant types for this tenant only.
+  // Do not rely on RLS alone: linked-hub / PO-item policies can still expose warehouse catalog rows.
   const fetchData = async () => {
+    if (!user?.company_id) {
+      setBrands([]);
+      setVariants([]);
+      setVariantTypes([]);
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
+      const companyId = user.company_id;
 
       const { data: brandsData, error: brandsError } = await supabase
         .from('brands')
         .select('id, name, description, created_at, updated_at')
+        .eq('company_id', companyId)
+        .eq('is_active', true)
         .order('name');
 
       if (brandsError) throw brandsError;
-      setBrands(brandsData || []);
+      const nextBrands = brandsData || [];
+      setBrands(nextBrands);
+      setSelectedBrand((prev) =>
+        prev && nextBrands.some((b) => b.id === prev) ? prev : ''
+      );
 
       const { data: variantsData, error: variantsError } = await supabase
         .from('variants')
         .select('id, brand_id, name, variant_type, description, sku, created_at')
+        .eq('company_id', companyId)
+        .eq('is_active', true)
         .order('name');
 
       if (variantsError) throw variantsError;
@@ -122,6 +140,7 @@ export default function BrandsPage() {
       const { data: typesData, error: typesError } = await supabase
         .from('variant_types')
         .select('id, name, display_name, description, color_code, sort_order')
+        .eq('company_id', companyId)
         .eq('is_active', true);
 
       // Sort: non-zero values first (ascending), then zero values (by display_name)
@@ -173,7 +192,7 @@ export default function BrandsPage() {
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [user?.company_id]);
 
   // Reset variant search and type filter when switching to another brand
   useEffect(() => {
@@ -286,7 +305,8 @@ export default function BrandsPage() {
           name: brandForm.name.trim(),
           description: brandForm.description.trim() || null
         })
-        .eq('id', editingBrand.id);
+        .eq('id', editingBrand.id)
+        .eq('company_id', user?.company_id ?? '');
 
       if (error) throw error;
 
@@ -317,7 +337,8 @@ export default function BrandsPage() {
       const { error } = await supabase
         .from('brands')
         .delete()
-        .eq('id', deletingBrand.id);
+        .eq('id', deletingBrand.id)
+        .eq('company_id', user?.company_id ?? '');
 
       if (error) throw error;
 
@@ -355,6 +376,23 @@ export default function BrandsPage() {
 
     setSubmitting(true);
     try {
+      // Brand must belong to this tenant — never attach to a warehouse/hub brand id.
+      const { data: ownedBrand, error: brandErr } = await supabase
+        .from('brands')
+        .select('id')
+        .eq('id', variantForm.brand_id)
+        .eq('company_id', user.company_id)
+        .maybeSingle();
+      if (brandErr) throw brandErr;
+      if (!ownedBrand) {
+        toast({
+          title: 'Error',
+          description: 'Selected brand is not part of your company catalog.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
       // Find the variant type to get its ID and name
       const selectedType = variantTypes.find(t => t.name === variantForm.variant_type);
       if (!selectedType) {
@@ -374,7 +412,8 @@ export default function BrandsPage() {
         name: variantForm.name.trim(),
         variant_type_id: selectedType.id,
         description: variantForm.description.trim() || null,
-        sku: variantForm.sku.trim() || null
+        sku: variantForm.sku.trim() || null,
+        is_active: true,
       };
 
       const { error } = await supabase
@@ -433,7 +472,8 @@ export default function BrandsPage() {
       const { error } = await supabase
         .from('variants')
         .update(updateData)
-        .eq('id', editingVariant.id);
+        .eq('id', editingVariant.id)
+        .eq('company_id', user?.company_id ?? '');
 
       if (error) throw error;
 
@@ -465,7 +505,8 @@ export default function BrandsPage() {
       const { error } = await supabase
         .from('variants')
         .delete()
-        .eq('id', deletingVariant.id);
+        .eq('id', deletingVariant.id)
+        .eq('company_id', user?.company_id ?? '');
 
       if (error) throw error;
 
