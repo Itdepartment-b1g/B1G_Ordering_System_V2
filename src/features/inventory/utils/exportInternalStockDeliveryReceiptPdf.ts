@@ -172,6 +172,7 @@ function buildDeliveryReceiptHtml(
   const logoUrl = escapeHtml(new URL('/logo/B1G_LOGO_BLACK.png', window.location.origin).toString());
 
   const receiptLines = resolveReceiptLines(request, wave);
+  const totalQuantity = receiptLines.reduce((sum, row) => sum + Math.max(0, row.qty || 0), 0);
   const itemRows =
     receiptLines.length > 0
       ? receiptLines
@@ -317,6 +318,22 @@ function buildDeliveryReceiptHtml(
     min-height: 22px;
   }
 
+  .total-qty-row {
+    display: flex;
+    justify-content: flex-start;
+    align-items: baseline;
+    gap: 10px;
+    margin: 4px 0 8px;
+    font-size: 10px;
+  }
+  .total-qty-row .label { font-weight: 800; }
+  .total-qty-row .value {
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    min-width: 90px;
+    text-align: right;
+  }
+
   .delivery-section {
     margin: 18px 0;
     padding-top: 8px;
@@ -431,6 +448,11 @@ function buildDeliveryReceiptHtml(
         ${itemRows}
       </tbody>
     </table>
+
+    <div class="total-qty-row">
+      <span class="label">Total Quantity:</span>
+      <span class="value">${fmtQty(totalQuantity)}</span>
+    </div>
 
     <div class="delivery-section">
       <div class="section-label">Delivery Details:</div>
