@@ -384,10 +384,12 @@ export type NotifyKeyAccountPoCreatorFulfilledOrder = {
     po_number?: string | null;
     company_account_type?: string | null;
     created_by?: string | null;
+    kam_id?: string | null;
     created_at?: string | null;
     order_date?: string | null;
     approved_at?: string | null;
     created_by_user?: { full_name?: string | null; email?: string | null } | null;
+    kam?: { full_name?: string | null; email?: string | null } | null;
     client?: { client_name?: string | null } | { client_name?: string | null }[] | null;
     shop?: { shop_name?: string | null } | { shop_name?: string | null }[] | null;
     address?:
@@ -539,9 +541,49 @@ function mapDeliverToFromOrder(order: NotifyKeyAccountPoCreatorFulfilledOrder): 
     };
 }
 
+type KaFulfillEmailRecipient = {
+    id: string;
+    email: string;
+    name: string | null;
+};
+
+async function resolveKaFulfillRecipient(
+    userId: string | null | undefined,
+    embedded?: { email?: string | null; full_name?: string | null } | null
+): Promise<KaFulfillEmailRecipient | null> {
+    const id = userId ? String(userId) : '';
+    if (!id) return null;
+
+    let email = embedded?.email?.trim() || '';
+    let name = embedded?.full_name?.trim() || null;
+
+    if (!email) {
+        try {
+            const { data: profile, error } = await supabase
+                .from('profiles')
+                .select('email, full_name')
+                .eq('id', id)
+                .maybeSingle();
+            if (error) {
+                console.warn('⚠️ Could not load KA fulfill recipient profile:', id, error);
+                return null;
+            }
+            email = profile?.email?.trim() || '';
+            name = profile?.full_name?.trim() || name;
+        } catch (err) {
+            console.warn('⚠️ Failed to resolve KA fulfill recipient:', id, err);
+            return null;
+        }
+    }
+
+    if (!email) return null;
+    return { id, email, name };
+}
+
 /**
- * Resolve creator email and notify when a Key Account PO location is fulfilled.
- * Skips non-KA POs, missing email, and when the actor is the creator.
+ * Notify when a Key Account PO location is fulfilled.
+ * Always emails the PO owner (kam_id). Also emails the creator when different
+ * (Sales Admin on-behalf). Skips non-KA POs and the acting warehouse user.
  */
 export async function notifyKeyAccountPoCreatorOfFulfillment(params: {
     order: NotifyKeyAccountPoCreatorFulfilledOrder;
@@ -569,34 +611,32 @@ export async function notifyKeyAccountPoCreatorOfFulfillment(params: {
 
     if (String(order.company_account_type || '') !== 'Key Accounts') return;
 
+    const ownerId = order.kam_id ? String(order.kam_id) : null;
     const createdBy = order.created_by ? String(order.created_by) : null;
-    if (!createdBy) return;
-    if (actorUserId && createdBy === actorUserId) return;
+    if (!ownerId && !createdBy) return;
 
-    let to = order.created_by_user?.email?.trim() || '';
-    let creatorName = order.created_by_user?.full_name?.trim() || null;
+    const [owner, creator] = await Promise.all([
+        resolveKaFulfillRecipient(ownerId, unwrapRelation(order.kam)),
+        createdBy && createdBy !== ownerId
+            ? resolveKaFulfillRecipient(createdBy, unwrapRelation(order.created_by_user))
+            : !ownerId
+              ? resolveKaFulfillRecipient(createdBy, unwrapRelation(order.created_by_user))
+              : Promise.resolve(null),
+    ]);
 
-    if (!to) {
-        try {
-            const { data: profile, error } = await supabase
-                .from('profiles')
-                .select('email, full_name')
-                .eq('id', createdBy)
-                .maybeSingle();
-            if (error) {
-                console.warn('⚠️ Could not load PO creator profile for fulfill email:', error);
-                return;
-            }
-            to = profile?.email?.trim() || '';
-            creatorName = profile?.full_name?.trim() || creatorName;
-        } catch (err) {
-            console.warn('⚠️ Failed to resolve PO creator email:', err);
-            return;
-        }
+    const recipients: KaFulfillEmailRecipient[] = [];
+    const seenEmails = new Set<string>();
+    for (const row of [owner, creator]) {
+        if (!row) continue;
+        if (actorUserId && row.id === actorUserId) continue;
+        const key = row.email.toLowerCase();
+        if (seenEmails.has(key)) continue;
+        seenEmails.add(key);
+        recipients.push(row);
     }
 
-    if (!to) {
-        console.warn('⚠️ Skipping KA fulfill email: creator has no email');
+    if (recipients.length === 0) {
+        console.warn('⚠️ Skipping KA fulfill email: no owner/creator email');
         return;
     }
 
@@ -608,11 +648,12 @@ export async function notifyKeyAccountPoCreatorOfFulfillment(params: {
 
     const poNumber = String(order.po_number || order.id);
     const poViewUrl = `${window.location.origin}/key-accounts/purchase-orders?search=${encodeURIComponent(poNumber)}&tab=all`;
+    const greetingName = owner?.name || recipients[0]?.name || null;
 
     await sendKeyAccountPoFulfilledEmail({
-        to,
+        to: recipients.map((r) => r.email).join(','),
         poNumber,
-        creatorName,
+        creatorName: greetingName,
         warehouseLocationName,
         items: emailItems,
         ...mapDeliverToFromOrder(order),

@@ -2305,7 +2305,7 @@ export function KeyAccountPurchaseOrdersPage() {
                         <RotateCcw className="h-4 w-4" />
                         Rebates
                       </CardTitle>
-                      {isDeliveredKeyAccountOrder(active) &&
+                      {/* {isDeliveredKeyAccountOrder(active) &&
                         !isRebateDerivedPurchaseOrder(active) &&
                         !isReadOnlyAccounting && (
                         <Button
@@ -2317,7 +2317,7 @@ export function KeyAccountPurchaseOrdersPage() {
                         >
                           Create rebate
                         </Button>
-                      )}
+                      )} */}
                     </CardHeader>
                     <CardContent className="text-sm">
                       {isDeliveredKeyAccountOrder(active) ? (
@@ -3128,21 +3128,21 @@ export function KeyAccountPurchaseOrdersPage() {
                 COF
               </Button>
             )}
-            {active &&
+            {/* {active &&
               isDeliveredKeyAccountOrder(active) &&
               !isRebateDerivedPurchaseOrder(active) &&
               !isReadOnlyAccounting && (
-              <Button
-                className="w-full sm:w-auto"
-                onClick={() => {
-                  setViewOpen(false);
-                  navigate(`/key-accounts/rebates/new?poId=${active.id}`);
-                }}
-              >
-                <RotateCcw className="h-4 w-4 mr-2" />
-                Create rebate
-              </Button>
-            )}
+              // <Button
+              //   className="w-full sm:w-auto"
+              //   onClick={() => {
+              //     setViewOpen(false);
+              //     navigate(`/key-accounts/rebates/new?poId=${active.id}`);
+              //   }}
+              // >
+              //   <RotateCcw className="h-4 w-4 mr-2" />
+              //   Create rebate
+              // </Button>
+            )} */}
             {active && canOwnerApprove(active) && !isReadOnlyAccounting && (
               <>
                 <Button
