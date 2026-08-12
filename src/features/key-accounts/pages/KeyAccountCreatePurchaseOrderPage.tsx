@@ -70,7 +70,10 @@ import {
   KeyAccountAddAddressDialog,
   KeyAccountAddShopDialog,
 } from '@/features/key-accounts/components/KeyAccountShopAddressDialogs';
-import { KeyAccountPaymentProofUploadField } from '@/features/key-accounts/components/KeyAccountPaymentProofPreview';
+import {
+  KeyAccountPaymentProofStoredPreview,
+  KeyAccountPaymentProofUploadField,
+} from '@/features/key-accounts/components/KeyAccountPaymentProofPreview';
 import { parsePaymentTerms } from '@/features/key-accounts/keyAccountCodes';
 import { useKeyAccountPaymentSettings } from '@/features/key-accounts/hooks/useKeyAccountPaymentSettings';
 import { useKeyAccountPaymentTermOptions } from '@/features/key-accounts/hooks/useKeyAccountPaymentTermOptions';
@@ -169,6 +172,9 @@ export function KeyAccountPurchaseOrderPage() {
   const [editWorkflowStatus, setEditWorkflowStatus] = useState<string | null>(null);
   const [editPaymentStatus, setEditPaymentStatus] = useState('unpaid');
   const [editHasPayments, setEditHasPayments] = useState(false);
+  const [editPaymentProofs, setEditPaymentProofs] = useState<
+    { id: string; proof_storage_path: string | null; amount: number; payment_method: string | null }[]
+  >([]);
   const suppressCascadeRef = useRef(false);
   const [clients, setClients] = useState<KeyAccountClient[]>([]);
   const [clientsHasMore, setClientsHasMore] = useState(false);
@@ -555,10 +561,14 @@ export function KeyAccountPurchaseOrderPage() {
           .eq('purchase_order_id', poId);
         if (itemsErr) throw itemsErr;
 
-        const { count: paymentCount } = await supabase
+        const { data: paymentRows, error: paymentsErr } = await supabase
           .from('purchase_order_key_account_payments')
-          .select('id', { count: 'exact', head: true })
-          .eq('purchase_order_id', poId);
+          .select('id, proof_storage_path, amount, payment_method')
+          .eq('purchase_order_id', poId)
+          .order('created_at', { ascending: true });
+        if (paymentsErr) {
+          console.warn('Failed to load payment proofs for edit:', paymentsErr);
+        }
 
         if (cancelled) return;
 
@@ -566,7 +576,15 @@ export function KeyAccountPurchaseOrderPage() {
         setEditPoNumber(po.po_number || '');
         setEditWorkflowStatus(po.workflow_status || null);
         setEditPaymentStatus(String(po.key_account_payment_status || 'unpaid'));
-        setEditHasPayments((paymentCount || 0) > 0);
+        setEditHasPayments((paymentRows || []).length > 0);
+        setEditPaymentProofs(
+          (paymentRows || []).map((row) => ({
+            id: String(row.id),
+            proof_storage_path: row.proof_storage_path || null,
+            amount: Number(row.amount || 0),
+            payment_method: row.payment_method || null,
+          }))
+        );
 
         if (po.kam_id) setSelectedOwnerId(po.kam_id);
 
@@ -1687,6 +1705,7 @@ export function KeyAccountPurchaseOrderPage() {
     );
     setSplitFirstAmount('');
     setPaymentProofFile(null);
+    setEditPaymentProofs([]);
     setSourceMode('single');
     setActiveWarehouseTabId('');
   }
@@ -2591,19 +2610,43 @@ export function KeyAccountPurchaseOrderPage() {
                     </p>
                   )}
 
-                  <KeyAccountPaymentProofUploadField
-                    file={paymentProofFile}
-                    onFileChange={setPaymentProofFile}
-                    inputId="create-po-payment-proof"
-                    label={requiresPaymentProof ? 'Payment proof *' : 'Payment proof (optional)'}
-                  />
-                  {isEditMode && editHasPayments && (
-                    <p className="text-xs text-muted-foreground">
-                      Existing payment records are kept. Upload a new proof only if you need to add
-                      another payment later from the PO view.
-                    </p>
+                  {(!isEditMode || !editHasPayments) && (
+                    <KeyAccountPaymentProofUploadField
+                      file={paymentProofFile}
+                      onFileChange={setPaymentProofFile}
+                      inputId="create-po-payment-proof"
+                      label={requiresPaymentProof ? 'Payment proof *' : 'Payment proof (optional)'}
+                    />
                   )}
                 </>
+              ) : null}
+
+              {isEditMode && editPaymentProofs.length > 0 ? (
+                <div className="space-y-3 pt-2">
+                  <Label>Current payment proof</Label>
+                  {editPaymentProofs.map((payment) => (
+                    <div key={payment.id} className="rounded-lg border p-3 space-y-2">
+                      <p className="text-sm text-muted-foreground">
+                        {payment.payment_method || 'Payment'}
+                        {payment.amount > 0 ? ` · ₱${payment.amount.toFixed(2)}` : ''}
+                      </p>
+                      {payment.proof_storage_path ? (
+                        <KeyAccountPaymentProofStoredPreview
+                          storagePath={payment.proof_storage_path}
+                          compact
+                          label="Payment proof"
+                          showViewFull
+                        />
+                      ) : (
+                        <p className="text-xs text-muted-foreground">No proof attached to this payment.</p>
+                      )}
+                    </div>
+                  ))}
+                  <p className="text-xs text-muted-foreground">
+                    Existing payment records are kept. Add another payment later from the PO view
+                    if needed.
+                  </p>
+                </div>
               ) : null}
             </CardContent>
           </Card>

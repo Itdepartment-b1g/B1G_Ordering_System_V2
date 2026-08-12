@@ -192,12 +192,13 @@ export function KeyAccountPaymentProofStoredPreview({
   const [error, setError] = useState<string | null>(null);
   const [fullOpen, setFullOpen] = useState(false);
 
-  const isImage = paymentProofPathIsImage(storagePath);
   const isPdf = paymentProofPathIsPdf(storagePath);
-  const canViewFull = showViewFull && isImage;
+  const isImage = !isPdf && paymentProofPathIsImage(storagePath);
+  const canViewFull = showViewFull && !isPdf;
 
   useEffect(() => {
     let cancelled = false;
+    let objectUrl: string | null = null;
     setLoading(true);
     setError(null);
     setPreviewUrl(null);
@@ -210,6 +211,7 @@ export function KeyAccountPaymentProofStoredPreview({
           setError('Proof could not be loaded.');
           return;
         }
+        if (url.startsWith('blob:')) objectUrl = url;
         setPreviewUrl(url);
       } catch (e: any) {
         if (!cancelled) {
@@ -222,6 +224,7 @@ export function KeyAccountPaymentProofStoredPreview({
 
     return () => {
       cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [storagePath]);
 

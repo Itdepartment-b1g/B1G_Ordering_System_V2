@@ -633,6 +633,7 @@ export function KeyAccountPurchaseOrdersPage() {
     if (!(payStatus === 'partial' || payStatus === 'unpaid')) return false;
     const actorOk =
       po.created_by === user.id ||
+      po.kam_id === user.id ||
       isSalesAdmin ||
       isSalesHead ||
       (isDirector && !!po.kam_id && directorKamIds.has(po.kam_id));
