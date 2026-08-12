@@ -122,10 +122,12 @@ export function WarehouseProductMovementPanel({
             workflow is delivered. Standard Account: pending while status is pending or approved for
             fulfilled. Pending is filtered by PO order date (same as the PO page). Released,
             returned in, disposed, and shortage write-offs use fulfill/dispatch/receipt/resolve
-            dates. Available is current on-hand minus allocated. Net (out − in − loss) = released
-            minus returned in minus shortage write-offs for the selected period. Change-item rebates:
-            disputed goods return via Returned in; replacement SKUs ship out under Replacement out
-            (rebate fulfillment PO). Shortage write-offs link to Delivery Shortages.
+            dates. Available matches main inventory (on-hand minus allocated minus open PO holds).
+            PO Reserved is the live open transfer hold at this location. Net (out − in − loss) =
+            released minus returned in minus shortage write-offs for the selected period.
+            Change-item rebates: disputed goods return via Returned in; replacement SKUs ship out
+            under Replacement out (rebate fulfillment PO). Shortage write-offs link to Delivery
+            Shortages.
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-3 shrink-0">
@@ -222,25 +224,35 @@ export function WarehouseProductMovementPanel({
         </div>
       ) : (
         <div className="rounded-md border overflow-x-auto">
-          <Table className="min-w-[980px] table-fixed w-full">
+          <Table className="min-w-[1060px] table-fixed w-full">
             <colgroup>
-              <col className="w-[12%]" />
-              <col className="w-[20%]" />
+              <col className="w-[11%]" />
+              <col className="w-[18%]" />
+              <col className="w-[7%]" />
+              <col className="w-[8%]" />
+              <col className="w-[7%]" />
+              <col className="w-[7%]" />
+              <col className="w-[7%]" />
+              <col className="w-[7%]" />
+              <col className="w-[7%]" />
               <col className="w-[8%]" />
               <col className="w-[8%]" />
-              <col className="w-[8%]" />
-              <col className="w-[8%]" />
-              <col className="w-[8%]" />
-              <col className="w-[8%]" />
-              <col className="w-[9%]" />
-              <col className="w-[9%]" />
             </colgroup>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead className={LABEL_HEAD_CLASS}>Brand</TableHead>
                 <TableHead className={LABEL_HEAD_CLASS}>Variant</TableHead>
-                <TableHead className={METRIC_HEAD_CLASS} title="Available stock (on-hand minus allocated)">
+                <TableHead
+                  className={METRIC_HEAD_CLASS}
+                  title="Available stock (on-hand minus allocated minus open PO holds)"
+                >
                   Avail.
+                </TableHead>
+                <TableHead
+                  className={METRIC_HEAD_CLASS}
+                  title="Open transfer PO holds at this location (live snapshot)"
+                >
+                  PO Res.
                 </TableHead>
                 <TableHead className={METRIC_HEAD_CLASS} title="Released outbound">
                   Released
@@ -279,6 +291,9 @@ export function WarehouseProductMovementPanel({
                     </div>
                   </TableCell>
                   <TableCell className={METRIC_CELL_CLASS}>{num(row.stock)}</TableCell>
+                  <TableCell className={cn(METRIC_CELL_CLASS, 'text-violet-700 dark:text-violet-400')}>
+                    {row.poReserved > 0 ? num(row.poReserved) : '—'}
+                  </TableCell>
                   <TableCell className={METRIC_CELL_CLASS}>{num(row.released)}</TableCell>
                   <TableCell className={METRIC_CELL_CLASS}>
                     {row.rebateReplacementReleased > 0 ? (

@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { endOfDay, startOfDay } from 'date-fns';
 import { supabase } from '@/lib/supabase';
 import { isDateInRange } from '@/lib/dateRangePresets';
+import { fetchAllPaginated } from '@/lib/supabasePaginate';
 import { warehouseTransferReservationKey } from '@/features/key-accounts/key-accounts-analytics/keyAccountAnalyticsShared';
 import type { Brand } from './InventoryContext';
 import {
@@ -19,6 +20,10 @@ import {
   type WarehouseTransferOrderRef,
   type WarehouseTransferReservationSnapshot,
 } from './warehouseProductMovementShared';
+import { fetchOpenTransferPoReservedByVariant } from './warehouseStockBoard';
+
+/** Keep `.in()` URL size under PostgREST limits; page each chunk for the 1000-row cap. */
+const PO_ID_IN_CHUNK_SIZE = 100;
 
 type PoLineRow = {
   purchase_order_id: string;
@@ -119,86 +124,94 @@ export function useWarehouseProductMovement({
     staleTime: 0,
     refetchOnMount: 'always',
     queryFn: async (): Promise<WarehouseProductMovementRow[]> => {
-      let disposalsQuery = supabase
-        .from('warehouse_inventory_disposals')
-        .select('variant_id, quantity')
-        .eq('company_id', companyId!)
-        .eq('warehouse_location_id', locationId!);
+      const rangeStartIso = rangeStart ? startOfDay(rangeStart).toISOString() : null;
+      const rangeEndIso = rangeEnd ? endOfDay(rangeEnd).toISOString() : null;
 
-      if (rangeStart) {
-        disposalsQuery = disposalsQuery.gte('created_at', startOfDay(rangeStart).toISOString());
-      }
-      if (rangeEnd) {
-        disposalsQuery = disposalsQuery.lte('created_at', endOfDay(rangeEnd).toISOString());
-      }
-
-      let shortageWriteOffQuery = supabase
-        .from('purchase_order_delivery_discrepancies')
-        .select('variant_id, quantity, resolved_at')
-        .eq('company_id', companyId!)
-        .eq('warehouse_location_id', locationId!)
-        .in('status', [...SHORTAGE_WRITE_OFF_STATUSES]);
-
-      if (rangeStart) {
-        shortageWriteOffQuery = shortageWriteOffQuery.gte(
-          'resolved_at',
-          startOfDay(rangeStart).toISOString()
-        );
-      }
-      if (rangeEnd) {
-        shortageWriteOffQuery = shortageWriteOffQuery.lte(
-          'resolved_at',
-          endOfDay(rangeEnd).toISOString()
-        );
-      }
-
-      const [lineItemsResult, returnLinesResult, disposalsResult, shortageWriteOffResult] =
-        await Promise.all([
-        supabase
-          .from('purchase_order_items')
-          .select(
-            `
-            purchase_order_id,
-            variant_id,
-            quantity,
-            warehouse_location_id,
-            purchase_orders!inner (
-              status,
-              workflow_status,
-              company_account_type,
-              po_order_kind,
-              fulfillment_type,
-              warehouse_company_id,
+      const [
+        lineItems,
+        returnLines,
+        disposals,
+        shortageWriteOffs,
+        poReservedByVariantId,
+      ] = await Promise.all([
+        fetchAllPaginated<PoLineRow>(async (from, to) => {
+          const { data, error } = await supabase
+            .from('purchase_order_items')
+            .select(
+              `
+              id,
+              purchase_order_id,
+              variant_id,
+              quantity,
               warehouse_location_id,
-              updated_at,
-              order_date
-            )
-          `
-          )
-          .eq('purchase_orders.fulfillment_type', 'warehouse_transfer')
-          .eq('purchase_orders.warehouse_company_id', companyId!),
-        supabase
-          .from('key_account_po_rebate_return_receipt_lines')
-          .select(
+              purchase_orders!inner (
+                status,
+                workflow_status,
+                company_account_type,
+                po_order_kind,
+                fulfillment_type,
+                warehouse_company_id,
+                warehouse_location_id,
+                updated_at,
+                order_date
+              )
             `
-            variant_id,
-            qty_good,
-            key_account_po_rebate_return_receipts!inner (
-              received_at
             )
-          `
-          )
-          .eq('warehouse_location_id', locationId!),
-        disposalsQuery,
-        shortageWriteOffQuery,
+            .eq('purchase_orders.fulfillment_type', 'warehouse_transfer')
+            .eq('purchase_orders.warehouse_company_id', companyId!)
+            .order('id')
+            .range(from, to);
+          return { data: (data as PoLineRow[] | null) ?? null, error };
+        }),
+        fetchAllPaginated<RebateReturnLineRow>(async (from, to) => {
+          const { data, error } = await supabase
+            .from('key_account_po_rebate_return_receipt_lines')
+            .select(
+              `
+              id,
+              variant_id,
+              qty_good,
+              key_account_po_rebate_return_receipts!inner (
+                received_at
+              )
+            `
+            )
+            .eq('warehouse_location_id', locationId!)
+            .order('id')
+            .range(from, to);
+          return { data: (data as RebateReturnLineRow[] | null) ?? null, error };
+        }),
+        fetchAllPaginated<DisposalRow>(async (from, to) => {
+          let query = supabase
+            .from('warehouse_inventory_disposals')
+            .select('id, variant_id, quantity')
+            .eq('company_id', companyId!)
+            .eq('warehouse_location_id', locationId!);
+
+          if (rangeStartIso) query = query.gte('created_at', rangeStartIso);
+          if (rangeEndIso) query = query.lte('created_at', rangeEndIso);
+
+          const { data, error } = await query.order('id').range(from, to);
+          return { data: (data as DisposalRow[] | null) ?? null, error };
+        }),
+        fetchAllPaginated<ShortageWriteOffRow>(async (from, to) => {
+          let query = supabase
+            .from('purchase_order_delivery_discrepancies')
+            .select('id, variant_id, quantity, resolved_at')
+            .eq('company_id', companyId!)
+            .eq('warehouse_location_id', locationId!)
+            .in('status', [...SHORTAGE_WRITE_OFF_STATUSES]);
+
+          if (rangeStartIso) query = query.gte('resolved_at', rangeStartIso);
+          if (rangeEndIso) query = query.lte('resolved_at', rangeEndIso);
+
+          const { data, error } = await query.order('id').range(from, to);
+          return { data: (data as ShortageWriteOffRow[] | null) ?? null, error };
+        }),
+        fetchOpenTransferPoReservedByVariant(companyId!, locationId!),
       ]);
 
-      if (lineItemsResult.error) throw lineItemsResult.error;
-      if (returnLinesResult.error) throw returnLinesResult.error;
-      if (disposalsResult.error) throw disposalsResult.error;
-      if (shortageWriteOffResult.error) throw shortageWriteOffResult.error;
-
-      const scopedLines = ((lineItemsResult.data ?? []) as PoLineRow[]).filter((row) => {
+      const scopedLines = lineItems.filter((row) => {
         const order = firstRelation(row.purchase_orders);
         if (!order) return false;
         if (EXCLUDED_PO_STATUSES.includes(String(order.status || ''))) return false;
@@ -217,33 +230,60 @@ export function useWarehouseProductMovement({
       let deliveries: DeliveryRow[] = [];
 
       if (poIds.length > 0) {
-        const [reservationsResult, locationStatusResult, deliveriesResult] = await Promise.all([
-          supabase
-            .from('warehouse_transfer_reservations')
-            .select(
-              'purchase_order_id, variant_id, quantity_reserved, quantity_fulfilled, updated_at'
-            )
-            .eq('warehouse_company_id', companyId!)
-            .eq('warehouse_location_id', locationId!)
-            .in('purchase_order_id', poIds),
-          supabase
-            .from('warehouse_transfer_location_status')
-            .select('purchase_order_id, warehouse_location_id, status')
-            .eq('warehouse_location_id', locationId!)
-            .in('purchase_order_id', poIds),
-          supabase
-            .from('purchase_order_deliveries')
-            .select('purchase_order_id, warehouse_location_id, dispatched_at, delivered_at')
-            .in('purchase_order_id', poIds),
+        const fetchForPoIdChunks = async <T>(
+          fetchChunk: (
+            chunk: string[],
+            from: number,
+            to: number
+          ) => Promise<{ data: T[] | null; error: { message: string } | null }>
+        ): Promise<T[]> => {
+          const all: T[] = [];
+          for (let i = 0; i < poIds.length; i += PO_ID_IN_CHUNK_SIZE) {
+            const chunk = poIds.slice(i, i + PO_ID_IN_CHUNK_SIZE);
+            const rows = await fetchAllPaginated<T>(async (from, to) => fetchChunk(chunk, from, to));
+            all.push(...rows);
+          }
+          return all;
+        };
+
+        const [reservationRows, locationStatusRows, deliveryRows] = await Promise.all([
+          fetchForPoIdChunks<ReservationRow>(async (chunk, from, to) => {
+            const { data, error } = await supabase
+              .from('warehouse_transfer_reservations')
+              .select(
+                'id, purchase_order_id, variant_id, quantity_reserved, quantity_fulfilled, updated_at'
+              )
+              .eq('warehouse_company_id', companyId!)
+              .eq('warehouse_location_id', locationId!)
+              .in('purchase_order_id', chunk)
+              .order('id')
+              .range(from, to);
+            return { data: (data as ReservationRow[] | null) ?? null, error };
+          }),
+          fetchForPoIdChunks<LocationStatusRow>(async (chunk, from, to) => {
+            const { data, error } = await supabase
+              .from('warehouse_transfer_location_status')
+              .select('id, purchase_order_id, warehouse_location_id, status')
+              .eq('warehouse_location_id', locationId!)
+              .in('purchase_order_id', chunk)
+              .order('id')
+              .range(from, to);
+            return { data: (data as LocationStatusRow[] | null) ?? null, error };
+          }),
+          fetchForPoIdChunks<DeliveryRow>(async (chunk, from, to) => {
+            const { data, error } = await supabase
+              .from('purchase_order_deliveries')
+              .select('id, purchase_order_id, warehouse_location_id, dispatched_at, delivered_at')
+              .in('purchase_order_id', chunk)
+              .order('id')
+              .range(from, to);
+            return { data: (data as DeliveryRow[] | null) ?? null, error };
+          }),
         ]);
 
-        if (reservationsResult.error) throw reservationsResult.error;
-        if (locationStatusResult.error) throw locationStatusResult.error;
-        if (deliveriesResult.error) throw deliveriesResult.error;
-
-        reservations = (reservationsResult.data ?? []) as ReservationRow[];
-        locationStatuses = (locationStatusResult.data ?? []) as LocationStatusRow[];
-        deliveries = (deliveriesResult.data ?? []) as DeliveryRow[];
+        reservations = reservationRows;
+        locationStatuses = locationStatusRows;
+        deliveries = deliveryRows;
       }
 
       const reservationByKey = new Map<string, WarehouseTransferReservationSnapshot>();
@@ -356,7 +396,7 @@ export function useWarehouseProductMovement({
         }
       }
 
-      for (const row of (returnLinesResult.data ?? []) as RebateReturnLineRow[]) {
+      for (const row of returnLines) {
         const variantId = row.variant_id;
         const qty = Math.max(0, Number(row.qty_good) || 0);
         if (!variantId || qty <= 0) continue;
@@ -370,14 +410,14 @@ export function useWarehouseProductMovement({
         accumulateMovement(movementByVariant, variantId, { returnedIn: qty });
       }
 
-      for (const row of (disposalsResult.data ?? []) as DisposalRow[]) {
+      for (const row of disposals) {
         const variantId = row.variant_id;
         const qty = Math.max(0, Number(row.quantity) || 0);
         if (!variantId || qty <= 0) continue;
         accumulateMovement(movementByVariant, variantId, { disposed: qty });
       }
 
-      for (const row of (shortageWriteOffResult.data ?? []) as ShortageWriteOffRow[]) {
+      for (const row of shortageWriteOffs) {
         const variantId = row.variant_id;
         const qty = Math.max(0, Number(row.quantity) || 0);
         if (!variantId || qty <= 0) continue;
@@ -385,7 +425,7 @@ export function useWarehouseProductMovement({
         accumulateMovement(movementByVariant, variantId, { shortageWriteOff: qty });
       }
 
-      return buildWarehouseProductMovementRows(brands, movementByVariant);
+      return buildWarehouseProductMovementRows(brands, movementByVariant, poReservedByVariantId);
     },
   });
 }
