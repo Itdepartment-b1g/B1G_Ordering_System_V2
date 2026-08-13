@@ -41,15 +41,14 @@ import {
     PopoverTrigger,
 } from '@/components/ui/popover';
 import { useAuth } from '@/features/auth';
-import {
-    useExecutiveCompanies,
-    useExecutiveStats,
-    useExecutiveCompanyBreakdown,
-    useExecutiveRevenueTrends,
-    useExecutiveTopPerformers,
-    useExecutiveRecentActivity,
-    useExecutiveBrandPerformance
-} from './executiveHooks';
+import { useAppDispatch, useAppSelector } from '@/store';
+import { brandPerformanceSlice } from '@/store/slices/executive/brand-performance';
+import { companiesSlice } from '@/store/slices/executive/companies';
+import { companyBreakdownSlice } from '@/store/slices/executive/company-breakdown';
+import { recentActivitySlice } from '@/store/slices/executive/recent-activity';
+import { revenueTrendsSlice } from '@/store/slices/executive/revenue-trends';
+import { statsSlice } from '@/store/slices/executive/stats';
+import { topPerformersSlice } from '@/store/slices/executive/top-performers';
 import {
     useExecutiveMainInventory,
     useExecutiveLeaderInventory,
@@ -125,8 +124,13 @@ const getDateRange = (preset: DatePreset, customStart?: Date, customEnd?: Date):
     }
 };
 
+function isQueryLoading(status: string, enabled = true) {
+    return status === 'loading' || (status === 'idle' && enabled);
+}
+
 export default function ExecutiveDashboardPage() {
     const { user } = useAuth();
+    const dispatch = useAppDispatch();
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [datePreset, setDatePreset] = useState<DatePreset>('all');
     const [customStartDate, setCustomStartDate] = useState<Date | undefined>(undefined);
@@ -169,21 +173,68 @@ export default function ExecutiveDashboardPage() {
         return date;
     };
 
-    const { data: companiesData, isLoading: companiesLoading, refetch: refetchCompanies } = useExecutiveCompanies();
- 
+    const companiesState = useAppSelector((state) => state.executiveCompanies);
+    const statsState = useAppSelector((state) => state.executiveStats);
+    const breakdownState = useAppSelector((state) => state.executiveCompanyBreakdown);
+    const trendsState = useAppSelector((state) => state.executiveRevenueTrends);
+    const performersState = useAppSelector((state) => state.executiveTopPerformers);
+    const activityState = useAppSelector((state) => state.executiveRecentActivity);
+    const brandPerformanceState = useAppSelector((state) => state.executiveBrandPerformance);
+
+    const companiesData = companiesState.data;
+    const companiesLoading = isQueryLoading(companiesState.status);
+    const companiesError = companiesState.error;
+    const stats = statsState.data;
+    const breakdown = breakdownState.data;
+    const trends = trendsState.data;
+    const topPerformers = performersState.data;
+    const activity = activityState.data;
+    const brandPerformance = brandPerformanceState.data;
+
+    // GET /api/executive/companies
+    useEffect(() => {
+        void dispatch(companiesSlice.fetch({}));
+    }, [dispatch]);
+
     // 🔴 LIVE TRACKING: Auto-refresh when orders/sales happen in assigned companies
     const companyIds = companiesData?.companyIds || [];
     useExecutiveRealtime(companyIds);
 
     // Filter by selected company or use all companies
     const filteredCompanyIds = selectedCompanyId ? [selectedCompanyId] : companyIds;
+    const from = startDate?.toISOString();
+    const to = endDate?.toISOString();
+    const companyKey = filteredCompanyIds.join(',');
+    const hasCompanies = Boolean(companyKey);
 
-    const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useExecutiveStats(startDate, endDate, filteredCompanyIds);
-    const { data: breakdown, isLoading: breakdownLoading, refetch: refetchBreakdown } = useExecutiveCompanyBreakdown(startDate, endDate, filteredCompanyIds);
-    const { data: trends, isLoading: trendsLoading, refetch: refetchTrends } = useExecutiveRevenueTrends(startDate, endDate, filteredCompanyIds, 30);
-    const { data: topPerformers, isLoading: performersLoading, refetch: refetchPerformers } = useExecutiveTopPerformers(startDate, endDate, filteredCompanyIds, 10);
-    const { data: activity, isLoading: activityLoading, refetch: refetchActivity } = useExecutiveRecentActivity(startDate, endDate, filteredCompanyIds, 15);
-    const { data: brandPerformance, isLoading: brandPerformanceLoading, refetch: refetchBrandPerformance } = useExecutiveBrandPerformance(startDate, endDate, filteredCompanyIds, selectedBrandFilter);
+    const statsLoading = isQueryLoading(statsState.status, hasCompanies);
+    const breakdownLoading = isQueryLoading(breakdownState.status, hasCompanies);
+    const trendsLoading = isQueryLoading(trendsState.status, hasCompanies);
+    const performersLoading = isQueryLoading(performersState.status, hasCompanies);
+    const activityLoading = isQueryLoading(activityState.status, hasCompanies);
+    const brandPerformanceLoading = isQueryLoading(brandPerformanceState.status, hasCompanies);
+
+    // GET /api/executive/{stats,company-breakdown,revenue-trends,top-performers,recent-activity,brand-performance}
+    useEffect(() => {
+        const ids = companyKey ? companyKey.split(',') : [];
+        if (!ids.length) {
+            dispatch(statsSlice.reset());
+            dispatch(companyBreakdownSlice.reset());
+            dispatch(revenueTrendsSlice.reset());
+            dispatch(topPerformersSlice.reset());
+            dispatch(recentActivitySlice.reset());
+            dispatch(brandPerformanceSlice.reset());
+            return;
+        }
+
+        const args = { companyIds: ids, from, to };
+        void dispatch(statsSlice.fetch(args));
+        void dispatch(companyBreakdownSlice.fetch(args));
+        void dispatch(revenueTrendsSlice.fetch(args));
+        void dispatch(topPerformersSlice.fetch({ ...args, limit: 10 }));
+        void dispatch(recentActivitySlice.fetch({ ...args, limit: 15 }));
+        void dispatch(brandPerformanceSlice.fetch({ ...args, brandId: selectedBrandFilter }));
+    }, [dispatch, companyKey, from, to, selectedBrandFilter]);
 
     const inventoryCompanyId = selectedCompanyId;
     const assignedCompanies = companiesData?.companies || [];
@@ -375,14 +426,16 @@ export default function ExecutiveDashboardPage() {
     const handleRefresh = async () => {
         setIsRefreshing(true);
         try {
+            const ids = companyKey ? companyKey.split(',') : [];
+            const args = { companyIds: ids, from, to };
             await Promise.all([
-                refetchCompanies(),
-                refetchStats(),
-                refetchBreakdown(),
-                refetchTrends(),
-                refetchPerformers(),
-                refetchActivity(),
-                refetchBrandPerformance(),
+                dispatch(companiesSlice.fetch({})).unwrap(),
+                ids.length ? dispatch(statsSlice.fetch(args)).unwrap() : Promise.resolve(),
+                ids.length ? dispatch(companyBreakdownSlice.fetch(args)).unwrap() : Promise.resolve(),
+                ids.length ? dispatch(revenueTrendsSlice.fetch(args)).unwrap() : Promise.resolve(),
+                ids.length ? dispatch(topPerformersSlice.fetch({ ...args, limit: 10 })).unwrap() : Promise.resolve(),
+                ids.length ? dispatch(recentActivitySlice.fetch({ ...args, limit: 15 })).unwrap() : Promise.resolve(),
+                ids.length ? dispatch(brandPerformanceSlice.fetch({ ...args, brandId: selectedBrandFilter })).unwrap() : Promise.resolve(),
                 inventoryCompanyId ? refetchMainInventory() : Promise.resolve(),
                 inventoryCompanyId ? refetchTeamLeaders() : Promise.resolve(),
                 inventoryCompanyId && selectedLeaderId ? refetchLeaderInventory() : Promise.resolve(),
@@ -404,6 +457,23 @@ export default function ExecutiveDashboardPage() {
         return (
             <div className="flex justify-center items-center h-screen">
                 <Loader2 className="h-8 w-8 animate-spin" />
+            </div>
+        );
+    }
+
+    if (companiesError) {
+        return (
+            <div className="container mx-auto p-8">
+                <div className="rounded-md border border-destructive/40 bg-destructive/10 p-6 text-destructive">
+                    <h2 className="text-xl font-bold mb-2">Executive API failed</h2>
+                    <p className="text-sm whitespace-pre-wrap">{companiesError}</p>
+                    <p className="mt-3 text-sm text-muted-foreground">
+                        Add <code className="rounded bg-muted px-1">DATABASE_URL</code> (Supabase → Settings → Database → URI, server-only) to <code className="rounded bg-muted px-1">.env</code>, then restart <code className="rounded bg-muted px-1">npm run dev</code>.
+                    </p>
+                    <Button className="mt-4" variant="outline" onClick={() => void dispatch(companiesSlice.fetch({}))}>
+                        Retry
+                    </Button>
+                </div>
             </div>
         );
     }

@@ -9,6 +9,8 @@ import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import type { RealtimeChannel } from '@supabase/supabase-js';
+import { useAppDispatch } from '@/store';
+import { refetchAllExecutiveData } from '@/store/slices/executive';
 
 /**
  * Enable real-time live tracking for executive dashboard
@@ -18,6 +20,7 @@ import type { RealtimeChannel } from '@supabase/supabase-js';
  */
 export function useExecutiveRealtime(companyIds: string[]) {
     const queryClient = useQueryClient();
+    const dispatch = useAppDispatch();
 
     useEffect(() => {
         // Don't set up if no companies assigned
@@ -55,6 +58,7 @@ export function useExecutiveRealtime(companyIds: string[]) {
                         
                         // Refresh all dashboard data
                         queryClient.invalidateQueries({ queryKey: ['executive'] });
+                        void dispatch(refetchAllExecutiveData());
                     }
                 }
             )
@@ -90,6 +94,7 @@ export function useExecutiveRealtime(companyIds: string[]) {
                         });
                         
                         queryClient.invalidateQueries({ queryKey: ['executive'] });
+                        void dispatch(refetchAllExecutiveData());
                     }
                 }
             )
@@ -123,6 +128,7 @@ export function useExecutiveRealtime(companyIds: string[]) {
                         });
                         
                         queryClient.invalidateQueries({ queryKey: ['executive'] });
+                        void dispatch(refetchAllExecutiveData());
                     }
                 }
             )
@@ -151,6 +157,7 @@ export function useExecutiveRealtime(companyIds: string[]) {
                     
                     // Refresh everything when access changes
                     queryClient.invalidateQueries({ queryKey: ['executive'] });
+                    void dispatch(refetchAllExecutiveData());
                 }
             )
             .subscribe((status) => {
@@ -172,5 +179,5 @@ export function useExecutiveRealtime(companyIds: string[]) {
                 supabase.removeChannel(channel);
             });
         };
-    }, [companyIds.join(','), queryClient]);
+    }, [companyIds.join(','), queryClient, dispatch]);
 }
