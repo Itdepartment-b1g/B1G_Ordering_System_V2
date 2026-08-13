@@ -188,7 +188,9 @@ export function ClientHierarchyImportDialog({
         <DialogHeader className="space-y-2 text-left">
           <DialogTitle className="text-xl">Import {tabLabel(tab)}</DialogTitle>
           <DialogDescription>
-            Upload a CSV or Excel file using the template columns. Company ID is applied automatically from your account. The sample row is skipped automatically.
+            {tab === 'clients'
+              ? 'Required: client name, category, and contact phone. Contact person, email, payment terms, and notes can be blank (saved as empty). Extra columns are ignored. Company ID is applied automatically. The sample row is skipped.'
+              : 'Upload a CSV or Excel file using the template columns. Company ID is applied automatically from your account. The sample row is skipped automatically.'}
           </DialogDescription>
         </DialogHeader>
 

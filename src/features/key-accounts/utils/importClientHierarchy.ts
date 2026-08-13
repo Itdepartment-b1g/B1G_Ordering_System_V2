@@ -31,6 +31,13 @@ const FIELD_BY_HEADER: Record<string, keyof ImportRow | string> = {
   contactname: 'contact',
   email: 'email',
   phone: 'phone',
+  contactnumber: 'phone',
+  contactno: 'phone',
+  contactphone: 'phone',
+  phonenumber: 'phone',
+  phoneno: 'phone',
+  mobile: 'phone',
+  mobilephone: 'phone',
   paymentterms: 'paymentTerms',
   notes: 'notes',
   shop: 'shopName',
@@ -48,7 +55,11 @@ const FIELD_BY_HEADER: Record<string, keyof ImportRow | string> = {
 };
 
 function normalizeHeader(header: string): string {
-  return header.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  return header
+    .trim()
+    .toLowerCase()
+    .replace(/#/g, 'number')
+    .replace(/[^a-z0-9]/g, '');
 }
 
 function cellValue(value: unknown): string {
@@ -70,7 +81,7 @@ function parseRows(rawRows: Record<string, unknown>[]): ImportRow[] {
 
 function isEmptyRow(row: ImportRow, tab: ClientHierarchyExportTab): boolean {
   if (tab === 'clients') {
-    return !row.clientName && !row.code && !row.category && !row.contact && !row.email;
+    return !row.clientName && !row.category && !row.phone;
   }
   if (tab === 'shops') {
     return !row.shopName && !row.code && !row.location && !row.contact;
@@ -169,6 +180,9 @@ export async function importClientHierarchyFile(options: {
             `Invalid category. Use: ${KEY_ACCOUNT_CLIENT_CATEGORIES.join(', ')}`
           );
         }
+        if (!row.phone) {
+          throw new Error('Contact phone is required.');
+        }
         const clientCode = row.code || (await generateKeyAccountClientCode(companyId));
         const { error } = await supabase.from('key_account_clients').insert({
           company_id: companyId,
@@ -177,7 +191,7 @@ export async function importClientHierarchyFile(options: {
           client_category: category,
           contact_person: row.contact || null,
           contact_email: row.email || null,
-          contact_phone: row.phone || null,
+          contact_phone: row.phone,
           payment_terms: formatPaymentTerms(
             row.paymentTerms ? row.paymentTerms.split(',') : []
           ) || null,
