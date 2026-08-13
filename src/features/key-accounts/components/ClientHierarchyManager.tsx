@@ -22,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, Building2, Store, MapPin, ChevronRight, Loader2, LayoutGrid, Table2, Pencil, X } from 'lucide-react';
+import { Plus, Building2, Store, MapPin, ChevronRight, Loader2, LayoutGrid, Table2, Pencil, X, FileUp } from 'lucide-react';
 import {
   AnalyticsTablePagination,
   paginateAnalyticsRows,
@@ -37,6 +37,7 @@ import {
   formatPaymentTerms,
 } from '@/features/key-accounts/keyAccountCodes';
 import { KeyAccountShopCorView } from '@/features/key-accounts/components/KeyAccountShopCorView';
+import { ClientHierarchyImportDialog } from '@/features/key-accounts/components/ClientHierarchyImportDialog';
 import {
   DateRangeFilterPopover,
   type DateRangeFilterValue,
@@ -187,6 +188,7 @@ export function ClientHierarchyManager() {
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'all',
   });
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
 
   const createdDateRange = useMemo(
     () =>
@@ -761,11 +763,12 @@ export function ClientHierarchyManager() {
 
         {/* Clients Tab */}
         <TabsContent value="clients" className="space-y-4">
-        <div className="flex items-center justify-end">
-
+        <div className="flex items-center justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setImportDialogOpen(true)}>
+                <FileUp className="mr-2 h-4 w-4" />
+                Import
+              </Button>
               <HierarchyViewToolbar viewMode={viewMode} onViewModeChange={setViewMode} />
-
-            
           </div>
           {clients.length === 0 ? (
             <Card>
@@ -922,6 +925,10 @@ export function ClientHierarchyManager() {
               </p>
             </div>
             <div className="flex items-center gap-2">
+              <Button type="button" variant="outline" onClick={() => setImportDialogOpen(true)}>
+                <FileUp className="mr-2 h-4 w-4" />
+                Import
+              </Button>
               <HierarchyViewToolbar viewMode={viewMode} onViewModeChange={setViewMode} />
               <Button onClick={openCreateShopDialog}>
                 <Plus className="mr-2 h-4 w-4" />
@@ -1095,6 +1102,10 @@ export function ClientHierarchyManager() {
               </p>
             </div>
             <div className="flex items-center gap-2">
+              <Button type="button" variant="outline" onClick={() => setImportDialogOpen(true)}>
+                <FileUp className="mr-2 h-4 w-4" />
+                Import
+              </Button>
               <HierarchyViewToolbar viewMode={viewMode} onViewModeChange={setViewMode} />
               <Button onClick={openCreateAddressDialog}>
                 <Plus className="mr-2 h-4 w-4" />
@@ -1508,6 +1519,27 @@ export function ClientHierarchyManager() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <ClientHierarchyImportDialog
+        open={importDialogOpen}
+        onOpenChange={setImportDialogOpen}
+        tab={hierarchyTab}
+        companyId={user?.company_id}
+        userId={user?.id}
+        selectedClientId={selectedClient}
+        selectedShopId={selectedShop}
+        onImported={() => {
+          if (hierarchyTab === 'shops' && selectedClient) {
+            fetchShops(selectedClient);
+            return;
+          }
+          if (hierarchyTab === 'addresses' && selectedShop) {
+            fetchAddresses(selectedShop);
+            return;
+          }
+          fetchClients();
+        }}
+      />
     </div>
   );
 }
