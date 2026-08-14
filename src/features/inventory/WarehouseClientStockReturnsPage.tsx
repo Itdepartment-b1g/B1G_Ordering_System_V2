@@ -79,6 +79,7 @@ type InspectLotOption = {
 };
 
 type ClientReturnReceiptLine = {
+  warehouse_variant_id: string | null;
   qty_good: number;
   qty_damaged: number;
   variant: { name: string; brand: { name: string } | null } | null;
@@ -225,6 +226,7 @@ function mapRow(raw: Record<string, unknown>): ClientReturnRow {
           )
         : null;
       return {
+        warehouse_variant_id: (l.warehouse_variant_id as string | null) ?? null,
         qty_good: Number(l.qty_good) || 0,
         qty_damaged: Number(l.qty_damaged) || 0,
         variant: variant
@@ -375,6 +377,7 @@ export default function WarehouseClientStockReturnsPage() {
             received_at,
             notes,
             lines:standard_account_stock_return_receipt_lines (
+              warehouse_variant_id,
               qty_good,
               qty_damaged,
               warehouse_variant:variants!warehouse_variant_id (
@@ -389,7 +392,8 @@ export default function WarehouseClientStockReturnsPage() {
           )
         `
         )
-        .eq('warehouse_company_id', user!.company_id!);
+        .eq('warehouse_company_id', user!.company_id!)
+        .neq('status', 'pending_approval');
 
       if (!membership.isMain && membership.locationId) {
         requestQuery = requestQuery.eq('destination_location_id', membership.locationId);
@@ -501,7 +505,38 @@ export default function WarehouseClientStockReturnsPage() {
   const handleExportPdf = async (row: ClientReturnRow) => {
     setExportingPdfId(row.id);
     try {
-      await exportStandardAccountReturnPdfFromSource(row);
+      await exportStandardAccountReturnPdfFromSource({
+        request_number: row.request_number,
+        status: row.status,
+        created_at: row.created_at,
+        notes: row.notes,
+        signature_url: row.signature_url,
+        signature_path: row.signature_path,
+        client_company: row.client_company,
+        destination_location: row.destination_location,
+        items: row.items.map((item) => ({
+          warehouse_variant_id: item.warehouse_variant_id,
+          return_quantity: item.return_quantity,
+          inspected_quantity: item.inspected_quantity,
+          variant: item.variant
+            ? {
+                name: item.variant.name,
+                brand: item.variant.brand,
+              }
+            : null,
+        })),
+        receipts: row.receipts.map((receipt) => ({
+          lines: receipt.lines.map((line) => ({
+            warehouseVariantId: line.warehouse_variant_id,
+            brandName: line.variant?.brand?.name ?? null,
+            variantName: line.variant?.name ?? null,
+            qtyGood: line.qty_good,
+            qtyDamaged: line.qty_damaged,
+            batchNumber: line.destination_lot?.batch?.batch_number ?? null,
+            expirationDate: line.destination_lot?.expiration_date ?? null,
+          })),
+        })),
+      });
       toast({
         title: 'PDF opened',
         description: `${row.request_number} — use Print / Save PDF.`,
@@ -1080,6 +1115,7 @@ export default function WarehouseClientStockReturnsPage() {
               }`
             : 'Client company'
         }
+        requestNotes={selectedReturn?.notes}
         items={inspectItems}
         onItemsChange={setInspectItems}
         mainLots={inspectLots}

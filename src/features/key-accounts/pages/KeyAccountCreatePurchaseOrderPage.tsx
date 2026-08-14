@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
@@ -55,6 +55,7 @@ import {
   CreditCard,
   Check,
   ChevronsUpDown,
+  UserRound,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import type {
@@ -62,13 +63,17 @@ import type {
   KeyAccountShop,
   KeyAccountDeliveryAddress,
   KeyAccountPoPaymentMode,
+  UserRole,
 } from '@/types/database.types';
 import { uploadKeyAccountPaymentProof } from '@/features/key-accounts/kaPaymentProofUpload';
 import {
   KeyAccountAddAddressDialog,
   KeyAccountAddShopDialog,
 } from '@/features/key-accounts/components/KeyAccountShopAddressDialogs';
-import { KeyAccountPaymentProofUploadField } from '@/features/key-accounts/components/KeyAccountPaymentProofPreview';
+import {
+  KeyAccountPaymentProofStoredPreview,
+  KeyAccountPaymentProofUploadField,
+} from '@/features/key-accounts/components/KeyAccountPaymentProofPreview';
 import { parsePaymentTerms } from '@/features/key-accounts/keyAccountCodes';
 import { useKeyAccountPaymentSettings } from '@/features/key-accounts/hooks/useKeyAccountPaymentSettings';
 import { useKeyAccountPaymentTermOptions } from '@/features/key-accounts/hooks/useKeyAccountPaymentTermOptions';
@@ -78,6 +83,25 @@ import {
   KEY_ACCOUNT_PAYMENT_METHOD_LABELS,
   type KeyAccountPaymentMethod,
 } from '@/features/key-accounts/keyAccountPaymentSettingsUtils';
+import {
+  getKeyAccountRoleLabel,
+  isKeyAccountSalesAdmin,
+  canEditKeyAccountPo,
+} from '@/features/key-accounts/keyAccountRoles';
+import { sendNotification } from '@/features/shared/lib/notification.helpers';
+
+type OrderOwnerOption = {
+  id: string;
+  full_name: string | null;
+  email: string | null;
+  role: UserRole;
+};
+
+const ON_BEHALF_OWNER_ROLES: UserRole[] = [
+  'sales_head',
+  'sales_director',
+  'key_account_manager',
+];
 
 type PaymentTermsSource = 'client' | 'company';
 
@@ -129,20 +153,35 @@ export function KeyAccountPurchaseOrderPage() {
     [paymentSettings]
   );
   const navigate = useNavigate();
+  const { poId } = useParams<{ poId: string }>();
+  const isEditMode = Boolean(poId);
+  const isSalesAdmin = isKeyAccountSalesAdmin(user?.role);
 
   // Loading states
   const [loadingClients, setLoadingClients] = useState(true);
   const [loadingMoreClients, setLoadingMoreClients] = useState(false);
   const [loadingWarehouses, setLoadingWarehouses] = useState(true);
+  const [loadingOwners, setLoadingOwners] = useState(false);
+  const [loadingExistingPo, setLoadingExistingPo] = useState(isEditMode);
   const [submitting, setSubmitting] = useState(false);
 
   // Data states
+  const [orderOwners, setOrderOwners] = useState<OrderOwnerOption[]>([]);
+  const [selectedOwnerId, setSelectedOwnerId] = useState('');
+  const [editPoNumber, setEditPoNumber] = useState('');
+  const [editWorkflowStatus, setEditWorkflowStatus] = useState<string | null>(null);
+  const [editPaymentStatus, setEditPaymentStatus] = useState('unpaid');
+  const [editHasPayments, setEditHasPayments] = useState(false);
+  const [editPaymentProofs, setEditPaymentProofs] = useState<
+    { id: string; proof_storage_path: string | null; amount: number; payment_method: string | null }[]
+  >([]);
+  const suppressCascadeRef = useRef(false);
   const [clients, setClients] = useState<KeyAccountClient[]>([]);
   const [clientsHasMore, setClientsHasMore] = useState(false);
   const [clientSearch, setClientSearch] = useState('');
   const [clientPickerOpen, setClientPickerOpen] = useState(false);
   const [selectedClient, setSelectedClient] = useState<KeyAccountClient | null>(null);
-  const kamAssignedClientIdsRef = useRef<string[] | null>(null);
+  const kamAssignedClientIdsRef = useRef<{ kamId: string; clientIds: string[] } | null>(null);
   const clientFetchGenRef = useRef(0);
   const [shops, setShops] = useState<KeyAccountShop[]>([]);
   const [addresses, setAddresses] = useState<KeyAccountDeliveryAddress[]>([]);
@@ -343,6 +382,50 @@ export function KeyAccountPurchaseOrderPage() {
     fetchWarehouses();
   }, []);
 
+  // Sales Admin: load Sales Head / Director / KAM options for create-on-behalf
+  useEffect(() => {
+    if (!isSalesAdmin || !user?.company_id) {
+      setOrderOwners([]);
+      setSelectedOwnerId('');
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setLoadingOwners(true);
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('id, full_name, email, role')
+          .eq('company_id', user.company_id)
+          .in('role', ON_BEHALF_OWNER_ROLES)
+          .eq('status', 'active')
+          .order('full_name', { ascending: true });
+        if (error) throw error;
+        if (cancelled) return;
+        setOrderOwners((data || []) as OrderOwnerOption[]);
+      } catch (e: any) {
+        if (!cancelled) {
+          toast({
+            variant: 'destructive',
+            title: 'Error loading order owners',
+            description: e?.message || 'Failed to load Sales Head / Director / KAM list',
+          });
+          setOrderOwners([]);
+        }
+      } finally {
+        if (!cancelled) setLoadingOwners(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isSalesAdmin, user?.company_id]);
+
+  const selectedOwner = useMemo(
+    () => orderOwners.find((o) => o.id === selectedOwnerId) ?? null,
+    [orderOwners, selectedOwnerId]
+  );
+
   // Debounced searchable client list (10 at a time)
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -350,33 +433,51 @@ export function KeyAccountPurchaseOrderPage() {
     }, clientSearch.trim() ? 300 : 0);
     return () => window.clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchClients closes over latest user/search
-  }, [clientSearch, user?.company_id, user?.id, user?.role]);
+  }, [clientSearch, user?.company_id, user?.id, user?.role, selectedOwnerId]);
+
+  // When Sales Admin changes the on-behalf owner, clear client selection (scope may change)
+  useEffect(() => {
+    if (!isSalesAdmin) return;
+    if (suppressCascadeRef.current) return;
+    setSelectedClientId('');
+    setSelectedClient(null);
+    setSelectedShopId('');
+    setSelectedAddressId('');
+    setClients([]);
+  }, [selectedOwnerId, isSalesAdmin]);
 
   // Fetch shops when client changes
   useEffect(() => {
-    if (selectedClientId) {
-      fetchShops(selectedClientId);
-      setSelectedShopId('');
-      setSelectedAddressId('');
-      setPaymentTermsSource('client');
-      setSelectedCompanyPaymentTerm('');
-      const terms = parsePaymentTerms(
-        clients.find((c) => c.id === selectedClientId)?.payment_terms
-      );
-      setSelectedClientPaymentTerm(terms.length === 1 ? terms[0] : '');
+    if (!selectedClientId) return;
+    if (suppressCascadeRef.current) {
+      void fetchShops(selectedClientId);
+      return;
     }
+    fetchShops(selectedClientId);
+    setSelectedShopId('');
+    setSelectedAddressId('');
+    setPaymentTermsSource('client');
+    setSelectedCompanyPaymentTerm('');
+    const terms = parsePaymentTerms(
+      clients.find((c) => c.id === selectedClientId)?.payment_terms
+    );
+    setSelectedClientPaymentTerm(terms.length === 1 ? terms[0] : '');
   }, [selectedClientId]);
 
   // Fetch addresses when shop changes
   useEffect(() => {
-    if (selectedShopId) {
-      fetchAddresses(selectedShopId);
-      setSelectedAddressId('');
+    if (!selectedShopId) return;
+    if (suppressCascadeRef.current) {
+      void fetchAddresses(selectedShopId);
+      return;
     }
+    fetchAddresses(selectedShopId);
+    setSelectedAddressId('');
   }, [selectedShopId]);
 
   // Auto-select default address
   useEffect(() => {
+    if (suppressCascadeRef.current) return;
     if (filteredAddresses.length > 0 && !selectedAddressId) {
       const defaultAddress = filteredAddresses.find((a) => a.is_default);
       if (defaultAddress) {
@@ -384,6 +485,198 @@ export function KeyAccountPurchaseOrderPage() {
       }
     }
   }, [filteredAddresses, selectedAddressId]);
+
+  // Edit mode: load existing PO and hydrate the form
+  useEffect(() => {
+    if (!isEditMode || !poId || !user?.id) return;
+
+    let cancelled = false;
+    (async () => {
+      setLoadingExistingPo(true);
+      try {
+        const { data: po, error: poErr } = await supabase
+          .from('purchase_orders')
+          .select(
+            `
+            id,
+            po_number,
+            status,
+            workflow_status,
+            kam_id,
+            created_by,
+            po_order_kind,
+            key_account_client_id,
+            key_account_shop_id,
+            key_account_address_id,
+            warehouse_location_id,
+            warehouse_company_id,
+            order_date,
+            expected_delivery_date,
+            notes,
+            tax_rate,
+            discount,
+            key_account_payment_terms,
+            key_account_payment_terms_source,
+            key_account_payment_mode,
+            key_account_payment_status,
+            company_account_type,
+            client:key_account_clients(*)
+          `
+          )
+          .eq('id', poId)
+          .single();
+        if (poErr) throw poErr;
+        if (cancelled) return;
+
+        if (!canEditKeyAccountPo(po, user)) {
+          toast({
+            variant: 'destructive',
+            title: 'Cannot edit this PO',
+            description:
+              'On-behalf orders lock after owner approval. Regular orders lock after submit to warehouse.',
+          });
+          navigate('/key-accounts/purchase-orders');
+          return;
+        }
+
+        const { data: itemRows, error: itemsErr } = await supabase
+          .from('purchase_order_items')
+          .select(
+            `
+            id,
+            variant_id,
+            quantity,
+            unit_price,
+            total_price,
+            warehouse_location_id,
+            variant:variants(
+              id,
+              name,
+              variant_type,
+              brand_id,
+              brand:brands(id, name)
+            )
+          `
+          )
+          .eq('purchase_order_id', poId);
+        if (itemsErr) throw itemsErr;
+
+        const { data: paymentRows, error: paymentsErr } = await supabase
+          .from('purchase_order_key_account_payments')
+          .select('id, proof_storage_path, amount, payment_method')
+          .eq('purchase_order_id', poId)
+          .order('created_at', { ascending: true });
+        if (paymentsErr) {
+          console.warn('Failed to load payment proofs for edit:', paymentsErr);
+        }
+
+        if (cancelled) return;
+
+        suppressCascadeRef.current = true;
+        setEditPoNumber(po.po_number || '');
+        setEditWorkflowStatus(po.workflow_status || null);
+        setEditPaymentStatus(String(po.key_account_payment_status || 'unpaid'));
+        setEditHasPayments((paymentRows || []).length > 0);
+        setEditPaymentProofs(
+          (paymentRows || []).map((row) => ({
+            id: String(row.id),
+            proof_storage_path: row.proof_storage_path || null,
+            amount: Number(row.amount || 0),
+            payment_method: row.payment_method || null,
+          }))
+        );
+
+        if (po.kam_id) setSelectedOwnerId(po.kam_id);
+
+        const client = Array.isArray(po.client) ? po.client[0] : po.client;
+        if (client) {
+          setSelectedClient(client as KeyAccountClient);
+          setClients([client as KeyAccountClient]);
+        }
+        setSelectedClientId(po.key_account_client_id || '');
+        setSelectedShopId(po.key_account_shop_id || '');
+        setSelectedAddressId(po.key_account_address_id || '');
+
+        const locIds = new Set<string>();
+        if (po.warehouse_location_id) locIds.add(po.warehouse_location_id);
+        for (const row of itemRows || []) {
+          if (row.warehouse_location_id) locIds.add(row.warehouse_location_id);
+        }
+        const multi = locIds.size > 1;
+        setSourceMode(multi ? 'multi' : 'single');
+        if (po.warehouse_location_id) {
+          setSelectedWarehouseLocationId(po.warehouse_location_id);
+          setActiveWarehouseTabId(po.warehouse_location_id);
+        } else if (locIds.size === 1) {
+          const only = [...locIds][0];
+          setSelectedWarehouseLocationId(only);
+          setActiveWarehouseTabId(only);
+        }
+
+        const orderDateRaw = String(po.order_date || '').slice(0, 10);
+        setOrderDate(orderDateRaw || new Date().toISOString().split('T')[0]);
+        setExpectedDeliveryDate(
+          po.expected_delivery_date ? String(po.expected_delivery_date).slice(0, 10) : ''
+        );
+        setNotes(po.notes || '');
+        setTaxRate(Number(po.tax_rate || 0));
+        setDiscount(Number(po.discount || 0));
+        setIsConsignment(String(po.po_order_kind || '') === 'consignment');
+        setPaymentMode((po.key_account_payment_mode as KeyAccountPoPaymentMode) || 'full');
+
+        const termsSource =
+          po.key_account_payment_terms_source === 'company' ? 'company' : 'client';
+        setPaymentTermsSource(termsSource);
+        if (termsSource === 'company') {
+          setSelectedCompanyPaymentTerm(po.key_account_payment_terms || '');
+        } else {
+          setSelectedClientPaymentTerm(po.key_account_payment_terms || '');
+        }
+
+        const hydratedItems: POItem[] = (itemRows || []).map((row: any) => {
+          const variant = Array.isArray(row.variant) ? row.variant[0] : row.variant;
+          const brand = variant
+            ? Array.isArray(variant.brand)
+              ? variant.brand[0]
+              : variant.brand
+            : null;
+          return {
+            id: row.id || crypto.randomUUID(),
+            brandId: brand?.id || variant?.brand_id || '',
+            brandName: brand?.name || '—',
+            variantId: row.variant_id,
+            variantName: variant?.name || '—',
+            variantType: variant?.variant_type || '',
+            quantity: Number(row.quantity || 0),
+            unitPrice: Number(row.unit_price || 0),
+            totalPrice: Number(row.total_price || 0),
+            warehouseLocationId: row.warehouse_location_id || undefined,
+          };
+        });
+        setItems(hydratedItems);
+
+        window.setTimeout(() => {
+          suppressCascadeRef.current = false;
+        }, 300);
+      } catch (e: any) {
+        if (!cancelled) {
+          toast({
+            variant: 'destructive',
+            title: 'Failed to load PO',
+            description: e?.message || 'Could not load purchase order for editing.',
+          });
+          navigate('/key-accounts/purchase-orders');
+        }
+      } finally {
+        if (!cancelled) setLoadingExistingPo(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEditMode, poId, user?.id]);
 
   // Reset variant when brand changes
   useEffect(() => {
@@ -565,23 +858,45 @@ export function KeyAccountPurchaseOrderPage() {
   }, [sourceMode, selectedWarehouseLocationId]);
 
   async function resolveKamAssignedClientIds(): Promise<string[] | null> {
-    if (user?.role !== 'key_account_manager') return null;
-    if (kamAssignedClientIdsRef.current) return kamAssignedClientIdsRef.current;
+    const kamIdForScope =
+      user?.role === 'key_account_manager'
+        ? user.id
+        : isSalesAdmin && selectedOwner?.role === 'key_account_manager'
+          ? selectedOwner.id
+          : null;
+
+    if (!kamIdForScope) return null;
+
+    if (
+      kamAssignedClientIdsRef.current &&
+      kamAssignedClientIdsRef.current.kamId === kamIdForScope
+    ) {
+      return kamAssignedClientIdsRef.current.clientIds;
+    }
 
     const { data: assignments, error: assignErr } = await supabase
       .from('kam_client_assignments')
       .select('client_id')
-      .eq('kam_id', user.id);
+      .eq('kam_id', kamIdForScope);
 
     if (assignErr) throw assignErr;
 
     const clientIds = (assignments ?? []).map((a) => a.client_id).filter(Boolean);
-    kamAssignedClientIdsRef.current = clientIds;
+    kamAssignedClientIdsRef.current = { kamId: kamIdForScope, clientIds };
     return clientIds;
   }
 
   async function fetchClients(opts: { search?: string; append?: boolean } = {}) {
     if (!user?.company_id) return;
+
+    // Sales Admin must pick an order owner before clients are scoped/loaded.
+    if (isSalesAdmin && !selectedOwnerId) {
+      setClients([]);
+      setClientsHasMore(false);
+      setLoadingClients(false);
+      setLoadingMoreClients(false);
+      return;
+    }
 
     const search = (opts.search ?? clientSearch).trim();
     const append = opts.append ?? false;
@@ -914,6 +1229,15 @@ export function KeyAccountPurchaseOrderPage() {
       return;
     }
 
+    if (isSalesAdmin && !selectedOwnerId) {
+      toast({
+        variant: 'destructive',
+        title: 'Order owner required',
+        description: 'Select Sales Head, Director, or KAM to create this PO on behalf of.',
+      });
+      return;
+    }
+
     if (sourceMode === 'single' && !selectedWarehouseLocationId) {
       toast({
         variant: 'destructive',
@@ -979,7 +1303,10 @@ export function KeyAccountPurchaseOrderPage() {
       return;
     }
 
-    if (!isConsignment && !paymentProofFile) {
+    const requiresPaymentProof =
+      !isConsignment && (!isEditMode || !editHasPayments);
+
+    if (requiresPaymentProof && !paymentProofFile) {
       toast({
         variant: 'destructive',
         title: 'Payment proof required',
@@ -1025,29 +1352,42 @@ export function KeyAccountPurchaseOrderPage() {
     }
 
     setSubmitting(true);
+    /** Set only for brand-new POs so a failed payment/items step can roll the row back. */
+    let createdPoId: string | null = null;
 
     try {
-      // Generate PO number using existing DB function
-      const { data: poNumber, error: poNumberErr } = await supabase.rpc('generate_po_number', {});
-      if (poNumberErr) throw poNumberErr;
-
       const isDirector = user?.role === 'sales_director';
       const isSalesHead = user?.role === 'sales_head';
       const isKam = user?.role === 'key_account_manager';
+      const canChangeOwner =
+        isSalesAdmin && (!isEditMode || editWorkflowStatus === 'owner_pending');
 
-      const orderData = {
-        company_id: user?.company_id,
-        po_number: poNumber,
-        supplier_id: null,
-        fulfillment_type: 'warehouse_transfer',
+      const kamId = canChangeOwner
+        ? selectedOwnerId
+        : isEditMode
+          ? selectedOwnerId || null
+          : isKam || isDirector || isSalesHead
+            ? user?.id
+            : null;
+
+      const paymentTermsCreatedBy = (() => {
+        if (!finalResolvedPaymentTerms) return null;
+        if (paymentTermsSource === 'company') {
+          const option = companyPaymentTermOptions.find(
+            (o) => o.label === selectedCompanyPaymentTerm
+          );
+          return option?.created_by ?? user?.id ?? null;
+        }
+        return null;
+      })();
+
+      const headerFields = {
         warehouse_company_id: linkedWarehouseCompanyId,
         warehouse_location_id: sourceMode === 'single' ? selectedWarehouseLocationId : null,
         key_account_client_id: selectedClientId,
         key_account_shop_id: selectedShopId,
         key_account_address_id: selectedAddressId,
-        kam_id: isKam || isDirector || isSalesHead ? user?.id : null,
-        company_account_type: 'Key Accounts',
-        workflow_status: isDirector || isSalesHead ? 'admin_pending' : 'kam_pending',
+        kam_id: kamId,
         order_date: orderDate,
         expected_delivery_date: expectedDeliveryDate,
         notes: notes,
@@ -1056,25 +1396,137 @@ export function KeyAccountPurchaseOrderPage() {
         tax_amount: computedTaxAmount,
         discount: discount,
         total_amount: computedTotal,
-        status: 'pending',
-        created_by: user?.id,
         po_order_kind: isConsignment ? 'consignment' : 'standard',
         key_account_payment_terms: finalResolvedPaymentTerms || null,
         key_account_payment_terms_source: finalResolvedPaymentTerms
           ? paymentTermsSource
           : null,
-        key_account_payment_terms_created_by: (() => {
-          if (!finalResolvedPaymentTerms) return null;
-          if (paymentTermsSource === 'company') {
-            const option = companyPaymentTermOptions.find(
-              (o) => o.label === selectedCompanyPaymentTerm
-            );
-            return option?.created_by ?? user?.id ?? null;
-          }
-          return null;
-        })(),
-        // Keep mode so unpaid badge + later "Record payment" work for consignment.
+        key_account_payment_terms_created_by: paymentTermsCreatedBy,
         key_account_payment_mode: isConsignment ? 'full' : paymentMode,
+      };
+
+      const orderItems = items.map((item) => ({
+        company_id: user?.company_id,
+        variant_id: item.variantId,
+        warehouse_location_id:
+          sourceMode === 'single'
+            ? selectedWarehouseLocationId
+            : item.warehouseLocationId || null,
+        quantity: item.quantity,
+        unit_price: item.unitPrice,
+        total_price: item.totalPrice,
+      }));
+
+      const { logPurchaseOrderEvent } = await import('@/features/orders/purchaseOrderEventsApi');
+
+      if (isEditMode && poId) {
+        const { data: currentPo, error: currentErr } = await supabase
+          .from('purchase_orders')
+          .select('id, status, workflow_status, kam_id, created_by, po_order_kind, key_account_payment_status')
+          .eq('id', poId)
+          .single();
+        if (currentErr) throw currentErr;
+        if (!canEditKeyAccountPo(currentPo, user)) {
+          throw new Error(
+            'This PO can no longer be edited (owner approved, or it was already submitted to warehouse).'
+          );
+        }
+
+        const { error: poError } = await supabase
+          .from('purchase_orders')
+          .update({
+            ...headerFields,
+            ...(canChangeOwner ? { kam_id: selectedOwnerId } : {}),
+          })
+          .eq('id', poId);
+        if (poError) throw poError;
+
+        const { error: deleteItemsErr } = await supabase
+          .from('purchase_order_items')
+          .delete()
+          .eq('purchase_order_id', poId);
+        if (deleteItemsErr) throw deleteItemsErr;
+
+        const { error: itemsError } = await supabase.from('purchase_order_items').insert(
+          orderItems.map((item) => ({
+            ...item,
+            purchase_order_id: poId,
+          }))
+        );
+        if (itemsError) throw itemsError;
+
+        void logPurchaseOrderEvent({
+          purchaseOrderId: poId,
+          eventType: 'updated',
+          note: 'PO updated before warehouse approval',
+          lines: items.map((item) => ({
+            variant_id: item.variantId,
+            quantity: item.quantity,
+            variant_name: item.variantName,
+            brand_name: item.brandName,
+          })),
+          createdBy: user?.id,
+        });
+
+        const needsPaymentInsert =
+          !isConsignment &&
+          !editHasPayments &&
+          String(editPaymentStatus || 'unpaid') === 'unpaid';
+        if (needsPaymentInsert) {
+          if (!user.company_id) {
+            throw new Error('Missing company context for payment proof upload.');
+          }
+          if (!paymentProofFile) {
+            throw new Error('Payment proof is required.');
+          }
+          const proofPath = await uploadKeyAccountPaymentProof(
+            user.company_id,
+            poId,
+            paymentProofFile
+          );
+          const { error: payErr } = await supabase.from('purchase_order_key_account_payments').insert({
+            purchase_order_id: poId,
+            company_id: user.company_id,
+            amount: paymentMode === 'full' ? orderTotalRounded : firstPaymentAmount,
+            payment_method: paymentMethod,
+            bank_type: paymentMethod === 'BANK_TRANSFER' ? bankType : null,
+            proof_storage_path: proofPath,
+          });
+          if (payErr) throw payErr;
+        }
+
+        toast({
+          title: 'Order updated',
+          description: `${editPoNumber || 'PO'} saved. Workflow status unchanged.`,
+        });
+        setConfirmOpen(false);
+        navigate('/key-accounts/purchase-orders');
+        return;
+      }
+
+      // Generate Key Account PO number (PO-{INITIALS}-KA-YYYYMM-####); does not use generate_po_number()
+      if (!user?.company_id) throw new Error('Company is required');
+      const { data: poNumber, error: poNumberErr } = await supabase.rpc('generate_key_account_po_number', {
+        p_company_id: user.company_id,
+      });
+      if (poNumberErr) throw poNumberErr;
+
+      const workflowStatus = isSalesAdmin
+        ? 'owner_pending'
+        : isDirector || isSalesHead
+          ? 'admin_pending'
+          : 'kam_pending';
+
+      const orderData = {
+        company_id: user?.company_id,
+        po_number: poNumber,
+        supplier_id: null,
+        fulfillment_type: 'warehouse_transfer',
+        ...headerFields,
+        company_account_type: 'Key Accounts',
+        workflow_status: workflowStatus,
+        status: 'pending',
+        created_by: user?.id,
         key_account_payment_status: 'unpaid',
       };
 
@@ -1086,40 +1538,19 @@ export function KeyAccountPurchaseOrderPage() {
         .single();
 
       if (poError) throw poError;
+      createdPoId = poData.id;
 
-      // Create order items
-      const orderItems = items.map((item) => ({
-        company_id: user?.company_id,
-        purchase_order_id: poData.id,
-        variant_id: item.variantId,
-        warehouse_location_id:
-          sourceMode === 'single'
-            ? selectedWarehouseLocationId
-            : item.warehouseLocationId || null,
-        quantity: item.quantity,
-        unit_price: item.unitPrice,
-        total_price: item.totalPrice,
-      }));
-
-      const { error: itemsError } = await supabase
-        .from('purchase_order_items')
-        .insert(orderItems);
+      const { error: itemsError } = await supabase.from('purchase_order_items').insert(
+        orderItems.map((item) => ({
+          ...item,
+          purchase_order_id: poData.id,
+        }))
+      );
 
       if (itemsError) throw itemsError;
 
-      const { logPurchaseOrderEvent } = await import('@/features/orders/purchaseOrderEventsApi');
-      void logPurchaseOrderEvent({
-        purchaseOrderId: poData.id,
-        eventType: 'created',
-        lines: items.map((item) => ({
-          variant_id: item.variantId,
-          quantity: item.quantity,
-          variant_name: item.variantName,
-          brand_name: item.brandName,
-        })),
-        createdBy: user?.id,
-      });
-
+      // Require initial payment before treating the create as successful (non-consignment).
+      // If payment fails, the catch block deletes this PO so it does not remain in the list.
       if (!isConsignment) {
         if (!user.company_id) {
           throw new Error('Missing company context for payment proof upload.');
@@ -1140,19 +1571,61 @@ export function KeyAccountPurchaseOrderPage() {
         if (payErr) throw payErr;
       }
 
+      void logPurchaseOrderEvent({
+        purchaseOrderId: poData.id,
+        eventType: 'created',
+        note: isSalesAdmin && selectedOwner
+          ? `Created by Sales Admin on behalf of ${selectedOwner.full_name || selectedOwner.email || 'order owner'}`
+          : undefined,
+        lines: items.map((item) => ({
+          variant_id: item.variantId,
+          quantity: item.quantity,
+          variant_name: item.variantName,
+          brand_name: item.brandName,
+        })),
+        createdBy: user?.id,
+      });
+
+      if (isSalesAdmin && selectedOwnerId && user.company_id) {
+        const ownerName = selectedOwner?.full_name || selectedOwner?.email || 'order owner';
+        void sendNotification({
+          userId: selectedOwnerId,
+          companyId: user.company_id,
+          type: 'key_account_order_created',
+          title: 'PO awaiting your approval',
+          message: `Sales Admin created PO ${poNumber} on your behalf (${ownerName}). Please review and approve.`,
+          referenceType: 'key_account_purchase_order',
+          referenceId: poData.id,
+        });
+      }
+
+      // Clear so catch does not delete a successfully created PO.
+      createdPoId = null;
+
       toast({
         title: 'Order created successfully',
-        description: isConsignment
-          ? `Consignment PO created for ${selectedClient?.client_name} (payment deferred)`
-          : `Purchase Order created for ${selectedClient?.client_name}`,
+        description: isSalesAdmin
+          ? `PO created on behalf of ${selectedOwner?.full_name || 'selected owner'} — pending their approval`
+          : isConsignment
+            ? `Consignment PO created for ${selectedClient?.client_name} (payment deferred)`
+            : `Purchase Order created for ${selectedClient?.client_name}`,
       });
 
       setConfirmOpen(false);
       navigate('/key-accounts/purchase-orders');
     } catch (error: any) {
+      if (createdPoId) {
+        const { error: rollbackErr } = await supabase
+          .from('purchase_orders')
+          .delete()
+          .eq('id', createdPoId);
+        if (rollbackErr) {
+          console.error('Failed to roll back incomplete Key Account PO:', createdPoId, rollbackErr);
+        }
+      }
       toast({
         variant: 'destructive',
-        title: 'Error creating order',
+        title: isEditMode ? 'Error updating order' : 'Error creating order',
         description: error.message,
       });
     } finally {
@@ -1235,12 +1708,13 @@ export function KeyAccountPurchaseOrderPage() {
     );
     setSplitFirstAmount('');
     setPaymentProofFile(null);
+    setEditPaymentProofs([]);
     setSourceMode('single');
     setActiveWarehouseTabId('');
   }
 
   // Clients load inline in the picker; only block the page on warehouses/payment settings.
-  if (loadingWarehouses || loadingPaymentSettings) {
+  if (loadingWarehouses || loadingPaymentSettings || loadingExistingPo) {
     return (
       <div className="flex items-center justify-center h-96">
         <Loader2 className="h-8 w-8 animate-spin" />
@@ -1252,19 +1726,75 @@ export function KeyAccountPurchaseOrderPage() {
     ? `${selectedClient.client_name} (${selectedClient.client_code})`
     : 'Choose a client...';
 
+  const canChangeOwnerOnEdit =
+    !isEditMode || editWorkflowStatus === 'owner_pending';
+  const requiresPaymentProof =
+    !isConsignment && (!isEditMode || !editHasPayments);
+
   return (
     <div className="p-6 space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Create Key Account Order</h1>
+        <h1 className="text-2xl font-bold tracking-tight">
+          {isEditMode ? 'Edit Key Account Order' : 'Create Key Account Order'}
+        </h1>
         <p className="text-muted-foreground">
-          Create a purchase order for your assigned clients with warehouse fulfillment. Turn on
-          Consignment to float stock without payment proof at create.
+          {isEditMode
+            ? `Editing ${editPoNumber || 'PO'} while status is pending (before warehouse approval). Workflow status is preserved.`
+            : isSalesAdmin
+              ? 'Create a purchase order on behalf of Sales Head, Director, or KAM. The selected owner must approve before the order continues.'
+              : 'Create a purchase order for your assigned clients with warehouse fulfillment. Turn on Consignment to float stock without payment proof at create.'}
         </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column - Client & Delivery Info */}
         <div className="lg:col-span-2 space-y-6">
+          {isSalesAdmin && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <UserRound className="h-5 w-5" />
+                  Order Owner
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="space-y-2">
+                  <Label>Create on behalf of *</Label>
+                  <Select
+                    value={selectedOwnerId || undefined}
+                    onValueChange={setSelectedOwnerId}
+                    disabled={loadingOwners || (isEditMode && !canChangeOwnerOnEdit)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={
+                          loadingOwners ? 'Loading owners...' : 'Select Sales Head, Director, or KAM'
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {orderOwners.map((owner) => (
+                        <SelectItem key={owner.id} value={owner.id}>
+                          {owner.full_name || owner.email || 'Unnamed'} (
+                          {getKeyAccountRoleLabel(owner.role)})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {selectedOwner && (
+                  <p className="text-sm text-muted-foreground">
+                    {isEditMode && !canChangeOwnerOnEdit
+                      ? `Order owner: ${selectedOwner.full_name || selectedOwner.email} (locked after owner approval).`
+                      : isEditMode
+                        ? `Created on behalf of ${selectedOwner.full_name || selectedOwner.email}.`
+                        : `Created on behalf of ${selectedOwner.full_name || selectedOwner.email} — pending their approval after submit.`}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {/* Client Selection */}
           <Card>
             <CardHeader>
@@ -1285,6 +1815,7 @@ export function KeyAccountPurchaseOrderPage() {
                       role="combobox"
                       aria-expanded={clientPickerOpen}
                       className="w-full justify-between font-normal"
+                      disabled={isSalesAdmin && !selectedOwnerId}
                     >
                       <span
                         className={cn(
@@ -1526,226 +2057,6 @@ export function KeyAccountPurchaseOrderPage() {
                   No warehouses linked to your company. Please contact your administrator.
                 </p>
               )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <CreditCard className="h-5 w-5" />
-                Payment
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-start justify-between gap-4 rounded-md border p-3">
-                <div className="space-y-1 min-w-0">
-                  <Label htmlFor="consignment-po-toggle" className="text-sm font-medium">
-                    Consignment PO
-                  </Label>
-                  <p className="text-xs text-muted-foreground">
-                    Float stock to the client now. Warehouse still fulfills this PO; payment can be recorded later.
-                    Consignment amounts are excluded from revenue/analytics until payment-based recognition is added.
-                  </p>
-                </div>
-                <Switch
-                  id="consignment-po-toggle"
-                  checked={isConsignment}
-                  onCheckedChange={setIsConsignment}
-                  className="mt-0.5 shrink-0"
-                />
-              </div>
-
-              {isConsignment ? (
-                <p className="text-sm rounded-md border border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-100 p-3">
-                  Payment proof is not required at create. Status will stay <span className="font-medium">unpaid</span>{' '}
-                  until you record payment on the PO later.
-                </p>
-              ) : null}
-
-              <div className="space-y-2">
-                <Label>Payment terms{isConsignment ? ' (optional)' : ' *'}</Label>
-                <Select
-                  value={paymentTermsSource}
-                  onValueChange={(v) => setPaymentTermsSource(v as PaymentTermsSource)}
-                  disabled={!selectedClientId}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Choose how to set terms…" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="client">Use client profile terms</SelectItem>
-                    <SelectItem value="company">Use company payment terms</SelectItem>
-                  </SelectContent>
-                </Select>
-                {paymentTermsSource === 'client' ? (
-                  clientPaymentTerms.length === 0 ? (
-                    <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
-                      No payment terms on file for this client — choose company terms, or update
-                      the client record.
-                    </p>
-                  ) : clientPaymentTerms.length === 1 ? (
-                    <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
-                      {clientPaymentTerms[0]}
-                    </p>
-                  ) : (
-                    <Select
-                      value={selectedClientPaymentTerm || undefined}
-                      onValueChange={setSelectedClientPaymentTerm}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a client payment term…" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {clientPaymentTerms.map((term) => (
-                          <SelectItem key={term} value={term}>
-                            {term}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )
-                ) : (
-                  <div className="space-y-2">
-                    {loadingCompanyPaymentTerms ? (
-                      <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3 flex items-center gap-2">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Loading company payment terms…
-                      </p>
-                    ) : (
-                      <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
-                        {companyPaymentTermOptions.length === 0 ? (
-                          <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3 sm:flex-1 w-full">
-                            No company payment terms yet
-                            {canAddCompanyPaymentTerms
-                              ? ' — use Add term to create one.'
-                              : ' — ask Sales Head/Director to add them.'}
-                          </p>
-                        ) : (
-                          <Select
-                            value={selectedCompanyPaymentTerm || undefined}
-                            onValueChange={setSelectedCompanyPaymentTerm}
-                          >
-                            <SelectTrigger className="sm:flex-1 w-full">
-                              <SelectValue placeholder="Select a company payment term…" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {companyPaymentTermOptions.map((option) => (
-                                <SelectItem key={option.id} value={option.label}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        )}
-                        {canAddCompanyPaymentTerms ? (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="shrink-0 w-full sm:w-auto"
-                            onClick={() => setCompanyPaymentTermDialogOpen(true)}
-                          >
-                            <Plus className="h-4 w-4 mr-2" />
-                            Add term
-                          </Button>
-                        ) : null}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {!isConsignment ? (
-                <>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Payment mode *</Label>
-                      <Select value={paymentMode} onValueChange={(v) => setPaymentMode(v as KeyAccountPoPaymentMode)}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="full">Full (pay order total now)</SelectItem>
-                          <SelectItem value="split">Split (first installment now)</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Payment method *</Label>
-                      {availablePaymentMethods.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">
-                          No payment methods are enabled. Ask your Sales Head to configure them under
-                          Key Account payment settings.
-                        </p>
-                      ) : (
-                        <Select
-                          value={paymentMethod}
-                          onValueChange={(v) => setPaymentMethod(v as KeyAccountPaymentMethod)}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {availablePaymentMethods.map((method) => (
-                              <SelectItem key={method} value={method}>
-                                {KEY_ACCOUNT_PAYMENT_METHOD_LABELS[method]}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      )}
-                    </div>
-                  </div>
-
-                  {paymentMethod === 'BANK_TRANSFER' && enabledBankAccounts.length > 0 && (
-                    <div className="space-y-2">
-                      <Label>Bank *</Label>
-                      <Select value={bankType} onValueChange={setBankType}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select bank account" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {enabledBankAccounts.map((bank) => (
-                            <SelectItem key={bank.name} value={bank.name}>
-                              {bank.name} · {bank.account_number}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
-
-                  {paymentMode === 'split' && (
-                    <div className="space-y-2">
-                      <Label>First payment amount (₱) *</Label>
-                      <Input
-                        type="number"
-                        min={0.01}
-                        step="0.01"
-                        value={splitFirstAmount}
-                        onChange={(e) => setSplitFirstAmount(e.target.value)}
-                        placeholder="Less than order total"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Order total after tax/discount: <span className="font-medium">₱{total.toFixed(2)}</span>. You can
-                        record the balance later when the PO is warehouse reserved, fulfilled, or delivered.
-                      </p>
-                    </div>
-                  )}
-
-                  {paymentMode === 'full' && (
-                    <p className="text-sm text-muted-foreground">
-                      First payment will be the full order total: <span className="font-medium">₱{total.toFixed(2)}</span>.
-                    </p>
-                  )}
-
-                  <KeyAccountPaymentProofUploadField
-                    file={paymentProofFile}
-                    onFileChange={setPaymentProofFile}
-                    inputId="create-po-payment-proof"
-                    label="Payment proof *"
-                  />
-                </>
-              ) : null}
             </CardContent>
           </Card>
 
@@ -2092,6 +2403,256 @@ export function KeyAccountPurchaseOrderPage() {
               )}
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <CreditCard className="h-5 w-5" />
+                Payment
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+                <div className="space-y-1 min-w-0">
+                  <Label htmlFor="consignment-po-toggle" className="text-sm font-medium">
+                    Consignment PO
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Float stock to the client now. Warehouse still fulfills this PO; payment can be recorded later.
+                    Consignment amounts are excluded from revenue/analytics until payment-based recognition is added.
+                  </p>
+                </div>
+                <Switch
+                  id="consignment-po-toggle"
+                  checked={isConsignment}
+                  onCheckedChange={setIsConsignment}
+                  className="mt-0.5 shrink-0"
+                />
+              </div>
+
+              {isConsignment ? (
+                <p className="text-sm rounded-md border border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-100 p-3">
+                  Payment proof is not required at create. Status will stay <span className="font-medium">unpaid</span>{' '}
+                  until you record payment on the PO later.
+                </p>
+              ) : null}
+
+              <div className="space-y-2">
+                <Label>Payment terms{isConsignment ? ' (optional)' : ' *'}</Label>
+                <Select
+                  value={paymentTermsSource}
+                  onValueChange={(v) => setPaymentTermsSource(v as PaymentTermsSource)}
+                  disabled={!selectedClientId}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose how to set terms…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="client">Use client profile terms</SelectItem>
+                    <SelectItem value="company">Use company payment terms</SelectItem>
+                  </SelectContent>
+                </Select>
+                {paymentTermsSource === 'client' ? (
+                  clientPaymentTerms.length === 0 ? (
+                    <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
+                      No payment terms on file for this client — choose company terms, or update
+                      the client record.
+                    </p>
+                  ) : clientPaymentTerms.length === 1 ? (
+                    <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
+                      {clientPaymentTerms[0]}
+                    </p>
+                  ) : (
+                    <Select
+                      value={selectedClientPaymentTerm || undefined}
+                      onValueChange={setSelectedClientPaymentTerm}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select a client payment term…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {clientPaymentTerms.map((term) => (
+                          <SelectItem key={term} value={term}>
+                            {term}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )
+                ) : (
+                  <div className="space-y-2">
+                    {loadingCompanyPaymentTerms ? (
+                      <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3 flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading company payment terms…
+                      </p>
+                    ) : (
+                      <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                        {companyPaymentTermOptions.length === 0 ? (
+                          <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3 sm:flex-1 w-full">
+                            No company payment terms yet
+                            {canAddCompanyPaymentTerms
+                              ? ' — use Add term to create one.'
+                              : ' — ask Sales Head/Director to add them.'}
+                          </p>
+                        ) : (
+                          <Select
+                            value={selectedCompanyPaymentTerm || undefined}
+                            onValueChange={setSelectedCompanyPaymentTerm}
+                          >
+                            <SelectTrigger className="sm:flex-1 w-full">
+                              <SelectValue placeholder="Select a company payment term…" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {companyPaymentTermOptions.map((option) => (
+                                <SelectItem key={option.id} value={option.label}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
+                        {canAddCompanyPaymentTerms ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="shrink-0 w-full sm:w-auto"
+                            onClick={() => setCompanyPaymentTermDialogOpen(true)}
+                          >
+                            <Plus className="h-4 w-4 mr-2" />
+                            Add term
+                          </Button>
+                        ) : null}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {!isConsignment ? (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Payment mode *</Label>
+                      <Select value={paymentMode} onValueChange={(v) => setPaymentMode(v as KeyAccountPoPaymentMode)}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="full">Full (pay order total now)</SelectItem>
+                          <SelectItem value="split">Split (first installment now)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Payment method *</Label>
+                      {availablePaymentMethods.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">
+                          No payment methods are enabled. Ask your Sales Head to configure them under
+                          Key Account payment settings.
+                        </p>
+                      ) : (
+                        <Select
+                          value={paymentMethod}
+                          onValueChange={(v) => setPaymentMethod(v as KeyAccountPaymentMethod)}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {availablePaymentMethods.map((method) => (
+                              <SelectItem key={method} value={method}>
+                                {KEY_ACCOUNT_PAYMENT_METHOD_LABELS[method]}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
+                  </div>
+
+                  {paymentMethod === 'BANK_TRANSFER' && enabledBankAccounts.length > 0 && (
+                    <div className="space-y-2">
+                      <Label>Bank *</Label>
+                      <Select value={bankType} onValueChange={setBankType}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select bank account" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {enabledBankAccounts.map((bank) => (
+                            <SelectItem key={bank.name} value={bank.name}>
+                              {bank.name} · {bank.account_number}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+
+                  {paymentMode === 'split' && (
+                    <div className="space-y-2">
+                      <Label>First payment amount (₱) *</Label>
+                      <Input
+                        type="number"
+                        min={0.01}
+                        step="0.01"
+                        value={splitFirstAmount}
+                        onChange={(e) => setSplitFirstAmount(e.target.value)}
+                        placeholder="Less than order total"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Order total after tax/discount: <span className="font-medium">₱{total.toFixed(2)}</span>. You can
+                        record the balance later when the PO is warehouse reserved, fulfilled, or delivered.
+                      </p>
+                    </div>
+                  )}
+
+                  {paymentMode === 'full' && (
+                    <p className="text-sm text-muted-foreground">
+                      First payment will be the full order total: <span className="font-medium">₱{total.toFixed(2)}</span>.
+                    </p>
+                  )}
+
+                  {(!isEditMode || !editHasPayments) && (
+                    <KeyAccountPaymentProofUploadField
+                      file={paymentProofFile}
+                      onFileChange={setPaymentProofFile}
+                      inputId="create-po-payment-proof"
+                      label={requiresPaymentProof ? 'Payment proof *' : 'Payment proof (optional)'}
+                    />
+                  )}
+                </>
+              ) : null}
+
+              {isEditMode && editPaymentProofs.length > 0 ? (
+                <div className="space-y-3 pt-2">
+                  <Label>Current payment proof</Label>
+                  {editPaymentProofs.map((payment) => (
+                    <div key={payment.id} className="rounded-lg border p-3 space-y-2">
+                      <p className="text-sm text-muted-foreground">
+                        {payment.payment_method || 'Payment'}
+                        {payment.amount > 0 ? ` · ₱${payment.amount.toFixed(2)}` : ''}
+                      </p>
+                      {payment.proof_storage_path ? (
+                        <KeyAccountPaymentProofStoredPreview
+                          storagePath={payment.proof_storage_path}
+                          compact
+                          label="Payment proof"
+                          showViewFull
+                        />
+                      ) : (
+                        <p className="text-xs text-muted-foreground">No proof attached to this payment.</p>
+                      )}
+                    </div>
+                  ))}
+                  <p className="text-xs text-muted-foreground">
+                    Existing payment records are kept. Add another payment later from the PO view
+                    if needed.
+                  </p>
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
         </div>
 
         {/* Right Column - Order Summary */}
@@ -2173,13 +2734,14 @@ export function KeyAccountPurchaseOrderPage() {
                 onClick={() => setConfirmOpen(true)}
                 disabled={
                   submitting ||
+                  (isSalesAdmin && !selectedOwnerId) ||
                   !selectedClientId ||
                   !selectedShopId ||
                   !selectedAddressId ||
                   (sourceMode === 'single' && !selectedWarehouseLocationId) ||
                   (sourceMode === 'multi' && items.some((i) => !i.warehouseLocationId)) ||
                   items.length === 0 ||
-                  (!isConsignment && !paymentProofFile) ||
+                  (requiresPaymentProof && !paymentProofFile) ||
                   !expectedDeliveryDate
                 }
                 className="w-full"
@@ -2187,7 +2749,11 @@ export function KeyAccountPurchaseOrderPage() {
               >
                 <>
                   <Save className="h-4 w-4 mr-2" />
-                  {isConsignment ? 'Create Consignment PO' : 'Create Purchase Order'}
+                  {isEditMode
+                    ? 'Save changes'
+                    : isConsignment
+                      ? 'Create Consignment PO'
+                      : 'Create Purchase Order'}
                 </>
               </Button>
             </CardContent>
@@ -2242,9 +2808,13 @@ export function KeyAccountPurchaseOrderPage() {
       >
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Confirm purchase order</DialogTitle>
+            <DialogTitle>
+              {isEditMode ? 'Confirm order changes' : 'Confirm purchase order'}
+            </DialogTitle>
             <DialogDescription>
-              Are you sure you want to create this purchase order? Review the summary below before confirming.
+              {isEditMode
+                ? 'Save these changes to the purchase order? Workflow status will stay the same.'
+                : 'Are you sure you want to create this purchase order? Review the summary below before confirming.'}
             </DialogDescription>
           </DialogHeader>
 
@@ -2383,8 +2953,10 @@ export function KeyAccountPurchaseOrderPage() {
               {submitting ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Creating Order...
+                  {isEditMode ? 'Saving…' : 'Creating Order...'}
                 </>
+              ) : isEditMode ? (
+                'Confirm & Save'
               ) : (
                 'Confirm & Create'
               )}

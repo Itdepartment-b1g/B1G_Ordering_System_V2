@@ -32,6 +32,7 @@ export type PurchaseOrderStatus =
 
 // Key Account workflow specific statuses
 export type KeyAccountWorkflowStatus =
+  | "owner_pending"
   | "kam_pending"
   | "director_pending"
   | "admin_pending"
@@ -434,6 +435,29 @@ export interface PurchaseOrderKeyAccountPayment {
   proof_storage_path?: string | null;
   recorded_by?: string | null;
   created_at: string;
+}
+
+export type KeyAccountSettlementDiscountRequestStatus = 'pending' | 'approved' | 'rejected';
+
+/** Settlement discount awaiting Sales Head approval (cash may already be recorded). */
+export interface KeyAccountSettlementDiscountRequest {
+  id: string;
+  company_id: string;
+  purchase_order_id: string;
+  settlement_discount: number;
+  settlement_discount_reason: string;
+  status: KeyAccountSettlementDiscountRequestStatus;
+  requested_by: string;
+  approved_by?: string | null;
+  approved_at?: string | null;
+  rejected_by?: string | null;
+  rejected_at?: string | null;
+  rejection_reason?: string | null;
+  payment_id?: string | null;
+  /** Cash payment submitted with this discount; discount attaches here on approve. */
+  source_payment_id?: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface PurchaseOrder {
@@ -1185,6 +1209,36 @@ export interface CreateClientOrderInput {
   notes?: string;
 }
 
+export interface CreateClientOrderAtomicInput {
+  p_agent_id: string;
+  p_client_id: string;
+  p_items: {
+    variant_id: string;
+    quantity: number;
+    unit_price: number;
+    selling_price?: number | null;
+    dsp_price?: number | null;
+    rsp_price?: number | null;
+    total_price?: number | null;
+  }[];
+  p_order_date: string;
+  p_subtotal?: number;
+  p_tax_amount?: number;
+  p_discount?: number;
+  p_total_amount?: number;
+  p_notes?: string | null;
+  p_signature_url?: string | null;
+  p_payment_method?: string | null;
+  p_bank_type?: string | null;
+  p_payment_proof_url?: string | null;
+  p_payment_mode?: string | null;
+  p_payment_splits?: unknown | null;
+  p_stage?: string | null;
+  p_remitted?: boolean | null;
+  p_pricing_strategy?: string | null;
+  p_order_number?: string | null;
+}
+
 export interface AllocateInventoryInput {
   agent_id: string;
   variant_id: string;
@@ -1363,6 +1417,10 @@ export interface Database {
         Args: Record<string, never>;
         Returns: string;
       };
+      generate_key_account_po_number: {
+        Args: { p_company_id: string };
+        Returns: string;
+      };
       generate_key_account_client_code: {
         Args: { p_company_id: string };
         Returns: string;
@@ -1430,6 +1488,17 @@ export interface Database {
       create_client_order: {
         Args: CreateClientOrderInput;
         Returns: FunctionResponse<{ order_id: string; order_number: string }>;
+      };
+      create_client_order_atomic: {
+        Args: CreateClientOrderAtomicInput;
+        Returns: FunctionResponse<{
+          id: string;
+          order_number: string;
+          created_at?: string;
+          company_id?: string;
+          client_account_type?: string;
+          item_count?: number;
+        }>;
       };
       approve_client_order: {
         Args: { p_order_id: string; p_approver_id: string };

@@ -14,6 +14,7 @@ export function keyAccountWorkflowBadgeClass(workflowStatus: string) {
     case 'admin_pending':
     case 'director_pending':
     case 'kam_pending':
+    case 'owner_pending':
       return 'bg-amber-500 text-white';
     case 'rejected':
       return 'bg-red-600 text-white';
@@ -25,11 +26,16 @@ export function keyAccountWorkflowBadgeClass(workflowStatus: string) {
 export function keyAccountWorkflowLabel(workflowStatus: string | null | undefined) {
   const ws = String(workflowStatus || '');
   if (ws === 'partial_delivered') return 'Partial delivered';
+  if (ws === 'owner_pending') return 'Owner pending';
+  if (ws === 'kam_pending') return 'Awaiting director';
+  if (ws === 'director_pending') return 'Awaiting director';
+  if (ws === 'admin_pending') return 'Awaiting sales admin';
   return ws.replace(/_/g, ' ');
 }
 
 export function isKeyAccountPendingWorkflow(workflowStatus: string | null | undefined) {
   return (
+    workflowStatus === 'owner_pending' ||
     workflowStatus === 'kam_pending' ||
     workflowStatus === 'director_pending' ||
     workflowStatus === 'admin_pending'

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
@@ -16,6 +16,16 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { format } from 'date-fns';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -27,6 +37,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
   Loader2,
   Eye,
@@ -45,13 +56,25 @@ import {
   Pencil,
   ChevronDown,
   History,
+  MoreVertical,
 } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { PurchaseOrderDeliveryDetailsPanel, keyAccountDeliveryDetailsEnabled } from '@/features/orders/components/PurchaseOrderDeliveryDetailsPanel';
 import { PurchaseOrderHistoryDialog } from '@/features/orders/components/PurchaseOrderHistoryDialog';
 import { logPurchaseOrderEvent } from '@/features/orders/purchaseOrderEventsApi';
 import type { PurchaseOrder } from '@/features/orders/types';
 import { KeyAccountPoWarehouseProgress } from '@/features/key-accounts/components/KeyAccountPoWarehouseProgress';
-import type { KeyAccountPoPaymentStatus, PurchaseOrderKeyAccountPayment } from '@/types/database.types';
+import type {
+  KeyAccountPoPaymentStatus,
+  KeyAccountSettlementDiscountRequest,
+  PurchaseOrderKeyAccountPayment,
+} from '@/types/database.types';
 import { uploadKeyAccountPaymentProof } from '@/features/key-accounts/kaPaymentProofUpload';
 import {
   keyAccountWorkflowBadgeClass,
@@ -62,6 +85,8 @@ import {
   isKeyAccountAccounting,
   isKeyAccountSalesAdmin,
   isKeyAccountSalesHead,
+  canEditKeyAccountPo,
+  isKeyAccountOnBehalfPo,
 } from '@/features/key-accounts/keyAccountRoles';
 import { isDeliveredKeyAccountOrder } from '@/features/key-accounts/key-accounts-analytics/keyAccountAnalyticsShared';
 import {
@@ -79,8 +104,11 @@ import {
   KeyAccountPaymentProofStoredPreview,
   KeyAccountPaymentProofUploadField,
 } from '@/features/key-accounts/components/KeyAccountPaymentProofPreview';
+import { sendNotification } from '@/features/shared/lib/notification.helpers';
+import { KeyAccountOutstandingPaymentsDialog } from '@/features/key-accounts/components/KeyAccountOutstandingPaymentsDialog';
 
 type KeyAccountWorkflowStatus =
+  | 'owner_pending'
   | 'kam_pending'
   | 'director_pending'
   | 'admin_pending'
@@ -150,6 +178,7 @@ type Row = {
     is_default: boolean;
   } | null;
   kam?: { full_name: string; email: string } | null;
+  created_by_user?: { full_name: string | null; email: string | null } | null;
   payment_terms_creator?: { full_name: string | null; email: string | null } | null;
   items?: Array<{
     id: string;
@@ -195,6 +224,9 @@ function normalizePoRow(order: any): Row {
   const rawShop = Array.isArray(order.shop) ? order.shop[0] : order.shop;
   const rawAddress = Array.isArray(order.address) ? order.address[0] : order.address;
   const rawKam = Array.isArray(order.kam) ? order.kam[0] : order.kam;
+  const rawCreatedBy = Array.isArray(order.created_by_user)
+    ? order.created_by_user[0]
+    : order.created_by_user;
 
   return {
     ...order,
@@ -203,6 +235,7 @@ function normalizePoRow(order: any): Row {
     shop: rawShop ?? null,
     address: rawAddress ?? null,
     kam: rawKam ?? null,
+    created_by_user: rawCreatedBy ?? null,
   };
 }
 
@@ -305,10 +338,20 @@ export function KeyAccountPurchaseOrdersPage() {
   const { user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<Row[]>([]);
-  const [q, setQ] = useState('');
+  const [q, setQ] = useState(() => searchParams.get('search')?.trim() || searchParams.get('po')?.trim() || '');
+  const initialTabParam = searchParams.get('tab');
+  const [activeTab, setActiveTab] = useState<TabKey>(() => {
+    const t = String(initialTabParam || '').toLowerCase();
+    if (t === 'pending' || t === 'rebates' || t === 'warehouse' || t === 'done' || t === 'my' || t === 'all') {
+      return t;
+    }
+    // Deep-link from email/search → show matching row across statuses
+    return searchParams.get('search') || searchParams.get('po') ? 'all' : 'pending';
+  });
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'all',
   });
@@ -324,10 +367,15 @@ export function KeyAccountPurchaseOrdersPage() {
   const [viewOpen, setViewOpen] = useState(false);
   const [active, setActive] = useState<Row | null>(null);
   const [historyOrder, setHistoryOrder] = useState<Row | null>(null);
+  const [outstandingDialogOpen, setOutstandingDialogOpen] = useState(false);
 
   const [actingId, setActingId] = useState<string | null>(null);
+  const [ownerApproveTarget, setOwnerApproveTarget] = useState<Row | null>(null);
   const [cofLoadingId, setCofLoadingId] = useState<string | null>(null);
   const [rfpfDraft, setRfpfDraft] = useState('');
+  const [warehouseSubmitMode, setWarehouseSubmitMode] = useState<'without_rfpf' | 'with_rfpf'>(
+    'without_rfpf'
+  );
   const [rfpfRevisions, setRfpfRevisions] = useState<RfpfRevision[]>([]);
   const [rfpfRevisionsLoading, setRfpfRevisionsLoading] = useState(false);
   const [editRfpfOpen, setEditRfpfOpen] = useState(false);
@@ -355,6 +403,21 @@ export function KeyAccountPurchaseOrdersPage() {
   const [paymentSummaryLoading, setPaymentSummaryLoading] = useState(false);
   const [linkedWarehouseNamesById, setLinkedWarehouseNamesById] = useState<Record<string, string>>({});
   const [paymentEntryCount, setPaymentEntryCount] = useState(0);
+  const [discountRequests, setDiscountRequests] = useState<
+    (KeyAccountSettlementDiscountRequest & {
+      requester?: { full_name: string | null; email: string | null } | null;
+    })[]
+  >([]);
+  const [discountRequestsLoading, setDiscountRequestsLoading] = useState(false);
+  const [companyPendingDiscounts, setCompanyPendingDiscounts] = useState<
+    (KeyAccountSettlementDiscountRequest & {
+      requester?: { full_name: string | null; email: string | null } | null;
+      purchase_order?: { po_number: string | null } | null;
+    })[]
+  >([]);
+  const [actingDiscountId, setActingDiscountId] = useState<string | null>(null);
+  const [rejectDiscountId, setRejectDiscountId] = useState<string | null>(null);
+  const [rejectDiscountReason, setRejectDiscountReason] = useState('');
   const [tabPages, setTabPages] = useState<Record<TabKey, number>>(createInitialTabPages);
   const [poRebates, setPoRebates] = useState<
     { id: string; rebate_number: string; status: string; disputed_total: number; resolution_type: string }[]
@@ -382,6 +445,7 @@ export function KeyAccountPurchaseOrdersPage() {
 
   const manualRefreshUntilRef = useRef(0);
   const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const deepLinkHandledRef = useRef<string | null>(null);
 
   const markLocalRefresh = () => {
     manualRefreshUntilRef.current = Date.now() + 3000;
@@ -419,6 +483,8 @@ export function KeyAccountPurchaseOrdersPage() {
 
   const canDirectorApprove = (po: Row) =>
     isDirector && (po.workflow_status === 'director_pending' || po.workflow_status === 'kam_pending');
+  const canOwnerApprove = (po: Row) =>
+    !!user?.id && po.workflow_status === 'owner_pending' && po.kam_id === user.id;
   const canSalesAdminReview = (po: Row) => isSalesAdmin && po.workflow_status === 'admin_pending';
 
   /** Sales Admin may manage RFPF while the PO is still under admin review or already queued for warehouse. */
@@ -437,6 +503,7 @@ export function KeyAccountPurchaseOrdersPage() {
 
   const isCreatedByCurrentUser = (po: Row) => po.created_by === user?.id;
   const isPendingWorkflow = (po: Row) =>
+    po.workflow_status === 'owner_pending' ||
     po.workflow_status === 'kam_pending' ||
     po.workflow_status === 'director_pending' ||
     po.workflow_status === 'admin_pending';
@@ -462,7 +529,17 @@ export function KeyAccountPurchaseOrdersPage() {
     paymentSummaryDiscount !== null
       ? paymentSummaryDiscount
       : discountTotalForPayments(payments);
+  const pendingDiscountSoFar = discountRequests
+    .filter((r) => r.status === 'pending')
+    .reduce((s, r) => s + Number(r.settlement_discount || 0), 0);
   const paymentAppliedSoFar = paymentPaidSoFar + paymentDiscountSoFar;
+  /** Room left for new cash/discount after applying pending requests (validation only). */
+  const paymentReservedSoFar = paymentAppliedSoFar + pendingDiscountSoFar;
+  /** Unsettled balance after cash + approved discount only (pending does not reduce this). */
+  const paymentRemainingBalance =
+    Math.round((Number(active?.total_amount || 0) - paymentAppliedSoFar) * 100) / 100;
+  const paymentAvailableToApply =
+    Math.round((Number(active?.total_amount || 0) - paymentReservedSoFar) * 100) / 100;
 
   async function loadPaymentSummary(poId: string) {
     setPaymentSummaryLoading(true);
@@ -496,6 +573,58 @@ export function KeyAccountPurchaseOrdersPage() {
     }
   }
 
+  const loadDiscountRequests = async (poId: string) => {
+    setDiscountRequestsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('key_account_settlement_discount_requests')
+        .select(
+          `
+          *,
+          requester:profiles!key_account_settlement_discount_requests_requested_by_fkey(full_name,email)
+        `
+        )
+        .eq('purchase_order_id', poId)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setDiscountRequests((data as any) || []);
+    } catch (e: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Error loading discount requests',
+        description: e?.message || 'Failed to load settlement discount requests',
+      });
+      setDiscountRequests([]);
+    } finally {
+      setDiscountRequestsLoading(false);
+    }
+  };
+
+  const loadCompanyPendingDiscounts = async () => {
+    if (!user?.company_id || !isSalesHead) {
+      setCompanyPendingDiscounts([]);
+      return;
+    }
+    try {
+      const { data, error } = await supabase
+        .from('key_account_settlement_discount_requests')
+        .select(
+          `
+          *,
+          requester:profiles!key_account_settlement_discount_requests_requested_by_fkey(full_name,email),
+          purchase_order:purchase_orders!key_account_settlement_discount_requests_purchase_order_id_fkey(po_number)
+        `
+        )
+        .eq('company_id', user.company_id)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      setCompanyPendingDiscounts((data as any) || []);
+    } catch {
+      setCompanyPendingDiscounts([]);
+    }
+  };
+
   const canRecordRemainingPayment = (po: Row | null) => {
     if (!po || !user?.id) return false;
     if (!po.key_account_payment_mode) return false;
@@ -504,6 +633,7 @@ export function KeyAccountPurchaseOrdersPage() {
     if (!(payStatus === 'partial' || payStatus === 'unpaid')) return false;
     const actorOk =
       po.created_by === user.id ||
+      po.kam_id === user.id ||
       isSalesAdmin ||
       isSalesHead ||
       (isDirector && !!po.kam_id && directorKamIds.has(po.kam_id));
@@ -590,14 +720,15 @@ export function KeyAccountPurchaseOrdersPage() {
           client:key_account_clients(client_name, client_code, contact_phone),
           shop:key_account_shops(shop_name, cor_pdf_path, city, province, region),
           address:key_account_delivery_addresses(address_label,full_address,city,province,zip_code,contact_name,contact_phone,is_default),
-          kam:profiles!purchase_orders_kam_id_fkey(full_name,email)
+          kam:profiles!purchase_orders_kam_id_fkey(full_name,email),
+          created_by_user:profiles!purchase_orders_created_by_fkey(full_name,email)
         `
         )
         .eq('company_account_type', 'Key Accounts')
         .order('created_at', { ascending: false });
 
       if (isKAM) {
-        query = query.eq('created_by', user.id);
+        query = query.or(`created_by.eq.${user.id},kam_id.eq.${user.id}`);
       }
 
       const { data, error } = await query;
@@ -706,6 +837,15 @@ export function KeyAccountPurchaseOrdersPage() {
   }, [user?.company_id]);
 
   useEffect(() => {
+    if (!user?.company_id || !isSalesHead) {
+      setCompanyPendingDiscounts([]);
+      return;
+    }
+    void loadCompanyPendingDiscounts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.company_id, isSalesHead]);
+
+  useEffect(() => {
     setTabPages(createInitialTabPages());
   }, [q, orderDateRange.start, orderDateRange.end]);
 
@@ -727,6 +867,17 @@ export function KeyAccountPurchaseOrdersPage() {
       cancelled = true;
     };
   }, [user?.id, user?.role]);
+
+  useEffect(() => {
+    const fromUrl = searchParams.get('search')?.trim() || searchParams.get('po')?.trim() || '';
+    if (fromUrl) setQ(fromUrl);
+    const t = String(searchParams.get('tab') || '').toLowerCase();
+    if (t === 'pending' || t === 'rebates' || t === 'warehouse' || t === 'done' || t === 'my' || t === 'all') {
+      setActiveTab(t);
+    } else if (fromUrl) {
+      setActiveTab('all');
+    }
+  }, [searchParams]);
 
   const filtered = useMemo(() => {
     const dateFiltered = rows.filter((r) => {
@@ -769,18 +920,22 @@ export function KeyAccountPurchaseOrdersPage() {
     };
   }, [filtered, user?.id]);
 
+  const outstandingOrders = useMemo(
+    () => filtered.filter(isKeyAccountPaymentNotComplete),
+    [filtered]
+  );
+
   const paymentOutstanding = useMemo(() => {
-    const withPaymentTracking = filtered.filter((r) => r.key_account_payment_mode);
-    const unpaid = withPaymentTracking.filter(
+    const unpaid = outstandingOrders.filter(
       (r) => (r.key_account_payment_status || 'unpaid') === 'unpaid'
     );
-    const partial = withPaymentTracking.filter((r) => r.key_account_payment_status === 'partial');
+    const partial = outstandingOrders.filter((r) => r.key_account_payment_status === 'partial');
     return {
       unpaid: unpaid.length,
       partial: partial.length,
-      total: unpaid.length + partial.length,
+      total: outstandingOrders.length,
     };
-  }, [filtered]);
+  }, [outstandingOrders]);
 
   const visibleTabs = useMemo<Array<{ value: TabKey; label: string }>>(
     () => [
@@ -833,6 +988,7 @@ export function KeyAccountPurchaseOrdersPage() {
   const openView = async (po: Row) => {
     setActive(po);
     setRfpfDraft(po.rfpf_number || '');
+    setWarehouseSubmitMode(po.rfpf_number?.trim() ? 'with_rfpf' : 'without_rfpf');
     setRfpfRevisions([]);
     setEditRfpfOpen(false);
     setEditRfpfDraft('');
@@ -847,6 +1003,7 @@ export function KeyAccountPurchaseOrdersPage() {
     setNewPayBank('BPI');
     setNewPayFile(null);
     setPayments([]);
+    setDiscountRequests([]);
     setPaymentHistoryOpen(po.key_account_payment_mode === 'split');
     setPaymentSummaryPaid(null);
     setPaymentSummaryDiscount(null);
@@ -854,6 +1011,7 @@ export function KeyAccountPurchaseOrdersPage() {
     if (po.key_account_payment_mode) {
       void loadPaymentSummary(po.id);
       void loadPayments(po.id);
+      void loadDiscountRequests(po.id);
     }
     if (po.rfpf_number?.trim()) void fetchRfpfRevisions(po.id);
 
@@ -976,6 +1134,25 @@ export function KeyAccountPurchaseOrdersPage() {
     }
   };
 
+  // Email "View PO" deep link: filter list + open matching Key Account PO.
+  useEffect(() => {
+    if (loading || rows.length === 0) return;
+    const fromUrl = (searchParams.get('search') || searchParams.get('po') || '').trim();
+    if (!fromUrl) return;
+    if (deepLinkHandledRef.current === fromUrl) return;
+
+    const needle = fromUrl.toLowerCase();
+    const exact =
+      rows.find((r) => String(r.po_number || '').toLowerCase() === needle) ||
+      rows.find((r) => String(r.po_number || '').toLowerCase().includes(needle));
+
+    if (!exact) return;
+    deepLinkHandledRef.current = fromUrl;
+    setQ(fromUrl);
+    setActiveTab('all');
+    void openView(exact);
+  }, [loading, rows, searchParams]);
+
   const updateWorkflow = async (poId: string, patch: Partial<Row>): Promise<boolean> => {
     setActingId(poId);
     markLocalRefresh();
@@ -1040,9 +1217,10 @@ export function KeyAccountPurchaseOrdersPage() {
     await openCofForPo(active);
   };
 
-  const directorApprove = async () => {
-    if (!active || !user?.id) return;
-    const poId = active.id;
+  const directorApprove = async (po?: Row | null) => {
+    const target = po ?? active;
+    if (!target || !user?.id) return;
+    const poId = target.id;
     const ok = await updateWorkflow(poId, {
       workflow_status: 'admin_pending',
       director_approved_at: new Date().toISOString(),
@@ -1058,9 +1236,10 @@ export function KeyAccountPurchaseOrdersPage() {
     }
   };
 
-  const directorReject = async () => {
-    if (!active || !user?.id) return;
-    const poId = active.id;
+  const directorReject = async (po?: Row | null) => {
+    const target = po ?? active;
+    if (!target || !user?.id) return;
+    const poId = target.id;
     const ok = await updateWorkflow(poId, {
       workflow_status: 'rejected',
       status: 'rejected',
@@ -1074,6 +1253,73 @@ export function KeyAccountPurchaseOrdersPage() {
         note: 'Rejected by sales director',
         createdBy: user.id,
       });
+    }
+  };
+
+  const notifyCreatorOfOwnerDecision = (
+    po: Row,
+    decision: 'approved' | 'rejected',
+    nextStatus?: string
+  ) => {
+    if (!po.created_by || !user?.company_id || po.created_by === user.id) return;
+    const actorName = user.full_name || user.email || 'Order owner';
+    void sendNotification({
+      userId: po.created_by,
+      companyId: user.company_id,
+      type: decision === 'approved' ? 'key_account_order_director_approved' : 'key_account_order_rejected',
+      title: decision === 'approved' ? 'On-behalf PO approved by owner' : 'On-behalf PO rejected by owner',
+      message:
+        decision === 'approved'
+          ? `${actorName} approved PO ${po.po_number}. Status is now ${String(nextStatus || '').replace(/_/g, ' ')}.`
+          : `${actorName} rejected PO ${po.po_number}.`,
+      referenceType: 'key_account_purchase_order',
+      referenceId: po.id,
+    });
+  };
+
+  const requestOwnerApprove = (po?: Row | null) => {
+    const target = po ?? active;
+    if (!target || !canOwnerApprove(target)) return;
+    setOwnerApproveTarget(target);
+  };
+
+  const ownerApprove = async (po?: Row | null) => {
+    const target = po ?? ownerApproveTarget ?? active;
+    if (!target || !user?.id || !canOwnerApprove(target)) return;
+    const poId = target.id;
+    // After the order owner confirms an on-behalf PO, Sales Admin handles RFPF / warehouse submit.
+    const nextStatus = 'admin_pending';
+    const ok = await updateWorkflow(poId, {
+      workflow_status: nextStatus,
+    } as any);
+    if (ok) {
+      void logPurchaseOrderEvent({
+        purchaseOrderId: poId,
+        eventType: 'approved',
+        note: 'Approved by order owner (created on behalf by Sales Admin)',
+        createdBy: user.id,
+      });
+      notifyCreatorOfOwnerDecision(target, 'approved', nextStatus);
+      setOwnerApproveTarget(null);
+    }
+  };
+
+  const ownerReject = async (po?: Row | null) => {
+    const target = po ?? active;
+    if (!target || !user?.id || !canOwnerApprove(target)) return;
+    const poId = target.id;
+    const ok = await updateWorkflow(poId, {
+      workflow_status: 'rejected',
+      status: 'rejected',
+    } as any);
+    if (ok) {
+      void logPurchaseOrderEvent({
+        purchaseOrderId: poId,
+        eventType: 'rejected',
+        note: 'Rejected by order owner (created on behalf by Sales Admin)',
+        createdBy: user.id,
+      });
+      notifyCreatorOfOwnerDecision(target, 'rejected');
     }
   };
 
@@ -1184,12 +1430,13 @@ export function KeyAccountPurchaseOrdersPage() {
     }
   };
 
-  const salesAdminSubmitToWarehouse = async () => {
-    if (!active || !user?.id) return;
+  const salesAdminSubmitToWarehouse = async (po?: Row | null): Promise<boolean> => {
+    const target = po ?? active;
+    if (!target || !user?.id) return false;
 
     // Release to warehouse queue after admin review; RFPF may already be entered before this step.
     // Keep `status` as pending so the existing Warehouse inbox can approve it.
-    const poId = active.id;
+    const poId = target.id;
     const ok = await updateWorkflow(poId, {
       workflow_status: 'warehouse_reserved',
       admin_approved_at: new Date().toISOString(),
@@ -1201,15 +1448,72 @@ export function KeyAccountPurchaseOrdersPage() {
       void logPurchaseOrderEvent({
         purchaseOrderId: poId,
         eventType: 'admin_submitted',
-        note: 'Submitted to warehouse by sales admin',
+        note:
+          warehouseSubmitMode === 'with_rfpf'
+            ? 'Submitted to warehouse by sales admin (with RFPF)'
+            : 'Submitted to warehouse by sales admin (without RFPF)',
         createdBy: user.id,
       });
+    }
+    return ok;
+  };
+
+  /** Submit from the detail dialog: optionally save RFPF first based on Sales Admin choice. */
+  const salesAdminSubmitFromDialog = async () => {
+    if (!active || !user?.id || !canSubmitToWarehouse(active)) return;
+
+    const withRfpf = warehouseSubmitMode === 'with_rfpf';
+    const existingRfpf = active.rfpf_number?.trim() || '';
+    const draftRfpf = rfpfDraft.trim();
+
+    if (withRfpf && !existingRfpf && !draftRfpf) {
+      toast({
+        variant: 'destructive',
+        title: 'RFPF required',
+        description: 'Enter an RFPF number, or choose Submit without RFPF.',
+      });
+      return;
+    }
+
+    setActingId(active.id);
+    markLocalRefresh();
+    try {
+      if (withRfpf && !existingRfpf && draftRfpf) {
+        const { data, error } = await supabase.rpc('set_key_account_rfpf', {
+          p_po_id: active.id,
+          p_rfpf_number: draftRfpf,
+          p_reason: null,
+        });
+        if (error) throw error;
+        const result = data as { success?: boolean; message?: string };
+        if (!result?.success) {
+          throw new Error(result?.message || 'Failed to save RFPF');
+        }
+        setActive((prev) => (prev ? { ...prev, rfpf_number: draftRfpf } : prev));
+      }
+
+      const ok = await salesAdminSubmitToWarehouse(active);
+      if (!ok) return;
+      toast({
+        title: 'Submitted to warehouse',
+        description: withRfpf
+          ? 'PO queued with RFPF for warehouse fulfillment.'
+          : 'PO queued without RFPF. You can still add RFPF while warehouse reserved.',
+      });
+    } catch (e: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Submit failed',
+        description: e?.message || 'Failed to submit to warehouse',
+      });
+    } finally {
+      setActingId(null);
     }
   };
 
   const submitRemainingPayment = async () => {
     if (!active || !user?.company_id) return;
-    const remaining = Math.round((Number(active.total_amount) - paymentAppliedSoFar) * 100) / 100;
+    const remaining = paymentAvailableToApply;
     const rawAmt = parseFloat(String(newPayAmount).replace(/,/g, ''));
     const rawDiscount = parseFloat(String(newPaySettlementDiscount).replace(/,/g, ''));
     const amt = newPayAmount.trim() === '' ? 0 : Math.round(rawAmt * 100) / 100;
@@ -1244,7 +1548,11 @@ export function KeyAccountPurchaseOrdersPage() {
       toast({
         variant: 'destructive',
         title: 'Amount too high',
-        description: `Remaining balance is ₱${remaining.toFixed(2)}.`,
+        description: `You can record up to ₱${remaining.toFixed(2)}${
+          pendingDiscountSoFar > 0
+            ? ` (₱${pendingDiscountSoFar.toFixed(2)} is reserved for a pending discount)`
+            : ''
+        }.`,
       });
       return;
     }
@@ -1275,20 +1583,57 @@ export function KeyAccountPurchaseOrdersPage() {
           });
         }
       }
-      const method = amt > 0 ? newPayMethod : 'CASH';
-      const { error } = await supabase.from('purchase_order_key_account_payments').insert({
-        purchase_order_id: active.id,
-        company_id: user.company_id,
-        amount: amt,
-        settlement_discount: discount,
-        settlement_discount_reason: discount > 0 ? reason : null,
-        payment_method: method,
-        bank_type: method === 'BANK_TRANSFER' ? newPayBank : null,
-        proof_storage_path: proofPath,
-      });
-      if (error) throw error;
+
+      // Sales Head: cash + discount apply immediately (auto-approve).
+      // Others: cash applies now; discount goes to Sales Head for approval
+      // and attaches to this cash row when approved.
+      const needsDiscountApproval = discount > 0 && !isSalesHead;
+      let sourcePaymentId: string | null = null;
+
+      if (amt > 0 || (discount > 0 && isSalesHead)) {
+        const method = amt > 0 ? newPayMethod : 'CASH';
+        const { data: insertedPay, error } = await supabase
+          .from('purchase_order_key_account_payments')
+          .insert({
+            purchase_order_id: active.id,
+            company_id: user.company_id,
+            amount: amt,
+            settlement_discount: needsDiscountApproval ? 0 : discount,
+            settlement_discount_reason: !needsDiscountApproval && discount > 0 ? reason : null,
+            payment_method: method,
+            bank_type: method === 'BANK_TRANSFER' ? newPayBank : null,
+            proof_storage_path: proofPath,
+          })
+          .select('id')
+          .single();
+        if (error) throw error;
+        if (needsDiscountApproval && amt > 0 && insertedPay?.id) {
+          sourcePaymentId = insertedPay.id;
+        }
+      }
+
+      if (needsDiscountApproval) {
+        const { data, error } = await supabase.rpc('request_key_account_settlement_discount', {
+          p_purchase_order_id: active.id,
+          p_settlement_discount: discount,
+          p_settlement_discount_reason: reason,
+          p_source_payment_id: sourcePaymentId,
+        });
+        if (error) throw error;
+        const result = data as { success?: boolean; error?: string; auto_approved?: boolean } | null;
+        if (!result?.success) {
+          throw new Error(result?.error || 'Could not submit settlement discount for approval');
+        }
+      }
+
       toast({
-        title: discount > 0 && amt <= 0 ? 'Settlement discount recorded' : 'Payment recorded',
+        title: needsDiscountApproval
+          ? amt > 0
+            ? 'Payment recorded — discount pending Sales Head approval'
+            : 'Settlement discount submitted for Sales Head approval'
+          : discount > 0 && amt <= 0
+            ? 'Settlement discount recorded'
+            : 'Payment recorded',
       });
       setRecordPayOpen(false);
       setNewPayAmount('');
@@ -1298,6 +1643,8 @@ export function KeyAccountPurchaseOrdersPage() {
       setPaymentHistoryOpen(true);
       await loadPaymentSummary(active.id);
       await loadPayments(active.id);
+      await loadDiscountRequests(active.id);
+      if (isSalesHead) void loadCompanyPendingDiscounts();
       const { data: poRow } = await supabase
         .from('purchase_orders')
         .select('key_account_payment_status')
@@ -1317,6 +1664,82 @@ export function KeyAccountPurchaseOrdersPage() {
       });
     } finally {
       setSavingPayment(false);
+    }
+  };
+
+  const approveSettlementDiscount = async (requestId: string) => {
+    setActingDiscountId(requestId);
+    markLocalRefresh();
+    try {
+      const { data, error } = await supabase.rpc('approve_key_account_settlement_discount', {
+        p_request_id: requestId,
+      });
+      if (error) throw error;
+      const result = data as { success?: boolean; error?: string; purchase_order_id?: string } | null;
+      if (!result?.success) {
+        throw new Error(result?.error || 'Could not approve settlement discount');
+      }
+      toast({ title: 'Settlement discount approved' });
+      const poId = result.purchase_order_id || active?.id;
+      if (poId) {
+        await loadPaymentSummary(poId);
+        await loadPayments(poId);
+        await loadDiscountRequests(poId);
+        const { data: poRow } = await supabase
+          .from('purchase_orders')
+          .select('key_account_payment_status')
+          .eq('id', poId)
+          .maybeSingle();
+        if (poRow && active?.id === poId) {
+          setActive((prev) =>
+            prev ? { ...prev, key_account_payment_status: (poRow as any).key_account_payment_status } : prev
+          );
+        }
+      }
+      await loadCompanyPendingDiscounts();
+      await fetchRows(false);
+    } catch (e: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Approval failed',
+        description: e?.message || 'Could not approve settlement discount',
+      });
+    } finally {
+      setActingDiscountId(null);
+    }
+  };
+
+  const rejectSettlementDiscount = async () => {
+    if (!rejectDiscountId) return;
+    setActingDiscountId(rejectDiscountId);
+    markLocalRefresh();
+    try {
+      const { data, error } = await supabase.rpc('reject_key_account_settlement_discount', {
+        p_request_id: rejectDiscountId,
+        p_reason: rejectDiscountReason.trim() || null,
+      });
+      if (error) throw error;
+      const result = data as { success?: boolean; error?: string; purchase_order_id?: string } | null;
+      if (!result?.success) {
+        throw new Error(result?.error || 'Could not reject settlement discount');
+      }
+      toast({ title: 'Settlement discount rejected' });
+      const poId = result.purchase_order_id || active?.id;
+      if (poId) {
+        await loadDiscountRequests(poId);
+      }
+      setRejectDiscountId(null);
+      setRejectDiscountReason('');
+      await loadCompanyPendingDiscounts();
+      await fetchRows(false);
+    } catch (e: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Reject failed',
+        description: e?.message || 'Could not reject settlement discount',
+      });
+    } finally {
+      setActingDiscountId(null);
     }
   };
 
@@ -1341,15 +1764,15 @@ export function KeyAccountPurchaseOrdersPage() {
               : isDirector
                 ? 'Review assigned KAM POs, or open My PO for orders you created.'
                 : isSalesAdmin
-                  ? 'Final review: submit to warehouse.'
+                  ? 'Create POs on behalf of Sales Head, Director, or KAM; final review and submit to warehouse.'
                   : isSalesHead
-                    ? 'Create POs for admin review; Sales Admin submits to warehouse.'
+                    ? 'Create POs for admin review; Sales Admin submits to warehouse. Approve settlement discounts from KAMs and Directors.'
                     : isReadOnlyAccounting
                       ? 'View purchase orders, delivery, dispatch, and payment history.'
                       : 'Purchase Orders'}
           </p>
         </div>
-        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto sm:items-center">
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto sm:items-center sm:justify-end sm:ml-auto">
           <Input
             placeholder="Search PO / client / workflow / payment / DR / RFPF…"
             value={q}
@@ -1362,8 +1785,79 @@ export function KeyAccountPurchaseOrdersPage() {
             triggerClassName="w-full sm:w-[220px] justify-between h-10 shrink-0"
             align="end"
           />
+          {/* {(isSalesAdmin || isSalesHead || isDirector || isKAM) && !isReadOnlyAccounting && (
+            <Button
+              className="w-full sm:w-auto shrink-0"
+              onClick={() => navigate('/key-accounts/create-order')}
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Create Purchase Order
+            </Button>
+          )} */}
         </div>
       </div>
+
+      {isSalesHead && companyPendingDiscounts.length > 0 ? (
+        <Card className="border-amber-200/90 bg-amber-50/40 dark:border-amber-900/50 dark:bg-amber-950/20">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              Pending settlement discounts
+              <Badge variant="secondary">{companyPendingDiscounts.length}</Badge>
+            </CardTitle>
+            <p className="text-sm text-muted-foreground font-normal">
+              KAM / Director / Admin discount requests waiting for your approval.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {companyPendingDiscounts.map((req) => {
+              const poNumber =
+                (req.purchase_order as { po_number?: string | null } | null)?.po_number || 'PO';
+              const requesterName =
+                req.requester?.full_name || req.requester?.email || 'Unknown requester';
+              return (
+                <div
+                  key={req.id}
+                  className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-md border bg-background p-3"
+                >
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="font-medium tabular-nums">
+                      {poNumber} · ₱{Number(req.settlement_discount).toFixed(2)}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {requesterName} · {new Date(req.created_at).toLocaleString()}
+                    </p>
+                    <p className="text-sm whitespace-pre-wrap">{req.settlement_discount_reason}</p>
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={actingDiscountId === req.id}
+                      onClick={() => {
+                        setRejectDiscountId(req.id);
+                        setRejectDiscountReason('');
+                      }}
+                    >
+                      Reject
+                    </Button>
+                    <Button
+                      size="sm"
+                      disabled={actingDiscountId === req.id}
+                      onClick={() => void approveSettlementDiscount(req.id)}
+                    >
+                      {actingDiscountId === req.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        'Approve'
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      ) : null}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
         <Card>
@@ -1398,7 +1892,18 @@ export function KeyAccountPurchaseOrdersPage() {
             <div className="text-2xl font-bold">{byTab.done.length}</div>
           </CardContent>
         </Card>
-        <Card className="border-amber-200/80 dark:border-amber-900/50">
+        <Card
+          className="border-amber-200/80 dark:border-amber-900/50 cursor-pointer transition-colors hover:bg-amber-50/60 dark:hover:bg-amber-950/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40"
+          role="button"
+          tabIndex={0}
+          onClick={() => setOutstandingDialogOpen(true)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              setOutstandingDialogOpen(true);
+            }
+          }}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-muted-foreground flex items-center gap-1.5">
               <span
@@ -1415,11 +1920,14 @@ export function KeyAccountPurchaseOrdersPage() {
             <p className="text-xs text-muted-foreground mt-1">
               {paymentOutstanding.unpaid} unpaid · {paymentOutstanding.partial} partial
             </p>
+            <p className="text-[11px] text-amber-700/80 dark:text-amber-400/80 mt-1">
+              Click to view balances
+            </p>
           </CardContent>
         </Card>
       </div>
 
-      <Tabs defaultValue="pending">
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)}>
         <TabsList className="w-full justify-between gap-1 px-4 sm:gap-2 md:gap-4 overflow-x-auto">
           {visibleTabs.map((tab) => (
             <TabsTrigger key={tab.value} value={tab.value} className="px-8 sm:px-4">
@@ -1446,6 +1954,8 @@ export function KeyAccountPurchaseOrdersPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>PO</TableHead>
+                      <TableHead>Created</TableHead>
+                      <TableHead>Order owner</TableHead>
                       <TableHead>Client</TableHead>
                       <TableHead>Shop</TableHead>
                       <TableHead>Status</TableHead>
@@ -1459,7 +1969,7 @@ export function KeyAccountPurchaseOrdersPage() {
                   <TableBody>
                     {tabRows.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
+                        <TableCell colSpan={11} className="text-center text-muted-foreground py-8">
                           No purchase orders found.
                         </TableCell>
                       </TableRow>
@@ -1492,6 +2002,16 @@ export function KeyAccountPurchaseOrdersPage() {
                             ) : null}
                           </div>
                         </TableCell>
+                          <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                            {po.created_at
+                              ? format(new Date(po.created_at), 'MMM d, yyyy h:mm a')
+                              : '—'}
+                          </TableCell>
+                          <TableCell className="min-w-[10rem]">
+                            <div className="text-sm font-medium text-foreground">
+                              {po.kam?.full_name?.trim() || po.kam?.email?.trim() || '—'}
+                            </div>
+                          </TableCell>
                           <TableCell>{po.client?.client_name || '—'}</TableCell>
                           <TableCell>{po.shop?.shop_name || '—'}</TableCell>
                           <TableCell>
@@ -1512,36 +2032,127 @@ export function KeyAccountPurchaseOrdersPage() {
                           <TableCell className="font-medium">{po.rfpf_number || '—'}</TableCell>
                           <TableCell className="text-right font-semibold">₱{Number(po.total_amount || 0).toLocaleString()}</TableCell>
                           <TableCell className="text-right">
-                            <div className="flex items-center justify-end gap-1 flex-wrap">
-                              {po.company_account_type === 'Key Accounts' && (
+                            <div className="flex items-center justify-end gap-1">
+                              {!isReadOnlyAccounting && canOwnerApprove(po) ? (
                                 <Button
-                                  variant="outline"
                                   size="sm"
-                                  onClick={() => void openCofForPo(po)}
-                                  disabled={cofLoadingId === po.id}
-                                  title="View / Print COF"
+                                  className="h-8"
+                                  disabled={actingId === po.id}
+                                  onClick={() => requestOwnerApprove(po)}
                                 >
-                                  {cofLoadingId === po.id ? (
-                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                  {actingId === po.id ? (
+                                    <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
                                   ) : (
-                                    <FileText className="h-4 w-4 mr-2" />
+                                    <Check className="h-4 w-4 mr-1.5" />
                                   )}
-                                  COF
+                                  Approve
                                 </Button>
-                              )}
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => setHistoryOrder(po)}
-                                title="View PO history"
-                              >
-                                <History className="h-4 w-4 mr-2" />
-                                History
-                              </Button>
-                              <Button variant="ghost" size="sm" onClick={() => void openView(po)}>
-                                <Eye className="h-4 w-4 mr-2" />
-                                View
-                              </Button>
+                              ) : !isReadOnlyAccounting && canDirectorApprove(po) ? (
+                                <Button
+                                  size="sm"
+                                  className="h-8"
+                                  disabled={actingId === po.id}
+                                  onClick={() => void directorApprove(po)}
+                                >
+                                  {actingId === po.id ? (
+                                    <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                                  ) : (
+                                    <Check className="h-4 w-4 mr-1.5" />
+                                  )}
+                                  Approve
+                                </Button>
+                              ) : !isReadOnlyAccounting && canSubmitToWarehouse(po) ? (
+                                <Button
+                                  size="sm"
+                                  className="h-8"
+                                  onClick={() => void openView(po)}
+                                >
+                                  <Send className="h-4 w-4 mr-1.5" />
+                                  Review
+                                </Button>
+                              ) : null}
+                              {/* Rebate row action — uncomment and replace `: null}` above with this branch to restore:
+                              ) : !isReadOnlyAccounting &&
+                                isDeliveredKeyAccountOrder(po) &&
+                                !isRebateDerivedPurchaseOrder(po) ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8"
+                                  onClick={() =>
+                                    navigate(`/key-accounts/rebates/new?poId=${po.id}`)
+                                  }
+                                >
+                                  <RotateCcw className="h-4 w-4 mr-1.5" />
+                                  Rebate
+                                </Button>
+                              ) : null}
+                              */}
+
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    aria-label={`More actions for ${po.po_number}`}
+                                    disabled={actingId === po.id || cofLoadingId === po.id}
+                                  >
+                                    {actingId === po.id || cofLoadingId === po.id ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <MoreVertical className="h-4 w-4" />
+                                    )}
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-52">
+                                  {(canOwnerApprove(po) || canDirectorApprove(po)) &&
+                                    !isReadOnlyAccounting && (
+                                      <>
+                                        <DropdownMenuItem
+                                          className="text-destructive focus:text-destructive"
+                                          onSelect={() =>
+                                            void (canOwnerApprove(po)
+                                              ? ownerReject(po)
+                                              : directorReject(po))
+                                          }
+                                        >
+                                          <X className="mr-2 h-4 w-4" />
+                                          Reject
+                                        </DropdownMenuItem>
+                                        <DropdownMenuSeparator />
+                                      </>
+                                    )}
+                                  {canEditKeyAccountPo(po, user) && (
+                                    <DropdownMenuItem
+                                      onSelect={() =>
+                                        navigate(`/key-accounts/purchase-orders/${po.id}/edit`)
+                                      }
+                                    >
+                                      <Pencil className="mr-2 h-4 w-4" />
+                                      Edit
+                                    </DropdownMenuItem>
+                                  )}
+                                  {po.company_account_type === 'Key Accounts' && (
+                                    <DropdownMenuItem
+                                      disabled={cofLoadingId === po.id}
+                                      onSelect={() => void openCofForPo(po)}
+                                    >
+                                      <FileText className="mr-2 h-4 w-4" />
+                                      COF
+                                    </DropdownMenuItem>
+                                  )}
+                                  <DropdownMenuItem onSelect={() => setHistoryOrder(po)}>
+                                    <History className="mr-2 h-4 w-4" />
+                                    History
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onSelect={() => void openView(po)}>
+                                    <Eye className="mr-2 h-4 w-4" />
+                                    View
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -1680,6 +2291,14 @@ export function KeyAccountPurchaseOrdersPage() {
                   fulfillmentType="warehouse_transfer"
                 />
 
+                {active.workflow_status === 'owner_pending' && (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100">
+                    Waiting for order owner
+                    {active.kam?.full_name ? ` (${active.kam.full_name})` : ''} to approve this
+                    Sales Admin–created PO before it continues the approval workflow.
+                  </div>
+                )}
+
                 {isDoneWorkflow(active) && (
                   <Card className="border-dashed">
                     <CardHeader className="flex flex-col gap-2 space-y-0 pb-2 sm:flex-row sm:items-center sm:justify-between">
@@ -1687,7 +2306,7 @@ export function KeyAccountPurchaseOrdersPage() {
                         <RotateCcw className="h-4 w-4" />
                         Rebates
                       </CardTitle>
-                      {isDeliveredKeyAccountOrder(active) &&
+                      {/* {isDeliveredKeyAccountOrder(active) &&
                         !isRebateDerivedPurchaseOrder(active) &&
                         !isReadOnlyAccounting && (
                         <Button
@@ -1699,7 +2318,7 @@ export function KeyAccountPurchaseOrdersPage() {
                         >
                           Create rebate
                         </Button>
-                      )}
+                      )} */}
                     </CardHeader>
                     <CardContent className="text-sm">
                       {isDeliveredKeyAccountOrder(active) ? (
@@ -1761,23 +2380,43 @@ export function KeyAccountPurchaseOrdersPage() {
                   </Card>
                 )}
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="grid grid-cols-2 sm:grid-cols-subgrid sm:col-span-2 gap-3">
-                    <div>
-                      <Label className="text-xs text-muted-foreground">Order date</Label>
-                      <div className="font-medium">{new Date(active.order_date).toLocaleDateString()}</div>
-                    </div>
-                    <div>
-                      <Label className="text-xs text-muted-foreground">Expected</Label>
-                      <div className="font-medium">
-                        {active.expected_delivery_date ? new Date(active.expected_delivery_date).toLocaleDateString() : '—'}
-                      </div>
-                    </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Order date</Label>
+                    <div className="font-medium">{new Date(active.order_date).toLocaleDateString()}</div>
                   </div>
                   <div>
-                    <Label className="text-xs text-muted-foreground">Created By</Label>
-                    <div className="font-medium">{active.kam?.full_name || '—'}</div>
-                    <div className="text-xs text-muted-foreground">{active.kam?.email || ''}</div>
+                    <Label className="text-xs text-muted-foreground">Expected</Label>
+                    <div className="font-medium">
+                      {active.expected_delivery_date
+                        ? new Date(active.expected_delivery_date).toLocaleDateString()
+                        : '—'}
+                    </div>
+                  </div>
+                  {isKeyAccountOnBehalfPo(active) ? (
+                    <div>
+                      <Label className="text-xs text-muted-foreground">On behalf of</Label>
+                      <div className="font-medium">{active.kam?.full_name || '—'}</div>
+                      <div className="text-xs text-muted-foreground">{active.kam?.email || ''}</div>
+                    </div>
+                  ) : null}
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Created by</Label>
+                    <div className="font-medium">
+                      {active.created_by_user?.full_name ||
+                        (active.created_by === active.kam_id ? active.kam?.full_name : null) ||
+                        '—'}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {active.created_by_user?.email ||
+                        (active.created_by === active.kam_id ? active.kam?.email : '') ||
+                        ''}
+                    </div>
+                    {isKeyAccountOnBehalfPo(active) ? (
+                      <div className="text-xs text-muted-foreground mt-0.5">
+                        Created on behalf of order owner
+                      </div>
+                    ) : null}
                   </div>
                 </div>
 
@@ -1869,18 +2508,21 @@ export function KeyAccountPurchaseOrdersPage() {
                               : `₱${(paymentSummaryDiscount ?? 0).toFixed(2)}`}
                           </div>
                         </div>
+                        {pendingDiscountSoFar > 0 ? (
+                          <div>
+                            <span className="text-muted-foreground">Pending discount approval</span>
+                            <div className="font-semibold text-amber-700 dark:text-amber-400">
+                              ₱{pendingDiscountSoFar.toFixed(2)}
+                            </div>
+                          </div>
+                        ) : null}
                         <div>
                           <span className="text-muted-foreground">Remaining</span>
                           <div className="font-semibold">
                             ₱
                             {paymentSummaryLoading
                               ? '…'
-                              : Math.max(
-                                  0,
-                                  Math.round(
-                                    (Number(active.total_amount) - paymentAppliedSoFar) * 100
-                                  ) / 100
-                                ).toFixed(2)}
+                              : Math.max(0, paymentRemainingBalance).toFixed(2)}
                           </div>
                         </div>
                       </div>
@@ -1892,6 +2534,82 @@ export function KeyAccountPurchaseOrdersPage() {
                             ? 'Record payment'
                             : 'Record remaining payment'}
                         </Button>
+                      )}
+
+                      {(discountRequestsLoading || discountRequests.length > 0) && (
+                        <div className="space-y-2 rounded-md border border-amber-200/80 bg-amber-50/30 p-3 dark:border-amber-900/40 dark:bg-amber-950/20">
+                          <div className="text-sm font-medium">Settlement discount requests</div>
+                          {discountRequestsLoading ? (
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Loading…
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              {discountRequests.map((req) => (
+                                <div key={req.id} className="rounded-md border bg-background p-3 space-y-2">
+                                  <div className="flex flex-wrap items-center gap-2 justify-between">
+                                    <div className="font-semibold tabular-nums">
+                                      ₱{Number(req.settlement_discount).toFixed(2)}
+                                    </div>
+                                    <Badge
+                                      variant={
+                                        req.status === 'pending'
+                                          ? 'secondary'
+                                          : req.status === 'approved'
+                                            ? 'default'
+                                            : 'destructive'
+                                      }
+                                    >
+                                      {req.status === 'pending'
+                                        ? 'Pending Sales Head'
+                                        : req.status === 'approved'
+                                          ? 'Approved'
+                                          : 'Rejected'}
+                                    </Badge>
+                                  </div>
+                                  <p className="text-xs text-muted-foreground">
+                                    {(req.requester?.full_name || req.requester?.email || 'Requester') +
+                                      ' · ' +
+                                      new Date(req.created_at).toLocaleString()}
+                                  </p>
+                                  <p className="text-sm whitespace-pre-wrap">{req.settlement_discount_reason}</p>
+                                  {req.status === 'rejected' && req.rejection_reason ? (
+                                    <p className="text-xs text-destructive whitespace-pre-wrap">
+                                      Rejected: {req.rejection_reason}
+                                    </p>
+                                  ) : null}
+                                  {isSalesHead && req.status === 'pending' && !isReadOnlyAccounting ? (
+                                    <div className="flex gap-2 pt-1">
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={actingDiscountId === req.id}
+                                        onClick={() => {
+                                          setRejectDiscountId(req.id);
+                                          setRejectDiscountReason('');
+                                        }}
+                                      >
+                                        Reject
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        disabled={actingDiscountId === req.id}
+                                        onClick={() => void approveSettlementDiscount(req.id)}
+                                      >
+                                        {actingDiscountId === req.id ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          'Approve'
+                                        )}
+                                      </Button>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       )}
 
                       <Collapsible
@@ -2191,41 +2909,132 @@ export function KeyAccountPurchaseOrdersPage() {
 
                 {isSalesAdmin && (
                   <Card>
-
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base">Sales Admin actions</CardTitle>
+                    </CardHeader>
                     <CardContent className="space-y-3">
-                      {canSalesAdminReview(active) && (
-                        <>
+                      {canSalesAdminReview(active) ? (
+                        <div className="space-y-4">
+                          <div className="space-y-2">
+                            <Label>Submit action</Label>
+                            <RadioGroup
+                              value={warehouseSubmitMode}
+                              onValueChange={(value) =>
+                                setWarehouseSubmitMode(value as 'without_rfpf' | 'with_rfpf')
+                              }
+                              className="gap-3"
+                            >
+                              <div className="flex items-start gap-2 rounded-md border p-3">
+                                <RadioGroupItem
+                                  value="without_rfpf"
+                                  id="submit-without-rfpf"
+                                  className="mt-0.5"
+                                />
+                                <div className="space-y-0.5">
+                                  <Label
+                                    htmlFor="submit-without-rfpf"
+                                    className="font-medium cursor-pointer"
+                                  >
+                                    Submit without RFPF
+                                  </Label>
+                                  <p className="text-xs text-muted-foreground">
+                                    Queue for warehouse now. RFPF can be added later while status is
+                                    Warehouse reserved.
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2 rounded-md border p-3">
+                                <RadioGroupItem
+                                  value="with_rfpf"
+                                  id="submit-with-rfpf"
+                                  className="mt-0.5"
+                                />
+                                <div className="space-y-0.5">
+                                  <Label
+                                    htmlFor="submit-with-rfpf"
+                                    className="font-medium cursor-pointer"
+                                  >
+                                    Submit with RFPF
+                                  </Label>
+                                  <p className="text-xs text-muted-foreground">
+                                    Save RFPF (if needed) and submit to warehouse in one step.
+                                  </p>
+                                </div>
+                              </div>
+                            </RadioGroup>
+                          </div>
+
+                          {warehouseSubmitMode === 'with_rfpf' ? (
+                            active.rfpf_number?.trim() ? (
+                              <div className="rounded-md border px-3 py-2">
+                                <p className="text-xs text-muted-foreground">RFPF Number</p>
+                                <p className="font-mono font-semibold">
+                                  {active.rfpf_number.toUpperCase()}
+                                </p>
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                <Label htmlFor="submit-rfpf-input">RFPF Number *</Label>
+                                <Input
+                                  id="submit-rfpf-input"
+                                  value={rfpfDraft}
+                                  onChange={(e) => setRfpfDraft(e.target.value)}
+                                  placeholder="Enter RFPF..."
+                                />
+                              </div>
+                            )
+                          ) : null}
+
                           <Button
-                            onClick={() => void salesAdminSubmitToWarehouse()}
-                            disabled={!canSubmitToWarehouse(active) || actingId === active.id}
+                            onClick={() => void salesAdminSubmitFromDialog()}
+                            disabled={
+                              actingId === active.id ||
+                              (warehouseSubmitMode === 'with_rfpf' &&
+                                !active.rfpf_number?.trim() &&
+                                !rfpfDraft.trim())
+                            }
                           >
-                            {actingId === active.id ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
-                            Submit to Warehouse
+                            {actingId === active.id ? (
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            ) : (
+                              <Send className="h-4 w-4 mr-2" />
+                            )}
+                            {warehouseSubmitMode === 'with_rfpf'
+                              ? 'Submit with RFPF'
+                              : 'Submit without RFPF'}
                           </Button>
-                        </>
-                      )}
-                      {canSaveRfpf(active) && (
-                        <>
+                        </div>
+                      ) : null}
+
+                      {!canSalesAdminReview(active) && canSaveRfpf(active) ? (
+                        <div className="space-y-3">
                           <div className="space-y-2">
                             <Label>RFPF Number</Label>
-                            <Input value={rfpfDraft} onChange={(e) => setRfpfDraft(e.target.value)} placeholder="Enter RFPF…" />
+                            <Input
+                              value={rfpfDraft}
+                              onChange={(e) => setRfpfDraft(e.target.value)}
+                              placeholder="Enter RFPF..."
+                            />
                           </div>
                           <div className="flex items-center gap-2">
                             <Button
                               onClick={() => void salesAdminSaveRfpf()}
                               disabled={actingId === active.id}
                             >
-                              {actingId === active.id ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                              {actingId === active.id ? (
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              ) : null}
                               Save RFPF
                             </Button>
                           </div>
                           <p className="text-xs text-muted-foreground">
-                            RFPF can be saved while this PO is in Admin pending or Warehouse reserved status.
+                            RFPF can still be saved while this PO is Warehouse reserved.
                           </p>
-                        </>
-                      )}
-                      {canManageRfpf(active) && active.rfpf_number?.trim() && (
-                        <>
+                        </div>
+                      ) : null}
+
+                      {canManageRfpf(active) && active.rfpf_number?.trim() ? (
+                        <div className="space-y-3">
                           <div className="rounded-md border overflow-hidden">
                             <div className="bg-muted/30 px-3 py-1.5 flex items-center justify-between text-muted-foreground font-semibold text-xs">
                               <span>
@@ -2250,7 +3059,9 @@ export function KeyAccountPurchaseOrdersPage() {
                               ) : null}
                             </div>
                             <div className="px-3 py-2">
-                              <div className="text-lg font-bold font-mono">{active.rfpf_number.toUpperCase()}</div>
+                              <div className="text-lg font-bold font-mono">
+                                {active.rfpf_number.toUpperCase()}
+                              </div>
                             </div>
                           </div>
                           {rfpfRevisionsLoading ? (
@@ -2260,7 +3071,9 @@ export function KeyAccountPurchaseOrdersPage() {
                             </div>
                           ) : rfpfRevisions.length > 0 ? (
                             <div className="space-y-2">
-                              <p className="text-xs font-semibold text-muted-foreground">Edit history</p>
+                              <p className="text-xs font-semibold text-muted-foreground">
+                                Edit history
+                              </p>
                               <div className="rounded-md border divide-y">
                                 {rfpfRevisions.map((revision) => (
                                   <RfpfRevisionEntry key={revision.id} revision={revision} />
@@ -2268,8 +3081,8 @@ export function KeyAccountPurchaseOrdersPage() {
                               </div>
                             </div>
                           ) : null}
-                        </>
-                      )}
+                        </div>
+                      ) : null}
                     </CardContent>
                   </Card>
                 )}
@@ -2278,6 +3091,19 @@ export function KeyAccountPurchaseOrdersPage() {
           </div>
 
           <div className="shrink-0 border-t px-4 py-4 sm:px-6 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
+            {active && canEditKeyAccountPo(active, user) && (
+              <Button
+                className="w-full sm:w-auto"
+                variant="outline"
+                onClick={() => {
+                  setViewOpen(false);
+                  navigate(`/key-accounts/purchase-orders/${active.id}/edit`);
+                }}
+              >
+                <Pencil className="h-4 w-4 mr-2" />
+                Edit
+              </Button>
+            )}
             {active && (
               <Button
                 className="w-full sm:w-auto"
@@ -2303,20 +3129,37 @@ export function KeyAccountPurchaseOrdersPage() {
                 COF
               </Button>
             )}
-            {active &&
+            {/* {active &&
               isDeliveredKeyAccountOrder(active) &&
               !isRebateDerivedPurchaseOrder(active) &&
               !isReadOnlyAccounting && (
-              <Button
-                className="w-full sm:w-auto"
-                onClick={() => {
-                  setViewOpen(false);
-                  navigate(`/key-accounts/rebates/new?poId=${active.id}`);
-                }}
-              >
-                <RotateCcw className="h-4 w-4 mr-2" />
-                Create rebate
-              </Button>
+              // <Button
+              //   className="w-full sm:w-auto"
+              //   onClick={() => {
+              //     setViewOpen(false);
+              //     navigate(`/key-accounts/rebates/new?poId=${active.id}`);
+              //   }}
+              // >
+              //   <RotateCcw className="h-4 w-4 mr-2" />
+              //   Create rebate
+              // </Button>
+            )} */}
+            {active && canOwnerApprove(active) && !isReadOnlyAccounting && (
+              <>
+                <Button
+                  className="w-full sm:w-auto"
+                  variant="outline"
+                  onClick={() => void ownerReject()}
+                  disabled={actingId === active.id}
+                >
+                  {actingId === active.id ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <X className="h-4 w-4 mr-2" />}
+                  Reject
+                </Button>
+                <Button className="w-full sm:w-auto" onClick={() => requestOwnerApprove()} disabled={actingId === active.id}>
+                  {actingId === active.id ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Check className="h-4 w-4 mr-2" />}
+                  Approve as owner
+                </Button>
+              </>
             )}
             {active && canDirectorApprove(active) && !isReadOnlyAccounting && (
               <>
@@ -2342,6 +3185,61 @@ export function KeyAccountPurchaseOrdersPage() {
         </DialogContent>
       </Dialog>
 
+      <AlertDialog
+        open={!!ownerApproveTarget}
+        onOpenChange={(open) => {
+          if (!open) setOwnerApproveTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Approve on-behalf PO?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to approve this on-behalf PO? It cannot be edited after
+              approval. Please review the PO first.
+              {ownerApproveTarget?.po_number ? (
+                <>
+                  {' '}
+                  ({ownerApproveTarget.po_number})
+                </>
+              ) : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col-reverse sm:flex-row sm:justify-end gap-2">
+            <AlertDialogCancel disabled={actingId === ownerApproveTarget?.id}>Cancel</AlertDialogCancel>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!ownerApproveTarget || actingId === ownerApproveTarget?.id}
+              onClick={() => {
+                const po = ownerApproveTarget;
+                setOwnerApproveTarget(null);
+                if (po) void openView(po);
+              }}
+            >
+              <Eye className="h-4 w-4 mr-2" />
+              Review
+            </Button>
+            <AlertDialogAction
+              disabled={actingId === ownerApproveTarget?.id}
+              onClick={(e) => {
+                e.preventDefault();
+                void ownerApprove(ownerApproveTarget);
+              }}
+            >
+              {actingId === ownerApproveTarget?.id ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Approving…
+                </>
+              ) : (
+                'Yes, approve'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
           <Dialog
             open={recordPayOpen}
             onOpenChange={(open) => {
@@ -2366,12 +3264,15 @@ export function KeyAccountPurchaseOrdersPage() {
               <p className="text-sm text-muted-foreground">
                 Remaining balance:{' '}
                 <span className="font-semibold text-foreground">
-                  ₱
-                  {Math.max(
-                    0,
-                    Math.round((Number(active.total_amount) - paymentAppliedSoFar) * 100) / 100
-                  ).toFixed(2)}
+                  ₱{Math.max(0, paymentRemainingBalance).toFixed(2)}
                 </span>
+                {pendingDiscountSoFar > 0 ? (
+                  <span className="block text-xs mt-1 text-amber-700 dark:text-amber-400">
+                    ₱{pendingDiscountSoFar.toFixed(2)} pending Sales Head approval (not deducted
+                    yet). Available to record now: ₱
+                    {Math.max(0, paymentAvailableToApply).toFixed(2)}.
+                  </span>
+                ) : null}
               </p>
               <div className="space-y-2">
                 <Label>Cash amount (₱)</Label>
@@ -2395,7 +3296,9 @@ export function KeyAccountPurchaseOrdersPage() {
                   placeholder="Write-off / commercial concession"
                 />
                 <p className="text-[11px] text-muted-foreground">
-                  Use when the client settles for less than the PO total (e.g. market price drop). Not counted as cash.
+                  {isSalesHead
+                    ? 'Your settlement discount is applied immediately (auto-approved). Not counted as cash.'
+                    : 'Discount needs Sales Head approval before it reduces the PO balance. Cash is recorded immediately. If rejected or left pending, only the cash counts toward paid.'}
                 </p>
               </div>
               {Number(newPaySettlementDiscount || 0) > 0 || newPaySettlementDiscount.trim() !== '' ? (
@@ -2464,6 +3367,8 @@ export function KeyAccountPurchaseOrdersPage() {
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                       Saving…
                     </>
+                  ) : Number(newPaySettlementDiscount || 0) > 0 && !isSalesHead ? (
+                    'Submit for approval'
                   ) : (
                     'Save'
                   )}
@@ -2552,6 +3457,67 @@ export function KeyAccountPurchaseOrdersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog
+        open={!!rejectDiscountId}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRejectDiscountId(null);
+            setRejectDiscountReason('');
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reject settlement discount</DialogTitle>
+            <DialogDescription>
+              Optionally include a reason. The reserved discount amount will be released.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label>Reason (optional)</Label>
+            <Textarea
+              value={rejectDiscountReason}
+              onChange={(e) => setRejectDiscountReason(e.target.value)}
+              placeholder="e.g. Discount too high without client confirmation"
+              rows={3}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setRejectDiscountId(null);
+                setRejectDiscountReason('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={!!actingDiscountId}
+              onClick={() => void rejectSettlementDiscount()}
+            >
+              {actingDiscountId ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Rejecting…
+                </>
+              ) : (
+                'Reject discount'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <KeyAccountOutstandingPaymentsDialog
+        open={outstandingDialogOpen}
+        onOpenChange={setOutstandingDialogOpen}
+        orders={outstandingOrders}
+      />
 
       <KeyAccountRebateDetailDialog
         open={rebateDetailOpen}

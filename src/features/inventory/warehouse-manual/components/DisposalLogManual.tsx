@@ -21,6 +21,7 @@ export default function DisposalLogManual({ embedded = false }: DisposalLogManua
         <p>Disposal records are created automatically when damaged stock is logged during inspection.</p>
         <hr className="my-2 border-gray-500"/>
         <span><span className="font-bold">Sub-warehouse return: </span>When main warehouse inspects a <Link to="/inventory/stock-returns" className="text-blue-500">Stock Return</Link> and marks units as <span className="text-blue-500">Damaged</span></span>
+        <span><span className="font-bold">Client stock return: </span>When main warehouse inspects a <Link to="/inventory/client-stock-returns" className="text-blue-500">Client Stock Return</Link> and marks units as <span className="text-blue-500">Damaged</span></span>
         <span><span className="font-bold">Rebate return: </span>When damaged units are recorded during rebate return inspection</span>
         <span><span className="font-bold">Adjustment: </span>When stock is removed through other approved disposal-related processes</span>
       </InstructionBorder>

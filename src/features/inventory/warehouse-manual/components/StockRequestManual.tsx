@@ -54,6 +54,29 @@ export default function StockRequestManual({ embedded = false }: StockRequestMan
       </InstructionBorder>
 
       <InstructionBorder>
+        <TitleSection>How Partial Receive Works?</TitleSection>
+        <p>
+          You can receive stock in multiple waves. If you receive less than the remaining ordered
+          quantity in one delivery, status becomes{" "}
+          <span className="text-blue-500">Partially received</span>.
+        </p>
+        <hr className="my-2 border-gray-500" />
+        <span>
+          1. Open <span className="text-blue-500">Receive</span> again while status is{" "}
+          <span className="text-blue-500">Partially received</span>
+        </span>
+        <span>
+          2. Enter quantities for this delivery wave only (cannot exceed remaining qty per line)
+        </span>
+        <span>
+          3. Confirm receive. Each wave adds stock under the same batch and updates receive history
+        </span>
+        <span>
+          4. Repeat until all ordered quantities are received or the request is fully received
+        </span>
+      </InstructionBorder>
+
+      <InstructionBorder>
         <TitleSection>How to Cancel a Stock Request?</TitleSection>
         <span>1. Click on the 3 vertical dots icon in the row and click on <span className="text-blue-500">Cancel</span></span>
         <span>2. A dialog will be displayed to confirm the cancellation. Click on <span className="text-blue-500">Cancel request</span> to confirm.</span>

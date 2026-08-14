@@ -1,3 +1,4 @@
+import { lazy, Suspense, type ComponentType } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -52,6 +53,14 @@ import LeaderManualPage from "./features/team-leader/pages/LeaderManualPage";
 import LeaderPoReceivePage from "./features/team-leader/pages/LeaderPoReceivePage";
 import SuperAdminAllocationHistoryPage from "@/features/sales-agents/SuperAdminAllocationHistoryPage";
 import WarehouseManualPage from "./features/inventory/WarehouseManualPage";
+
+/** Local-only preview (gitignored). Missing file = no route; production build skips it. */
+const componentVisualModules = import.meta.glob("./features/component-visual/component-visual.tsx");
+const componentVisualLoader = componentVisualModules["./features/component-visual/component-visual.tsx"];
+const ComponentVisual = componentVisualLoader
+  ? lazy(componentVisualLoader as () => Promise<{ default: ComponentType }>)
+  : null;
+
 const App = () => (
   <PersistQueryClientProvider
     client={queryClient}
@@ -162,7 +171,7 @@ const App = () => (
                     <Route
                       path="/inventory/return-to-warehouse"
                       element={
-                        <ProtectedRoute allowedRoles={["admin", "super_admin"]}>
+                        <ProtectedRoute allowedRoles={["admin", "super_admin", "team_leader"]}>
                           <StandardAccountReturnToWarehousePage />
                         </ProtectedRoute>
                       }
@@ -343,6 +352,14 @@ const App = () => (
                         </ProtectedRoute>
                       } 
                     />
+                    <Route
+                      path="/key-accounts/purchase-orders/:poId/edit"
+                      element={
+                        <ProtectedRoute allowedRoles={['sales_head', 'sales_admin', 'sales_director', 'key_account_manager']}>
+                          <KeyAccountPurchaseOrderPage />
+                        </ProtectedRoute>
+                      }
+                    />
                     <Route 
                       path="/key-accounts/purchase-orders" 
                       element={
@@ -383,6 +400,19 @@ const App = () => (
                         </ProtectedRoute>
                       }
                     />
+                    {/* Local email/HTML preview — only when file exists + DEV */}
+                    {import.meta.env.DEV && ComponentVisual && (
+                      <Route
+                        path="/component-visual"
+                        element={
+                          <ProtectedRoute>
+                            <Suspense fallback={null}>
+                              <ComponentVisual />
+                            </Suspense>
+                          </ProtectedRoute>
+                        }
+                      />
+                    )}
                     {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                     <Route path="*" element={<NotFound />} />
                   </Routes>

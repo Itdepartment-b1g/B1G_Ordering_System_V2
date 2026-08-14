@@ -2697,6 +2697,48 @@ $$;
 
 
 --
+-- Name: generate_key_account_po_number(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.generate_key_account_po_number(p_company_id uuid) RETURNS text
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_company_name TEXT;
+    v_initials TEXT;
+    date_part TEXT := to_char(CURRENT_DATE, 'YYYYMM');
+    seq_val INTEGER;
+BEGIN
+    IF p_company_id IS NULL THEN
+        RAISE EXCEPTION 'company id is required';
+    END IF;
+
+    SELECT c.company_name INTO v_company_name
+    FROM public.companies c
+    WHERE c.id = p_company_id;
+
+    IF v_company_name IS NULL OR btrim(v_company_name) = '' THEN
+        RAISE EXCEPTION 'Company name is missing';
+    END IF;
+
+    v_initials := upper(btrim(public.extract_company_initials(v_company_name)));
+    IF v_initials IS NULL OR v_initials = '' THEN
+        RAISE EXCEPTION 'Failed to derive company initials';
+    END IF;
+
+    INSERT INTO public.key_account_po_number_counters (company_id, last_value)
+    VALUES (p_company_id, 1)
+    ON CONFLICT (company_id)
+    DO UPDATE SET last_value = public.key_account_po_number_counters.last_value + 1
+    RETURNING last_value INTO seq_val;
+
+    RETURN 'PO-' || v_initials || '-KA-' || date_part || '-' || lpad(seq_val::TEXT, 4, '0');
+END;
+$$;
+
+
+--
 -- Name: get_auth_company_id(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8478,6 +8520,19 @@ CREATE SEQUENCE public.po_number_seq
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
+
+
+--
+-- Name: key_account_po_number_counters; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.key_account_po_number_counters (
+    company_id uuid NOT NULL,
+    last_value integer NOT NULL DEFAULT 0
+);
+
+ALTER TABLE ONLY public.key_account_po_number_counters
+    ADD CONSTRAINT key_account_po_number_counters_pkey PRIMARY KEY (company_id);
 
 
 --

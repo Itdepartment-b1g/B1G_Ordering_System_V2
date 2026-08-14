@@ -1,7 +1,6 @@
 /**
- * Main Warehouse: allocate/deliver stock to a Sub Warehouse without a prior request.
- * Combines destination + item cart + deliver proof/signature, then calls
- * create_and_deliver_main_stock_allocation.
+ * Main Warehouse: create a stock allocation to a Sub Warehouse (package photo first).
+ * Deliver with rider details is a separate step after printing the packing slip.
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Loader2, Minus, Plus, Search, Trash2 } from 'lucide-react';
@@ -26,9 +25,10 @@ import {
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { cn } from '@/lib/utils';
 import type { Brand, Variant } from '../InventoryContext';
+import { getMainWarehouseAllocatableQty } from '../warehouseStockBoard';
 import {
   InternalStockDeliveryProofFields,
-  isInternalStockDeliveryProofComplete,
+  isInternalStockPackageProofComplete,
   useInternalStockDeliveryProof,
 } from './InternalStockDeliveryProofFields';
 
@@ -51,12 +51,7 @@ export type MainAllocateSubmitPayload = {
   fromLocationId: string;
   notes: string;
   items: Array<{ variant_id: string; quantity: number }>;
-  signatureUrl: string;
-  proofImageUrl: string;
   packagePhotos: import('@/features/shared/components/MultiProofPhotoField').PackageProofPhotoItem[];
-  riderName: string;
-  riderPlateNumber: string;
-  riderPhotoUrl: string;
 };
 
 type MainWarehouseAllocateDialogProps = {
@@ -66,6 +61,8 @@ type MainWarehouseAllocateDialogProps = {
   loadingLocations?: boolean;
   brands: Brand[];
   loadingBrands?: boolean;
+  /** Open hard + soft transfer PO holds at main warehouse, by variant id. */
+  poReservedByVariantId?: Record<string, number>;
   submitting?: boolean;
   onSubmit: (payload: MainAllocateSubmitPayload) => void | Promise<void>;
 };
@@ -85,14 +82,14 @@ function normalizeTypeLabel(typeKey: string): string {
   return typeKey.toUpperCase();
 }
 
-function getMainAvailableQty(variant: Pick<Variant, 'stock' | 'allocatedStock'>): number {
-  return Math.max(0, variant.stock - (variant.allocatedStock || 0));
-}
-
-function findVariantAvailable(brands: Brand[], variantId: string): number {
+function findVariantAvailable(
+  brands: Brand[],
+  variantId: string,
+  poReservedByVariantId: Record<string, number>
+): number {
   for (const brand of brands) {
     const variant = brand.allVariants?.find((v) => v.id === variantId);
-    if (variant) return getMainAvailableQty(variant);
+    if (variant) return getMainWarehouseAllocatableQty(variant, poReservedByVariantId);
   }
   return Number.POSITIVE_INFINITY;
 }
@@ -179,6 +176,7 @@ export function MainWarehouseAllocateDialog({
   loadingLocations = false,
   brands,
   loadingBrands = false,
+  poReservedByVariantId = {},
   submitting = false,
   onSubmit,
 }: MainWarehouseAllocateDialogProps) {
@@ -257,7 +255,7 @@ export function MainWarehouseAllocateDialog({
       if (!qty || qty <= 0) continue;
       const variant = selectedBrand.allVariants.find((v) => v.id === variantId);
       if (!variant) continue;
-      const available = getMainAvailableQty(variant);
+      const available = getMainWarehouseAllocatableQty(variant, poReservedByVariantId);
       const quantity = Math.min(qty, available);
       if (quantity <= 0) continue;
       lines.push({
@@ -276,7 +274,7 @@ export function MainWarehouseAllocateDialog({
       for (const line of lines) {
         const idx = next.findIndex((x) => x.variantId === line.variantId);
         if (idx >= 0) {
-          const available = findVariantAvailable(brands, line.variantId);
+          const available = findVariantAvailable(brands, line.variantId, poReservedByVariantId);
           const merged = Math.min(
             available === Number.POSITIVE_INFINITY
               ? next[idx].quantity + line.quantity
@@ -300,7 +298,7 @@ export function MainWarehouseAllocateDialog({
   const canSubmit =
     !!locationId &&
     cart.length > 0 &&
-    isInternalStockDeliveryProofComplete(deliveryProof.value) &&
+    isInternalStockPackageProofComplete(deliveryProof.value) &&
     !submitting;
 
   const handleSubmit = async () => {
@@ -313,12 +311,7 @@ export function MainWarehouseAllocateDialog({
         variant_id: line.variantId,
         quantity: line.quantity,
       })),
-      signatureUrl: proof.signatureDataUrl,
-      proofImageUrl: proof.proofImageDataUrl,
       packagePhotos: proof.packagePhotos,
-      riderName: proof.riderName.trim(),
-      riderPlateNumber: proof.riderPlate.trim(),
-      riderPhotoUrl: proof.riderPhotoDataUrl,
     });
   };
 
@@ -329,8 +322,8 @@ export function MainWarehouseAllocateDialog({
           <DialogHeader>
             <DialogTitle>Allocate to Sub Warehouse</DialogTitle>
             <p className="text-sm text-muted-foreground font-normal pt-1">
-              Push stock without a sub request. Sub must still confirm receive before their
-              on-hand increases.
+              Create the allocation with a package photo first. Batch lots leave main on create;
+              print the packing slip for the boxes, then deliver with rider details when ready.
             </p>
           </DialogHeader>
 
@@ -428,7 +421,10 @@ export function MainWarehouseAllocateDialog({
                           <AccordionContent>
                             <div className="space-y-2 pb-2">
                               {variants.map((variant) => {
-                                const available = getMainAvailableQty(variant);
+                                const available = getMainWarehouseAllocatableQty(
+                                  variant,
+                                  poReservedByVariantId
+                                );
                                 const qty = quantities[variant.id] ?? 0;
                                 return (
                                   <div
@@ -497,7 +493,7 @@ export function MainWarehouseAllocateDialog({
               ) : (
                 <ul className="rounded-md border divide-y">
                   {cart.map((line) => {
-                    const available = findVariantAvailable(brands, line.variantId);
+                    const available = findVariantAvailable(brands, line.variantId, poReservedByVariantId);
                     const max =
                       available === Number.POSITIVE_INFINITY
                         ? Math.max(line.quantity, 99999)
@@ -554,23 +550,19 @@ export function MainWarehouseAllocateDialog({
               />
             </section>
 
-            {/* Rider & proof */}
+            {/* Package photo */}
             <section className="shrink-0">
               <InternalStockDeliveryProofFields
+                mode="package"
                 value={deliveryProof.value}
                 onChange={deliveryProof.patch}
-                riderPhotoError={deliveryProof.riderPhotoError}
                 proofError={deliveryProof.proofError}
-                onRiderPhotoError={deliveryProof.setRiderPhotoError}
                 onProofError={deliveryProof.setProofError}
                 labels={{
                   idPrefix: 'main-alloc',
-                  sectionTitle: 'Rider & proof',
-                  signatureAlt: 'Allocation signature',
-                  signatureDialogTitle: 'Sign allocation',
-                  signatureCanvasTitle: 'Allocation signature',
-                  signatureCanvasDescription:
-                    'Draw your signature to confirm this allocation delivery',
+                  sectionTitle: 'Package photo',
+                  proofLabel: 'Package photos (required)',
+                  proofUploadTitle: 'Upload package photo',
                 }}
               />
             </section>
@@ -589,10 +581,10 @@ export function MainWarehouseAllocateDialog({
               {submitting ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Allocating…
+                  Creating…
                 </>
               ) : (
-                'Allocate & deliver'
+                'Create transfer'
               )}
             </Button>
           </DialogFooter>

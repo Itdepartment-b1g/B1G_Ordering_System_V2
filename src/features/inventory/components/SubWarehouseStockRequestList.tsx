@@ -60,18 +60,25 @@ import {
   type SubWarehouseStockRequestStatus,
 } from './SubWarehouseStockRequestDialog';
 import { SubWarehouseRequestHistoryTimeline } from './SubWarehouseRequestHistoryTimeline';
+import { fetchInternalStockRequestById } from '../internalStockRequestsApi';
 import {
   canExportInternalStockRequestReport,
   exportInternalStockRequestReportPdf,
 } from '../utils/exportInternalStockRequestReportPdf';
 import {
+  canExportInternalStockDeliveryReceipt,
   exportInternalStockDeliveryReceiptPdf,
   type DeliveryReceiptWaveEvent,
 } from '../utils/exportInternalStockDeliveryReceiptPdf';
+import {
+  canExportInternalStockPackingSlip,
+  exportInternalStockPackingSlipPdf,
+} from '../utils/exportInternalStockPackingSlipPdf';
 
 const STATUS_LABELS: Record<SubWarehouseStockRequestStatus, string> = {
   pending_approval: 'Pending approval',
   approved: 'Approved (awaiting delivery)',
+  ready_to_deliver: 'Ready to deliver',
   pending_receive: 'Pending receive',
   partially_received: 'Partially received',
   fully_received: 'Fully received',
@@ -83,6 +90,7 @@ type StatusFilter = 'all' | SubWarehouseStockRequestStatus;
 type ListTab = 'requests' | 'allocations';
 
 const ALLOCATION_STATUS_FILTERS: SubWarehouseStockRequestStatus[] = [
+  'ready_to_deliver',
   'pending_receive',
   'partially_received',
   'fully_received',
@@ -110,6 +118,14 @@ function StatusBadge({ status }: { status: SubWarehouseStockRequestStatus }) {
     return (
       <Badge variant="secondary" className="gap-1 border-blue-200 bg-blue-50 text-blue-800">
         <CheckCircle2 className="h-3 w-3" />
+        {STATUS_LABELS[status]}
+      </Badge>
+    );
+  }
+  if (status === 'ready_to_deliver') {
+    return (
+      <Badge variant="secondary" className="gap-1 border-violet-200 bg-violet-50 text-violet-900">
+        <Package className="h-3 w-3" />
         {STATUS_LABELS[status]}
       </Badge>
     );
@@ -370,14 +386,20 @@ function RequestRowActionsMenu({
   onHistory,
   onReceive,
   onExportPdf,
+  onPrintPackingSlip,
+  onPrintDeliveryReceipt,
 }: {
   request: SubWarehouseStockRequest;
   onHistory: (request: SubWarehouseStockRequest) => void;
   onReceive: (request: SubWarehouseStockRequest) => void;
   onExportPdf: (request: SubWarehouseStockRequest) => void;
+  onPrintPackingSlip: (request: SubWarehouseStockRequest) => void;
+  onPrintDeliveryReceipt: (request: SubWarehouseStockRequest) => void;
 }) {
   const canReceive = canReceiveRequest(request);
   const canExport = canExportInternalStockRequestReport(request);
+  const canPrintPacking = canExportInternalStockPackingSlip(request);
+  const canPrintDr = canExportInternalStockDeliveryReceipt(request);
   const isPartialFollowUp = request.status === 'partially_received' && canReceive;
 
   return (
@@ -388,7 +410,7 @@ function RequestRowActionsMenu({
           <span className="sr-only">Open actions</span>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-52">
+      <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuItem onClick={() => onHistory(request)}>
           <History className="mr-2 h-4 w-4" />
           View history
@@ -397,6 +419,18 @@ function RequestRowActionsMenu({
           <DropdownMenuItem onClick={() => onExportPdf(request)}>
             <FileDown className="mr-2 h-4 w-4" />
             Export PDF
+          </DropdownMenuItem>
+        ) : null}
+        {canPrintPacking ? (
+          <DropdownMenuItem onClick={() => onPrintPackingSlip(request)}>
+            <Package className="mr-2 h-4 w-4" />
+            Print packing slip
+          </DropdownMenuItem>
+        ) : null}
+        {canPrintDr ? (
+          <DropdownMenuItem onClick={() => onPrintDeliveryReceipt(request)}>
+            <Truck className="mr-2 h-4 w-4" />
+            Print Delivery Receipt
           </DropdownMenuItem>
         ) : null}
         {canReceive ? (
@@ -431,7 +465,21 @@ export function SubWarehouseStockRequestList({
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [historyRequest, setHistoryRequest] = useState<SubWarehouseStockRequest | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [receiptRequest, setReceiptRequest] = useState<SubWarehouseStockRequest | null>(null);
+
+  const openHistory = async (request: SubWarehouseStockRequest) => {
+    setHistoryRequest(request);
+    setHistoryLoading(true);
+    try {
+      const full = await fetchInternalStockRequestById(request.id);
+      if (full) setHistoryRequest(full);
+    } catch {
+      // Keep list snapshot if detail fetch fails.
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
 
   const dateRange = useMemo(
     () =>
@@ -495,6 +543,17 @@ export function SubWarehouseStockRequestList({
 
   const { pageCount, safePage, pagedItems } = getListPaginationSlice(filtered, page, pageSize);
 
+  const resolveFullRequest = async (
+    request: SubWarehouseStockRequest
+  ): Promise<SubWarehouseStockRequest> => {
+    try {
+      const full = await fetchInternalStockRequestById(request.id);
+      return full ?? request;
+    } catch {
+      return request;
+    }
+  };
+
   const handleExportReceivePdf = async (request: SubWarehouseStockRequest) => {
     if (!canExportInternalStockRequestReport(request)) {
       toast({
@@ -506,7 +565,9 @@ export function SubWarehouseStockRequestList({
     }
 
     try {
-      await exportInternalStockRequestReportPdf(request);
+      // List rows are lite (events omitted). Load full request so the PDF timeline has history.
+      const full = await resolveFullRequest(request);
+      await exportInternalStockRequestReportPdf(full);
       toast({
         title: 'PDF opened',
         description: `${request.requestNumber} — use Print / Save PDF.`,
@@ -520,12 +581,65 @@ export function SubWarehouseStockRequestList({
     }
   };
 
+  const handlePrintPackingSlip = async (request: SubWarehouseStockRequest) => {
+    if (!canExportInternalStockPackingSlip(request)) {
+      toast({
+        title: 'Nothing to print',
+        description: 'Packing slip is available for main allocations that are ready to deliver.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    try {
+      const full = await resolveFullRequest(request);
+      await exportInternalStockPackingSlipPdf(full);
+      toast({
+        title: 'Packing slip opened',
+        description: `${request.requestNumber} — use Print / Save PDF.`,
+      });
+    } catch (error) {
+      toast({
+        title: 'Could not print packing slip',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handlePrintDeliveryReceipt = async (request: SubWarehouseStockRequest) => {
+    if (!canExportInternalStockDeliveryReceipt(request)) {
+      toast({
+        title: 'Nothing to print',
+        description: 'Delivery Receipt is available after main has delivered.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    try {
+      const full = await resolveFullRequest(request);
+      await exportInternalStockDeliveryReceiptPdf(full);
+      toast({
+        title: 'Delivery Receipt opened',
+        description: `${request.requestNumber} — use Print / Save PDF.`,
+      });
+    } catch {
+      toast({
+        title: 'Export failed',
+        description: 'Could not open the Delivery Receipt.',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const handlePrintDeliveryReceiptForEvent = async (
     request: SubWarehouseStockRequest,
     event: DeliveryReceiptWaveEvent
   ) => {
     try {
-      await exportInternalStockDeliveryReceiptPdf(request, { event });
+      const full = await resolveFullRequest(request);
+      await exportInternalStockDeliveryReceiptPdf(full, { event });
       toast({
         title: 'Delivery Receipt opened',
         description: `${event.drNumber?.trim() || request.drNumber || request.requestNumber} — use Print / Save PDF.`,
@@ -674,9 +788,11 @@ export function SubWarehouseStockRequestList({
                     <RequestStatusCluster request={req} />
                     <RequestRowActionsMenu
                       request={req}
-                      onHistory={setHistoryRequest}
+                      onHistory={(r) => void openHistory(r)}
                       onReceive={onReceive}
                       onExportPdf={(r) => void handleExportReceivePdf(r)}
+                      onPrintPackingSlip={(r) => void handlePrintPackingSlip(r)}
+                      onPrintDeliveryReceipt={(r) => void handlePrintDeliveryReceipt(r)}
                     />
                   </div>
                 </div>
@@ -781,9 +897,11 @@ export function SubWarehouseStockRequestList({
                         ) : null}
                         <RequestRowActionsMenu
                           request={req}
-                          onHistory={setHistoryRequest}
+                          onHistory={(r) => void openHistory(r)}
                           onReceive={onReceive}
                           onExportPdf={(r) => void handleExportReceivePdf(r)}
+                          onPrintPackingSlip={(r) => void handlePrintPackingSlip(r)}
+                          onPrintDeliveryReceipt={(r) => void handlePrintDeliveryReceipt(r)}
                         />
                       </div>
                     </TableCell>
@@ -815,19 +933,23 @@ export function SubWarehouseStockRequestList({
               {historyRequest ? <RequestStatusCluster request={historyRequest} /> : null}
             </DialogTitle>
           </DialogHeader>
-          <SubWarehouseRequestHistoryTimeline
-            history={historyRequest?.history}
-            items={historyRequest?.items}
-            request={historyRequest ?? undefined}
-            riderName={historyRequest?.riderName}
-            riderPlateNumber={historyRequest?.riderPlateNumber}
-            riderPhotoUrl={historyRequest?.riderPhotoUrl}
-            onPrintDeliveryReceipt={
-              historyRequest
-                ? (event) => void handlePrintDeliveryReceiptForEvent(historyRequest, event)
-                : undefined
-            }
-          />
+          {historyLoading ? (
+            <p className="text-sm text-muted-foreground py-6 text-center">Loading history…</p>
+          ) : (
+            <SubWarehouseRequestHistoryTimeline
+              history={historyRequest?.history}
+              items={historyRequest?.items}
+              request={historyRequest ?? undefined}
+              riderName={historyRequest?.riderName}
+              riderPlateNumber={historyRequest?.riderPlateNumber}
+              riderPhotoUrl={historyRequest?.riderPhotoUrl}
+              onPrintDeliveryReceipt={
+                historyRequest
+                  ? (event) => void handlePrintDeliveryReceiptForEvent(historyRequest, event)
+                  : undefined
+              }
+            />
+          )}
         </DialogContent>
       </Dialog>
 

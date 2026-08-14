@@ -47,6 +47,8 @@ const NON_PERSISTED_QUERY_KEYS = new Set([
     'sa-stock-returns',
     'sa-client-stock-returns',
     'warehouse-delivery-shortages',
+    // Heavy nested payloads (events + proof URLs); must stay live for allocate/request sync.
+    'internal-stock-requests',
 ]);
 
 export const queryPersistOptions = {

@@ -10,36 +10,36 @@ import {
   YAxis,
 } from 'recharts';
 import {
-  BarChart3,
   Building2,
   FileDown,
+  Layers,
   Loader2,
+  MapPin,
   Package,
-  ShoppingCart,
   TrendingDown,
-  TrendingUp,
   Users,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
+import { fetchAllPaginated } from '@/lib/supabasePaginate';
 import { useToast } from '@/hooks/use-toast';
 import KeyAccountKamAnalyticsTab from './KeyAccountKamAnalyticsTab';
 import KeyAccountClientAnalyticsTab from './KeyAccountClientAnalyticsTab';
+import KeyAccountCityAnalyticsTab from './KeyAccountCityAnalyticsTab';
+import KeyAccountComboAnalyticsTab from './KeyAccountComboAnalyticsTab';
 import KeyAccountFsnAnalyticsTab from './KeyAccountFsnAnalyticsTab';
 import { exportKeyAccountProductAnalyticsExcel } from './exportKeyAccountProductAnalyticsExcel';
+import {
+  buildKeyAccountProductPoBreakdownRows,
+  KeyAccountProductPoBreakdownDialog,
+} from './KeyAccountProductPoBreakdownDialog';
+import { KeyAccountBrandVariantsDialog } from './KeyAccountBrandVariantsDialog';
 import {
   fetchKeyAccountDashboardPaidByOrderId,
   fetchKeyAccountDashboardPayments,
@@ -57,20 +57,18 @@ import {
 } from '@/lib/dateRangePresets';
 import { isRebateDerivedPurchaseOrder } from '../rebates/keyAccountRebateShared';
 import {
+  buildKeyAccountBrandAnalyticsRows,
   buildKeyAccountProductAnalyticsRows,
   buildRebateCreditDeductionByPurchaseOrderId,
   buildRebateDeductionByPoItemId,
   buildRebateSwapByPoItemId,
   firstRelation,
-  getKeyAccountProductWorkflowBucket,
   isKeyAccountAnalyticsEligibleOrder,
-  isDeliveredKeyAccountOrder,
-  isRebateFulfillmentReplacementOrder,
   isKeyAccountCommercialProductAnalyticsOrder,
-  isKeyAccountConsignmentOrder,
   isKeyAccountPartialDeliveredOrder,
   normalizeRebateReplacements,
   rebateResolutionHasReplacement,
+  type KeyAccountBrandAnalyticsRow,
   type KeyAccountProductAnalyticsRow,
   type KeyAccountRebateAnalyticsRecord,
   warehouseTransferLocationStatusKey,
@@ -80,6 +78,20 @@ import {
   AnalyticsTablePagination,
   paginateAnalyticsRows,
 } from './AnalyticsTablePagination';
+
+interface KeyAccountShopRelation {
+  id: string;
+  shop_name: string | null;
+  city: string | null;
+  province: string | null;
+  region: string | null;
+}
+
+interface KeyAccountAddressRelation {
+  city: string | null;
+  province: string | null;
+  region: string | null;
+}
 
 interface KeyAccountOrder {
   id: string;
@@ -94,10 +106,13 @@ interface KeyAccountOrder {
   warehouse_location_id?: string | null;
   kam_id: string | null;
   key_account_client_id: string | null;
+  key_account_shop_id?: string | null;
   key_account_payment_status?: string | null;
   key_account_payment_mode?: string | null;
   analytics_only?: boolean;
   client?: { client_name: string | null } | { client_name: string | null }[] | null;
+  shop?: KeyAccountShopRelation | KeyAccountShopRelation[] | null;
+  address?: KeyAccountAddressRelation | KeyAccountAddressRelation[] | null;
   kam?: { full_name: string | null; email: string | null; role: string | null } | { full_name: string | null; email: string | null; role: string | null }[] | null;
 }
 
@@ -172,6 +187,8 @@ export default function KeyAccountAnalyticsPage() {
   const [productExporting, setProductExporting] = useState(false);
   const [selectedProductRevenue, setSelectedProductRevenue] = useState<KeyAccountProductAnalyticsRow | null>(null);
   const [productRevenueDialogOpen, setProductRevenueDialogOpen] = useState(false);
+  const [selectedBrandRow, setSelectedBrandRow] = useState<KeyAccountBrandAnalyticsRow | null>(null);
+  const [brandVariantsDialogOpen, setBrandVariantsDialogOpen] = useState(false);
 
   useEffect(() => {
     void fetchAnalytics();
@@ -182,30 +199,38 @@ export default function KeyAccountAnalyticsPage() {
     if (!user?.company_id) return;
     setLoading(true);
     try {
-      const [ordersResult, peopleResult, clientsResult] = await Promise.all([
-        supabase
-          .from('purchase_orders')
-          .select(`
-            id,
-            po_number,
-            order_date,
-            total_amount,
-            status,
-            workflow_status,
-            po_order_kind,
-            source_rebate_id,
-            fulfillment_type,
-            warehouse_location_id,
-            kam_id,
-            key_account_client_id,
-            key_account_payment_status,
-            key_account_payment_mode,
-            client:key_account_clients(client_name),
-            kam:profiles!purchase_orders_kam_id_fkey(full_name,email,role)
-          `)
-          .eq('company_id', user.company_id)
-          .eq('company_account_type', 'Key Accounts')
-          .order('order_date', { ascending: false }),
+      const [nextOrders, peopleResult, clientsResult] = await Promise.all([
+        fetchAllPaginated<KeyAccountOrder>(async (from, to) => {
+          const { data, error } = await supabase
+            .from('purchase_orders')
+            .select(`
+              id,
+              po_number,
+              order_date,
+              total_amount,
+              status,
+              workflow_status,
+              po_order_kind,
+              source_rebate_id,
+              fulfillment_type,
+              warehouse_location_id,
+              kam_id,
+              key_account_client_id,
+              key_account_shop_id,
+              key_account_payment_status,
+              key_account_payment_mode,
+              client:key_account_clients(client_name),
+              shop:key_account_shops(id, shop_name, city, province, region),
+              address:key_account_delivery_addresses(city, province, region),
+              kam:profiles!purchase_orders_kam_id_fkey(full_name,email,role)
+            `)
+            .eq('company_id', user.company_id)
+            .eq('company_account_type', 'Key Accounts')
+            .order('order_date', { ascending: false })
+            .order('id', { ascending: false })
+            .range(from, to);
+          return { data: (data as KeyAccountOrder[] | null) ?? null, error };
+        }),
         supabase
           .from('profiles')
           .select('id, full_name, email, role')
@@ -219,11 +244,8 @@ export default function KeyAccountAnalyticsPage() {
           .order('client_name', { ascending: true }),
       ]);
 
-      if (ordersResult.error) throw ordersResult.error;
       if (peopleResult.error) throw peopleResult.error;
       if (clientsResult.error) throw clientsResult.error;
-
-      const nextOrders = (ordersResult.data || []) as KeyAccountOrder[];
       const productAnalyticsOrderIds = nextOrders
         .filter(isKeyAccountCommercialProductAnalyticsOrder)
         .map((order) => order.id);
@@ -546,45 +568,6 @@ export default function KeyAccountAnalyticsPage() {
     setProductTablePage(1);
   }, [visibleProductRows.length, selectedBrand, dateRangeFilter]);
 
-  const summary = useMemo(() => {
-    const grossRevenue = productRows.reduce((sum, row) => sum + row.grossRevenue, 0);
-    const rebatedRevenue = productRows.reduce((sum, row) => sum + row.rebatedRevenue, 0);
-    const totalRevenue = productRows.reduce((sum, row) => sum + row.revenue, 0);
-    const totalUnits = productRows.reduce((sum, row) => sum + row.quantity, 0);
-    const consignmentUnits = productRows.reduce((sum, row) => sum + row.consignmentQuantity, 0);
-    const poTableGrossTotal = filteredOrders.reduce(
-      (sum, order) => sum + Math.max(0, Number(order.total_amount) || 0),
-      0
-    );
-    const productClients = new Set(
-      productAnalyticsOrders.map((order) => order.key_account_client_id).filter(Boolean)
-    );
-    const cardDeliveredOrders = dateFilteredOrders.filter(isDeliveredKeyAccountOrder);
-    const pendingWorkflowOrders = dateFilteredOrders.filter(
-      (order) => getKeyAccountProductWorkflowBucket(order.workflow_status) === 'pending'
-    ).length;
-    const partialDeliveredOrders = dateFilteredOrders.filter(isKeyAccountPartialDeliveredOrder).length;
-    const rebateReplacementOrders = dateFilteredOrders.filter(isRebateFulfillmentReplacementOrder).length;
-    const consignmentOrders = dateFilteredOrders.filter(isKeyAccountConsignmentOrder).length;
-    return {
-      grossRevenue,
-      rebatedRevenue,
-      totalRevenue,
-      totalUnits,
-      consignmentUnits,
-      poTableGrossTotal,
-      totalOrders: dateFilteredOrders.length,
-      deliveredOrders: cardDeliveredOrders.length,
-      pendingWorkflowOrders,
-      partialDeliveredOrders,
-      rebateReplacementOrders,
-      consignmentOrders,
-      clients: productClients.size,
-      avgOrderValue:
-        productAnalyticsOrders.length > 0 ? totalRevenue / productAnalyticsOrders.length : 0,
-    };
-  }, [dateFilteredOrders, filteredOrders, productAnalyticsOrders, productRows]);
-
   const productDateRangeLabel = dateRangeLabel;
 
   const handleExportProductAnalytics = async () => {
@@ -661,8 +644,18 @@ export default function KeyAccountAnalyticsPage() {
     return [...orders, ...placeholderOrders];
   }, [orders, people]);
 
-  const productChartData = visibleProductRows.slice(0, 10).map((row) => ({
-    name: row.variant,
+  const brandRows = useMemo(
+    () =>
+      buildKeyAccountBrandAnalyticsRows(
+        visibleProductRows,
+        (orderId) => allOrdersById.get(orderId)?.key_account_client_id
+      ),
+    [visibleProductRows, allOrdersById]
+  );
+
+  const brandChartData = brandRows.slice(0, 10).map((row) => ({
+    key: row.brand,
+    name: row.brand,
     brand: row.brand,
     revenue: Math.round(row.revenue),
     grossRevenue: Math.round(row.grossRevenue),
@@ -670,25 +663,33 @@ export default function KeyAccountAnalyticsPage() {
     quantity: row.quantity,
     orderCount: row.orderCount,
     clientCount: row.clientCount,
+    variantCount: row.variantCount,
     consignmentOrders: row.consignmentOrders,
     consignmentQuantity: row.consignmentQuantity,
   }));
 
+  const openBrandVariants = (row: KeyAccountBrandAnalyticsRow) => {
+    setSelectedBrandRow(row);
+    setBrandVariantsDialogOpen(true);
+  };
+
+  const openProductPoBreakdown = (row: KeyAccountProductAnalyticsRow) => {
+    setSelectedProductRevenue(row);
+    setProductRevenueDialogOpen(true);
+  };
+
+  const selectedProductPoRows = useMemo(() => {
+    if (!selectedProductRevenue) return [];
+    return buildKeyAccountProductPoBreakdownRows(selectedProductRevenue, allOrdersById);
+  }, [selectedProductRevenue, allOrdersById]);
+
   return (
     <div className="p-6 space-y-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Key Account Analytics</h1>
-          <p className="text-muted-foreground">
-            Product, agent, and client analytics from Key Account purchase orders — {dateRangeLabel}.
-          </p>
-        </div>
-        <DateRangeFilterPopover
-          value={dateRangeFilter}
-          onChange={setDateRangeFilter}
-          triggerClassName="w-full sm:w-[220px] justify-between h-10"
-          align="end"
-        />
+      <div>
+        <h1 className="text-3xl font-bold">Key Account Analytics</h1>
+        <p className="text-muted-foreground">
+          Overview, product, agent, client, and city analytics from Key Account purchase orders.
+        </p>
       </div>
 
       {loading ? (
@@ -700,89 +701,15 @@ export default function KeyAccountAnalyticsPage() {
         </Card>
       ) : (
         <>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                  <TrendingUp className="h-4 w-4" />
-                  Total product revenue
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{formatCurrency(summary.totalRevenue)}</div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Net after rebates · {summary.totalUnits.toLocaleString()} units ordered
-                  {summary.consignmentUnits > 0
-                    ? ` · ${summary.consignmentUnits.toLocaleString()} consignment`
-                    : ''}
-                </p>
-                {summary.rebatedRevenue > 0 && (
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Gross {formatCurrency(summary.grossRevenue)} · Rebated{' '}
-                    <span className="text-amber-700 dark:text-amber-400">
-                      −{formatCurrency(summary.rebatedRevenue)}
-                    </span>
-                  </p>
-                )}
-                {Math.abs(summary.poTableGrossTotal - summary.totalRevenue) > 0.5 &&
-                  Math.abs(summary.poTableGrossTotal - summary.grossRevenue) > 0.5 && (
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      PO table gross (sum of PO totals): {formatCurrency(summary.poTableGrossTotal)}
-                    </p>
-                  )}
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                  <ShoppingCart className="h-4 w-4" />
-                  Purchase orders
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{summary.totalOrders}</div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {summary.deliveredOrders} delivered · {summary.pendingWorkflowOrders} in workflow
-                  {summary.partialDeliveredOrders > 0
-                    ? ` · ${summary.partialDeliveredOrders} partial`
-                    : ''}
-                  {summary.consignmentOrders > 0
-                    ? ` · ${summary.consignmentOrders} consignment`
-                    : ''}
-                  {summary.rebateReplacementOrders > 0
-                    ? ` · ${summary.rebateReplacementOrders} rebate replacement`
-                    : ''}
-                </p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                  <Users className="h-4 w-4" />
-                  Buying clients
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{summary.clients}</div>
-                <p className="text-xs text-muted-foreground mt-1">Clients with product POs in range</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                  <BarChart3 className="h-4 w-4" />
-                  Avg product PO
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{formatCurrency(summary.avgOrderValue)}</div>
-                <p className="text-xs text-muted-foreground mt-1">Net product revenue ÷ product POs</p>
-              </CardContent>
-            </Card>
-          </div>
-
-          <Tabs defaultValue="products" className="space-y-4">
-            <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-4">
+          <Tabs defaultValue="overview" className="space-y-4">
+            <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-6">
+              <TabsTrigger
+                value="overview"
+                className="h-auto gap-1.5 whitespace-normal px-2 py-2 text-xs sm:gap-2 sm:px-3 sm:text-sm"
+              >
+                <Layers className="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" />
+                Overview
+              </TabsTrigger>
               <TabsTrigger
                 value="products"
                 className="h-auto gap-1.5 whitespace-normal px-2 py-2 text-xs sm:gap-2 sm:px-3 sm:text-sm"
@@ -805,6 +732,13 @@ export default function KeyAccountAnalyticsPage() {
                 Client Analytics
               </TabsTrigger>
               <TabsTrigger
+                value="cities"
+                className="h-auto gap-1.5 whitespace-normal px-2 py-2 text-xs sm:gap-2 sm:px-3 sm:text-sm"
+              >
+                <MapPin className="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" />
+                City Analytics
+              </TabsTrigger>
+              <TabsTrigger
                 value="fsn"
                 className="h-auto gap-1.5 whitespace-normal px-2 py-2 text-xs sm:gap-2 sm:px-3 sm:text-sm"
               >
@@ -813,17 +747,37 @@ export default function KeyAccountAnalyticsPage() {
               </TabsTrigger>
             </TabsList>
 
+            <TabsContent value="overview">
+              <KeyAccountComboAnalyticsTab
+                orders={orders}
+                items={items}
+                clients={clients}
+                people={people}
+                formatCurrency={formatCurrency}
+                dateRangeFilter={dateRangeFilter}
+                onDateRangeFilterChange={setDateRangeFilter}
+                paymentRows={paymentRows}
+              />
+            </TabsContent>
+
             <TabsContent value="products" className="space-y-4">
               <Card>
                 <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <div>
-                    <CardTitle>Top Products by Revenue</CardTitle>
+                    <CardTitle>Top Brands by PO Value</CardTitle>
                     <CardDescription>
-                      Units ordered and net revenue after rebates — {productDateRangeLabel}. Includes
-                      standard and consignment POs. Payment is tracked at PO level on the dashboard.
+                      Brand rollup of units ordered and net PO value after rebates —{' '}
+                      {productDateRangeLabel}. Click a brand to see variants, then a variant for PO
+                      breakdown.
                     </CardDescription>
                   </div>
                   <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+                    <DateRangeFilterPopover
+                      value={dateRangeFilter}
+                      onChange={setDateRangeFilter}
+                      triggerClassName="w-full md:w-[220px] justify-between h-10"
+                      align="end"
+                    />
                     <Select value={selectedBrand} onValueChange={setSelectedBrand}>
                       <SelectTrigger className="w-full md:w-[220px]">
                         <SelectValue placeholder="Filter brand" />
@@ -852,12 +806,22 @@ export default function KeyAccountAnalyticsPage() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="h-[360px]">
-                    {productChartData.length > 0 ? (
+                    {brandChartData.length > 0 ? (
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart
-                          data={productChartData}
+                          data={brandChartData}
                           layout="vertical"
                           margin={{ top: 4, right: 24, left: 24, bottom: 8 }}
+                          style={{ cursor: 'pointer' }}
+                          onClick={(state) => {
+                            const payload = state?.activePayload?.[0]?.payload as
+                              | { key?: string }
+                              | undefined;
+                            const key = payload?.key;
+                            if (!key) return;
+                            const row = brandRows.find((item) => item.brand === key);
+                            if (row) openBrandVariants(row);
+                          }}
                         >
                           <CartesianGrid strokeDasharray="3 3" />
                           <XAxis type="number" tick={{ fontSize: 12 }} />
@@ -877,6 +841,7 @@ export default function KeyAccountAnalyticsPage() {
                                 revenue: number;
                                 orderCount: number;
                                 clientCount: number;
+                                variantCount?: number;
                                 consignmentOrders?: number;
                                 consignmentQuantity?: number;
                                 rebatedRevenue?: number;
@@ -899,13 +864,14 @@ export default function KeyAccountAnalyticsPage() {
                                     )}
                                     <div className="flex items-center gap-2">
                                       <span className="w-3 h-3 rounded-full bg-emerald-500" />
-                                      <span className="font-semibold">Net:</span>
+                                      <span className="font-semibold">Net PO Value:</span>
                                       <span className="font-bold text-green-600 dark:text-green-400">
                                         {formatCurrency(net)}
                                       </span>
                                     </div>
                                     <p className="text-muted-foreground text-xs pt-1">
-                                      Qty: {row.quantity.toLocaleString()} · Brand: {row.brand}
+                                      Units Ordered: {row.quantity.toLocaleString()} ·{' '}
+                                      {row.variantCount || 0} variants
                                     </p>
                                     <p className="text-muted-foreground text-xs">
                                       {row.orderCount} POs · {row.clientCount} clients
@@ -915,6 +881,9 @@ export default function KeyAccountAnalyticsPage() {
                                           ).toLocaleString()} units)`
                                         : ''}
                                     </p>
+                                    <p className="text-muted-foreground text-[11px] pt-1">
+                                      Click bar to view variants
+                                    </p>
                                   </div>
                                 </div>
                               );
@@ -922,14 +891,20 @@ export default function KeyAccountAnalyticsPage() {
                           />
                           <Legend
                             wrapperStyle={{ fontSize: '12px' }}
-                            formatter={() => 'Net revenue'}
+                            formatter={() => 'Net PO Value'}
                           />
-                          <Bar dataKey="revenue" fill="#10b981" name="revenue" barSize={20} />
+                          <Bar
+                            dataKey="revenue"
+                            fill="#10b981"
+                            name="revenue"
+                            barSize={20}
+                            cursor="pointer"
+                          />
                         </BarChart>
                       </ResponsiveContainer>
                     ) : (
                       <div className="flex h-full items-center justify-center text-muted-foreground">
-                        No product data for the selected period.
+                        No brand data for the selected period.
                       </div>
                     )}
                   </div>
@@ -937,8 +912,8 @@ export default function KeyAccountAnalyticsPage() {
                   <div>
                     <p className="text-sm font-medium mb-2">Product Performance Details</p>
                     <p className="text-xs text-muted-foreground mb-3">
-                      Click net revenue for gross / rebated detail. Payment is tracked per PO on the
-                      dashboard.
+                      Chart shows brands. Click a brand for variants, or click net PO value in the
+                      table for that variant&apos;s PO breakdown.
                     </p>
                     <div className="rounded-md border bg-muted/30 px-3 py-2.5 text-xs text-muted-foreground mb-3 space-y-1">
                       <p>
@@ -954,8 +929,8 @@ export default function KeyAccountAnalyticsPage() {
                         and how widely this product is ordered.
                       </p>
                       <p>
-                        <span className="font-medium text-foreground">Net revenue</span> — gross line
-                        revenue minus rebated credits (product demand value, not collection status).
+                        <span className="font-medium text-foreground">Net PO value</span> — gross line
+                        value minus rebated credits (product demand value, not collection status).
                       </p>
                     </div>
                   </div>
@@ -979,7 +954,7 @@ export default function KeyAccountAnalyticsPage() {
                           >
                             Consignment POs
                           </TableHead>
-                          <TableHead className="text-right" title="Line revenue before rebate credits">
+                          <TableHead className="text-right" title="Line PO value before rebate credits">
                             Gross
                           </TableHead>
                           <TableHead
@@ -988,8 +963,8 @@ export default function KeyAccountAnalyticsPage() {
                           >
                             Rebated
                           </TableHead>
-                          <TableHead className="text-right" title="Gross minus rebated (net)">
-                            Net
+                          <TableHead className="text-right" title="Gross minus rebated (net PO value)">
+                            Net PO Value
                           </TableHead>
                           <TableHead className="text-right" title="Distinct purchase orders">
                             POs
@@ -1030,10 +1005,7 @@ export default function KeyAccountAnalyticsPage() {
                                 <button
                                   type="button"
                                   className="text-primary hover:underline underline-offset-2"
-                                  onClick={() => {
-                                    setSelectedProductRevenue(row);
-                                    setProductRevenueDialogOpen(true);
-                                  }}
+                                  onClick={() => openProductPoBreakdown(row)}
                                 >
                                   {formatCurrency(row.revenue)}
                                 </button>
@@ -1054,69 +1026,21 @@ export default function KeyAccountAnalyticsPage() {
                 </CardContent>
               </Card>
 
-              <Dialog open={productRevenueDialogOpen} onOpenChange={setProductRevenueDialogOpen}>
-                <DialogContent className="max-w-md">
-                  <DialogHeader>
-                    <DialogTitle>Product detail</DialogTitle>
-                    <DialogDescription>
-                      {selectedProductRevenue
-                        ? `${selectedProductRevenue.brand} — ${selectedProductRevenue.variant} (${productDateRangeLabel})`
-                        : ''}
-                    </DialogDescription>
-                  </DialogHeader>
-                  {selectedProductRevenue && (
-                    <div className="space-y-3 text-sm">
-                      {selectedProductRevenue.rebatedRevenue > 0 && (
-                        <>
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="text-muted-foreground">Gross revenue</span>
-                            <span className="font-semibold">
-                              {formatCurrency(selectedProductRevenue.grossRevenue)}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="text-muted-foreground">Rebated (credit)</span>
-                            <span className="font-semibold text-amber-700 dark:text-amber-400">
-                              −{formatCurrency(selectedProductRevenue.rebatedRevenue)}
-                            </span>
-                          </div>
-                        </>
-                      )}
-                      <div className="border-t pt-3 flex items-center justify-between gap-3">
-                        <span className="flex items-center gap-2 font-medium">
-                          <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
-                          Net revenue
-                        </span>
-                        <span className="text-lg font-bold text-green-600 dark:text-green-400">
-                          {formatCurrency(selectedProductRevenue.revenue)}
-                        </span>
-                      </div>
-                      <div className="border-t pt-3 space-y-1.5 text-muted-foreground text-xs">
-                        <div className="flex justify-between font-medium text-foreground">
-                          <span>Total units</span>
-                          <span>{selectedProductRevenue.quantity.toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>POs</span>
-                          <span>{selectedProductRevenue.orderCount}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Clients</span>
-                          <span>{selectedProductRevenue.clientCount}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Consignment POs</span>
-                          <span>{selectedProductRevenue.consignmentOrders}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Consignment units</span>
-                          <span>{selectedProductRevenue.consignmentQuantity.toLocaleString()}</span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </DialogContent>
-              </Dialog>
+              <KeyAccountBrandVariantsDialog
+                open={brandVariantsDialogOpen}
+                onOpenChange={setBrandVariantsDialogOpen}
+                brandRow={selectedBrandRow}
+                dateRangeLabel={productDateRangeLabel}
+                onSelectVariant={openProductPoBreakdown}
+              />
+              <KeyAccountProductPoBreakdownDialog
+                open={productRevenueDialogOpen}
+                onOpenChange={setProductRevenueDialogOpen}
+                product={selectedProductRevenue}
+                dateRangeLabel={productDateRangeLabel}
+                poRows={selectedProductPoRows}
+                formatCurrencyFn={formatCurrency}
+              />
             </TabsContent>
 
             <TabsContent value="agents">
@@ -1145,6 +1069,18 @@ export default function KeyAccountAnalyticsPage() {
                 formatCurrency={formatCurrency}
                 chartDateRange={chartDateRange}
                 usePageDateFilter
+                dateRangeFilter={dateRangeFilter}
+                onDateRangeFilterChange={setDateRangeFilter}
+                orderRevenueById={productOrderRevenueById}
+                paymentRows={paymentRows}
+              />
+            </TabsContent>
+
+            <TabsContent value="cities">
+              <KeyAccountCityAnalyticsTab
+                orders={orders}
+                clients={clients}
+                formatCurrency={formatCurrency}
                 dateRangeFilter={dateRangeFilter}
                 onDateRangeFilterChange={setDateRangeFilter}
                 orderRevenueById={productOrderRevenueById}

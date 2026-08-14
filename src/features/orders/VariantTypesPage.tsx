@@ -77,14 +77,21 @@ export default function VariantTypesPage() {
     { value: 'gray', label: 'Gray', className: 'bg-gray-100 text-gray-700' },
   ];
 
-  // Fetch variant types
+  // Fetch variant types for this tenant only (exclude linked warehouse / PO-visible types).
   const fetchVariantTypes = async () => {
+    if (!user?.company_id) {
+      setVariantTypes([]);
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
 
       const { data, error } = await supabase
         .from('variant_types')
-        .select('id, company_id, name, display_name, description, color_code, is_active, sort_order, created_at, updated_at');
+        .select('id, company_id, name, display_name, description, color_code, is_active, sort_order, created_at, updated_at')
+        .eq('company_id', user.company_id);
 
       if (error) throw error;
 
@@ -119,7 +126,7 @@ export default function VariantTypesPage() {
 
   useEffect(() => {
     fetchVariantTypes();
-  }, []);
+  }, [user?.company_id]);
 
   // Filter types by search query
   const filteredTypes = variantTypes.filter(type =>

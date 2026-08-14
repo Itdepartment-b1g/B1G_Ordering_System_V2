@@ -32,6 +32,7 @@ import { KeyAccountDashboardRevenueCard } from './KeyAccountDashboardRevenueCard
 import { KeyAccountDashboardRevenueOverview } from './KeyAccountDashboardRevenueOverview';
 import {
   EMPTY_KEY_ACCOUNT_DASHBOARD_REVENUE,
+  isKeyAccountDashboardSalesOrder,
   loadKeyAccountDashboardRevenue,
   type KeyAccountDashboardOrder,
   type KeyAccountDashboardRevenueResult,
@@ -77,10 +78,6 @@ function firstRelation<T>(value: T | T[] | null | undefined): T | null {
   return value ?? null;
 }
 
-function isDeliveredRevenue(o: { status?: string | null; workflow_status?: string | null }) {
-  return o.status === 'fulfilled' && o.workflow_status === 'delivered';
-}
-
 function formatCurrency(value: number) {
   return `₱${Math.round(value).toLocaleString()}`;
 }
@@ -113,7 +110,10 @@ function toSortedBreakdownRows(map: Map<string, PurchaseBreakdownAccumulator>) {
 }
 
 function buildBrandBreakdown(orders: AdminOrderRow[], items: AdminItemRow[]): BrandPurchaseBreakdown[] {
-  const deliveredOrderById = new Map(orders.filter(isDeliveredRevenue).map((order) => [order.id, order]));
+  // Same eligibility as Revenue Overview — booked sales POs, not delivered-only.
+  const salesOrderById = new Map(
+    orders.filter(isKeyAccountDashboardSalesOrder).map((order) => [order.id, order])
+  );
   const brandMap = new Map<string, {
     name: string;
     quantity: number;
@@ -125,7 +125,7 @@ function buildBrandBreakdown(orders: AdminOrderRow[], items: AdminItemRow[]): Br
   }>();
 
   items.forEach((item) => {
-    const order = deliveredOrderById.get(item.purchase_order_id);
+    const order = salesOrderById.get(item.purchase_order_id);
     if (!order) return;
 
     const variant = firstRelation(item.variants);
@@ -240,6 +240,9 @@ export function SalesAdminDashboard() {
           id,
           status,
           workflow_status,
+          po_order_kind,
+          source_rebate_id,
+          total_amount,
           order_date,
           key_account_client_id,
           client:key_account_clients(client_name)
@@ -258,31 +261,37 @@ export function SalesAdminDashboard() {
       if (ordersError) throw ordersError;
 
       const orderRows = (orders || []) as AdminOrderRow[];
-      const deliveredOrderIds = orderRows
-        .filter(isDeliveredRevenue)
+      const salesOrderIds = orderRows
+        .filter(isKeyAccountDashboardSalesOrder)
         .map((order) => order.id);
 
-      let deliveredItems: AdminItemRow[] = [];
-      if (deliveredOrderIds.length > 0) {
-        const { data: itemData, error: itemError } = await supabase
-          .from('purchase_order_items')
-          .select(`
-            purchase_order_id,
-            quantity,
-            unit_price,
-            total_price,
-            variants:variant_id (
-              name,
-              brands:brand_id (name)
-            )
-          `)
-          .in('purchase_order_id', deliveredOrderIds);
-
-        if (itemError) throw itemError;
-        deliveredItems = (itemData || []) as AdminItemRow[];
+      let salesItems: AdminItemRow[] = [];
+      if (salesOrderIds.length > 0) {
+        const chunkSize = 100;
+        for (let i = 0; i < salesOrderIds.length; i += chunkSize) {
+          const chunk = salesOrderIds.slice(i, i + chunkSize);
+          const itemRows = await fetchAllPaginated<AdminItemRow>(async (from, to) => {
+            const { data, error } = await supabase
+              .from('purchase_order_items')
+              .select(`
+                purchase_order_id,
+                quantity,
+                unit_price,
+                total_price,
+                variants:variant_id (
+                  name,
+                  brands:brand_id (name)
+                )
+              `)
+              .in('purchase_order_id', chunk)
+              .range(from, to);
+            return { data: (data as AdminItemRow[] | null) ?? null, error };
+          });
+          salesItems.push(...itemRows);
+        }
       }
 
-      const nextBrandBreakdown = buildBrandBreakdown(orderRows, deliveredItems);
+      const nextBrandBreakdown = buildBrandBreakdown(orderRows, salesItems);
       setBrandBreakdown(nextBrandBreakdown);
       setSelectedBrandName((current) => (
         current && nextBrandBreakdown.some((brand) => brand.name === current)
@@ -460,8 +469,8 @@ export function SalesAdminDashboard() {
           <div>
             <h2 className="text-lg font-semibold">Product Purchase Breakdown</h2>
             <p className="text-sm text-muted-foreground">
-              Delivered POs only (fulfilled + delivered). Ranked by total item quantity, then revenue.
-              PO order date: {breakdownDateRangeLabel}.
+              Same POs as Revenue Overview (pending through delivered; excludes cancelled/rejected).
+              Ranked by total item quantity, then PO count. PO order date: {breakdownDateRangeLabel}.
             </p>
           </div>
           <DateRangeFilterPopover
@@ -480,7 +489,7 @@ export function SalesAdminDashboard() {
               Top 10 Buying Brands
             </CardTitle>
             <p className="text-sm text-muted-foreground">
-              Top 10 brands by units sold on delivered POs ({breakdownDateRangeLabel}).
+              Top 10 brands by units ordered on sales POs ({breakdownDateRangeLabel}).
             </p>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -489,7 +498,7 @@ export function SalesAdminDashboard() {
                 <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
               </div>
             ) : brandBreakdown.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No delivered brand purchases yet.</p>
+              <p className="text-sm text-muted-foreground">No brand purchases in this range yet.</p>
             ) : (
               brandBreakdown.map((brand, index) => {
                 const isSelected = selectedBrand?.name === brand.name;
@@ -510,12 +519,14 @@ export function SalesAdminDashboard() {
                           {index + 1}. {brand.name}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          {brand.orderCount} delivered POs • {brand.clientCount} clients
+                          {brand.clientCount} client{brand.clientCount === 1 ? '' : 's'}
                         </p>
                       </div>
                       <div className="text-right shrink-0">
                         <p className="font-semibold">{brand.quantity.toLocaleString()}</p>
-                        <p className="text-xs text-muted-foreground">{formatCurrency(brand.revenue)}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {brand.orderCount} PO{brand.orderCount === 1 ? '' : 's'}
+                        </p>
                       </div>
                     </div>
                     <div className="mt-3 h-2 rounded-full bg-muted">
@@ -558,11 +569,12 @@ export function SalesAdminDashboard() {
                         <p className="font-medium truncate">
                           {index + 1}. {variant.name}
                         </p>
-                        <p className="text-xs text-muted-foreground">{variant.orderCount} delivered POs</p>
                       </div>
                       <div className="text-right shrink-0">
                         <p className="font-semibold">{variant.quantity.toLocaleString()}</p>
-                        <p className="text-xs text-muted-foreground">{formatCurrency(variant.revenue)}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {variant.orderCount} PO{variant.orderCount === 1 ? '' : 's'}
+                        </p>
                       </div>
                     </div>
                     <div className="mt-3 h-2 rounded-full bg-muted">
@@ -605,11 +617,12 @@ export function SalesAdminDashboard() {
                         <p className="font-medium truncate">
                           {index + 1}. {client.name}
                         </p>
-                        <p className="text-xs text-muted-foreground">{client.orderCount} delivered POs</p>
                       </div>
                       <div className="text-right shrink-0">
                         <p className="font-semibold">{client.quantity.toLocaleString()}</p>
-                        <p className="text-xs text-muted-foreground">{formatCurrency(client.revenue)}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {client.orderCount} PO{client.orderCount === 1 ? '' : 's'}
+                        </p>
                       </div>
                     </div>
                     <div className="mt-3 h-2 rounded-full bg-muted">

@@ -83,6 +83,15 @@ export function getDisplayedStock(
   return Math.max(0, variant.stock - (variant.allocatedStock || 0) - reserved);
 }
 
+/** Main warehouse qty that can be allocated (excludes open transfer PO holds). */
+export function getMainWarehouseAllocatableQty(
+  variant: { id: string; stock: number; allocatedStock?: number },
+  poReservedByVariantId: Record<string, number> = {}
+): number {
+  const reserved = Math.max(0, poReservedByVariantId[variant.id] || 0);
+  return Math.max(0, variant.stock - (variant.allocatedStock || 0) - reserved);
+}
+
 export function computeStockBoardStatus(
   displayedStock: number,
   reorderLevel: number
@@ -293,32 +302,38 @@ export async function fetchOpenTransferPoReservedByVariant(
 ): Promise<Record<string, number>> {
   if (!companyId || !locationId) return {};
 
-  let hardQuery = supabase
-    .from('warehouse_transfer_reservations')
-    .select('variant_id, quantity_reserved, quantity_fulfilled, status')
-    .eq('warehouse_company_id', companyId)
-    .eq('warehouse_location_id', locationId)
-    .in('status', ['reserved', 'partial']);
+  const hardData = await fetchAllPaginated(async (from, to) => {
+    const { data, error } = await supabase
+      .from('warehouse_transfer_reservations')
+      .select('id, variant_id, quantity_reserved, quantity_fulfilled, status')
+      .eq('warehouse_company_id', companyId)
+      .eq('warehouse_location_id', locationId)
+      .in('status', ['reserved', 'partial'])
+      .order('id')
+      .range(from, to);
+    return { data, error };
+  });
 
-  let softQuery = supabase
-    .from('warehouse_transfer_soft_reservations')
-    .select('variant_id, quantity_committed, status')
-    .eq('warehouse_company_id', companyId)
-    .eq('warehouse_location_id', locationId)
-    .eq('status', 'active');
-
-  const [{ data: hardData, error: hardErr }, { data: softData, error: softErr }] = await Promise.all([
-    hardQuery,
-    softQuery,
-  ]);
-
-  if (hardErr) throw hardErr;
-  // Soft table may not be migrated yet — treat as empty.
-  if (softErr) {
-    const msg = String(softErr.message || '');
+  let softData: { variant_id?: string; quantity_committed?: number }[] = [];
+  try {
+    softData = await fetchAllPaginated(async (from, to) => {
+      const { data, error } = await supabase
+        .from('warehouse_transfer_soft_reservations')
+        .select('id, variant_id, quantity_committed, status')
+        .eq('warehouse_company_id', companyId)
+        .eq('warehouse_location_id', locationId)
+        .eq('status', 'active')
+        .order('id')
+        .range(from, to);
+      return { data, error };
+    });
+  } catch (softErr: any) {
+    // Soft table may not be migrated yet — treat as empty.
+    const msg = String(softErr?.message || softErr || '');
+    const code = softErr?.code;
     if (
-      softErr.code !== '42P01' &&
-      softErr.code !== 'PGRST205' &&
+      code !== '42P01' &&
+      code !== 'PGRST205' &&
       !msg.includes('warehouse_transfer_soft_reservations')
     ) {
       throw softErr;
@@ -340,6 +355,23 @@ export async function fetchOpenTransferPoReservedByVariant(
     if (remaining <= 0) continue;
     const vid = String((row as any).variant_id);
     map[vid] = (map[vid] || 0) + remaining;
+  }
+  return map;
+}
+
+/** Main allocatable qty via RPC (works for sub-warehouse users blocked by PO-hold RLS). */
+export async function fetchMainWarehouseAllocatableByVariant(
+  variantIds?: string[]
+): Promise<Record<string, number>> {
+  const { data, error } = await supabase.rpc('get_main_warehouse_allocatable_by_variant', {
+    p_variant_ids: variantIds?.length ? variantIds : null,
+  });
+  if (error) throw error;
+
+  const map: Record<string, number> = {};
+  for (const row of (data as { variant_id: string; allocatable: number }[]) || []) {
+    const vid = String(row.variant_id);
+    map[vid] = Math.max(0, Number(row.allocatable || 0));
   }
   return map;
 }

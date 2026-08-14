@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
 import { fetchAllPaginated } from '@/lib/supabasePaginate';
@@ -9,7 +9,6 @@ import {
 } from '@/features/key-accounts/keyAccountWorkflowStatus';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   Users,
@@ -24,15 +23,29 @@ import {
   Eye
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import {
+  DateRangeFilterPopover,
+  type DateRangeFilterValue,
+} from '@/features/shared/components/DateRangeFilterPopover';
+import {
+  formatDateForInput,
+  getDatePresetLabel,
+  getDateRangeFromPreset,
+} from '@/lib/dateRangePresets';
 import { KeyAccountDashboardRevenueCard } from './KeyAccountDashboardRevenueCard';
 import { KeyAccountDashboardRevenueOverview } from './KeyAccountDashboardRevenueOverview';
 import {
   EMPTY_KEY_ACCOUNT_DASHBOARD_REVENUE,
+  fetchKeyAccountDashboardPayments,
   formatKeyAccountDashboardCurrency,
+  isKeyAccountDashboardSalesOrder,
   loadKeyAccountDashboardRevenue,
+  splitKeyAccountPoPaymentRevenue,
   type KeyAccountDashboardOrder,
+  type KeyAccountDashboardPaymentRow,
   type KeyAccountDashboardRevenueResult,
 } from './keyAccountDashboardRevenue';
+import { isKeyAccountConsignmentOrder } from '../key-accounts-analytics/keyAccountAnalyticsShared';
 
 interface KAMWithStats {
   id: string;
@@ -52,7 +65,10 @@ interface ClientWithLastOrder {
   lastOrderDate: string | null;
   daysSinceLastOrder: number | null;
   totalOrders: number;
-  totalRevenue: number;
+  paidRevenue: number;
+  remainingBalance: number;
+  consignmentRevenue: number;
+  settlementDiscountRevenue: number;
 }
 
 interface DirectorOrder {
@@ -81,6 +97,49 @@ function formatOrderDate(value: string | null) {
   return new Date(value).toLocaleDateString();
 }
 
+function sumPaymentsByOrderId(payments: KeyAccountDashboardPaymentRow[]) {
+  const paidByOrderId = new Map<string, number>();
+  const discountByOrderId = new Map<string, number>();
+  for (const payment of payments) {
+    const id = payment.purchase_order_id;
+    paidByOrderId.set(id, (paidByOrderId.get(id) || 0) + (Number(payment.amount) || 0));
+    discountByOrderId.set(
+      id,
+      (discountByOrderId.get(id) || 0) + (Number(payment.settlement_discount) || 0)
+    );
+  }
+  return { paidByOrderId, discountByOrderId };
+}
+
+/** Paid / remaining / consignment for a client's sales-eligible POs (same rules as Revenue Overview). */
+function computeClientPaymentTotals(
+  orders: KeyAccountDashboardOrder[],
+  paidByOrderId: Map<string, number>,
+  discountByOrderId: Map<string, number>
+) {
+  let paidRevenue = 0;
+  let remainingBalance = 0;
+  let consignmentRevenue = 0;
+  let settlementDiscountRevenue = 0;
+
+  for (const order of orders) {
+    if (!isKeyAccountDashboardSalesOrder(order)) continue;
+    const isConsignment = isKeyAccountConsignmentOrder(order);
+    const split = splitKeyAccountPoPaymentRevenue(
+      Number(order.total_amount) || 0,
+      paidByOrderId.get(order.id) || 0,
+      isConsignment,
+      discountByOrderId.get(order.id) || 0
+    );
+    paidRevenue += split.paidRevenue;
+    remainingBalance += split.partialRevenue + split.unpaidRevenue;
+    consignmentRevenue += split.consignmentRevenue;
+    settlementDiscountRevenue += split.settlementDiscountRevenue;
+  }
+
+  return { paidRevenue, remainingBalance, consignmentRevenue, settlementDiscountRevenue };
+}
+
 const PAGE_SIZE = 10;
 
 function getPageCount(total: number) {
@@ -97,6 +156,9 @@ export function SalesDirectorDashboard() {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState('overview');
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
+    preset: 'this_year',
+  });
   const [kamStats, setKamStats] = useState<KAMWithStats[]>([]);
   const [clients, setClients] = useState<ClientWithLastOrder[]>([]);
   const [orders, setOrders] = useState<DirectorOrder[]>([]);
@@ -115,52 +177,166 @@ export function SalesDirectorDashboard() {
     pendingOrders: 0,
     inactiveClients: 0
   });
-  const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [revenueLoading, setRevenueLoading] = useState(false);
+  const [tabsLoading, setTabsLoading] = useState(false);
 
-  useEffect(() => {
-    fetchDirectorData();
-  }, [selectedYear]);
+  const dateRange = useMemo(
+    () =>
+      getDateRangeFromPreset(
+        dateRangeFilter.preset,
+        dateRangeFilter.customStart,
+        dateRangeFilter.customEnd
+      ),
+    [dateRangeFilter]
+  );
 
-  const fetchDirectorData = async () => {
-    setLoading(true);
+  const dateRangeLabel = useMemo(
+    () =>
+      getDatePresetLabel(
+        dateRangeFilter.preset,
+        dateRangeFilter.customStart,
+        dateRangeFilter.customEnd
+      ),
+    [dateRangeFilter]
+  );
+
+  type ScopedOrder = KeyAccountDashboardOrder & {
+    client?: { client_name: string | null } | { client_name: string | null }[] | null;
+    shop?: { shop_name: string | null } | { shop_name: string | null }[] | null;
+    kam?: { full_name: string | null } | { full_name: string | null }[] | null;
+    dr_number?: string | null;
+  };
+
+  const loadKamScope = async () => {
+    const { data: kamAssignments, error: kamError } = await supabase
+      .from('kam_director_assignments')
+      .select('kam_id, kam:profiles!kam_director_assignments_kam_id_fkey(id, full_name, email)')
+      .eq('director_id', user?.id);
+
+    if (kamError) throw kamError;
+
+    const kamIds = kamAssignments?.map((a: any) => a.kam_id) || [];
+    const orderScopeKamIds = Array.from(
+      new Set([...kamIds, ...(user?.id ? [user.id] : [])])
+    );
+
+    return { kamAssignments: kamAssignments || [], kamIds, orderScopeKamIds };
+  };
+
+  const fetchScopedOrders = async (
+    orderScopeKamIds: string[],
+    dateStart: string | null,
+    dateEnd: string | null
+  ) => {
+    if (orderScopeKamIds.length === 0) return [] as ScopedOrder[];
+    return fetchAllPaginated<ScopedOrder>(async (from, to) => {
+      let query = supabase
+        .from('purchase_orders')
+        .select(`
+          id,
+          po_number,
+          total_amount,
+          subtotal,
+          status,
+          workflow_status,
+          po_order_kind,
+          source_rebate_id,
+          warehouse_location_id,
+          order_date,
+          dr_number,
+          key_account_client_id,
+          key_account_payment_status,
+          client:key_account_clients(client_name),
+          shop:key_account_shops(shop_name),
+          kam:profiles!purchase_orders_kam_id_fkey(full_name)
+        `)
+        .eq('company_id', user?.company_id)
+        .in('kam_id', orderScopeKamIds)
+        .eq('company_account_type', 'Key Accounts');
+      if (dateStart) query = query.gte('order_date', dateStart);
+      if (dateEnd) query = query.lte('order_date', dateEnd);
+      const { data, error } = await query
+        .order('order_date', { ascending: false })
+        .order('id', { ascending: true })
+        .range(from, to);
+      return { data: (data as ScopedOrder[] | null) ?? null, error };
+    });
+  };
+
+  /** Top cards + revenue chart — driven only by year picker. */
+  const fetchRevenueData = async () => {
+    setRevenueLoading(true);
     try {
-      // Get my assigned KAMs
-      const { data: kamAssignments, error: kamError } = await supabase
-        .from('kam_director_assignments')
-        .select('kam_id, kam:profiles!kam_director_assignments_kam_id_fkey(id, full_name, email)')
-        .eq('director_id', user?.id);
+      const { kamAssignments, orderScopeKamIds } = await loadKamScope();
+      const revenueOrders = await fetchScopedOrders(
+        orderScopeKamIds,
+        `${selectedYear}-01-01`,
+        `${selectedYear}-12-31`
+      );
+      const revenueResult = await loadKeyAccountDashboardRevenue(
+        supabase,
+        revenueOrders,
+        selectedYear
+      );
+      setRevenueMetrics(revenueResult);
 
-      if (kamError) throw kamError;
-
-      const kamIds = kamAssignments?.map((a: any) => a.kam_id) || [];
-      // Director-created POs store kam_id = director user id — include them in revenue/orders
-      // the same way Sales Head/Admin see company POs.
-      const orderScopeKamIds = Array.from(
-        new Set([...kamIds, ...(user?.id ? [user.id] : [])])
+      const yearClientIds = new Set(
+        revenueOrders
+          .map((o) => o.key_account_client_id)
+          .filter((id): id is string => Boolean(id))
       );
 
-      // Get stats for each assigned KAM
+      setStats((prev) => ({
+        ...prev,
+        totalKAMs: kamAssignments.length,
+        totalClients: yearClientIds.size,
+        totalOrders: revenueOrders.length,
+        pendingOrders: revenueResult.pendingOrderCount,
+      }));
+    } catch (error: any) {
+      toast({ variant: 'destructive', title: 'Error', description: error.message });
+    } finally {
+      setRevenueLoading(false);
+      setInitialLoading(false);
+    }
+  };
+
+  /** Overview / Client Monitoring / My KAMs / Orders — driven only by date filter. */
+  const fetchTabData = async () => {
+    setTabsLoading(true);
+    try {
+      const { kamAssignments, kamIds, orderScopeKamIds } = await loadKamScope();
+      const tabDateStart = dateRange.start ? formatDateForInput(dateRange.start) : null;
+      const tabDateEnd = dateRange.end ? formatDateForInput(dateRange.end) : null;
+
+      const analyticsOrders = await fetchScopedOrders(
+        orderScopeKamIds,
+        tabDateStart,
+        tabDateEnd
+      );
+
       const kamsWithStats: KAMWithStats[] = [];
-      for (const assignment of kamAssignments || []) {
+      for (const assignment of kamAssignments) {
         const kamData = assignment.kam as any;
         if (!kamData?.id) continue;
 
-        // Count clients
         const { count: clientCount } = await supabase
           .from('kam_client_assignments')
           .select('*', { count: 'exact', head: true })
           .eq('kam_id', kamData.id);
 
-        // Count orders and revenue
-        const { data: kamOrders } = await supabase
+        let kamOrdersQuery = supabase
           .from('purchase_orders')
           .select('total_amount, status, workflow_status')
-          .eq('kam_id', kamData.id)
-          .gte('order_date', `${selectedYear}-01-01`)
-          .lte('order_date', `${selectedYear}-12-31`);
+          .eq('kam_id', kamData.id);
+        if (tabDateStart) kamOrdersQuery = kamOrdersQuery.gte('order_date', tabDateStart);
+        if (tabDateEnd) kamOrdersQuery = kamOrdersQuery.lte('order_date', tabDateEnd);
+
+        const { data: kamOrderRows } = await kamOrdersQuery;
 
         const deliveredOrders =
-          kamOrders?.filter((o: any) => isDeliveredRevenue(o)) || [];
+          kamOrderRows?.filter((o: any) => isDeliveredRevenue(o)) || [];
         const revenue = deliveredOrders.reduce(
           (sum: number, o: any) => sum + (o.total_amount || 0),
           0
@@ -171,84 +347,44 @@ export function SalesDirectorDashboard() {
           full_name: kamData.full_name,
           email: kamData.email,
           clientCount: clientCount || 0,
-          orderCount: kamOrders?.length || 0,
+          orderCount: kamOrderRows?.length || 0,
           deliveredOrderCount: deliveredOrders.length,
-          totalRevenue: revenue
+          totalRevenue: revenue,
         });
       }
 
       setKamStats(kamsWithStats);
 
-      // Orders for assigned KAMs + director-created POs (paged — PostgREST 1000-row cap)
-      const analyticsOrders =
-        orderScopeKamIds.length === 0
-          ? []
-          : await fetchAllPaginated<KeyAccountDashboardOrder & {
-              client?: { client_name: string | null } | { client_name: string | null }[] | null;
-              shop?: { shop_name: string | null } | { shop_name: string | null }[] | null;
-              kam?: { full_name: string | null } | { full_name: string | null }[] | null;
-              dr_number?: string | null;
-            }>(async (from, to) => {
-              const { data, error } = await supabase
-                .from('purchase_orders')
-                .select(`
-                  id,
-                  po_number,
-                  total_amount,
-                  subtotal,
-                  status,
-                  workflow_status,
-                  po_order_kind,
-                  source_rebate_id,
-                  warehouse_location_id,
-                  order_date,
-                  dr_number,
-                  key_account_client_id,
-                  key_account_payment_status,
-                  client:key_account_clients(client_name),
-                  shop:key_account_shops(shop_name),
-                  kam:profiles!purchase_orders_kam_id_fkey(full_name)
-                `)
-                .eq('company_id', user?.company_id)
-                .in('kam_id', orderScopeKamIds)
-                .eq('company_account_type', 'Key Accounts')
-                .gte('order_date', `${selectedYear}-01-01`)
-                .lte('order_date', `${selectedYear}-12-31`)
-                .order('order_date', { ascending: false })
-                .order('id', { ascending: true })
-                .range(from, to);
-              return { data: (data as any[] | null) ?? null, error };
-            });
-
-      const revenueResult = await loadKeyAccountDashboardRevenue(
+      const tabPayments = await fetchKeyAccountDashboardPayments(
         supabase,
-        analyticsOrders,
-        selectedYear
+        analyticsOrders.filter(isKeyAccountDashboardSalesOrder).map((o) => o.id)
       );
-      setRevenueMetrics(revenueResult);
+      const { paidByOrderId, discountByOrderId } = sumPaymentsByOrderId(tabPayments);
 
       const formattedOrders: DirectorOrder[] = analyticsOrders.map((o: any) => ({
         id: o.id,
-        client_name: Array.isArray(o.client) ? o.client?.[0]?.client_name : o.client?.client_name || 'Unknown',
+        client_name: Array.isArray(o.client)
+          ? o.client?.[0]?.client_name
+          : o.client?.client_name || 'Unknown',
         shop_name: Array.isArray(o.shop) ? o.shop?.[0]?.shop_name : o.shop?.shop_name || 'Unknown',
         kam_name: Array.isArray(o.kam) ? o.kam?.[0]?.full_name : o.kam?.full_name || 'Unknown',
         total_amount: o.total_amount,
         status: o.status,
         workflow_status: o.workflow_status,
         order_date: o.order_date,
-        dr_number: o.dr_number
+        dr_number: o.dr_number,
       }));
 
       setOrders(formattedOrders);
 
-      // Client monitoring: KAM-assigned clients + clients from POs in director scope
-      // (director-created POs often use clients not assigned via kam_client_assignments).
       const clientById = new Map<string, ClientWithLastOrder>();
 
       if (kamIds.length > 0) {
         const { data: clientAssignments, error: clientError } = await supabase
           .from('kam_client_assignments')
-          .select('client_id, kam_id, kam:profiles!kam_client_assignments_kam_id_fkey(full_name), client:key_account_clients(*)')
+          .select(
+            'client_id, kam_id, kam:profiles!kam_client_assignments_kam_id_fkey(full_name), client:key_account_clients(*)'
+          )
           .in('kam_id', kamIds);
 
         if (clientError) throw clientError;
@@ -273,14 +409,17 @@ export function SalesDirectorDashboard() {
           const scopedOrders = analyticsOrders.filter(
             (o) => o.key_account_client_id === clientData.id
           );
-          const totalOrders = scopedOrders.length;
-          const totalRevenue = scopedOrders
-            .filter((o) => isDeliveredRevenue(o))
-            .reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0);
+          const paymentTotals = computeClientPaymentTotals(
+            scopedOrders,
+            paidByOrderId,
+            discountByOrderId
+          );
 
           const lastOrderDate = lastOrder?.order_date ?? null;
           const daysSinceLastOrder = lastOrderDate
-            ? Math.floor((Date.now() - new Date(lastOrderDate).getTime()) / (1000 * 60 * 60 * 24))
+            ? Math.floor(
+                (Date.now() - new Date(lastOrderDate).getTime()) / (1000 * 60 * 60 * 24)
+              )
             : null;
 
           clientById.set(clientData.id, {
@@ -290,8 +429,8 @@ export function SalesDirectorDashboard() {
             kam_name: kamName,
             lastOrderDate,
             daysSinceLastOrder,
-            totalOrders,
-            totalRevenue
+            totalOrders: scopedOrders.length,
+            ...paymentTotals,
           });
         }
       }
@@ -335,8 +474,16 @@ export function SalesDirectorDashboard() {
 
           const lastOrderDate = lastOrder?.order_date ?? latest?.order_date ?? null;
           const daysSinceLastOrder = lastOrderDate
-            ? Math.floor((Date.now() - new Date(lastOrderDate).getTime()) / (1000 * 60 * 60 * 24))
+            ? Math.floor(
+                (Date.now() - new Date(lastOrderDate).getTime()) / (1000 * 60 * 60 * 24)
+              )
             : null;
+
+          const paymentTotals = computeClientPaymentTotals(
+            scopedOrders,
+            paidByOrderId,
+            discountByOrderId
+          );
 
           clientById.set(client.id, {
             id: client.id,
@@ -346,9 +493,7 @@ export function SalesDirectorDashboard() {
             lastOrderDate,
             daysSinceLastOrder,
             totalOrders: scopedOrders.length,
-            totalRevenue: scopedOrders
-              .filter((o) => isDeliveredRevenue(o))
-              .reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0)
+            ...paymentTotals,
           });
         }
       }
@@ -358,16 +503,10 @@ export function SalesDirectorDashboard() {
 
       const inactiveThreshold = 30;
       const inactiveClients = clientsWithOrders.filter(
-        c => c.daysSinceLastOrder === null || c.daysSinceLastOrder > inactiveThreshold
+        (c) => c.daysSinceLastOrder === null || c.daysSinceLastOrder > inactiveThreshold
       ).length;
+      setStats((prev) => ({ ...prev, inactiveClients }));
 
-      setStats({
-        totalKAMs: kamsWithStats.length,
-        totalClients: clientsWithOrders.length,
-        totalOrders: formattedOrders.length,
-        pendingOrders: revenueResult.pendingOrderCount,
-        inactiveClients
-      });
       setAlertPage(1);
       setRecentOrdersPage(1);
       setClientPage(1);
@@ -376,9 +515,22 @@ export function SalesDirectorDashboard() {
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
     } finally {
-      setLoading(false);
+      setTabsLoading(false);
     }
   };
+
+  useEffect(() => {
+    void fetchRevenueData();
+  }, [selectedYear, user?.id, user?.company_id]);
+
+  useEffect(() => {
+    void fetchTabData();
+  }, [
+    dateRange.start?.getTime(),
+    dateRange.end?.getTime(),
+    user?.id,
+    user?.company_id,
+  ]);
 
   const getDaysBadge = (days: number | null) => {
     if (days === null) return <Badge variant="outline">Never ordered</Badge>;
@@ -438,7 +590,7 @@ export function SalesDirectorDashboard() {
   const paginatedKamStats = paginateRows(kamStats, kamPage);
   const paginatedOrders = paginateRows(orders, ordersPage);
 
-  if (loading) {
+  if (initialLoading) {
     return (
       <div className="flex items-center justify-center p-8">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
@@ -449,31 +601,19 @@ export function SalesDirectorDashboard() {
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Sales Director Dashboard</h1>
-          <div className="text-muted-foreground flex items-center flex-wrap gap-2">
-            <span>Welcome, {user?.full_name}</span>
-            <Badge variant="secondary">
-              <UserCheck className="h-3 w-3 mr-1" />
-              Sales Director
-            </Badge>
-          </div>
+      <div>
+        <h1 className="text-3xl font-bold">Sales Director Dashboard</h1>
+        <div className="text-muted-foreground flex items-center flex-wrap gap-2">
+          <span>Welcome, {user?.full_name}</span>
+          <Badge variant="secondary">
+            <UserCheck className="h-3 w-3 mr-1" />
+            Sales Director
+          </Badge>
         </div>
-        <Select value={selectedYear.toString()} onValueChange={(v) => setSelectedYear(parseInt(v))}>
-          <SelectTrigger className="w-[140px]">
-            <SelectValue placeholder="Select year" />
-          </SelectTrigger>
-          <SelectContent>
-            {[2024, 2025, 2026].map(y => (
-              <SelectItem key={y} value={y.toString()}>{y}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+      <div className={`grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6 ${revenueLoading ? 'opacity-60' : ''}`}>
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">My KAMs</CardTitle>
@@ -528,16 +668,40 @@ export function SalesDirectorDashboard() {
         </Card>
       </div>
 
-      <KeyAccountDashboardRevenueOverview
-        monthlyData={revenueMetrics.monthlyData}
-        selectedYear={selectedYear}
-        onYearChange={setSelectedYear}
-        orders={revenueMetrics.orders}
-        payments={revenueMetrics.payments}
-      />
+      <div className={revenueLoading ? 'opacity-60 pointer-events-none' : ''}>
+        <KeyAccountDashboardRevenueOverview
+          monthlyData={revenueMetrics.monthlyData}
+          selectedYear={selectedYear}
+          onYearChange={setSelectedYear}
+          orders={revenueMetrics.orders}
+          payments={revenueMetrics.payments}
+        />
+      </div>
 
-      {/* Main Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
+      {/* Main Tabs — date filter applies to tab content only (not revenue chart year). */}
+      <div className="space-y-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-muted-foreground">
+            Tab data · PO order date: {dateRangeLabel}
+          </p>
+          <DateRangeFilterPopover
+            value={dateRangeFilter}
+            onChange={setDateRangeFilter}
+            triggerClassName="w-full sm:w-[220px] justify-between h-10 shrink-0"
+            align="end"
+          />
+        </div>
+
+        <div className="relative">
+          {tabsLoading ? (
+            <div className="absolute inset-0 z-10 flex items-start justify-center rounded-md bg-background/60 pt-16">
+              <div className="flex items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm text-muted-foreground shadow-sm">
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                Updating tab data…
+              </div>
+            </div>
+          ) : null}
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4">
           <TabsTrigger value="overview" className="flex items-center gap-2">
             <Eye className="h-4 w-4" />
@@ -661,6 +825,10 @@ export function SalesDirectorDashboard() {
                   (Assigned KAM clients + clients from your POs)
                 </span>
               </CardTitle>
+              <p className="text-sm text-muted-foreground font-normal">
+                Paid and remaining use the same payment rules as Revenue Overview / Client Analytics
+                for {dateRangeLabel}. Consignment float is shown separately.
+              </p>
             </CardHeader>
             <CardContent>
               <Table>
@@ -672,7 +840,10 @@ export function SalesDirectorDashboard() {
                     <TableHead>KAM</TableHead>
                     <TableHead>Last Order</TableHead>
                     <TableHead className="text-right">Orders</TableHead>
-                    <TableHead className="text-right">Delivered Revenue</TableHead>
+                    <TableHead className="text-right">Paid</TableHead>
+                    <TableHead className="text-right">Remaining</TableHead>
+                    <TableHead className="text-right">Consignment</TableHead>
+                    <TableHead className="text-right">Settlement disc.</TableHead>
                     <TableHead className="text-right">Activity</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -705,13 +876,24 @@ export function SalesDirectorDashboard() {
                         <TableCell>{client.kam_name}</TableCell>
                         <TableCell>{formatOrderDate(client.lastOrderDate)}</TableCell>
                         <TableCell className="text-right">{client.totalOrders}</TableCell>
-                        <TableCell className="text-right">₱{client.totalRevenue.toLocaleString()}</TableCell>
+                        <TableCell className="text-right text-emerald-600 tabular-nums">
+                          {formatKeyAccountDashboardCurrency(client.paidRevenue)}
+                        </TableCell>
+                        <TableCell className="text-right text-orange-600 tabular-nums">
+                          {formatKeyAccountDashboardCurrency(client.remainingBalance)}
+                        </TableCell>
+                        <TableCell className="text-right text-sky-600 tabular-nums">
+                          {formatKeyAccountDashboardCurrency(client.consignmentRevenue)}
+                        </TableCell>
+                        <TableCell className="text-right text-slate-600 tabular-nums">
+                          {formatKeyAccountDashboardCurrency(client.settlementDiscountRevenue)}
+                        </TableCell>
                         <TableCell className="text-right">{getDaysBadge(client.daysSinceLastOrder)}</TableCell>
                       </TableRow>
                     ))}
                   {clients.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={8} className="py-6 text-center text-muted-foreground">
+                      <TableCell colSpan={11} className="py-6 text-center text-muted-foreground">
                         No clients in your scope yet.
                       </TableCell>
                     </TableRow>
@@ -731,6 +913,9 @@ export function SalesDirectorDashboard() {
                 <Users className="h-5 w-5" />
                 My Key Account Managers
               </CardTitle>
+              <p className="text-sm text-muted-foreground font-normal">
+                Order counts and delivered revenue for {dateRangeLabel}.
+              </p>
             </CardHeader>
             <CardContent>
               <Table>
@@ -781,8 +966,11 @@ export function SalesDirectorDashboard() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <ShoppingCart className="h-5 w-5" />
-                All Orders from My KAMs
+                All Orders in My Scope
               </CardTitle>
+              <p className="text-sm text-muted-foreground font-normal">
+                POs from your assigned KAMs and POs you created as Sales Director · {dateRangeLabel}.
+              </p>
             </CardHeader>
             <CardContent>
               <Table>
@@ -790,7 +978,7 @@ export function SalesDirectorDashboard() {
                   <TableRow>
                     <TableHead>Client</TableHead>
                     <TableHead>Shop</TableHead>
-                    <TableHead>KAM</TableHead>
+                    <TableHead>Owner</TableHead>
                     <TableHead>Date</TableHead>
                     <TableHead>DR Number</TableHead>
                     <TableHead className="text-right">Amount</TableHead>
@@ -814,7 +1002,7 @@ export function SalesDirectorDashboard() {
                   {orders.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={7} className="py-6 text-center text-muted-foreground">
-                        No orders found.
+                        No orders found in your scope.
                       </TableCell>
                     </TableRow>
                   )}
@@ -825,6 +1013,8 @@ export function SalesDirectorDashboard() {
           </Card>
         </TabsContent>
       </Tabs>
+        </div>
+      </div>
     </div>
   );
 }

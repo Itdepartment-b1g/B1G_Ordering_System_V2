@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -23,14 +23,24 @@ import {
   fetchInternalStockRequestById,
   fetchInternalStockRequests,
 } from './internalStockRequestsApi';
+import {
+  broadcastInternalStockRequestsChanged,
+  refetchInternalStockRequestLists,
+  useInternalStockRequestsRealtime,
+} from './useInternalStockRequestsRealtime';
 import { exportSubWarehouseReceivePdf } from './utils/exportSubWarehouseReceivePdf';
 import {
   attachInternalStockProofImageUrls,
   uploadInternalStockPackagePhotos,
   uploadInternalStockSignature,
 } from './utils/uploadInternalStockDeliveryEvidence';
-import { fetchMainWarehouseStockBoard } from './warehouseStockBoard';
+import {
+  fetchMainWarehouseStockBoard,
+  fetchMainWarehouseAllocatableByVariant,
+} from './warehouseStockBoard';
 import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
+import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import RequestStockManual from '@/features/inventory/warehouse-manual/components/RequestStockManual';
 
 export default function SubWarehouseStockRequestPage() {
   const { toast } = useToast();
@@ -52,68 +62,47 @@ export default function SubWarehouseStockRequestPage() {
     isLoading: loadingRequests,
     error: requestsError,
   } = useQuery({
-    queryKey: [INTERNAL_STOCK_REQUESTS_QUERY_KEY, 'sub', user?.company_id, myLocationId],
+    queryKey: [INTERNAL_STOCK_REQUESTS_QUERY_KEY, 'sub', user?.company_id, myLocationId, 'lite'],
     enabled: !!user?.company_id && !!myLocationId,
-    staleTime: 15_000,
-    refetchOnMount: true,
+    staleTime: 0,
+    gcTime: 5 * 60_000,
+    placeholderData: (prev) => prev,
+    refetchOnMount: 'always',
     refetchOnWindowFocus: true,
     queryFn: () => fetchInternalStockRequests({ fromLocationId: myLocationId }),
   });
 
   /** Do not await on mutation success — awaiting blocks dialog close / Confirming… state. */
   const schedulePostMutationRefresh = () => {
-    void queryClient.invalidateQueries({ queryKey: [INTERNAL_STOCK_REQUESTS_QUERY_KEY] });
+    void refetchInternalStockRequestLists(queryClient);
+    void broadcastInternalStockRequestsChanged(user?.company_id);
     void queryClient.invalidateQueries({ queryKey: ['inventory'] });
     void queryClient.invalidateQueries({ queryKey: ['variant-batch-lots'] });
     void queryClient.invalidateQueries({
       queryKey: ['main-warehouse-stock-for-sub-request', user?.company_id],
     });
+    void queryClient.invalidateQueries({
+      queryKey: ['main-warehouse-allocatable-for-sub-request', user?.company_id],
+    });
   };
 
-  // Live updates when main approves / rejects / allocates remaining.
-  useEffect(() => {
-    if (!user?.company_id || !myLocationId) return;
-
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const scheduleRefresh = () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        void queryClient.invalidateQueries({ queryKey: [INTERNAL_STOCK_REQUESTS_QUERY_KEY] });
-      }, 250);
-    };
-
-    const channel = supabase
-      .channel(`internal-stock-requests-sub-${myLocationId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'internal_stock_requests',
-        },
-        (payload) => {
-          const row = (payload.new ?? payload.old) as { from_location_id?: string } | null;
-          if (row?.from_location_id && row.from_location_id !== myLocationId) return;
-          scheduleRefresh();
-        }
-      )
-      .subscribe((status) => {
-        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          console.error('[SubStockRequests] realtime subscription failed:', status);
-        }
-      });
-
-    return () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      void supabase.removeChannel(channel);
-    };
-  }, [user?.company_id, myLocationId, queryClient]);
+  useInternalStockRequestsRealtime({
+    enabled: !!user?.company_id && !!myLocationId,
+    companyId: user?.company_id,
+    fromLocationId: myLocationId,
+  });
 
   const { data: mainBrands = [], isLoading: loadingMainBrands } = useQuery({
     queryKey: ['main-warehouse-stock-for-sub-request', user?.company_id],
     enabled: !!user?.company_id && requestOpen,
     queryFn: () => fetchMainWarehouseStockBoard(user!.company_id!),
+    staleTime: 30_000,
+  });
+
+  const { data: mainAllocatableByVariantId = {}, isLoading: loadingMainAllocatable } = useQuery({
+    queryKey: ['main-warehouse-allocatable-for-sub-request', user?.company_id, requestOpen],
+    enabled: !!user?.company_id && requestOpen,
+    queryFn: () => fetchMainWarehouseAllocatableByVariant(),
     staleTime: 30_000,
   });
 
@@ -150,7 +139,8 @@ export default function SubWarehouseStockRequestPage() {
         title: 'Request submitted',
         description: `${result.request_number} sent to main warehouse.`,
       });
-      void queryClient.invalidateQueries({ queryKey: [INTERNAL_STOCK_REQUESTS_QUERY_KEY] });
+      void refetchInternalStockRequestLists(queryClient);
+      void broadcastInternalStockRequestsChanged(user?.company_id);
     },
     onError: (error: Error) => {
       toast({
@@ -293,6 +283,12 @@ export default function SubWarehouseStockRequestPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <PageGettingStartedDialog />
+          <PageManualDialog
+            title="Request Stock Manual"
+            fullManualHref="/warehouse-manual#request-stock"
+          >
+            <RequestStockManual embedded />
+          </PageManualDialog>
           <Button onClick={() => setRequestOpen(true)} disabled={!myLocationId}>
             <Plus className="mr-2 h-4 w-4" />
             New stock request
@@ -306,23 +302,27 @@ export default function SubWarehouseStockRequestPage() {
         </p>
       ) : null}
 
-      {loadingRequests ? (
+      {loadingRequests && requests.length === 0 ? (
         <div className="flex items-center justify-center py-16 text-muted-foreground">
           <Loader2 className="h-6 w-6 animate-spin mr-2" />
           Loading requests…
         </div>
       ) : (
-        <SubWarehouseStockRequestList requests={requests} onReceive={(request) => {
-          setReceiveTarget(request);
-          setReceiveOpen(true);
-        }} />
+        <SubWarehouseStockRequestList
+          requests={requests}
+          onReceive={(request) => {
+            setReceiveTarget(request);
+            setReceiveOpen(true);
+          }}
+        />
       )}
 
       <SubWarehouseStockRequestDialog
         open={requestOpen}
         onOpenChange={setRequestOpen}
         brands={mainBrands}
-        loadingBrands={loadingMainBrands}
+        loadingBrands={loadingMainBrands || loadingMainAllocatable}
+        mainAllocatableByVariantId={mainAllocatableByVariantId}
         sourceLocationName={mainLocationName || 'Main warehouse'}
         submitting={createMutation.isPending}
         onSubmit={async (payload) => {

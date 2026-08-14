@@ -261,23 +261,31 @@ function buildPeriods(orders: AnalyticsOrder[], range?: DateRange) {
     if (diff <= 35) {
       const current = new Date(from);
       while (current <= to) {
-        periods.push({ label: formatShortDate(current), start: startOfDay(current), end: endOfDay(current) });
+        // Copy dates — never push the loop cursor by reference.
+        periods.push({
+          label: formatShortDate(current),
+          start: startOfDay(current),
+          end: endOfDay(current),
+        });
         current.setDate(current.getDate() + 1);
       }
     } else if (diff <= 180) {
       const current = startOfWeek(from);
       while (current <= to) {
-        const start = current < from ? from : current;
-        const end = endOfWeek(current) > to ? to : endOfWeek(current);
+        const start = current < from ? new Date(from) : new Date(current);
+        const weekEnd = endOfWeek(current);
+        const end = weekEnd > to ? new Date(to) : weekEnd;
         periods.push({ label: `Week of ${formatShortDate(start)}`, start, end });
         current.setDate(current.getDate() + 7);
       }
     } else {
       const current = startOfMonth(from);
       while (current <= to) {
-        const start = current < from ? from : current;
-        const end = endOfMonth(current) > to ? to : endOfMonth(current);
-        periods.push({ label: formatMonthYear(start), start, end });
+        const monthStart = startOfMonth(current);
+        const monthEnd = endOfMonth(current);
+        const start = monthStart < from ? new Date(from) : monthStart;
+        const end = monthEnd > to ? new Date(to) : monthEnd;
+        periods.push({ label: formatMonthYear(monthStart), start, end });
         current.setMonth(current.getMonth() + 1);
       }
     }
@@ -299,7 +307,11 @@ function buildPeriods(orders: AnalyticsOrder[], range?: DateRange) {
   const current = startOfMonth(earliest);
   const end = endOfMonth(latest);
   while (current <= end) {
-    periods.push({ label: formatMonthYear(current), start: startOfMonth(current), end: endOfMonth(current) });
+    periods.push({
+      label: formatMonthYear(current),
+      start: startOfMonth(current),
+      end: endOfMonth(current),
+    });
     current.setMonth(current.getMonth() + 1);
   }
   return periods;
@@ -1010,10 +1022,10 @@ export default function KeyAccountKamAnalyticsTab({
           consignmentOrders: number;
           total: number;
         };
+      const openOrders = partialOrders + unpaidOrders;
       const orderNotes = [
         paidOrders > 0 ? `${paidOrders.toLocaleString()} paid` : null,
-        partialOrders > 0 ? `${partialOrders.toLocaleString()} partial` : null,
-        unpaidOrders > 0 ? `${unpaidOrders.toLocaleString()} unpaid` : null,
+        openOrders > 0 ? `${openOrders.toLocaleString()} open (partial + unpaid)` : null,
         consignmentOrders > 0 ? `${consignmentOrders.toLocaleString()} consignment` : null,
       ].filter(Boolean);
       return (
@@ -1021,34 +1033,30 @@ export default function KeyAccountKamAnalyticsTab({
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
             Period total — all agents
           </p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 text-sm">
-            <div>
-              <p className="text-muted-foreground text-xs">Paid</p>
+          <div className="grid grid-cols-5 gap-2 text-sm">
+            <div className="min-w-0">
+              <p className="text-muted-foreground text-xs whitespace-nowrap">Paid</p>
               <p className="font-semibold text-green-600 dark:text-green-400">{formatCurrency(paid)}</p>
             </div>
-            <div>
-              <p className="text-muted-foreground text-xs">Partial</p>
-              <p className="font-semibold text-amber-600 dark:text-amber-400">{formatCurrency(partial)}</p>
+            <div className="min-w-0">
+              <p className="text-muted-foreground text-xs whitespace-nowrap">Rem. bal.</p>
+              <p className="font-semibold text-orange-600 dark:text-orange-400">
+                {formatCurrency(partial + unpaid)}
+              </p>
             </div>
-            <div>
-              <p className="text-muted-foreground text-xs">Unpaid</p>
-              <p className="font-semibold text-orange-600 dark:text-orange-400">{formatCurrency(unpaid)}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground text-xs">Consignment</p>
+            <div className="min-w-0">
+              <p className="text-muted-foreground text-xs whitespace-nowrap">Cons.</p>
               <p className="font-semibold text-sky-600 dark:text-sky-400">{formatCurrency(consignment)}</p>
             </div>
-            <div>
-              <p className="text-muted-foreground text-xs">Settlement disc.</p>
+            <div className="min-w-0">
+              <p className="text-muted-foreground text-xs whitespace-nowrap">Settle disc.</p>
               <p className="font-semibold text-slate-600 dark:text-slate-300">
                 {formatCurrency(settlementDiscount)}
               </p>
             </div>
-          </div>
-          <div className="grid grid-cols-1 gap-3 text-sm border-t pt-3">
-            <div>
-              <p className="text-muted-foreground text-xs">Total</p>
-              <p className="text-xl font-bold">{formatCurrency(total)}</p>
+            <div className="min-w-0">
+              <p className="text-muted-foreground text-xs whitespace-nowrap">Total</p>
+              <p className="font-semibold">{formatCurrency(total)}</p>
             </div>
           </div>
           {orderNotes.length > 0 && (
@@ -1196,17 +1204,12 @@ export default function KeyAccountKamAnalyticsTab({
                     </div>
                     <div className="flex items-center justify-between gap-3">
                       <span className="flex items-center gap-1.5">
-                        <span className="h-2 w-2 rounded-full bg-amber-500" />
-                        Partial:
-                      </span>
-                      <span className="font-medium text-foreground">{formatCurrency(partial)}</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="flex items-center gap-1.5">
                         <span className="h-2 w-2 rounded-full bg-orange-500" />
-                        Unpaid:
+                        Remaining balance:
                       </span>
-                      <span className="font-medium text-foreground">{formatCurrency(unpaid)}</span>
+                      <span className="font-medium text-foreground">
+                        {formatCurrency(partial + unpaid)}
+                      </span>
                     </div>
                     <div className="flex items-center justify-between gap-3">
                       <span className="flex items-center gap-1.5">
@@ -1218,7 +1221,7 @@ export default function KeyAccountKamAnalyticsTab({
                     <div className="flex items-center justify-between gap-3">
                       <span className="flex items-center gap-1.5">
                         <span className="h-2 w-2 rounded-full bg-slate-500" />
-                        Settlement disc.:
+                        Settle disc.:
                       </span>
                       <span className="font-medium text-foreground">
                         {formatCurrency(settlementDiscount)}
@@ -1227,7 +1230,8 @@ export default function KeyAccountKamAnalyticsTab({
                     <div className="flex items-center justify-between gap-3 border-t pt-2 mt-1 text-xs">
                       <span>PO mix:</span>
                       <span className="font-medium text-foreground">
-                        {paidOrders} paid · {partialOrders} partial · {unpaidOrders} unpaid · {consignmentOrders} consignment
+                        {paidOrders} paid · {partialOrders + unpaidOrders} open · {consignmentOrders}{' '}
+                        consignment
                       </span>
                     </div>
                     <div className="flex items-center justify-between gap-3 border-t pt-2 mt-1">
@@ -1238,7 +1242,7 @@ export default function KeyAccountKamAnalyticsTab({
                 </div>
               );
             })}
-          </div>
+          </div>  
         </>
       );
     }
@@ -1338,8 +1342,8 @@ export default function KeyAccountKamAnalyticsTab({
           <CardContent>
             <div className="text-2xl font-bold">{formatCurrency(totals.totalRevenue)}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              Paid {formatCurrency(totals.paidRevenue)} · Partial {formatCurrency(totals.partialRevenue)}
-              {' · '}Unpaid {formatCurrency(totals.unpaidRevenue)} · Consignment{' '}
+              Paid {formatCurrency(totals.paidRevenue)} · Remaining balance{' '}
+              {formatCurrency(totals.partialRevenue + totals.unpaidRevenue)} · Consignment{' '}
               {formatCurrency(totals.consignmentRevenue)} · Settlement disc.{' '}
               {formatCurrency(totals.settlementDiscountRevenue)}
             </p>
@@ -1355,7 +1359,7 @@ export default function KeyAccountKamAnalyticsTab({
           <CardContent>
             <div className="text-2xl font-bold">{totals.totalOrders}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              {totals.paidOrders} paid · {totals.partialOrders} partial · {totals.unpaidOrders} unpaid
+              {totals.paidOrders} paid · {totals.partialOrders + totals.unpaidOrders} open
               {totals.consignmentOrders > 0 ? ` · ${totals.consignmentOrders} consignment` : ''}
               {rebateReplacementOrders > 0 ? ` · ${rebateReplacementOrders} rebate replacement` : ''}
             </p>
@@ -1569,8 +1573,7 @@ export default function KeyAccountKamAnalyticsTab({
                 <TableRow>
                   <TableHead>Person</TableHead>
                   <TableHead className="text-right">Paid</TableHead>
-                  <TableHead className="text-right">Partial</TableHead>
-                  <TableHead className="text-right">Unpaid</TableHead>
+                  <TableHead className="text-right">Remaining balance</TableHead>
                   <TableHead className="text-right">Consignment</TableHead>
                   <TableHead className="text-right">Settlement disc.</TableHead>
                   <TableHead className="text-right">Net</TableHead>
@@ -1582,7 +1585,7 @@ export default function KeyAccountKamAnalyticsTab({
               <TableBody>
                 {rows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={11} className="text-center text-muted-foreground py-6">
+                    <TableCell colSpan={9} className="text-center text-muted-foreground py-6">
                       No agent analytics found.
                     </TableCell>
                   </TableRow>
@@ -1596,8 +1599,9 @@ export default function KeyAccountKamAnalyticsTab({
                         </div>
                       </TableCell>
                       <TableCell className="text-right text-green-600 dark:text-green-400">{formatCurrency(row.paidRevenue)}</TableCell>
-                      <TableCell className="text-right text-amber-600 dark:text-amber-400">{formatCurrency(row.partialRevenue)}</TableCell>
-                      <TableCell className="text-right text-orange-600 dark:text-orange-400">{formatCurrency(row.unpaidRevenue)}</TableCell>
+                      <TableCell className="text-right text-orange-600 dark:text-orange-400">
+                        {formatCurrency(row.partialRevenue + row.unpaidRevenue)}
+                      </TableCell>
                       <TableCell className="text-right text-sky-600 dark:text-sky-400">{formatCurrency(row.consignmentRevenue)}</TableCell>
                       <TableCell className="text-right text-slate-600 dark:text-slate-300">
                         {formatCurrency(row.settlementDiscountRevenue)}
@@ -1630,7 +1634,7 @@ export default function KeyAccountKamAnalyticsTab({
             </DialogTitle>
             <DialogDescription>
               {selectedMetric === 'revenue'
-                ? 'Payment breakdown by agent for the POs they created: paid, partial, unpaid, and consignment.'
+                ? 'Payment breakdown by agent for the POs they created: paid, remaining balance, consignment, and settlement discount.'
                 : selectedMetric === 'orders'
                   ? 'Delivered, in-workflow, and partial-delivered PO counts plus PO line splits (same rules as product analytics).'
                   : 'Unique buying clients per agent in this period (summed per KAM).'}

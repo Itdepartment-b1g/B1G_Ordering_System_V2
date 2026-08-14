@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { format } from 'date-fns';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
@@ -22,11 +23,35 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, Building2, Store, MapPin, ChevronRight, Loader2, LayoutGrid, Table2, Pencil, X } from 'lucide-react';
+import { Plus, Building2, Store, MapPin, ChevronRight, Loader2, LayoutGrid, Table2, Pencil, X, FileUp } from 'lucide-react';
 import {
-  AnalyticsTablePagination,
-  paginateAnalyticsRows,
-} from '@/features/key-accounts/key-accounts-analytics/AnalyticsTablePagination';
+  DEFAULT_PAGE_SIZE,
+  getListPaginationSlice,
+  ListPagination,
+  type PageSize,
+} from '@/features/shared/components/ListPagination';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  DEFAULT_CLIENT_HIERARCHY_ADDRESS_SORT_DIRECTION,
+  DEFAULT_CLIENT_HIERARCHY_ADDRESS_SORT_KEY,
+  DEFAULT_CLIENT_HIERARCHY_CLIENT_SORT_DIRECTION,
+  DEFAULT_CLIENT_HIERARCHY_CLIENT_SORT_KEY,
+  DEFAULT_CLIENT_HIERARCHY_SHOP_SORT_DIRECTION,
+  DEFAULT_CLIENT_HIERARCHY_SHOP_SORT_KEY,
+  sortClientHierarchyAddresses,
+  sortClientHierarchyClients,
+  sortClientHierarchyShops,
+  type ClientHierarchyAddressSortKey,
+  type ClientHierarchyClientSortKey,
+  type ClientHierarchyShopSortKey,
+} from '@/features/key-accounts/utils/clientHierarchySorting';
 import { useToast } from '@/hooks/use-toast';
 import type { KeyAccountClient, KeyAccountShop, KeyAccountDeliveryAddress } from '@/types/database.types';
 import {
@@ -37,6 +62,7 @@ import {
   formatPaymentTerms,
 } from '@/features/key-accounts/keyAccountCodes';
 import { KeyAccountShopCorView } from '@/features/key-accounts/components/KeyAccountShopCorView';
+import { ClientHierarchyImportDialog } from '@/features/key-accounts/components/ClientHierarchyImportDialog';
 import {
   DateRangeFilterPopover,
   type DateRangeFilterValue,
@@ -157,9 +183,19 @@ export function ClientHierarchyManager() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('clients');
   const [viewMode, setViewMode] = useState<HierarchyViewMode>('card');
-  const [clientsPage, setClientsPage] = useState(1);
-  const [shopsPage, setShopsPage] = useState(1);
-  const [addressesPage, setAddressesPage] = useState(1);
+  const [clientsPage, setClientsPage] = useState(0);
+  const [shopsPage, setShopsPage] = useState(0);
+  const [addressesPage, setAddressesPage] = useState(0);
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
+  const [clientsSortState, setClientsSortState] = useState<
+    TableSortCycleState<ClientHierarchyClientSortKey>
+  >(createInitialTableSortCycle);
+  const [shopsSortState, setShopsSortState] = useState<
+    TableSortCycleState<ClientHierarchyShopSortKey>
+  >(createInitialTableSortCycle);
+  const [addressesSortState, setAddressesSortState] = useState<
+    TableSortCycleState<ClientHierarchyAddressSortKey>
+  >(createInitialTableSortCycle);
 
   // Dialog states
   const [clientDialogOpen, setClientDialogOpen] = useState(false);
@@ -183,10 +219,15 @@ export function ClientHierarchyManager() {
 
   const [newAddress, setNewAddress] = useState(EMPTY_ADDRESS_FORM);
 
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchByTab, setSearchByTab] = useState<Record<HierarchyTab, string>>({
+    clients: '',
+    shops: '',
+    addresses: '',
+  });
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'all',
   });
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
 
   const createdDateRange = useMemo(
     () =>
@@ -198,10 +239,16 @@ export function ClientHierarchyManager() {
     [dateRangeFilter]
   );
 
+  const hierarchyTab = (activeTab === 'shops' || activeTab === 'addresses'
+    ? activeTab
+    : 'clients') as HierarchyTab;
+
+  const searchQuery = searchByTab[hierarchyTab];
+
   const filteredClients = useMemo(() => {
     const inRange = filterRowsByCreatedAt(clients, createdDateRange);
     return inRange.filter((client) =>
-      matchesHierarchySearch(searchQuery, [
+      matchesHierarchySearch(searchByTab.clients, [
         client.client_name,
         client.client_code,
         client.client_category,
@@ -212,12 +259,12 @@ export function ClientHierarchyManager() {
         client.notes,
       ])
     );
-  }, [clients, createdDateRange, searchQuery]);
+  }, [clients, createdDateRange, searchByTab.clients]);
 
   const filteredShops = useMemo(() => {
     const inRange = filterRowsByCreatedAt(shops, createdDateRange);
     return inRange.filter((shop) =>
-      matchesHierarchySearch(searchQuery, [
+      matchesHierarchySearch(searchByTab.shops, [
         shop.shop_name,
         shop.shop_code,
         shop.city,
@@ -230,12 +277,12 @@ export function ClientHierarchyManager() {
         shop.notes,
       ])
     );
-  }, [shops, createdDateRange, searchQuery]);
+  }, [shops, createdDateRange, searchByTab.shops]);
 
   const filteredAddresses = useMemo(() => {
     const inRange = filterRowsByCreatedAt(addresses, createdDateRange);
     return inRange.filter((address) =>
-      matchesHierarchySearch(searchQuery, [
+      matchesHierarchySearch(searchByTab.addresses, [
         address.address_label,
         address.full_address,
         address.city,
@@ -247,11 +294,7 @@ export function ClientHierarchyManager() {
         address.delivery_instructions,
       ])
     );
-  }, [addresses, createdDateRange, searchQuery]);
-
-  const hierarchyTab = (activeTab === 'shops' || activeTab === 'addresses'
-    ? activeTab
-    : 'clients') as HierarchyTab;
+  }, [addresses, createdDateRange, searchByTab.addresses]);
 
   const searchPlaceholder = useMemo(
     () => getHierarchySearchPlaceholder(hierarchyTab),
@@ -266,14 +309,48 @@ export function ClientHierarchyManager() {
   useEffect(() => {
     if (selectedClient) {
       fetchShops(selectedClient);
+      return;
     }
+    setShops([]);
+    setAddresses([]);
+    setSelectedShop(null);
   }, [selectedClient]);
 
   useEffect(() => {
     if (selectedShop) {
       fetchAddresses(selectedShop);
+      return;
     }
+    setAddresses([]);
   }, [selectedShop]);
+
+  const skipClientsSearchReset = useRef(true);
+  useEffect(() => {
+    if (skipClientsSearchReset.current) {
+      skipClientsSearchReset.current = false;
+      return;
+    }
+
+    setSelectedClient(null);
+    setSelectedShop(null);
+    setShops([]);
+    setAddresses([]);
+    setSearchByTab((prev) => ({ ...prev, shops: '', addresses: '' }));
+    setActiveTab('clients');
+  }, [searchByTab.clients]);
+
+  const skipShopsSearchReset = useRef(true);
+  useEffect(() => {
+    if (skipShopsSearchReset.current) {
+      skipShopsSearchReset.current = false;
+      return;
+    }
+
+    setSelectedShop(null);
+    setAddresses([]);
+    setSearchByTab((prev) => ({ ...prev, addresses: '' }));
+    setActiveTab((current) => (current === 'addresses' ? 'shops' : current));
+  }, [searchByTab.shops]);
 
   useEffect(() => {
     if (!shopDialogOpen) {
@@ -292,29 +369,115 @@ export function ClientHierarchyManager() {
   }, [addressDialogOpen]);
 
   useEffect(() => {
-    setClientsPage(1);
-  }, [filteredClients.length, searchQuery, createdDateRange.start, createdDateRange.end]);
+    setClientsPage(0);
+  }, [
+    filteredClients.length,
+    searchByTab.clients,
+    createdDateRange.start,
+    createdDateRange.end,
+    pageSize,
+    clientsSortState,
+  ]);
 
   useEffect(() => {
-    setShopsPage(1);
-  }, [filteredShops.length, selectedClient, searchQuery, createdDateRange.start, createdDateRange.end]);
+    setShopsPage(0);
+  }, [
+    filteredShops.length,
+    selectedClient,
+    searchByTab.shops,
+    createdDateRange.start,
+    createdDateRange.end,
+    pageSize,
+    shopsSortState,
+  ]);
 
   useEffect(() => {
-    setAddressesPage(1);
-  }, [filteredAddresses.length, selectedShop, searchQuery, createdDateRange.start, createdDateRange.end]);
+    setAddressesPage(0);
+  }, [
+    filteredAddresses.length,
+    selectedShop,
+    searchByTab.addresses,
+    createdDateRange.start,
+    createdDateRange.end,
+    pageSize,
+    addressesSortState,
+  ]);
 
-  const paginatedClients = useMemo(
-    () => paginateAnalyticsRows(filteredClients, clientsPage),
-    [filteredClients, clientsPage]
+  const { key: clientsSortKey, direction: clientsSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        clientsSortState,
+        DEFAULT_CLIENT_HIERARCHY_CLIENT_SORT_KEY,
+        DEFAULT_CLIENT_HIERARCHY_CLIENT_SORT_DIRECTION
+      ),
+    [clientsSortState]
   );
-  const paginatedShops = useMemo(
-    () => paginateAnalyticsRows(filteredShops, shopsPage),
-    [filteredShops, shopsPage]
+  const { key: shopsSortKey, direction: shopsSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        shopsSortState,
+        DEFAULT_CLIENT_HIERARCHY_SHOP_SORT_KEY,
+        DEFAULT_CLIENT_HIERARCHY_SHOP_SORT_DIRECTION
+      ),
+    [shopsSortState]
   );
-  const paginatedAddresses = useMemo(
-    () => paginateAnalyticsRows(filteredAddresses, addressesPage),
-    [filteredAddresses, addressesPage]
+  const { key: addressesSortKey, direction: addressesSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        addressesSortState,
+        DEFAULT_CLIENT_HIERARCHY_ADDRESS_SORT_KEY,
+        DEFAULT_CLIENT_HIERARCHY_ADDRESS_SORT_DIRECTION
+      ),
+    [addressesSortState]
   );
+
+  const sortedClients = useMemo(
+    () => sortClientHierarchyClients(filteredClients, clientsSortKey, clientsSortDirection),
+    [filteredClients, clientsSortKey, clientsSortDirection]
+  );
+  const sortedShops = useMemo(
+    () => sortClientHierarchyShops(filteredShops, shopsSortKey, shopsSortDirection),
+    [filteredShops, shopsSortKey, shopsSortDirection]
+  );
+  const sortedAddresses = useMemo(
+    () => sortClientHierarchyAddresses(filteredAddresses, addressesSortKey, addressesSortDirection),
+    [filteredAddresses, addressesSortKey, addressesSortDirection]
+  );
+
+  const {
+    pageCount: clientsPageCount,
+    safePage: clientsSafePage,
+    pagedItems: paginatedClients,
+  } = useMemo(
+    () => getListPaginationSlice(sortedClients, clientsPage, pageSize),
+    [sortedClients, clientsPage, pageSize]
+  );
+  const {
+    pageCount: shopsPageCount,
+    safePage: shopsSafePage,
+    pagedItems: paginatedShops,
+  } = useMemo(
+    () => getListPaginationSlice(sortedShops, shopsPage, pageSize),
+    [sortedShops, shopsPage, pageSize]
+  );
+  const {
+    pageCount: addressesPageCount,
+    safePage: addressesSafePage,
+    pagedItems: paginatedAddresses,
+  } = useMemo(
+    () => getListPaginationSlice(sortedAddresses, addressesPage, pageSize),
+    [sortedAddresses, addressesPage, pageSize]
+  );
+
+  const handleClientsSort = (key: ClientHierarchyClientSortKey) => {
+    setClientsSortState((current) => getNextTableSortCycleState(current, key));
+  };
+  const handleShopsSort = (key: ClientHierarchyShopSortKey) => {
+    setShopsSortState((current) => getNextTableSortCycleState(current, key));
+  };
+  const handleAddressesSort = (key: ClientHierarchyAddressSortKey) => {
+    setAddressesSortState((current) => getNextTableSortCycleState(current, key));
+  };
 
   const selectClient = (clientId: string) => {
     setSelectedClient(clientId);
@@ -731,7 +894,9 @@ export function ClientHierarchyManager() {
           <Input
             placeholder={searchPlaceholder}
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) =>
+              setSearchByTab((prev) => ({ ...prev, [hierarchyTab]: e.target.value }))
+            }
             className="w-full sm:flex-1"
           />
           <DateRangeFilterPopover
@@ -761,11 +926,12 @@ export function ClientHierarchyManager() {
 
         {/* Clients Tab */}
         <TabsContent value="clients" className="space-y-4">
-        <div className="flex items-center justify-end">
-
+        <div className="flex items-center justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setImportDialogOpen(true)}>
+                <FileUp className="mr-2 h-4 w-4" />
+                Import
+              </Button>
               <HierarchyViewToolbar viewMode={viewMode} onViewModeChange={setViewMode} />
-
-            
           </div>
           {clients.length === 0 ? (
             <Card>
@@ -856,14 +1022,60 @@ export function ClientHierarchyManager() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Client</TableHead>
-                        <TableHead>Code</TableHead>
-                        <TableHead>Category</TableHead>
-                        <TableHead>Contact</TableHead>
-                        <TableHead>Email</TableHead>
-                        <TableHead>Phone</TableHead>
-                        <TableHead>Payment Terms</TableHead>
-                        <TableHead>Notes</TableHead>
+                        <SortableTableHead
+                          label="Client"
+                          sortKey="clientName"
+                          sortDirection={getTableSortDisplayDirection(clientsSortState, 'clientName')}
+                          onSort={handleClientsSort}
+                        />
+                        <SortableTableHead
+                          label="Code"
+                          sortKey="code"
+                          sortDirection={getTableSortDisplayDirection(clientsSortState, 'code')}
+                          onSort={handleClientsSort}
+                        />
+                        <SortableTableHead
+                          label="Category"
+                          sortKey="category"
+                          sortDirection={getTableSortDisplayDirection(clientsSortState, 'category')}
+                          onSort={handleClientsSort}
+                        />
+                        <SortableTableHead
+                          label="Contact"
+                          sortKey="contact"
+                          sortDirection={getTableSortDisplayDirection(clientsSortState, 'contact')}
+                          onSort={handleClientsSort}
+                        />
+                        <SortableTableHead
+                          label="Email"
+                          sortKey="email"
+                          sortDirection={getTableSortDisplayDirection(clientsSortState, 'email')}
+                          onSort={handleClientsSort}
+                        />
+                        <SortableTableHead
+                          label="Phone"
+                          sortKey="phone"
+                          sortDirection={getTableSortDisplayDirection(clientsSortState, 'phone')}
+                          onSort={handleClientsSort}
+                        />
+                        <SortableTableHead
+                          label="Payment Terms"
+                          sortKey="paymentTerms"
+                          sortDirection={getTableSortDisplayDirection(clientsSortState, 'paymentTerms')}
+                          onSort={handleClientsSort}
+                        />
+                        <SortableTableHead
+                          label="Notes"
+                          sortKey="notes"
+                          sortDirection={getTableSortDisplayDirection(clientsSortState, 'notes')}
+                          onSort={handleClientsSort}
+                        />
+                        <SortableTableHead
+                          label="Created At"
+                          sortKey="createdAt"
+                          sortDirection={getTableSortDisplayDirection(clientsSortState, 'createdAt')}
+                          onSort={handleClientsSort}
+                        />
                         <TableHead className="w-20 text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -883,6 +1095,11 @@ export function ClientHierarchyManager() {
                           <TableCell>{client.payment_terms || '—'}</TableCell>
                           <TableCell className="max-w-[200px] whitespace-pre-wrap break-words">
                             {client.notes || '—'}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-muted-foreground">
+                            {client.created_at
+                              ? format(new Date(client.created_at), 'MMM d, yyyy')
+                              : '—'}
                           </TableCell>
                           <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                             {canManageClients && (
@@ -904,11 +1121,20 @@ export function ClientHierarchyManager() {
                   </Table>
                 </div>
               )}
-              <AnalyticsTablePagination
-                page={clientsPage}
-                onPageChange={setClientsPage}
-                totalRows={filteredClients.length}
-              />
+              {filteredClients.length > 0 && (
+                <div className="mt-4 pt-4 border-t">
+                  <ListPagination
+                    pageSize={pageSize}
+                    safePage={clientsSafePage}
+                    pageCount={clientsPageCount}
+                    onPageSizeChange={setPageSize}
+                    onPrevious={() => setClientsPage((page) => Math.max(0, page - 1))}
+                    onNext={() =>
+                      setClientsPage((page) => Math.min(clientsPageCount - 1, page + 1))
+                    }
+                  />
+                </div>
+              )}
             </>
           )}
         </TabsContent>
@@ -1023,16 +1249,72 @@ export function ClientHierarchyManager() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Shop</TableHead>
-                        <TableHead>Code</TableHead>
-                        <TableHead>Location</TableHead>
-                        <TableHead>Region</TableHead>
-                        <TableHead>Contact</TableHead>
-                        <TableHead>Phone</TableHead>
-                        <TableHead>Email</TableHead>
-                        <TableHead>Operating Hours</TableHead>
-                        <TableHead>Notes</TableHead>
-                        <TableHead>COR</TableHead>
+                        <SortableTableHead
+                          label="Shop"
+                          sortKey="shopName"
+                          sortDirection={getTableSortDisplayDirection(shopsSortState, 'shopName')}
+                          onSort={handleShopsSort}
+                        />
+                        <SortableTableHead
+                          label="Code"
+                          sortKey="code"
+                          sortDirection={getTableSortDisplayDirection(shopsSortState, 'code')}
+                          onSort={handleShopsSort}
+                        />
+                        <SortableTableHead
+                          label="Location"
+                          sortKey="location"
+                          sortDirection={getTableSortDisplayDirection(shopsSortState, 'location')}
+                          onSort={handleShopsSort}
+                        />
+                        <SortableTableHead
+                          label="Region"
+                          sortKey="region"
+                          sortDirection={getTableSortDisplayDirection(shopsSortState, 'region')}
+                          onSort={handleShopsSort}
+                        />
+                        <SortableTableHead
+                          label="Contact"
+                          sortKey="contact"
+                          sortDirection={getTableSortDisplayDirection(shopsSortState, 'contact')}
+                          onSort={handleShopsSort}
+                        />
+                        <SortableTableHead
+                          label="Phone"
+                          sortKey="phone"
+                          sortDirection={getTableSortDisplayDirection(shopsSortState, 'phone')}
+                          onSort={handleShopsSort}
+                        />
+                        <SortableTableHead
+                          label="Email"
+                          sortKey="email"
+                          sortDirection={getTableSortDisplayDirection(shopsSortState, 'email')}
+                          onSort={handleShopsSort}
+                        />
+                        <SortableTableHead
+                          label="Operating Hours"
+                          sortKey="operatingHours"
+                          sortDirection={getTableSortDisplayDirection(shopsSortState, 'operatingHours')}
+                          onSort={handleShopsSort}
+                        />
+                        <SortableTableHead
+                          label="Notes"
+                          sortKey="notes"
+                          sortDirection={getTableSortDisplayDirection(shopsSortState, 'notes')}
+                          onSort={handleShopsSort}
+                        />
+                        <SortableTableHead
+                          label="COR"
+                          sortKey="cor"
+                          sortDirection={getTableSortDisplayDirection(shopsSortState, 'cor')}
+                          onSort={handleShopsSort}
+                        />
+                        <SortableTableHead
+                          label="Created At"
+                          sortKey="createdAt"
+                          sortDirection={getTableSortDisplayDirection(shopsSortState, 'createdAt')}
+                          onSort={handleShopsSort}
+                        />
                         <TableHead className="w-20 text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -1059,6 +1341,11 @@ export function ClientHierarchyManager() {
                           <TableCell onClick={(e) => e.stopPropagation()}>
                             <KeyAccountShopCorView corPdfPath={shop.cor_pdf_path} stopPropagation />
                           </TableCell>
+                          <TableCell className="whitespace-nowrap text-muted-foreground">
+                            {shop.created_at
+                              ? format(new Date(shop.created_at), 'MMM d, yyyy')
+                              : '—'}
+                          </TableCell>
                           <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                             <Button
                               type="button"
@@ -1077,11 +1364,18 @@ export function ClientHierarchyManager() {
                   </Table>
                 </div>
               )}
-              <AnalyticsTablePagination
-                page={shopsPage}
-                onPageChange={setShopsPage}
-                totalRows={filteredShops.length}
-              />
+              {filteredShops.length > 0 && (
+                <div className="mt-4 pt-4 border-t">
+                  <ListPagination
+                    pageSize={pageSize}
+                    safePage={shopsSafePage}
+                    pageCount={shopsPageCount}
+                    onPageSizeChange={setPageSize}
+                    onPrevious={() => setShopsPage((page) => Math.max(0, page - 1))}
+                    onNext={() => setShopsPage((page) => Math.min(shopsPageCount - 1, page + 1))}
+                  />
+                </div>
+              )}
             </>
           )}
         </TabsContent>
@@ -1186,12 +1480,48 @@ export function ClientHierarchyManager() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Label</TableHead>
-                        <TableHead>Address</TableHead>
-                        <TableHead>Location</TableHead>
-                        <TableHead>Contact</TableHead>
-                        <TableHead>Phone</TableHead>
-                        <TableHead>Instructions</TableHead>
+                        <SortableTableHead
+                          label="Label"
+                          sortKey="label"
+                          sortDirection={getTableSortDisplayDirection(addressesSortState, 'label')}
+                          onSort={handleAddressesSort}
+                        />
+                        <SortableTableHead
+                          label="Address"
+                          sortKey="address"
+                          sortDirection={getTableSortDisplayDirection(addressesSortState, 'address')}
+                          onSort={handleAddressesSort}
+                        />
+                        <SortableTableHead
+                          label="Location"
+                          sortKey="location"
+                          sortDirection={getTableSortDisplayDirection(addressesSortState, 'location')}
+                          onSort={handleAddressesSort}
+                        />
+                        <SortableTableHead
+                          label="Contact"
+                          sortKey="contact"
+                          sortDirection={getTableSortDisplayDirection(addressesSortState, 'contact')}
+                          onSort={handleAddressesSort}
+                        />
+                        <SortableTableHead
+                          label="Phone"
+                          sortKey="phone"
+                          sortDirection={getTableSortDisplayDirection(addressesSortState, 'phone')}
+                          onSort={handleAddressesSort}
+                        />
+                        <SortableTableHead
+                          label="Instructions"
+                          sortKey="instructions"
+                          sortDirection={getTableSortDisplayDirection(addressesSortState, 'instructions')}
+                          onSort={handleAddressesSort}
+                        />
+                        <SortableTableHead
+                          label="Created At"
+                          sortKey="createdAt"
+                          sortDirection={getTableSortDisplayDirection(addressesSortState, 'createdAt')}
+                          onSort={handleAddressesSort}
+                        />
                         <TableHead className="w-20 text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -1219,6 +1549,11 @@ export function ClientHierarchyManager() {
                           <TableCell className="max-w-[180px] truncate">
                             {address.delivery_instructions || '—'}
                           </TableCell>
+                          <TableCell className="whitespace-nowrap text-muted-foreground">
+                            {address.created_at
+                              ? format(new Date(address.created_at), 'MMM d, yyyy')
+                              : '—'}
+                          </TableCell>
                           <TableCell className="text-right">
                             <Button
                               type="button"
@@ -1237,11 +1572,20 @@ export function ClientHierarchyManager() {
                   </Table>
                 </div>
               )}
-              <AnalyticsTablePagination
-                page={addressesPage}
-                onPageChange={setAddressesPage}
-                totalRows={filteredAddresses.length}
-              />
+              {filteredAddresses.length > 0 && (
+                <div className="mt-4 pt-4 border-t">
+                  <ListPagination
+                    pageSize={pageSize}
+                    safePage={addressesSafePage}
+                    pageCount={addressesPageCount}
+                    onPageSizeChange={setPageSize}
+                    onPrevious={() => setAddressesPage((page) => Math.max(0, page - 1))}
+                    onNext={() =>
+                      setAddressesPage((page) => Math.min(addressesPageCount - 1, page + 1))
+                    }
+                  />
+                </div>
+              )}
             </>
           )}
         </TabsContent>
@@ -1508,6 +1852,17 @@ export function ClientHierarchyManager() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <ClientHierarchyImportDialog
+        open={importDialogOpen}
+        onOpenChange={setImportDialogOpen}
+        tab="clients"
+        companyId={user?.company_id}
+        userId={user?.id}
+        selectedClientId={selectedClient}
+        selectedShopId={selectedShop}
+        onImported={fetchClients}
+      />
     </div>
   );
 }

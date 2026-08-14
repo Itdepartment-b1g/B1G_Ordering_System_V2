@@ -18,8 +18,13 @@ export type WarehouseProductMovementRow = {
   brandId: string;
   brandName: string;
   variantType: string;
-  /** Available stock at this location (on-hand minus allocated reservations). */
+  /**
+   * Available stock at this location — matches main inventory Available:
+   * on-hand minus allocated minus open transfer PO holds.
+   */
   stock: number;
+  /** Open transfer PO holds (hard + soft) at this location — live snapshot, not date-filtered. */
+  poReserved: number;
   released: number;
   rebateReplacementReleased: number;
   pendingRelease: number;
@@ -67,20 +72,29 @@ export function accumulateMovement(
   map.set(variantId, existing);
 }
 
-/** Main inventory: stock minus allocated. Sub-warehouse rows have no allocation. */
-export function getVariantAvailableStock(variant: Variant): number {
-  return Math.max(0, variant.stock - (variant.allocatedStock || 0));
+/**
+ * Available stock matching main inventory: on-hand − allocated − open PO holds.
+ * Sub-warehouse rows typically have no allocation.
+ */
+export function getVariantAvailableStock(
+  variant: Variant,
+  poReservedByVariantId: Record<string, number> = {}
+): number {
+  const reserved = Math.max(0, poReservedByVariantId[variant.id] || 0);
+  return Math.max(0, variant.stock - (variant.allocatedStock || 0) - reserved);
 }
 
 export function buildWarehouseProductMovementRows(
   brands: Brand[],
-  movementByVariant: Map<string, WarehouseMovementAggregate>
+  movementByVariant: Map<string, WarehouseMovementAggregate>,
+  poReservedByVariantId: Record<string, number> = {}
 ): WarehouseProductMovementRow[] {
   const rows: WarehouseProductMovementRow[] = [];
 
   for (const brand of brands) {
     for (const variant of brand.allVariants) {
       const agg = movementByVariant.get(variant.id) ?? createEmptyMovementAggregate();
+      const poReserved = Math.max(0, poReservedByVariantId[variant.id] || 0);
       const netMovement = agg.released - agg.returnedIn - agg.shortageWriteOff;
       rows.push({
         variantId: variant.id,
@@ -88,7 +102,8 @@ export function buildWarehouseProductMovementRows(
         brandId: brand.id,
         brandName: brand.name,
         variantType: variant.variantType,
-        stock: getVariantAvailableStock(variant),
+        stock: getVariantAvailableStock(variant, poReservedByVariantId),
+        poReserved,
         released: agg.released,
         rebateReplacementReleased: agg.rebateReplacementReleased,
         pendingRelease: agg.pendingRelease,

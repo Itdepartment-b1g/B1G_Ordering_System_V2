@@ -68,6 +68,7 @@ const leaderMenuItems: MenuItem[] = [
     { title: 'Team Remittances', url: '/inventory/team-remittances', description: 'Review stock and cash remittances submitted by your team.' },
     { title: 'Cash Deposits', url: '/inventory/cash-deposits', description: 'Record and review cash/cheque deposits for your team.' },
     { title: 'PO Receiving', url: '/inventory/po-receive', description: 'Receive warehouse transfer POs assigned to you and report delivery shortages.' },
+    { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', description: 'Return your allocated stock to the linked warehouse for inspection (good/damaged + batch).' },
     { title: 'How to use?', url: '/leader-manual', description: 'Open the team leader manual and usage guides.' },
   ]},
   { title: 'Tasks', url: '/tasks', description: 'Assign and monitor daily tasks for your team.', hasSubmenu: true, submenu: [

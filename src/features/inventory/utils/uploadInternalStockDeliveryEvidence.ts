@@ -151,3 +151,42 @@ export async function prepareInternalStockDeliveryUploads(input: {
   ]);
   return { signature, rider, packages };
 }
+
+export async function prepareInternalStockPackageUploads(input: {
+  companyId: string;
+  requestId?: string;
+  packagePhotos: PackageProofPhotoItem[];
+}) {
+  if (!input.packagePhotos.length) {
+    throw new Error('At least one package photo is required');
+  }
+  const packages = await uploadInternalStockPackagePhotos({
+    photos: input.packagePhotos,
+    companyId: input.companyId,
+    requestId: input.requestId,
+  });
+  return { packages };
+}
+
+export async function prepareInternalStockRiderSignatureUploads(input: {
+  companyId: string;
+  requestId?: string;
+  riderPhotoDataUrl: string;
+  riderPhotoName?: string;
+  signatureDataUrl: string;
+}) {
+  const [signature, rider] = await Promise.all([
+    uploadInternalStockSignature({
+      signatureDataUrl: input.signatureDataUrl,
+      companyId: input.companyId,
+      requestId: input.requestId,
+    }),
+    uploadInternalStockRiderPhoto({
+      riderPhotoDataUrl: input.riderPhotoDataUrl,
+      companyId: input.companyId,
+      requestId: input.requestId,
+      fileName: input.riderPhotoName,
+    }),
+  ]);
+  return { signature, rider };
+}

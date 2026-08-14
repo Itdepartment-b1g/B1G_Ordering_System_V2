@@ -7,6 +7,7 @@ export const KEY_ACCOUNT_CLIENT_CATEGORIES = [
   'distri w/ retail',
   'multi retail',
   'retail',
+  'reseller',
 ] as const;
 
 export type KeyAccountClientCategory = (typeof KEY_ACCOUNT_CLIENT_CATEGORIES)[number];

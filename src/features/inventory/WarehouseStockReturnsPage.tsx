@@ -5,11 +5,15 @@ import {
   AlertCircle,
   ChevronLeft,
   ChevronRight,
+  Eye,
+  FileText,
   Loader2,
+  MoreHorizontal,
   RotateCcw,
   Search,
-  Truck,
+  SearchCheck,
   Undo2,
+  XCircle,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
@@ -28,10 +32,11 @@ import {
   getInspectValidationError,
   type InspectRequestItem,
 } from './warehouseStockReturnInspectShared';
+import { exportStandardAccountReturnPdfFromSource } from './utils/exportStandardAccountReturnPdf';
 import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
 import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
 import StockReturnsManual from '@/features/inventory/warehouse-manual/components/StockReturnsManual';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
 import {
@@ -51,15 +56,19 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   Select,
   SelectContent,
@@ -143,9 +152,14 @@ type StockReturnRow = {
     notes: string | null;
     received_by_user: { full_name: string } | null;
     lines: Array<{
+      variant_id: string | null;
       qty_good: number;
       qty_damaged: number;
       variant: { name: string; brand: { name: string } | null } | null;
+      destination_lot: {
+        expiration_date: string | null;
+        batch: { batch_number: string } | null;
+      } | null;
     }>;
   }>;
 };
@@ -234,11 +248,28 @@ function mapReturnRow(raw: Record<string, unknown>): StockReturnRow {
       const brand = variant?.brand
         ? firstRelation(variant.brand as { name: string } | { name: string }[])
         : null;
+      const destinationLot = firstRelation(
+        l.destination_lot as
+          | StockReturnRow['receipts'][0]['lines'][0]['destination_lot']
+          | NonNullable<StockReturnRow['receipts'][0]['lines'][0]['destination_lot']>[]
+      );
+      const destBatch = destinationLot?.batch
+        ? firstRelation(
+            destinationLot.batch as { batch_number: string } | { batch_number: string }[]
+          )
+        : null;
       return {
+        variant_id: (l.variant_id as string | null) ?? null,
         qty_good: l.qty_good as number,
         qty_damaged: l.qty_damaged as number,
         variant: variant
           ? { name: variant.name, brand: brand ? { name: brand.name } : null }
+          : null,
+        destination_lot: destinationLot
+          ? {
+              expiration_date: (destinationLot.expiration_date as string | null | undefined) ?? null,
+              batch: destBatch ? { batch_number: destBatch.batch_number } : null,
+            }
           : null,
       };
     });
@@ -299,26 +330,29 @@ export default function WarehouseStockReturnsPage() {
   const [inspectSubmitting, setInspectSubmitting] = useState(false);
   const [cancelSubmitting, setCancelSubmitting] = useState(false);
   const [returnOpen, setReturnOpen] = useState(false);
+  const [exportingPdfId, setExportingPdfId] = useState<string | null>(null);
 
   const inspectVariantIds = useMemo(
     () => [...new Set(inspectItems.map((item) => item.variant_id))],
     [inspectItems]
   );
 
-  const { data: mainWarehouseLocationId } = useQuery({
-    queryKey: ['main-warehouse-location-id', user?.company_id],
-    enabled: inspectOpen && !!user?.company_id,
+  const { data: mainWarehouseLocation } = useQuery({
+    queryKey: ['main-warehouse-location', user?.company_id],
+    enabled: !!user?.company_id && isWarehouse,
     queryFn: async () => {
       const { data, error } = await supabase
         .from('warehouse_locations')
-        .select('id')
+        .select('id, name')
         .eq('company_id', user!.company_id!)
         .eq('is_main', true)
         .maybeSingle();
       if (error) throw error;
-      return data?.id ?? null;
+      return data as { id: string; name: string } | null;
     },
   });
+
+  const mainWarehouseLocationId = mainWarehouseLocation?.id ?? null;
 
   const { data: inspectMainLots = [], isLoading: loadingInspectLots } = useQuery({
     queryKey: ['warehouse-inspect-main-batch-lots', mainWarehouseLocationId, inspectVariantIds],
@@ -433,9 +467,14 @@ export default function WarehouseStockReturnsPage() {
             notes,
             received_by_user:profiles!warehouse_stock_return_receipts_received_by_fkey ( full_name ),
             lines:warehouse_stock_return_receipt_lines (
+              variant_id,
               qty_good,
               qty_damaged,
-              variant:variants ( name, brand:brands ( name ) )
+              variant:variants ( name, brand:brands ( name ) ),
+              destination_lot:inventory_batch_lots!destination_lot_id (
+                expiration_date,
+                batch:inventory_batches ( batch_number )
+              )
             )
           )
         `
@@ -633,6 +672,62 @@ export default function WarehouseStockReturnsPage() {
       });
     } finally {
       setInspectSubmitting(false);
+    }
+  };
+
+  const handleExportPdf = async (row: StockReturnRow) => {
+    setExportingPdfId(row.id);
+    try {
+      await exportStandardAccountReturnPdfFromSource({
+        request_number: row.request_number,
+        status: row.status,
+        created_at: row.created_at,
+        notes: row.notes,
+        footerNote: 'Sub-warehouse return to main warehouse',
+        companyFieldLabel: 'From',
+        client_company: row.from_location
+          ? { company_name: row.from_location.name }
+          : null,
+        destination_location: {
+          name: mainWarehouseLocation?.name ?? 'Main warehouse',
+          is_main: true,
+        },
+        created_by_user: row.created_by_user,
+        items: row.items.map((item) => ({
+          warehouse_variant_id: item.variant_id,
+          return_quantity: item.return_quantity,
+          inspected_quantity: item.inspected_quantity,
+          variant: item.variant
+            ? {
+                name: item.variant.name,
+                brand: item.variant.brand,
+              }
+            : null,
+        })),
+        receipts: row.receipts.map((receipt) => ({
+          lines: receipt.lines.map((line) => ({
+            warehouseVariantId: line.variant_id,
+            brandName: line.variant?.brand?.name ?? null,
+            variantName: line.variant?.name ?? null,
+            qtyGood: line.qty_good,
+            qtyDamaged: line.qty_damaged,
+            batchNumber: line.destination_lot?.batch?.batch_number ?? null,
+            expirationDate: line.destination_lot?.expiration_date ?? null,
+          })),
+        })),
+      });
+      toast({
+        title: 'PDF opened',
+        description: `${row.request_number} — use Print / Save PDF.`,
+      });
+    } catch {
+      toast({
+        variant: 'destructive',
+        title: 'PDF export failed',
+        description: 'Could not open the return PDF.',
+      });
+    } finally {
+      setExportingPdfId(null);
     }
   };
 
@@ -843,34 +938,54 @@ export default function WarehouseStockReturnsPage() {
                             : '—'}
                         </TableCell>
                         <TableCell className="text-right">
-                          <div className="flex justify-end gap-1 flex-wrap">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                setSelectedReturn(req);
-                                setDetailOpen(true);
-                              }}
-                            >
-                              View
-                            </Button>
-                            {canInspect && (
-                              <Button variant="outline" size="sm" onClick={() => openInspectDialog(req)}>
-                                <Truck className="h-3.5 w-3.5 mr-1" />
-                                Inspect
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon" className="h-8 w-8">
+                                <MoreHorizontal className="h-4 w-4" />
+                                <span className="sr-only">Open actions</span>
                               </Button>
-                            )}
-                            {canCancel && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="text-destructive"
-                                onClick={() => setCancelTarget(req)}
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-48">
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  setSelectedReturn(req);
+                                  setDetailOpen(true);
+                                }}
                               >
-                                Cancel
-                              </Button>
-                            )}
-                          </div>
+                                <Eye className="mr-2 h-4 w-4" />
+                                View
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                disabled={exportingPdfId === req.id}
+                                onClick={() => void handleExportPdf(req)}
+                              >
+                                {exportingPdfId === req.id ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <FileText className="mr-2 h-4 w-4" />
+                                )}
+                                Print PDF
+                              </DropdownMenuItem>
+                              {canInspect && (
+                                <DropdownMenuItem onClick={() => openInspectDialog(req)}>
+                                  <SearchCheck className="mr-2 h-4 w-4" />
+                                  Inspect
+                                </DropdownMenuItem>
+                              )}
+                              {canCancel && (
+                                <>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
+                                    className="text-destructive focus:text-destructive"
+                                    onClick={() => setCancelTarget(req)}
+                                  >
+                                    <XCircle className="mr-2 h-4 w-4" />
+                                    Cancel
+                                  </DropdownMenuItem>
+                                </>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </TableCell>
                       </TableRow>
                     );
@@ -937,6 +1052,7 @@ export default function WarehouseStockReturnsPage() {
         onOpenChange={setInspectOpen}
         requestNumber={selectedReturn?.request_number ?? ''}
         fromLocationName={selectedReturn?.from_location?.name ?? 'sub-warehouse'}
+        requestNotes={selectedReturn?.notes}
         items={inspectItems}
         onItemsChange={setInspectItems}
         mainLots={inspectMainLots}
@@ -954,7 +1070,25 @@ export default function WarehouseStockReturnsPage() {
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{selectedReturn?.request_number}</DialogTitle>
+            <div className="flex items-start justify-between gap-3 pr-6">
+              <DialogTitle>{selectedReturn?.request_number}</DialogTitle>
+              {selectedReturn && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={exportingPdfId === selectedReturn.id}
+                  onClick={() => void handleExportPdf(selectedReturn)}
+                >
+                  {exportingPdfId === selectedReturn.id ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <FileText className="h-4 w-4 mr-2" />
+                  )}
+                  Print PDF
+                </Button>
+              )}
+            </div>
           </DialogHeader>
           {selectedReturn && (
             <div className="space-y-4 text-sm">
@@ -1029,23 +1163,43 @@ export default function WarehouseStockReturnsPage() {
                             ? ` · ${r.received_by_user.full_name}`
                             : ''}
                         </p>
-                        {r.lines.map((line, idx) => (
-                          <p key={idx}>
-                            {line.variant?.brand?.name ? `${line.variant.brand.name} · ` : ''}
-                            {line.variant?.name ?? 'SKU'}:{' '}
-                            <span className="text-green-700 dark:text-green-400">
-                              {line.qty_good} good
-                            </span>
-                            {line.qty_damaged > 0 && (
-                              <>
-                                ,{' '}
-                                <span className="text-destructive">
-                                  {line.qty_damaged} damaged
-                                </span>
-                              </>
-                            )}
-                          </p>
-                        ))}
+                        {r.notes?.trim() ? (
+                          <p className="text-xs text-muted-foreground">Notes: {r.notes.trim()}</p>
+                        ) : null}
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Product</TableHead>
+                              <TableHead>Batch</TableHead>
+                              <TableHead className="text-right">Good</TableHead>
+                              <TableHead className="text-right">Damaged</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {r.lines.map((line, idx) => (
+                              <TableRow key={`${r.id}-${idx}`}>
+                                <TableCell>
+                                  {line.variant?.brand?.name
+                                    ? `${line.variant.brand.name} · `
+                                    : ''}
+                                  {line.variant?.name ?? 'SKU'}
+                                </TableCell>
+                                <TableCell className="font-mono text-xs text-muted-foreground">
+                                  {formatSubLotLabel(
+                                    line.destination_lot?.batch?.batch_number ?? null,
+                                    line.destination_lot?.expiration_date ?? null
+                                  )}
+                                </TableCell>
+                                <TableCell className="text-right text-green-700 dark:text-green-400">
+                                  {line.qty_good}
+                                </TableCell>
+                                <TableCell className="text-right text-destructive">
+                                  {line.qty_damaged}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
                       </div>
                     ))}
                   </div>

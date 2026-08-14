@@ -98,6 +98,8 @@ function mapEvent(
         ...base,
         type: 'main_allocated',
         lines: lines.length > 0 ? lines : undefined,
+        proofImageDataUrl,
+        proofImageUrls,
       };
     case 'approved':
       return { ...base, type: 'approved' };

@@ -126,11 +126,11 @@ function eventSummary(
   if (event.type === 'main_allocated') {
     const qty = linesTotalQty(event.lines);
     if (qty > 0) {
-      return `Allocated ${unitLabel(qty)} · pending receive`;
+      return `Allocated ${unitLabel(qty)} · awaiting delivery`;
     }
-    if (!items?.length) return 'Main-initiated allocation · pending receive';
+    if (!items?.length) return 'Main-initiated allocation · awaiting delivery';
     const allocated = items.reduce((sum, item) => sum + Math.max(0, item.requestedQuantity), 0);
-    return `Allocated ${unitLabel(allocated)} · pending receive`;
+    return `Allocated ${unitLabel(allocated)} · awaiting delivery`;
   }
 
   if (event.type === 'approved') {
@@ -654,13 +654,13 @@ function EventAttachments({
   proofImageDataUrl,
   proofImageUrls,
   signatureDataUrl,
-  signatureLabel,
+  signatureLabel = 'Signature',
   proofLabel = 'Package photo',
 }: {
   proofImageDataUrl?: string;
   proofImageUrls?: string[];
   signatureDataUrl?: string;
-  signatureLabel: string;
+  signatureLabel?: string;
   proofLabel?: string;
 }) {
   const urls =
@@ -975,6 +975,14 @@ export function SubWarehouseRequestHistoryTimeline({
                         <p className="whitespace-pre-wrap leading-snug">{event.note}</p>
                       </div>
                     </div>
+                  ) : null}
+
+                  {event.type === 'main_allocated' ? (
+                    <EventAttachments
+                      proofImageDataUrl={event.proofImageDataUrl}
+                      proofImageUrls={event.proofImageUrls}
+                      proofLabel="Package photo"
+                    />
                   ) : null}
 
                   {event.type === 'receive_confirmed' ? (

@@ -3,12 +3,14 @@ import { cn } from "@/lib/utils";
 
 const MANUAL_SECTIONS = [
   { id: "getting-started", label: "Getting Started" },
+  { id: "dashboard", label: "Dashboard" },
+  { id: "request-stock", label: "Request Stock" },
   { id: "variant-types", label: "Variant Types" },
   { id: "brands-and-variants", label: "Brands and Variants" },
   { id: "payment-settings", label: "Payment Settings" },
   { id: "purchase-order", label: "Purchase Order" },
   { id: "subwarehouse", label: "Subwarehouse" },
-  { id: "sub-stock-requests", label: "Sub Stock Requests" },
+  { id: "sub-stock-requests", label: "Stock Transfer" },
   { id: "delivery-shortages", label: "Delivery Shortages" },
   { id: "main-inventory", label: "Main Inventory" },
   { id: "stock-request", label: "Stock Request" },

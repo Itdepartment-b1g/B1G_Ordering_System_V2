@@ -167,6 +167,7 @@ const salesAdminMenuItems: MenuItem[] = [
     icon: ClipboardList,
     hasSubmenu: true,
     submenu: [
+      { title: 'Create Purchase Order', url: '/key-accounts/create-order', icon: Plus },
       { title: 'Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
       // { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
     ]
@@ -303,6 +304,7 @@ const leaderMenuItems: MenuItem[] = [
       { title: 'Team Remittances', url: '/inventory/team-remittances', icon: ArrowLeft },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: DollarSign },
       { title: 'PO Receiving', url: '/inventory/po-receive', icon: PackageCheck },
+      { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
     ]
   },
   {
@@ -364,8 +366,8 @@ const warehouseMenuItems: MenuItem[] = [
     submenu: [
 
       { title: 'Sub Warehouses', url: '/inventory/sub-warehouses', icon: Building2 },
-      { title: 'Request & Allocations', url: '/inventory/request-stock', icon: Send },
-      { title: 'Sub Requests & Allocations ', url: '/inventory/sub-stock-requests', icon: ClipboardList },
+      { title: 'Request Stock', url: '/inventory/request-stock', icon: Send },
+      { title: 'Stock Transfer', url: '/inventory/sub-stock-requests', icon: ClipboardList },
       { title: 'Main Inventory', url: '/inventory/main', icon: Package },
       // { title: 'Allocation History', url: '/inventory/allocation-history', icon: Package2Icon },
       { title: 'Stock Requests', url: '/inventory/stock-requests', icon: ClipboardList },

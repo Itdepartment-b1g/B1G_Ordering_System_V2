@@ -38,7 +38,7 @@ export default function DeliveryShortagesManual({ embedded = false }: DeliverySh
           Resolving a shortage here closes the investigation. For sub-stock{" "}
           <span className="text-blue-500">Found</span> or{" "}
           <span className="text-blue-500">write off &amp; replace</span>, you must still run{" "}
-          <span className="text-blue-500">Allocate Remaining</span> on Sub Stock Requests to re-deliver — this
+          <span className="text-blue-500">Allocate Remaining</span> on Stock Transfer to re-deliver — this
           page does not ship stock.
         </p>
       </InstructionBorder>
@@ -112,11 +112,11 @@ export default function DeliveryShortagesManual({ embedded = false }: DeliverySh
           4. For Found or write-off &amp; replace, go to{" "}
           {embedded ? (
             <Link to="/warehouse-manual#sub-stock-requests" className="text-blue-500">
-              Sub Stock Requests &amp; Allocations
+              Stock Transfer
             </Link>
           ) : (
             <a href="#sub-stock-requests" className="text-blue-500">
-              Sub Stock Requests &amp; Allocations
+              Stock Transfer
             </a>
           )}{" "}
           — the row shows <span className="text-blue-500">Ready to allocate</span>. Use{" "}

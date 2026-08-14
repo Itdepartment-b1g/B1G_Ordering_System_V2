@@ -20,10 +20,12 @@ import {
 } from '@/components/ui/select';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import type { Brand, Variant } from '../InventoryContext';
+import { getMainWarehouseAllocatableQty } from '../warehouseStockBoard';
 
 export type SubWarehouseStockRequestStatus =
   | 'pending_approval'
   | 'approved'
+  | 'ready_to_deliver'
   | 'pending_receive'
   | 'partially_received'
   | 'fully_received'
@@ -85,6 +87,8 @@ export type SubWarehouseRequestHistoryEvent =
       note?: string;
       byName?: string;
       lines?: SubWarehouseReleaseLine[];
+      proofImageDataUrl?: string;
+      proofImageUrls?: string[];
     }
   | {
       id: string;
@@ -297,9 +301,16 @@ function normalizeTypeLabel(typeKey: string): string {
   return typeKey.toUpperCase();
 }
 
-/** Available units at main warehouse (total stock minus allocated). */
-function getMainAvailableQty(variant: Pick<Variant, 'stock' | 'allocatedStock'>): number {
-  return Math.max(0, variant.stock - (variant.allocatedStock || 0));
+/** Available units at main warehouse (total stock minus allocated minus PO holds). */
+function getMainAvailableQty(
+  variant: Pick<Variant, 'id' | 'stock' | 'allocatedStock'>,
+  poReservedByVariantId: Record<string, number> = {},
+  mainAllocatableByVariantId?: Record<string, number>
+): number {
+  if (mainAllocatableByVariantId && variant.id in mainAllocatableByVariantId) {
+    return Math.max(0, mainAllocatableByVariantId[variant.id]);
+  }
+  return getMainWarehouseAllocatableQty(variant, poReservedByVariantId);
 }
 
 type CartLine = {
@@ -316,6 +327,10 @@ type SubWarehouseStockRequestDialogProps = {
   onOpenChange: (open: boolean) => void;
   brands: Brand[];
   loadingBrands?: boolean;
+  /** Open hard + soft transfer PO holds at main warehouse, by variant id. */
+  poReservedByVariantId?: Record<string, number>;
+  /** Authoritative main allocatable qty (from RPC; use for sub-warehouse users). */
+  mainAllocatableByVariantId?: Record<string, number>;
   /** Main warehouse location name stock is requested from. */
   sourceLocationName?: string;
   submitting?: boolean;
@@ -330,6 +345,8 @@ export function SubWarehouseStockRequestDialog({
   onOpenChange,
   brands,
   loadingBrands = false,
+  poReservedByVariantId = {},
+  mainAllocatableByVariantId,
   sourceLocationName = 'Main warehouse',
   submitting = false,
   onSubmit,
@@ -381,7 +398,7 @@ export function SubWarehouseStockRequestDialog({
       if (!qty || qty <= 0) continue;
       const variant = selectedBrand.allVariants.find((v) => v.id === variantId);
       if (!variant) continue;
-      const available = getMainAvailableQty(variant);
+      const available = getMainAvailableQty(variant, poReservedByVariantId, mainAllocatableByVariantId);
       const quantity = Math.min(qty, available);
       if (quantity <= 0) continue;
       lines.push({
@@ -436,7 +453,9 @@ export function SubWarehouseStockRequestDialog({
         <DialogHeader>
           <DialogTitle>Request stock from {sourceLocationName}</DialogTitle>
           <p className="text-sm text-muted-foreground font-normal pt-1">
-            Quantities are based on available stock at {sourceLocationName} (stock − allocated).
+            Quantities are based on available stock at {sourceLocationName} (stock − allocated − PO
+            reserved). Batch lots leave main when main allocates or delivers; your warehouse
+            inventory updates when you confirm receive.
           </p>
         </DialogHeader>
 
@@ -507,7 +526,11 @@ export function SubWarehouseStockRequestDialog({
                     <AccordionContent>
                       <div className="space-y-2 pt-1">
                         {variants.map((v) => {
-                          const mainAvailable = getMainAvailableQty(v);
+                          const mainAvailable = getMainAvailableQty(
+                            v,
+                            poReservedByVariantId,
+                            mainAllocatableByVariantId
+                          );
                           const outOfStock = mainAvailable <= 0;
                           return (
                             <div

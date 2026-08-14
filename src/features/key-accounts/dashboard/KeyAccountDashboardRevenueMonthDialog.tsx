@@ -51,6 +51,56 @@ type PaymentHistoryRow = {
     | null;
 };
 
+/** One visible history line — cash and settlement discount are never combined. */
+type PaymentHistoryDisplayRow = {
+  key: string;
+  created_at: string;
+  methodLabel: string;
+  recorderName: string;
+  amountLabel: string;
+  amountClassName?: string;
+};
+
+function buildPaymentHistoryDisplayRows(payments: PaymentHistoryRow[]): PaymentHistoryDisplayRow[] {
+  const rows: PaymentHistoryDisplayRow[] = [];
+  for (const payment of payments) {
+    const recorder = firstRelation(payment.recorder);
+    const recorderName = recorder?.full_name || recorder?.email || '—';
+    const cash = Number(payment.amount) || 0;
+    const discount = Number(payment.settlement_discount) || 0;
+    const createdAt = payment.created_at || '';
+
+    if (cash > 0) {
+      const method = payment.payment_method
+        ? String(payment.payment_method).replace(/_/g, ' ')
+        : '—';
+      const bank = payment.bank_type
+        ? ` · ${String(payment.bank_type).replace(/_/g, ' ')}`
+        : '';
+      rows.push({
+        key: `${payment.id}-cash`,
+        created_at: createdAt,
+        methodLabel: `${method}${bank}`,
+        recorderName,
+        amountLabel: formatKeyAccountDashboardCurrency(cash),
+        amountClassName: 'font-medium',
+      });
+    }
+
+    if (discount > 0) {
+      rows.push({
+        key: `${payment.id}-discount`,
+        created_at: createdAt,
+        methodLabel: 'Settlement discount',
+        recorderName,
+        amountLabel: `Disc. ${formatKeyAccountDashboardCurrency(discount)}`,
+        amountClassName: 'text-slate-600',
+      });
+    }
+  }
+  return rows;
+}
+
 type PoKindFilter = 'all' | 'standard' | 'consignment';
 
 function paymentStatusBadgeClass(status: string) {
@@ -131,9 +181,17 @@ export function KeyAccountDashboardRevenueMonthDialog({
       historyPayments.reduce((sum, row) => sum + (Number(row.settlement_discount) || 0), 0),
     [historyPayments]
   );
+  const historyDisplayRows = useMemo(
+    () => buildPaymentHistoryDisplayRows(historyPayments),
+    [historyPayments]
+  );
+  const historyCashPaymentCount = useMemo(
+    () => historyPayments.filter((p) => (Number(p.amount) || 0) > 0).length,
+    [historyPayments]
+  );
   const pagedHistoryPayments = useMemo(
-    () => paginateAnalyticsRows(historyPayments, historyPage),
-    [historyPayments, historyPage]
+    () => paginateAnalyticsRows(historyDisplayRows, historyPage),
+    [historyDisplayRows, historyPage]
   );
 
   const openPaymentHistory = async (row: KeyAccountDashboardMonthPoRow) => {
@@ -205,7 +263,7 @@ export function KeyAccountDashboardRevenueMonthDialog({
 
           {monthlyRow && (
             <div className="space-y-4 text-sm min-w-0">
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
                 <div>
                   <p className="text-muted-foreground text-xs">Paid</p>
                   <p className="font-semibold text-emerald-600">
@@ -213,15 +271,11 @@ export function KeyAccountDashboardRevenueMonthDialog({
                   </p>
                 </div>
                 <div>
-                  <p className="text-muted-foreground text-xs">Partial</p>
-                  <p className="font-semibold text-amber-600">
-                    {formatKeyAccountDashboardCurrency(monthlyRow.partialRevenue)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground text-xs">Unpaid</p>
+                  <p className="text-muted-foreground text-xs">Remaining balance</p>
                   <p className="font-semibold text-orange-600">
-                    {formatKeyAccountDashboardCurrency(monthlyRow.unpaidRevenue)}
+                    {formatKeyAccountDashboardCurrency(
+                      monthlyRow.partialRevenue + monthlyRow.unpaidRevenue
+                    )}
                   </p>
                 </div>
                 <div>
@@ -423,7 +477,7 @@ export function KeyAccountDashboardRevenueMonthDialog({
                 </div>
               </div>
 
-              {historyPayments.length === 0 ? (
+              {historyDisplayRows.length === 0 ? (
                 <div className="py-10 text-center text-muted-foreground">
                   No payment history recorded for this PO.
                 </div>
@@ -440,58 +494,38 @@ export function KeyAccountDashboardRevenueMonthDialog({
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {pagedHistoryPayments.map((payment) => {
-                          const recorder = firstRelation(payment.recorder);
-                          const method = payment.payment_method
-                            ? String(payment.payment_method).replace(/_/g, ' ')
-                            : '—';
-                          const bank = payment.bank_type
-                            ? ` · ${String(payment.bank_type).replace(/_/g, ' ')}`
-                            : '';
-                          const cash = Number(payment.amount) || 0;
-                          const discount = Number(payment.settlement_discount) || 0;
-                          return (
-                            <TableRow key={payment.id}>
-                              <TableCell className="align-top">
-                                {payment.created_at
-                                  ? new Date(payment.created_at).toLocaleString()
-                                  : '—'}
-                              </TableCell>
-                              <TableCell className="align-top break-words">{`${method}${bank}`}</TableCell>
-                              <TableCell
-                                className="align-top truncate"
-                                title={recorder?.full_name || recorder?.email || '—'}
-                              >
-                                {recorder?.full_name || recorder?.email || '—'}
-                              </TableCell>
-                              <TableCell className="text-right align-top tabular-nums">
-                                {cash > 0 ? (
-                                  <div className="font-medium">
-                                    {formatKeyAccountDashboardCurrency(cash)}
-                                  </div>
-                                ) : null}
-                                {discount > 0 ? (
-                                  <div className="text-slate-600">
-                                    Disc. {formatKeyAccountDashboardCurrency(discount)}
-                                  </div>
-                                ) : null}
-                                {cash <= 0 && discount <= 0 ? '—' : null}
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
+                        {pagedHistoryPayments.map((row) => (
+                          <TableRow key={row.key}>
+                            <TableCell className="align-top">
+                              {row.created_at ? new Date(row.created_at).toLocaleString() : '—'}
+                            </TableCell>
+                            <TableCell className="align-top break-words">{row.methodLabel}</TableCell>
+                            <TableCell
+                              className="align-top truncate"
+                              title={row.recorderName}
+                            >
+                              {row.recorderName}
+                            </TableCell>
+                            <TableCell
+                              className={`text-right align-top tabular-nums ${row.amountClassName || ''}`}
+                            >
+                              {row.amountLabel}
+                            </TableCell>
+                          </TableRow>
+                        ))}
                       </TableBody>
                     </Table>
                   </div>
                   <AnalyticsTablePagination
                     page={historyPage}
                     onPageChange={setHistoryPage}
-                    totalRows={historyPayments.length}
+                    totalRows={historyDisplayRows.length}
                   />
                 </>
               )}
               <p className="text-xs text-muted-foreground text-right">
-                {historyPayments.length} payment entr{historyPayments.length === 1 ? 'y' : 'ies'}
+                {historyCashPaymentCount} payment entr
+                {historyCashPaymentCount === 1 ? 'y' : 'ies'}
               </p>
             </div>
           )}

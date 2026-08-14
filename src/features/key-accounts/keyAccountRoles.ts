@@ -66,3 +66,55 @@ export function getKeyAccountRoleLabel(role?: string | null): string {
       return role?.replace(/_/g, ' ') ?? 'User';
   }
 }
+
+/** Editable until Sales Admin submits to warehouse (status may stay pending until warehouse approves).
+ * On-behalf POs (Sales Admin created for another owner) lock earlier — after the owner approves. */
+export type KeyAccountPoEditGateInput = {
+  status?: string | null;
+  workflow_status?: string | null;
+  kam_id?: string | null;
+  created_by?: string | null;
+  po_order_kind?: string | null;
+};
+
+export function isKeyAccountOnBehalfPo(
+  po: Pick<KeyAccountPoEditGateInput, 'created_by' | 'kam_id'> | null | undefined
+): boolean {
+  return !!po?.created_by && !!po?.kam_id && po.created_by !== po.kam_id;
+}
+
+const KEY_ACCOUNT_PO_EDIT_LOCKED_WORKFLOWS = new Set([
+  'warehouse_reserved',
+  'partial_delivered',
+  'delivered',
+  'rejected',
+]);
+
+export function canEditKeyAccountPo(
+  po: KeyAccountPoEditGateInput | null | undefined,
+  user?: { id?: string | null; role?: string | null } | null
+): boolean {
+  if (!po || !user?.id || !user.role) return false;
+  if (isKeyAccountAccounting(user.role)) return false;
+
+  const status = String(po.status || '').toLowerCase();
+  const workflow = String(po.workflow_status || '').toLowerCase();
+  if (status !== 'pending') return false;
+  if (workflow === 'rejected' || status === 'rejected' || status === 'cancelled') return false;
+  // Submitted to warehouse (or past that) — not editable even while status is still pending
+  if (KEY_ACCOUNT_PO_EDIT_LOCKED_WORKFLOWS.has(workflow)) return false;
+
+  const kind = String(po.po_order_kind || '');
+  if (kind === 'rebate_fulfillment' || kind === 'rebate_topup') return false;
+
+  // On-behalf PO: editable only while waiting for owner approval
+  if (isKeyAccountOnBehalfPo(po) && workflow !== 'owner_pending') return false;
+
+  const isPrivilegedEditor =
+    isKeyAccountSalesAdmin(user.role) ||
+    isKeyAccountSalesHead(user.role) ||
+    isKeyAccountDirector(user.role);
+  const isOwner = !!po.kam_id && po.kam_id === user.id;
+
+  return isPrivilegedEditor || isOwner;
+}

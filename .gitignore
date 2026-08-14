@@ -34,3 +34,6 @@ dist-ssr
 
 # Local ops runbooks (prod migration checklists — personal, not for repo)
 docs/local/
+
+# Local-only dev previews (email/component visual — not shipped to main)
+src/features/component-visual/

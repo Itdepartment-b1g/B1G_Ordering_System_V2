@@ -56,7 +56,8 @@ import {
   generateAndOpenKeyAccountCofPdf,
   orderToKeyAccountPoForCof,
 } from '@/features/key-accounts/cof/generateKeyAccountCofPdf';
-import { generateAndOpenDrPdf } from './dr/generateDrPdf';
+import { generateAndOpenDrPdf, type DrPdfDispatchLine } from './dr/generateDrPdf';
+import { enrichDispatchLinesWithLots } from './dr/fetchDeliveryDispatchLots';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
   import { Textarea } from '@/components/ui/textarea';
@@ -91,6 +92,7 @@ import {
 } from './utils/purchaseOrderFilters';
 import { KeyAccountPoWarehouseProgress } from '@/features/key-accounts/components/KeyAccountPoWarehouseProgress';
 import { keyAccountWorkflowStatusAfterLocationDispatch } from '@/features/key-accounts/keyAccountDispatchWorkflow';
+import { notifyKeyAccountPoCreatorOfFulfillment } from '@/lib/keyAccountEmail.helpers';
 import { RebateReplacementPricingSummary, RebateReceiveReturnsDialog } from '@/features/key-accounts/rebates';
 import {
   filterRebateReturnLinesForWarehouseUser,
@@ -475,14 +477,7 @@ export default function PurchaseOrdersPage() {
     if (!drMeta?.dr_number) return;
     try {
       // Prefer this DR's dispatched lines (partial multi-DR) over full PO qty
-      let dispatchLines:
-        | Array<{
-            variant_id: string;
-            brand_name?: string | null;
-            variant_name?: string | null;
-            quantity: number;
-          }>
-        | undefined;
+      let dispatchLines: DrPdfDispatchLine[] | undefined;
 
       const { data: deliveryRow } = await supabase
         .from('purchase_order_deliveries')
@@ -515,6 +510,9 @@ export default function PurchaseOrdersPage() {
               quantity: Number(item.quantity_dispatched) || 0,
             };
           });
+        if (dispatchLines.length > 0) {
+          dispatchLines = await enrichDispatchLinesWithLots(deliveryRow.id, dispatchLines);
+        }
       }
 
       await generateAndOpenDrPdf(order, {
@@ -1277,9 +1275,15 @@ export default function PurchaseOrdersPage() {
 
     let cancelled = false;
     setLoadingApproveStock(true);
+    const excludePoId = String(orderToApprove.id);
     (async () => {
-      const [{ data: locRows, error: locErr }, { data: invRows, error: invErr }, { data: mainInvRows, error: mainInvErr }] =
-        await Promise.all([
+      const [
+        { data: locRows, error: locErr },
+        { data: invRows, error: invErr },
+        { data: mainInvRows, error: mainInvErr },
+        { data: reservedData, error: reservedErr },
+        { data: softReservedData, error: softReservedErr },
+      ] = await Promise.all([
         supabase
           .from('warehouse_locations')
           .select('id,name,is_main')
@@ -1291,17 +1295,33 @@ export default function PurchaseOrdersPage() {
           .eq('company_id', user.company_id)
           .in('location_id', locationIds)
           .in('variant_id', variantIds),
-        // Main Warehouse "location" stock lives in main_inventory (available = stock - allocated_stock).
+        // Main Warehouse "location" stock lives in main_inventory.
         supabase
           .from('main_inventory')
           .select('variant_id,stock,allocated_stock')
           .eq('company_id', user.company_id)
           .in('variant_id', variantIds),
+        // Hard PO reserves (approved but not yet fulfilled)
+        supabase
+          .from('warehouse_transfer_reservations')
+          .select('purchase_order_id,variant_id,warehouse_location_id,quantity_reserved,quantity_fulfilled,status')
+          .eq('warehouse_company_id', user.company_id)
+          .in('variant_id', variantIds)
+          .in('status', ['reserved', 'partial']),
+        // Soft (pending) PO commitments
+        supabase
+          .from('warehouse_transfer_soft_reservations')
+          .select('purchase_order_id,variant_id,warehouse_location_id,quantity_committed,status')
+          .eq('warehouse_company_id', user.company_id)
+          .in('variant_id', variantIds)
+          .eq('status', 'active'),
       ]);
       if (cancelled) return;
       if (locErr) throw locErr;
       if (invErr) throw invErr;
       if (mainInvErr) throw mainInvErr;
+      if (reservedErr) throw reservedErr;
+      if (softReservedErr) throw softReservedErr;
 
       const nameMap: Record<string, string> = {};
       const mainLocIds: string[] = [];
@@ -1312,17 +1332,44 @@ export default function PurchaseOrdersPage() {
       }
       setApproveLocationNames(nameMap);
 
-      const stockMap: Record<string, number> = {};
-      for (const r of (invRows as any[]) || []) {
-        stockMap[locVarKey(String(r.location_id), String(r.variant_id))] = Number(r.stock || 0);
+      // Match approve_multi_location_po: exclude this PO so its own soft commitment is not double-counted.
+      const reservedByLocVar: Record<string, number> = {};
+      for (const row of (reservedData as any[]) || []) {
+        if (String(row.purchase_order_id) === excludePoId) continue;
+        const remaining = Math.max(
+          0,
+          Number(row.quantity_reserved || 0) - Number(row.quantity_fulfilled || 0)
+        );
+        if (remaining <= 0) continue;
+        const key = locVarKey(String(row.warehouse_location_id), String(row.variant_id));
+        reservedByLocVar[key] = (reservedByLocVar[key] || 0) + remaining;
+      }
+      for (const row of (softReservedData as any[]) || []) {
+        if (String(row.purchase_order_id) === excludePoId) continue;
+        const committed = Math.max(0, Number(row.quantity_committed || 0));
+        if (committed <= 0) continue;
+        const key = locVarKey(String(row.warehouse_location_id), String(row.variant_id));
+        reservedByLocVar[key] = (reservedByLocVar[key] || 0) + committed;
       }
 
-      // Fill in "available" for main locations from main_inventory.
+      const stockMap: Record<string, number> = {};
+      // Sub-warehouse: available = stock - hard - soft (other POs)
+      for (const r of (invRows as any[]) || []) {
+        const key = locVarKey(String(r.location_id), String(r.variant_id));
+        const reserved = reservedByLocVar[key] || 0;
+        stockMap[key] = Math.max(0, Number(r.stock || 0) - reserved);
+      }
+
+      // Main: available = stock - allocated_stock - hard - soft (other POs)
       for (const r of (mainInvRows as any[]) || []) {
         const variantId = String(r.variant_id);
-        const available = Math.max(0, Number(r.stock || 0) - Number(r.allocated_stock || 0));
         for (const mainLocId of mainLocIds) {
-          stockMap[locVarKey(mainLocId, variantId)] = available;
+          const key = locVarKey(mainLocId, variantId);
+          const reserved = reservedByLocVar[key] || 0;
+          stockMap[key] = Math.max(
+            0,
+            Number(r.stock || 0) - Number(r.allocated_stock || 0) - reserved
+          );
         }
       }
       setApproveStockByLocVar(stockMap);
@@ -1574,8 +1621,13 @@ export default function PurchaseOrdersPage() {
 
   const handleOpenFulfillDialog = (order: any) => {
     setOrderToFulfill(order);
-    setFulfillLocationId(membership.locationId ?? null);
-    setFulfillLocationName(null);
+    const locId = membership.locationId ?? null;
+    setFulfillLocationId(locId);
+    setFulfillLocationName(
+      locId
+        ? approveLocationNames[locId] || resolveWarehouseNameForLocation(order, locId)
+        : null
+    );
     if (order?.fulfillment_type === 'warehouse_transfer') {
       openDispatchCaptureForFulfill(order);
       return;
@@ -1752,6 +1804,16 @@ export default function PurchaseOrdersPage() {
       });
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || 'Fulfillment failed');
+
+      void notifyKeyAccountPoCreatorOfFulfillment({
+        order: orderToFulfill,
+        actorUserId: user?.id,
+        warehouseLocationName:
+          fulfillLocationName?.trim() ||
+          (locId ? approveLocationNames[locId] : null) ||
+          (locId ? resolveWarehouseNameForLocation(orderToFulfill, locId) : null),
+        warehouseLocationId: locId,
+      });
 
       toast({
         title: 'Fulfilled',
@@ -2951,6 +3013,31 @@ export default function PurchaseOrdersPage() {
                         fileStem: 'package',
                       });
 
+                      // Email after proofs exist so creator gets rider + package images.
+                      const emailWarehouseName =
+                        fulfillLocationName?.trim() ||
+                        approveLocationNames[locId] ||
+                        resolveWarehouseNameForLocation(dispatchPo, locId);
+                      void notifyKeyAccountPoCreatorOfFulfillment({
+                        order: dispatchPo,
+                        actorUserId: user?.id,
+                        warehouseLocationName: emailWarehouseName,
+                        warehouseLocationId: locId,
+                        items: dispatchLines
+                          .filter((l) => l.ship_qty > 0)
+                          .map((l) => ({
+                            variantId: l.variant_id,
+                            brandName: l.brand_name ?? null,
+                            variantName: l.variant_name ?? null,
+                            dispatchQty: l.ship_qty,
+                            quantity: l.ship_qty,
+                          })),
+                        riderPhotoUrl,
+                        riderName: riderName.trim() || null,
+                        riderPlateNumber: riderPlate.trim() || null,
+                        packagePhotoUrls: packageUpload.urls,
+                      });
+
                       // 2) Create DR number (WH + first letter of warehouse_locations.name, e.g. Bacoor → WHB)
                       const { data: drNumber, error: drErr } = await supabase.rpc('generate_dr_number', {
                         p_warehouse_location_id: locId,
@@ -3089,15 +3176,19 @@ export default function PurchaseOrdersPage() {
                       const pdfDrNumber = drNumber;
                       const pdfLocId = locId;
                       const pdfWhName = whName;
-                      const pdfDispatchLines = fulfilledItems.map((it) => {
-                        const fromUi = dispatchLines.find((l) => l.variant_id === it.variant_id);
-                        return {
-                          variant_id: it.variant_id,
-                          brand_name: fromUi?.brand_name ?? null,
-                          variant_name: fromUi?.variant_name ?? null,
-                          quantity: it.quantity,
-                        };
-                      });
+                      const pdfDeliveryId = deliveryRow.id as string;
+                      const pdfDispatchLines = await enrichDispatchLinesWithLots(
+                        pdfDeliveryId,
+                        fulfilledItems.map((it) => {
+                          const fromUi = dispatchLines.find((l) => l.variant_id === it.variant_id);
+                          return {
+                            variant_id: it.variant_id,
+                            brand_name: fromUi?.brand_name ?? null,
+                            variant_name: fromUi?.variant_name ?? null,
+                            quantity: it.quantity,
+                          };
+                        })
+                      );
 
                       setMyLocationDrByPo((prev) => ({
                         ...prev,
@@ -4049,6 +4140,7 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
       case 'admin_pending':
       case 'director_pending':
       case 'kam_pending':
+      case 'owner_pending':
         return 'bg-amber-500 text-white';
       case 'rejected':
         return 'bg-red-600 text-white';

@@ -1,4 +1,6 @@
 import { format } from 'date-fns';
+import { FileText, Loader2 } from 'lucide-react';
+import { useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -11,8 +13,10 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { useToast } from '@/hooks/use-toast';
 
 import type { PhysicalCountHistoryDetail, PhysicalCountLine } from '../types';
+import { exportPhysicalCountPdf } from '../utils/exportPhysicalCountPdf';
 import { formatLotDate } from '../utils/formatLotDate';
 import { parseNonNegativeQty } from '../utils/physicalCountQty';
 
@@ -141,17 +145,59 @@ export function PhysicalCountHistoryDetailDialog({
   onOpenChange: (open: boolean) => void;
   session: PhysicalCountHistoryDetail | null;
 }) {
+  const { toast } = useToast();
+  const [exporting, setExporting] = useState(false);
+
+  const handleExportPdf = async () => {
+    if (!session || exporting) return;
+    try {
+      setExporting(true);
+      await exportPhysicalCountPdf(session);
+      toast({
+        title: 'PDF opened',
+        description: 'Physical count report opened — use Print / Save PDF.',
+      });
+    } catch {
+      toast({
+        title: 'Export failed',
+        description: 'Could not open the physical count PDF.',
+        variant: 'destructive',
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
+
   if (!session) return null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="w-[95vw] max-w-5xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Physical count detail</DialogTitle>
-          <DialogDescription>
-            {session.batch?.batch_number ?? 'Batch'} · {session.warehouse_location?.name ?? 'Location'}{' '}
-            · {format(new Date(session.counted_at), 'MMM d, yyyy h:mm a')}
-          </DialogDescription>
+          <div className="flex items-start justify-between gap-3 pr-6">
+            <div className="space-y-1.5">
+              <DialogTitle>Physical count detail</DialogTitle>
+              <DialogDescription>
+                {session.batch?.batch_number ?? 'Batch'} ·{' '}
+                {session.warehouse_location?.name ?? 'Location'} ·{' '}
+                {format(new Date(session.counted_at), 'MMM d, yyyy h:mm a')}
+              </DialogDescription>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={exporting}
+              onClick={() => void handleExportPdf()}
+            >
+              {exporting ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : (
+                <FileText className="h-4 w-4 mr-2" />
+              )}
+              Export to PDF
+            </Button>
+          </div>
         </DialogHeader>
 
         <div className="space-y-4">
