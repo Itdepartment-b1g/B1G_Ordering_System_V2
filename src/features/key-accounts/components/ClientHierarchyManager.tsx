@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
@@ -184,7 +184,11 @@ export function ClientHierarchyManager() {
 
   const [newAddress, setNewAddress] = useState(EMPTY_ADDRESS_FORM);
 
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchByTab, setSearchByTab] = useState<Record<HierarchyTab, string>>({
+    clients: '',
+    shops: '',
+    addresses: '',
+  });
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'all',
   });
@@ -200,10 +204,16 @@ export function ClientHierarchyManager() {
     [dateRangeFilter]
   );
 
+  const hierarchyTab = (activeTab === 'shops' || activeTab === 'addresses'
+    ? activeTab
+    : 'clients') as HierarchyTab;
+
+  const searchQuery = searchByTab[hierarchyTab];
+
   const filteredClients = useMemo(() => {
     const inRange = filterRowsByCreatedAt(clients, createdDateRange);
     return inRange.filter((client) =>
-      matchesHierarchySearch(searchQuery, [
+      matchesHierarchySearch(searchByTab.clients, [
         client.client_name,
         client.client_code,
         client.client_category,
@@ -214,12 +224,12 @@ export function ClientHierarchyManager() {
         client.notes,
       ])
     );
-  }, [clients, createdDateRange, searchQuery]);
+  }, [clients, createdDateRange, searchByTab.clients]);
 
   const filteredShops = useMemo(() => {
     const inRange = filterRowsByCreatedAt(shops, createdDateRange);
     return inRange.filter((shop) =>
-      matchesHierarchySearch(searchQuery, [
+      matchesHierarchySearch(searchByTab.shops, [
         shop.shop_name,
         shop.shop_code,
         shop.city,
@@ -232,12 +242,12 @@ export function ClientHierarchyManager() {
         shop.notes,
       ])
     );
-  }, [shops, createdDateRange, searchQuery]);
+  }, [shops, createdDateRange, searchByTab.shops]);
 
   const filteredAddresses = useMemo(() => {
     const inRange = filterRowsByCreatedAt(addresses, createdDateRange);
     return inRange.filter((address) =>
-      matchesHierarchySearch(searchQuery, [
+      matchesHierarchySearch(searchByTab.addresses, [
         address.address_label,
         address.full_address,
         address.city,
@@ -249,11 +259,7 @@ export function ClientHierarchyManager() {
         address.delivery_instructions,
       ])
     );
-  }, [addresses, createdDateRange, searchQuery]);
-
-  const hierarchyTab = (activeTab === 'shops' || activeTab === 'addresses'
-    ? activeTab
-    : 'clients') as HierarchyTab;
+  }, [addresses, createdDateRange, searchByTab.addresses]);
 
   const searchPlaceholder = useMemo(
     () => getHierarchySearchPlaceholder(hierarchyTab),
@@ -268,14 +274,48 @@ export function ClientHierarchyManager() {
   useEffect(() => {
     if (selectedClient) {
       fetchShops(selectedClient);
+      return;
     }
+    setShops([]);
+    setAddresses([]);
+    setSelectedShop(null);
   }, [selectedClient]);
 
   useEffect(() => {
     if (selectedShop) {
       fetchAddresses(selectedShop);
+      return;
     }
+    setAddresses([]);
   }, [selectedShop]);
+
+  const skipClientsSearchReset = useRef(true);
+  useEffect(() => {
+    if (skipClientsSearchReset.current) {
+      skipClientsSearchReset.current = false;
+      return;
+    }
+
+    setSelectedClient(null);
+    setSelectedShop(null);
+    setShops([]);
+    setAddresses([]);
+    setSearchByTab((prev) => ({ ...prev, shops: '', addresses: '' }));
+    setActiveTab('clients');
+  }, [searchByTab.clients]);
+
+  const skipShopsSearchReset = useRef(true);
+  useEffect(() => {
+    if (skipShopsSearchReset.current) {
+      skipShopsSearchReset.current = false;
+      return;
+    }
+
+    setSelectedShop(null);
+    setAddresses([]);
+    setSearchByTab((prev) => ({ ...prev, addresses: '' }));
+    setActiveTab((current) => (current === 'addresses' ? 'shops' : current));
+  }, [searchByTab.shops]);
 
   useEffect(() => {
     if (!shopDialogOpen) {
@@ -295,15 +335,15 @@ export function ClientHierarchyManager() {
 
   useEffect(() => {
     setClientsPage(1);
-  }, [filteredClients.length, searchQuery, createdDateRange.start, createdDateRange.end]);
+  }, [filteredClients.length, searchByTab.clients, createdDateRange.start, createdDateRange.end]);
 
   useEffect(() => {
     setShopsPage(1);
-  }, [filteredShops.length, selectedClient, searchQuery, createdDateRange.start, createdDateRange.end]);
+  }, [filteredShops.length, selectedClient, searchByTab.shops, createdDateRange.start, createdDateRange.end]);
 
   useEffect(() => {
     setAddressesPage(1);
-  }, [filteredAddresses.length, selectedShop, searchQuery, createdDateRange.start, createdDateRange.end]);
+  }, [filteredAddresses.length, selectedShop, searchByTab.addresses, createdDateRange.start, createdDateRange.end]);
 
   const paginatedClients = useMemo(
     () => paginateAnalyticsRows(filteredClients, clientsPage),
@@ -733,7 +773,9 @@ export function ClientHierarchyManager() {
           <Input
             placeholder={searchPlaceholder}
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) =>
+              setSearchByTab((prev) => ({ ...prev, [hierarchyTab]: e.target.value }))
+            }
             className="w-full sm:flex-1"
           />
           <DateRangeFilterPopover
