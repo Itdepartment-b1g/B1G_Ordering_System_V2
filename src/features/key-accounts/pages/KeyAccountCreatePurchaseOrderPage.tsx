@@ -1504,8 +1504,11 @@ export function KeyAccountPurchaseOrderPage() {
         return;
       }
 
-      // Generate PO number using existing DB function
-      const { data: poNumber, error: poNumberErr } = await supabase.rpc('generate_po_number', {});
+      // Generate Key Account PO number (PO-{INITIALS}-KA-YYYYMM-####); does not use generate_po_number()
+      if (!user?.company_id) throw new Error('Company is required');
+      const { data: poNumber, error: poNumberErr } = await supabase.rpc('generate_key_account_po_number', {
+        p_company_id: user.company_id,
+      });
       if (poNumberErr) throw poNumberErr;
 
       const workflowStatus = isSalesAdmin

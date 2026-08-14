@@ -1417,6 +1417,10 @@ export interface Database {
         Args: Record<string, never>;
         Returns: string;
       };
+      generate_key_account_po_number: {
+        Args: { p_company_id: string };
+        Returns: string;
+      };
       generate_key_account_client_code: {
         Args: { p_company_id: string };
         Returns: string;
