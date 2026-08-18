@@ -4,6 +4,7 @@ import path from "path";
 import { componentTagger } from "lovable-tagger";
 import removeConsole from "vite-plugin-remove-console";
 import { localSendEmailApi } from "./vite-plugins/local-send-email-api";
+import { localExecutiveApi } from "./vite-plugins/local-executive-api";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -14,6 +15,7 @@ export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
     mode === "development" && localSendEmailApi(),
+    mode === "development" && localExecutiveApi(),
     mode === "development" && componentTagger(),
     // Remove ALL console logs in production (including console.error)
     // Note: window.console in main.tsx will still work as it's not removed by the plugin
@@ -23,5 +25,8 @@ export default defineConfig(({ mode }) => ({
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+  },
+  ssr: {
+    external: ["pg", "drizzle-orm"],
   },
 }));

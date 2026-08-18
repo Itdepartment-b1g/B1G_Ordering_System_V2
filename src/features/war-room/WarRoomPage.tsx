@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
-import { useExecutiveCompanies } from '@/features/dashboard/executiveHooks';
+import { useExecutiveCompanies } from '@/store/slices/executive';
 import { useIsMobile } from '@/hooks/use-mobile';
 import './WarRoomPage.css';
 

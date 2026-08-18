@@ -49,6 +49,8 @@ const NON_PERSISTED_QUERY_KEYS = new Set([
     'warehouse-delivery-shortages',
     // Heavy nested payloads (events + proof URLs); must stay live for allocate/request sync.
     'internal-stock-requests',
+    // Old client-side executive aggregations; dashboard now uses /api/executive + Redux.
+    'executive',
 ]);
 
 export const queryPersistOptions = {
