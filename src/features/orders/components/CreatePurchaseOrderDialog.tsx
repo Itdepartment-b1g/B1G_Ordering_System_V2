@@ -1,5 +1,6 @@
 
 import { useState, useEffect, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -27,7 +28,7 @@ import {
     AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Package, FileText } from 'lucide-react';
-import { PoTeamLeaderSelect } from './PoTeamLeaderSelect';
+import { PoTeamLeaderSelect, type TeamLeaderOption } from './PoTeamLeaderSelect';
 
 // Types
 import type { Supplier } from '../types';
@@ -114,7 +115,43 @@ export function CreatePurchaseOrderDialog({
     const [discount, setDiscount] = useState(0);
     const [notes, setNotes] = useState('');
     const [selectedTeamLeaderId, setSelectedTeamLeaderId] = useState('');
+    const [leaderConfirmOpen, setLeaderConfirmOpen] = useState(false);
+    const [leaderNameConfirmInput, setLeaderNameConfirmInput] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const { data: teamLeaders = [] } = useQuery({
+        queryKey: ['po_create_team_leaders', user?.company_id],
+        queryFn: async (): Promise<TeamLeaderOption[]> => {
+            let query = supabase
+                .from('profiles')
+                .select('id, full_name')
+                .eq('role', 'team_leader')
+                .order('full_name', { ascending: true });
+
+            if (user?.company_id) {
+                query = query.eq('company_id', user.company_id);
+            }
+
+            const { data, error } = await query;
+            if (error) throw error;
+            return (data ?? []) as TeamLeaderOption[];
+        },
+        enabled: open && fulfillmentMode === 'warehouse_transfer' && !!user?.company_id,
+        staleTime: 60_000,
+    });
+
+    const selectedTeamLeaderName = useMemo(
+        () => teamLeaders.find((leader) => leader.id === selectedTeamLeaderId)?.full_name ?? '',
+        [teamLeaders, selectedTeamLeaderId]
+    );
+
+    const leaderNameMatches = useMemo(() => {
+        if (!selectedTeamLeaderName) return false;
+        return (
+            leaderNameConfirmInput.trim().toLowerCase() ===
+            selectedTeamLeaderName.trim().toLowerCase()
+        );
+    }, [leaderNameConfirmInput, selectedTeamLeaderName]);
 
     // Items State
     const [items, setItems] = useState<NewPOItem[]>([]);
@@ -125,14 +162,28 @@ export function CreatePurchaseOrderDialog({
     useEffect(() => {
         if (!open) {
             setSelectedTeamLeaderId('');
+            setLeaderConfirmOpen(false);
+            setLeaderNameConfirmInput('');
         }
     }, [open]);
 
     useEffect(() => {
         if (fulfillmentMode !== 'warehouse_transfer') {
             setSelectedTeamLeaderId('');
+            setLeaderConfirmOpen(false);
+            setLeaderNameConfirmInput('');
         }
     }, [fulfillmentMode]);
+
+    useEffect(() => {
+        setLeaderNameConfirmInput('');
+    }, [selectedTeamLeaderId]);
+
+    useEffect(() => {
+        if (!leaderConfirmOpen) {
+            setLeaderNameConfirmInput('');
+        }
+    }, [leaderConfirmOpen]);
 
     // Keep item-level location in sync with source mode and default selection.
     useEffect(() => {
@@ -587,42 +638,72 @@ export function CreatePurchaseOrderDialog({
         }));
     };
 
-    const handleSubmit = async () => {
+    const validateForm = () => {
         if (!catalogCompanyId) {
             toast({ title: 'Error', description: 'Company catalog could not be loaded', variant: 'destructive' });
-            return;
+            return false;
         }
         if (fulfillmentMode === 'supplier' && !selectedSupplierId) {
             toast({ title: 'Error', description: 'Please select a supplier', variant: 'destructive' });
-            return;
+            return false;
         }
         if (fulfillmentMode === 'warehouse_transfer' && !linkedWarehouseCompanyId) {
             toast({ title: 'Error', description: 'No warehouse is linked to your company', variant: 'destructive' });
-            return;
+            return false;
         }
         if (fulfillmentMode === 'warehouse_transfer' && sourceMode === 'single' && !selectedWarehouseLocationId) {
             toast({ title: 'Error', description: 'Please select a sub-warehouse', variant: 'destructive' });
-            return;
+            return false;
         }
         if (fulfillmentMode === 'warehouse_transfer' && sourceMode === 'multi') {
             const missing = items.find(i => !i.warehouseLocationId);
             if (missing) {
                 toast({ title: 'Error', description: 'Please select a warehouse for each item', variant: 'destructive' });
-                return;
+                return false;
             }
         }
         if (fulfillmentMode === 'warehouse_transfer' && !selectedTeamLeaderId) {
             toast({ title: 'Error', description: 'Please select a receiving team leader', variant: 'destructive' });
-            return;
+            return false;
         }
         if (items.length === 0) {
             toast({ title: 'Error', description: 'Please add at least one item', variant: 'destructive' });
-            return;
+            return false;
         }
         if (!expectedDelivery) {
             toast({ title: 'Error', description: 'Please set expected delivery date', variant: 'destructive' });
+            return false;
+        }
+        return true;
+    };
+
+    const handleCreateClick = () => {
+        if (!validateForm()) return;
+
+        if (fulfillmentMode === 'warehouse_transfer') {
+            setLeaderConfirmOpen(true);
             return;
         }
+
+        void handleSubmit();
+    };
+
+    const handleConfirmLeaderAndSubmit = () => {
+        if (!leaderNameMatches) {
+            toast({
+                title: 'Name does not match',
+                description: 'Please type the selected team leader\'s name exactly to confirm.',
+                variant: 'destructive',
+            });
+            return;
+        }
+
+        setLeaderConfirmOpen(false);
+        void handleSubmit();
+    };
+
+    const handleSubmit = async () => {
+        if (!validateForm()) return;
 
         setIsSubmitting(true);
 
@@ -759,6 +840,7 @@ export function CreatePurchaseOrderDialog({
 
             setItems([]);
             setSelectedTeamLeaderId('');
+            setLeaderNameConfirmInput('');
             onOpenChange(false);
 
         } catch (err: any) {
@@ -1251,7 +1333,7 @@ export function CreatePurchaseOrderDialog({
 
                             <div className="p-4 border-t bg-muted/20 flex justify-end gap-2">
                                 <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-                                <Button onClick={handleSubmit} disabled={isSubmitting || catalogLoading || !catalogCompanyId}>
+                                <Button onClick={handleCreateClick} disabled={isSubmitting || catalogLoading || !catalogCompanyId}>
                                     {isSubmitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
                                     Create Purchase Order
                                 </Button>
@@ -1308,6 +1390,54 @@ export function CreatePurchaseOrderDialog({
                     </div>
                 </DialogContent>
             </Dialog>
+
+            {/* Team Leader Confirmation Dialog */}
+            <AlertDialog open={leaderConfirmOpen} onOpenChange={setLeaderConfirmOpen}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Confirm receiving team leader</AlertDialogTitle>
+                        <AlertDialogDescription asChild>
+                            <div className="space-y-4 pt-2">
+                                <p>
+                                    This PO will be assigned to{' '}
+                                    <span className="font-semibold text-foreground">{selectedTeamLeaderName}</span>{' '}
+                                    for receipt after warehouse fulfillment. To avoid assigning the wrong leader,
+                                    type their full name below.
+                                </p>
+                                <div className="space-y-2">
+                                    <Label htmlFor="leader-name-confirm">Team leader name</Label>
+                                    <Input
+                                        id="leader-name-confirm"
+                                        value={leaderNameConfirmInput}
+                                        onChange={(e) => setLeaderNameConfirmInput(e.target.value)}
+                                        placeholder={selectedTeamLeaderName || 'Enter team leader name'}
+                                        autoComplete="off"
+                                    />
+                                </div>
+                            </div>
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={isSubmitting}>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={(e) => {
+                                e.preventDefault();
+                                handleConfirmLeaderAndSubmit();
+                            }}
+                            disabled={!leaderNameMatches || isSubmitting}
+                        >
+                            {isSubmitting ? (
+                                <>
+                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                    Creating…
+                                </>
+                            ) : (
+                                'Confirm & Create PO'
+                            )}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
 
             {/* Clear All Confirmation Dialog */}
             <AlertDialog open={clearAllOpen} onOpenChange={setClearAllOpen}>
