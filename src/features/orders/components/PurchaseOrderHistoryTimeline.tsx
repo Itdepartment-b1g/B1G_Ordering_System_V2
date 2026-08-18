@@ -71,6 +71,8 @@ function eventTitle(
       return 'PO updated';
     case 'director_approved':
       return 'Director approved';
+    case 'owner_approved':
+      return 'Owner approved';
     case 'admin_submitted':
       return 'Submitted to warehouse';
     case 'approved':
@@ -110,12 +112,23 @@ function variantLabel(n: number): string {
 
 function eventSummary(
   event: PurchaseOrderHistoryEvent,
-  items?: PurchaseOrderHistoryItem[]
+  items?: PurchaseOrderHistoryItem[],
+  meta?: { ownerName?: string | null; isOnBehalf?: boolean }
 ): string | null {
   if (event.type === 'created') {
-    if (!items?.length) return null;
-    const ordered = items.reduce((sum, item) => sum + Math.max(0, item.orderedQuantity), 0);
-    return `Ordered ${unitLabel(ordered)} across ${variantLabel(items.length)}`;
+    const ordered = items?.length
+      ? items.reduce((sum, item) => sum + Math.max(0, item.orderedQuantity), 0)
+      : 0;
+    const qtyPart =
+      items?.length
+        ? `Ordered ${unitLabel(ordered)} across ${variantLabel(items.length)}`
+        : null;
+    if (meta?.isOnBehalf && meta.ownerName?.trim()) {
+      return qtyPart
+        ? `${qtyPart} · on behalf of ${meta.ownerName.trim()}`
+        : `Created on behalf of ${meta.ownerName.trim()}`;
+    }
+    return qtyPart;
   }
 
   if (event.type === 'updated') {
@@ -127,6 +140,13 @@ function eventSummary(
 
   if (event.type === 'director_approved') {
     return 'Sales director approved this Key Account PO';
+  }
+
+  if (event.type === 'owner_approved') {
+    const owner = meta?.ownerName?.trim();
+    return owner
+      ? `${owner} approved this on-behalf PO`
+      : 'Order owner approved this on-behalf PO';
   }
 
   if (event.type === 'admin_submitted') {
@@ -206,7 +226,7 @@ function EventIcon({
   const iconClass = cn('h-3.5 w-3.5', className);
   if (type === 'created') return <Clock className={iconClass} />;
   if (type === 'updated') return <Pencil className={iconClass} />;
-  if (type === 'director_approved') return <CheckCircle2 className={iconClass} />;
+  if (type === 'director_approved' || type === 'owner_approved') return <CheckCircle2 className={iconClass} />;
   if (type === 'admin_submitted') return <Send className={iconClass} />;
   if (type === 'approved') return <Send className={iconClass} />;
   if (type === 'dispatched') return <Truck className={iconClass} />;
@@ -229,6 +249,7 @@ function eventTone(type: PurchaseOrderHistoryEvent['type']): {
 } {
   switch (type) {
     case 'director_approved':
+    case 'owner_approved':
       return {
         rail: 'bg-amber-500',
         iconWrap: 'bg-amber-50 text-amber-800 border-amber-200',
@@ -277,6 +298,7 @@ function qtyHeaderForEvent(type: PurchaseOrderHistoryEvent['type']): string {
     type === 'approved' ||
     type === 'created' ||
     type === 'director_approved' ||
+    type === 'owner_approved' ||
     type === 'admin_submitted'
   ) {
     return 'Ordered';
@@ -564,6 +586,9 @@ type PurchaseOrderHistoryTimelineProps = {
   purchaseOrder?: PurchaseOrder | null;
   /** Key Account view uses clearer labels for warehouse approve vs KA workflow steps. */
   presentation?: 'default' | 'key_account';
+  ownerName?: string | null;
+  createdByName?: string | null;
+  isOnBehalf?: boolean;
   emptyLabel?: string;
 };
 
@@ -572,6 +597,9 @@ export function PurchaseOrderHistoryTimeline({
   items,
   purchaseOrder = null,
   presentation = 'default',
+  ownerName = null,
+  createdByName = null,
+  isOnBehalf = false,
   emptyLabel = 'No history yet.',
 }: PurchaseOrderHistoryTimelineProps) {
   const { toast } = useToast();
@@ -617,6 +645,26 @@ export function PurchaseOrderHistoryTimeline({
         <OrderStatusSummary items={items} history={history} presentation={presentation} />
       ) : null}
 
+      {presentation === 'key_account' && (ownerName || (isOnBehalf && createdByName)) ? (
+        <div className="rounded-md border px-3 py-2 text-sm space-y-0.5">
+          {ownerName ? (
+            <p>
+              <span className="text-muted-foreground">Owner</span>
+              {' · '}
+              <span className="font-medium">{ownerName}</span>
+            </p>
+          ) : null}
+          {isOnBehalf && createdByName ? (
+            <p>
+              <span className="text-muted-foreground">Created by</span>
+              {' · '}
+              <span className="font-medium">{createdByName}</span>
+              <span className="text-muted-foreground"> (on behalf of owner)</span>
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       {events.length === 0 ? (
         <p className="text-sm text-muted-foreground py-2">{emptyLabel}</p>
       ) : (
@@ -626,7 +674,7 @@ export function PurchaseOrderHistoryTimeline({
             {events.map((event, eventIndex) => {
               const isLast = eventIndex === events.length - 1;
               const lines = event.lines;
-              const summary = eventSummary(event, items);
+              const summary = eventSummary(event, items, { ownerName, isOnBehalf });
               const hasShortBadge =
                 presentation !== 'key_account' &&
                 (event.type === 'receive_confirmed' || event.type === 'shortage_opened') &&

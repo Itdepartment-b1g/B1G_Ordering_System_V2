@@ -53,6 +53,8 @@ function eventTitle(
       return 'PO updated';
     case 'director_approved':
       return 'Director approved';
+    case 'owner_approved':
+      return 'Owner approved';
     case 'admin_submitted':
       return 'Submitted to warehouse';
     case 'approved':
@@ -84,18 +86,27 @@ function linesTotal(event: PurchaseOrderHistoryEvent): number {
 
 function eventSummary(
   event: PurchaseOrderHistoryEvent,
-  presentation: 'default' | 'key_account' = 'default'
+  presentation: 'default' | 'key_account' = 'default',
+  meta?: { ownerName?: string | null; isOnBehalf?: boolean }
 ): string {
   const qty = linesTotal(event);
+  const owner = meta?.ownerName?.trim();
   switch (event.type) {
-    case 'created':
-      return qty > 0 ? `Ordered ${qty.toLocaleString()} unit(s)` : 'Purchase order created';
+    case 'created': {
+      const qtyPart = qty > 0 ? `Ordered ${qty.toLocaleString()} unit(s)` : 'Purchase order created';
+      if (meta?.isOnBehalf && owner) return `${qtyPart} · on behalf of ${owner}`;
+      return qtyPart;
+    }
     case 'updated':
       return qty > 0
         ? `Updated order · ${qty.toLocaleString()} unit(s)`
         : event.note?.trim() || 'Purchase order updated before warehouse approval';
     case 'director_approved':
       return 'Sales director approved this Key Account PO';
+    case 'owner_approved':
+      return owner
+        ? `${owner} approved this on-behalf PO`
+        : 'Order owner approved this on-behalf PO';
     case 'admin_submitted':
       return 'Sales admin submitted this PO to the warehouse queue';
     case 'approved':
@@ -207,7 +218,12 @@ export function exportPurchaseOrderHistoryPdf(
         <div class="activity-head">
           <div>
             <h4>${escapeHtml(eventTitle(event, presentation))}</h4>
-            <p class="activity-summary">${escapeHtml(eventSummary(event, presentation))}</p>
+            <p class="activity-summary">${escapeHtml(
+              eventSummary(event, presentation, {
+                ownerName: payload.ownerName,
+                isOnBehalf: payload.isOnBehalf,
+              })
+            )}</p>
             <p class="activity-meta">${escapeHtml(formatDateTime(event.at))}${
               event.byName ? ` · ${escapeHtml(event.byName)}` : ''
             }</p>
@@ -294,6 +310,18 @@ export function exportPurchaseOrderHistoryPdf(
       <div><dt>PO number</dt><dd>${escapeHtml(payload.poNumber)}</dd></div>
       <div><dt>Status</dt><dd>${escapeHtml(payload.workflowStatus || payload.status)}</dd></div>
       <div><dt>Created</dt><dd>${escapeHtml(formatDateTime(payload.createdAt))}</dd></div>
+      ${
+        payload.ownerName
+          ? `<div><dt>Owner</dt><dd>${escapeHtml(payload.ownerName)}${
+              payload.isOnBehalf ? ' (on-behalf PO)' : ''
+            }</dd></div>`
+          : ''
+      }
+      ${
+        payload.createdByName
+          ? `<div><dt>Created by</dt><dd>${escapeHtml(payload.createdByName)}</dd></div>`
+          : ''
+      }
       <div><dt>${
         hideReceiveMetrics ? 'Ordered / Dispatched' : 'Ordered / Dispatched / Received / Short'
       }</dt>

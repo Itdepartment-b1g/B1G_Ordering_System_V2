@@ -90,6 +90,14 @@ export function PurchaseOrderHistoryDialog({
             items={payload?.items}
             purchaseOrder={purchaseOrder}
             presentation={presentation}
+            ownerName={payload?.ownerName || purchaseOrder?.kam?.full_name}
+            createdByName={payload?.createdByName || purchaseOrder?.created_by_user?.full_name}
+            isOnBehalf={
+              payload?.isOnBehalf ??
+              (!!purchaseOrder?.created_by &&
+                !!purchaseOrder?.kam_id &&
+                purchaseOrder.created_by !== purchaseOrder.kam_id)
+            }
           />
         )}
 
