@@ -10,6 +10,7 @@ export type PurchaseOrderHistoryEventType =
   | 'created'
   | 'updated'
   | 'director_approved'
+  | 'owner_approved'
   | 'admin_submitted'
   | 'approved'
   | 'rejected'
@@ -57,6 +58,11 @@ export type PurchaseOrderHistoryPayload = {
   workflowStatus?: string | null;
   notes?: string | null;
   createdAt: string;
+  /** Key Account order owner (kam_id profile). */
+  ownerName?: string | null;
+  createdByName?: string | null;
+  /** Sales Admin created this PO for a different owner. */
+  isOnBehalf?: boolean;
   items: PurchaseOrderHistoryItem[];
   history: PurchaseOrderHistoryEvent[];
 };
@@ -65,6 +71,7 @@ export const PURCHASE_ORDER_HISTORY_EVENT_TYPES: PurchaseOrderHistoryEventType[]
   'created',
   'updated',
   'director_approved',
+  'owner_approved',
   'admin_submitted',
   'approved',
   'rejected',
@@ -83,11 +90,26 @@ export function isPurchaseOrderHistoryEventType(
   return (PURCHASE_ORDER_HISTORY_EVENT_TYPES as string[]).includes(value);
 }
 
+const LEGACY_OWNER_APPROVED_NOTE = /approved by order owner/i;
+
+/** Older on-behalf owner approvals were stored as warehouse `approved`. */
+export function resolvePurchaseOrderHistoryEventType(
+  eventType: string,
+  note?: string | null
+): PurchaseOrderHistoryEventType | null {
+  if (eventType === 'approved' && LEGACY_OWNER_APPROVED_NOTE.test(note || '')) {
+    return 'owner_approved';
+  }
+  if (!isPurchaseOrderHistoryEventType(eventType)) return null;
+  return eventType;
+}
+
 /** Causal order for same-delivery / same-second events (receive before shortage). */
 const PURCHASE_ORDER_HISTORY_EVENT_SEQUENCE: Record<PurchaseOrderHistoryEventType, number> = {
   created: 10,
   updated: 12,
   director_approved: 15,
+  owner_approved: 16,
   admin_submitted: 18,
   approved: 20,
   rejected: 20,
