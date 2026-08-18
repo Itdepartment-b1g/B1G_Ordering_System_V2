@@ -1,8 +1,26 @@
-import { getSupabaseAdmin } from '../db/supabaseAdmin';
-import { assertCompanyAssigned } from './executiveScope';
-import type { ExecutiveTeamLeaderDto, ExecutiveTeamLeaderMode, InventoryBrandDto, InventoryVariantDto } from './executiveInventoryRepository';
+import { getSupabaseAdmin } from '../../db/supabaseAdmin';
+import { HttpError } from '../../http/errors';
+import type {
+  ExecutiveTeamLeaderDto,
+  ExecutiveTeamLeaderMode,
+  InventoryBrandDto,
+  InventoryVariantDto,
+} from './executiveInventoryTypes';
 
 const LOW_STOCK_THRESHOLD = 10;
+
+async function assertCompanyAssigned(executiveId: string, companyId: string): Promise<void> {
+  const { data, error } = await getSupabaseAdmin()
+    .from('executive_company_assignments')
+    .select('company_id')
+    .eq('executive_id', executiveId)
+    .eq('company_id', companyId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) {
+    throw new HttpError(403, 'Company is not assigned to this executive');
+  }
+}
 
 function stockStatus(stock: number, reorderLevel = LOW_STOCK_THRESHOLD): InventoryVariantDto['status'] {
   if (stock === 0) return 'out-of-stock';
@@ -151,7 +169,8 @@ export async function getLeaderInventory(
 
   const byVariant = new Map<string, { row: any; stock: number }>();
   for (const row of data ?? []) {
-    const variantId = row.variants?.id as string | undefined;
+    const nestedVariant = Array.isArray(row.variants) ? row.variants[0] : row.variants;
+    const variantId = nestedVariant?.id as string | undefined;
     if (!variantId) continue;
     const existing = byVariant.get(variantId);
     if (existing) existing.stock += row.stock ?? 0;

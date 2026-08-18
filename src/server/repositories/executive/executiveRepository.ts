@@ -1,7 +1,7 @@
 import { and, asc, count, desc, eq, inArray, sql } from 'drizzle-orm';
-import { getDb } from '../db/client';
-import { hasDatabaseUrl } from '../db/pool';
-import { andAll, dateRange, toIso, toNumber } from '../db/helpers';
+import { getDb } from '../../db/client';
+import { hasDatabaseUrl } from '../../db/pool';
+import { andAll, dateRange, toIso, toNumber } from '../../db/helpers';
 import * as supabaseRepo from './executiveRepository.supabase';
 import {
   brands,
@@ -12,7 +12,7 @@ import {
   executiveCompanyAssignments,
   profiles,
   variants,
-} from '../db/schema/executive';
+} from '../../db/schema/executive';
 import { resolveExecutiveCompanyIds } from './executiveScope';
 
 export { assertCompanyAssigned, getAssignedCompanyIds, scopeCompanyIds } from './executiveScope';

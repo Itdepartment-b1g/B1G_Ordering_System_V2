@@ -1,4 +1,4 @@
-import { getSupabaseAdmin } from '../db/supabaseAdmin';
+import { getSupabaseAdmin } from '../../db/supabaseAdmin';
 import { resolveExecutiveCompanyIds } from './executiveScope';
 import type {
   ExecutiveActivityRow,

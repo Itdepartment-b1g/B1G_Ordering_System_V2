@@ -1,9 +1,9 @@
 import { eq } from 'drizzle-orm';
-import { getDb } from '../db/client';
-import { hasDatabaseUrl } from '../db/pool';
-import { getSupabaseAdmin } from '../db/supabaseAdmin';
-import { executiveCompanyAssignments } from '../db/schema/executive';
-import { HttpError } from '../http/errors';
+import { getDb } from '../../db/client';
+import { hasDatabaseUrl } from '../../db/pool';
+import { getSupabaseAdmin } from '../../db/supabaseAdmin';
+import { executiveCompanyAssignments } from '../../db/schema/executive';
+import { HttpError } from '../../http/errors';
 
 export function scopeCompanyIds(allowedIds: string[], requestedIds?: string[]): string[] {
   if (!requestedIds || requestedIds.length === 0) return allowedIds;

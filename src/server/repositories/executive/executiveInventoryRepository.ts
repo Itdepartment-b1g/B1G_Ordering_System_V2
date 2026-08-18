@@ -1,45 +1,25 @@
 import { and, asc, eq, inArray, sql, type Column } from 'drizzle-orm';
-import { getDb } from '../db/client';
-import { hasDatabaseUrl } from '../db/pool';
-import { toNumber } from '../db/helpers';
+import { getDb } from '../../db/client';
+import { hasDatabaseUrl } from '../../db/pool';
+import { toNumber } from '../../db/helpers';
 import * as supabaseInventory from './executiveInventoryRepository.supabase';
-import { agentInventory, brands, hubs, leaderTeams, mainInventory, profiles, variants } from '../db/schema/executive';
+import { agentInventory, brands, hubs, leaderTeams, mainInventory, profiles, variants } from '../../db/schema/executive';
 import { assertCompanyAssigned } from './executiveScope';
+import type {
+  ExecutiveTeamLeaderDto,
+  ExecutiveTeamLeaderMode,
+  InventoryBrandDto,
+  InventoryVariantDto,
+} from './executiveInventoryTypes';
+
+export type {
+  ExecutiveTeamLeaderDto,
+  ExecutiveTeamLeaderMode,
+  InventoryBrandDto,
+  InventoryVariantDto,
+} from './executiveInventoryTypes';
 
 const LOW_STOCK_THRESHOLD = 10;
-
-export type InventoryVariantDto = {
-  id: string;
-  name: string;
-  variantType: string;
-  stock: number;
-  allocatedStock: number;
-  price: number;
-  sellingPrice: number;
-  dspPrice: number;
-  rspPrice: number;
-  status: 'in-stock' | 'low-stock' | 'out-of-stock';
-  reorderLevel?: number;
-  mainInventoryId?: string;
-};
-
-export type InventoryBrandDto = {
-  id: string;
-  name: string;
-  flavors: InventoryVariantDto[];
-  batteries: InventoryVariantDto[];
-  posms: InventoryVariantDto[];
-  variantsByType: Record<string, InventoryVariantDto[]>;
-  allVariants: InventoryVariantDto[];
-};
-
-export type ExecutiveTeamLeaderDto = {
-  id: string;
-  full_name: string;
-  hub_names: string[];
-};
-
-export type ExecutiveTeamLeaderMode = 'leader_only' | 'team_total';
 
 function stockStatus(stock: number, reorderLevel = LOW_STOCK_THRESHOLD): InventoryVariantDto['status'] {
   if (stock === 0) return 'out-of-stock';

@@ -9,13 +9,13 @@ import {
   getStats,
   getTopPerformers,
   listAssignedCompanies,
-} from '../repositories/executiveRepository';
+} from '../repositories/executive/executiveRepository';
 import {
   getLeaderInventory,
   getMainInventory,
   getTeamLeaders,
   type ExecutiveTeamLeaderMode,
-} from '../repositories/executiveInventoryRepository';
+} from '../repositories/executive/executiveInventoryRepository';
 
 export type ApiResult<T> = { status: number; body: T | { error: string } };
 type QueryMap = Record<string, string | string[] | undefined>;
