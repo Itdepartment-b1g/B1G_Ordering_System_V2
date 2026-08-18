@@ -142,11 +142,11 @@ const salesAdminMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/key-accounts/dashboard', icon: LayoutDashboard },
   {
     title: 'Member Management',
-    url: '/member-management',
+    url: '/key-accounts/users',
     icon: Users,
     hasSubmenu: true,
     submenu: [
-      { title: 'User Management', url: '/sales-agents', icon: Users },
+      { title: 'User Management', url: '/key-accounts/users', icon: Users },
       { title: 'Team Management', url: '/key-accounts/team', icon: Crown },
     ]
   },
@@ -181,11 +181,11 @@ const salesHeadMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/key-accounts/dashboard', icon: LayoutDashboard },
   {
     title: 'Member Management',
-    url: '/member-management',
+    url: '/key-accounts/users',
     icon: Users,
     hasSubmenu: true,
     submenu: [
-      { title: 'User Management', url: '/sales-agents', icon: Users },
+      { title: 'User Management', url: '/key-accounts/users', icon: Users },
       { title: 'Team Management', url: '/key-accounts/team', icon: Crown },
     ]
   },

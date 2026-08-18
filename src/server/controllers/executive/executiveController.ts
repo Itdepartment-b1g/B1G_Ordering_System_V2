@@ -1,6 +1,6 @@
-import { requireExecutive } from '../auth/requireExecutive';
-import { HttpError, toErrorResult } from '../http/errors';
-import { firstString, parseCompanyIds, parsePositiveInt } from '../http/queryParams';
+import { requireExecutive } from '../../auth/requireExecutive';
+import { HttpError, toErrorResult } from '../../http/errors';
+import { firstString, parseCompanyIds, parsePositiveInt } from '../../http/queryParams';
 import {
   getBrandPerformance,
   getCompanyBreakdown,
@@ -9,13 +9,13 @@ import {
   getStats,
   getTopPerformers,
   listAssignedCompanies,
-} from '../repositories/executive/executiveRepository';
+} from '../../repositories/executive/executiveRepository';
 import {
   getLeaderInventory,
   getMainInventory,
   getTeamLeaders,
   type ExecutiveTeamLeaderMode,
-} from '../repositories/executive/executiveInventoryRepository';
+} from '../../repositories/executive/executiveInventoryRepository';
 
 export type ApiResult<T> = { status: number; body: T | { error: string } };
 type QueryMap = Record<string, string | string[] | undefined>;

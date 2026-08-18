@@ -1,6 +1,6 @@
 import { getAuthorizationHeader } from '../../src/server/http/headers';
 import { createRouteHandler } from '../../src/server/http/routeHandler';
-import { getExecutiveRevenueTrends } from '../../src/server/controllers/executiveController';
+import { getExecutiveRevenueTrends } from '../../src/server/controllers/executive/executiveController';
 
 export async function GET(req: any, res: any) {
   const result = await getExecutiveRevenueTrends(

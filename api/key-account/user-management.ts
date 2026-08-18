@@ -1,9 +1,9 @@
 import { getAuthorizationHeader } from '../../src/server/http/headers';
 import { createRouteHandler } from '../../src/server/http/routeHandler';
-import { getExecutiveTeamLeaders } from '../../src/server/controllers/executive/executiveController';
+import { getKAUsers } from '../../src/server/controllers/key-accounts/user-management';
 
 export async function GET(req: any, res: any) {
-  const result = await getExecutiveTeamLeaders(
+  const result = await getKAUsers(
     getAuthorizationHeader(req.headers || {}),
     req.query || {}
   );
