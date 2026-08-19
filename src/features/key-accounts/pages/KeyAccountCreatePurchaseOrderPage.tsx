@@ -2,6 +2,19 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
+import { useAppDispatch } from '@/store/store';
+import {
+  createKAPurchaseOrder,
+  fetchKAExistingPo,
+  fetchKAPoAddresses,
+  fetchKAPoClients,
+  fetchKAPoOwners,
+  fetchKAPoShops,
+  fetchKAPoStock,
+  fetchKAPoWarehouses,
+  updateKAPurchaseOrder,
+  type KAPoHeaderPayload,
+} from '@/store/slices/key-accounts/purchase-order';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -86,7 +99,6 @@ import {
 import {
   getKeyAccountRoleLabel,
   isKeyAccountSalesAdmin,
-  canEditKeyAccountPo,
 } from '@/features/key-accounts/keyAccountRoles';
 import { sendNotification } from '@/features/shared/lib/notification.helpers';
 
@@ -97,15 +109,7 @@ type OrderOwnerOption = {
   role: UserRole;
 };
 
-const ON_BEHALF_OWNER_ROLES: UserRole[] = [
-  'sales_head',
-  'sales_director',
-  'key_account_manager',
-];
-
 type PaymentTermsSource = 'client' | 'company';
-
-const CLIENT_PAGE_SIZE = 10;
 
 interface POItem {
   id: string;
@@ -136,6 +140,7 @@ interface Warehouse {
  */
 export function KeyAccountPurchaseOrderPage() {
   const { user } = useAuth();
+  const dispatch = useAppDispatch();
   const { toast } = useToast();
   const { settings: paymentSettings, loading: loadingPaymentSettings } = useKeyAccountPaymentSettings();
   const {
@@ -181,7 +186,6 @@ export function KeyAccountPurchaseOrderPage() {
   const [clientSearch, setClientSearch] = useState('');
   const [clientPickerOpen, setClientPickerOpen] = useState(false);
   const [selectedClient, setSelectedClient] = useState<KeyAccountClient | null>(null);
-  const kamAssignedClientIdsRef = useRef<{ kamId: string; clientIds: string[] } | null>(null);
   const clientFetchGenRef = useRef(0);
   const [shops, setShops] = useState<KeyAccountShop[]>([]);
   const [addresses, setAddresses] = useState<KeyAccountDeliveryAddress[]>([]);
@@ -393,16 +397,9 @@ export function KeyAccountPurchaseOrderPage() {
     (async () => {
       setLoadingOwners(true);
       try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('id, full_name, email, role')
-          .eq('company_id', user.company_id)
-          .in('role', ON_BEHALF_OWNER_ROLES)
-          .eq('status', 'active')
-          .order('full_name', { ascending: true });
-        if (error) throw error;
+        const result = await dispatch(fetchKAPoOwners()).unwrap();
         if (cancelled) return;
-        setOrderOwners((data || []) as OrderOwnerOption[]);
+        setOrderOwners((result.owners || []) as OrderOwnerOption[]);
       } catch (e: any) {
         if (!cancelled) {
           toast({
@@ -494,82 +491,9 @@ export function KeyAccountPurchaseOrderPage() {
     (async () => {
       setLoadingExistingPo(true);
       try {
-        const { data: po, error: poErr } = await supabase
-          .from('purchase_orders')
-          .select(
-            `
-            id,
-            po_number,
-            status,
-            workflow_status,
-            kam_id,
-            created_by,
-            po_order_kind,
-            key_account_client_id,
-            key_account_shop_id,
-            key_account_address_id,
-            warehouse_location_id,
-            warehouse_company_id,
-            order_date,
-            expected_delivery_date,
-            notes,
-            tax_rate,
-            discount,
-            key_account_payment_terms,
-            key_account_payment_terms_source,
-            key_account_payment_mode,
-            key_account_payment_status,
-            company_account_type,
-            client:key_account_clients(*)
-          `
-          )
-          .eq('id', poId)
-          .single();
-        if (poErr) throw poErr;
-        if (cancelled) return;
-
-        if (!canEditKeyAccountPo(po, user)) {
-          toast({
-            variant: 'destructive',
-            title: 'Cannot edit this PO',
-            description:
-              'On-behalf orders lock after owner approval. Regular orders lock after submit to warehouse.',
-          });
-          navigate('/key-accounts/purchase-orders');
-          return;
-        }
-
-        const { data: itemRows, error: itemsErr } = await supabase
-          .from('purchase_order_items')
-          .select(
-            `
-            id,
-            variant_id,
-            quantity,
-            unit_price,
-            total_price,
-            warehouse_location_id,
-            variant:variants(
-              id,
-              name,
-              variant_type,
-              brand_id,
-              brand:brands(id, name)
-            )
-          `
-          )
-          .eq('purchase_order_id', poId);
-        if (itemsErr) throw itemsErr;
-
-        const { data: paymentRows, error: paymentsErr } = await supabase
-          .from('purchase_order_key_account_payments')
-          .select('id, proof_storage_path, amount, payment_method')
-          .eq('purchase_order_id', poId)
-          .order('created_at', { ascending: true });
-        if (paymentsErr) {
-          console.warn('Failed to load payment proofs for edit:', paymentsErr);
-        }
-
+        const { po, items: itemRows, payments: paymentRows } = await dispatch(
+          fetchKAExistingPo(poId)
+        ).unwrap();
         if (cancelled) return;
 
         suppressCascadeRef.current = true;
@@ -578,7 +502,7 @@ export function KeyAccountPurchaseOrderPage() {
         setEditPaymentStatus(String(po.key_account_payment_status || 'unpaid'));
         setEditHasPayments((paymentRows || []).length > 0);
         setEditPaymentProofs(
-          (paymentRows || []).map((row) => ({
+          (paymentRows || []).map((row: any) => ({
             id: String(row.id),
             proof_storage_path: row.proof_storage_path || null,
             amount: Number(row.amount || 0),
@@ -707,121 +631,10 @@ export function KeyAccountPurchaseOrderPage() {
 
     setStockLoading(true);
     try {
-      // Preferred: SECURITY DEFINER RPC (includes soft open POs across linked tenants)
-      const { data: rpcRows, error: rpcErr } = await supabase.rpc(
-        'get_linked_warehouse_available_stock',
-        {
-          p_warehouse_company_id: linkedWarehouseCompanyId,
-          p_variant_ids: variantIds,
-        }
-      );
-
-      if (!rpcErr && Array.isArray(rpcRows)) {
-        const nextAvail: Record<string, number> = {};
-        const nextOnHand: Record<string, number> = {};
-        const nextReserved: Record<string, number> = {};
-        for (const row of rpcRows as any[]) {
-          if (!row?.variant_id || !row?.location_id) continue;
-          const key = stockKey(String(row.variant_id), String(row.location_id));
-          const hard = Math.max(0, Number(row.hard_reserved || 0));
-          const soft = Math.max(0, Number(row.soft_reserved || 0));
-          nextAvail[key] = Math.max(0, Number(row.available || 0));
-          nextOnHand[key] = Math.max(0, Number(row.on_hand || 0));
-          nextReserved[key] = hard + soft;
-        }
-        setStockMap(nextAvail);
-        setOnHandMap(nextOnHand);
-        setReservedMap(nextReserved);
-        return;
-      }
-
-      if (rpcErr) {
-        console.warn('[KA Create PO] available stock RPC unavailable, using fallback', rpcErr.message);
-      }
-
-      const [
-        { data: mainInvData, error: mainInvErr },
-        { data: locInvData, error: locInvErr },
-        { data: reservedData },
-        { data: softReservedData },
-      ] = await Promise.all([
-        supabase
-          .from('main_inventory')
-          .select('variant_id, stock, allocated_stock')
-          .eq('company_id', linkedWarehouseCompanyId)
-          .in('variant_id', variantIds),
-        supabase
-          .from('warehouse_location_inventory')
-          .select('variant_id, location_id, stock')
-          .eq('company_id', linkedWarehouseCompanyId)
-          .in('variant_id', variantIds),
-        supabase
-          .from('warehouse_transfer_reservations')
-          .select('variant_id, warehouse_location_id, quantity_reserved, quantity_fulfilled, status')
-          .eq('warehouse_company_id', linkedWarehouseCompanyId)
-          .in('variant_id', variantIds)
-          .in('status', ['reserved', 'partial']),
-        supabase
-          .from('warehouse_transfer_soft_reservations')
-          .select('variant_id, warehouse_location_id, quantity_committed, status')
-          .eq('warehouse_company_id', linkedWarehouseCompanyId)
-          .in('variant_id', variantIds)
-          .eq('status', 'active'),
-      ]);
-
-      if (mainInvErr) throw mainInvErr;
-      if (locInvErr) throw locInvErr;
-
-      const reservedByLocVar: Record<string, number> = {};
-      for (const row of reservedData || []) {
-        const remaining = Math.max(
-          0,
-          Number((row as any).quantity_reserved || 0) - Number((row as any).quantity_fulfilled || 0)
-        );
-        if (remaining <= 0) continue;
-        const key = stockKey(String((row as any).variant_id), String((row as any).warehouse_location_id));
-        reservedByLocVar[key] = (reservedByLocVar[key] || 0) + remaining;
-      }
-      for (const row of softReservedData || []) {
-        const committed = Math.max(0, Number((row as any).quantity_committed || 0));
-        if (committed <= 0) continue;
-        const key = stockKey(String((row as any).variant_id), String((row as any).warehouse_location_id));
-        reservedByLocVar[key] = (reservedByLocVar[key] || 0) + committed;
-      }
-
-      const nextAvail: Record<string, number> = {};
-      const nextOnHand: Record<string, number> = {};
-      const nextReserved: Record<string, number> = {};
-
-      if (mainWarehouseLocationId && mainInvData) {
-        for (const row of mainInvData as any[]) {
-          const key = stockKey(String(row.variant_id), mainWarehouseLocationId);
-          const stock = Number(row.stock || 0);
-          const allocated = Number(row.allocated_stock || 0);
-          const reserved = reservedByLocVar[key] || 0;
-          nextOnHand[key] = Math.max(0, stock);
-          nextReserved[key] = reserved;
-          nextAvail[key] = Math.max(0, stock - allocated - reserved);
-        }
-      }
-
-      if (locInvData) {
-        for (const row of locInvData as any[]) {
-          const locId = String(row.location_id);
-          // Main location stock comes from main_inventory (already mapped above).
-          if (mainWarehouseLocationId && locId === mainWarehouseLocationId) continue;
-          const key = stockKey(String(row.variant_id), locId);
-          const stock = Number(row.stock || 0);
-          const reserved = reservedByLocVar[key] || 0;
-          nextOnHand[key] = Math.max(0, stock);
-          nextReserved[key] = reserved;
-          nextAvail[key] = Math.max(0, stock - reserved);
-        }
-      }
-
-      setStockMap(nextAvail);
-      setOnHandMap(nextOnHand);
-      setReservedMap(nextReserved);
+      const result = await dispatch(fetchKAPoStock(variantIds)).unwrap();
+      setStockMap(result.stockMap || {});
+      setOnHandMap(result.onHandMap || {});
+      setReservedMap(result.reservedMap || {});
     } catch (e: any) {
       setStockMap({});
       setOnHandMap({});
@@ -857,35 +670,6 @@ export function KeyAccountPurchaseOrderPage() {
     );
   }, [sourceMode, selectedWarehouseLocationId]);
 
-  async function resolveKamAssignedClientIds(): Promise<string[] | null> {
-    const kamIdForScope =
-      user?.role === 'key_account_manager'
-        ? user.id
-        : isSalesAdmin && selectedOwner?.role === 'key_account_manager'
-          ? selectedOwner.id
-          : null;
-
-    if (!kamIdForScope) return null;
-
-    if (
-      kamAssignedClientIdsRef.current &&
-      kamAssignedClientIdsRef.current.kamId === kamIdForScope
-    ) {
-      return kamAssignedClientIdsRef.current.clientIds;
-    }
-
-    const { data: assignments, error: assignErr } = await supabase
-      .from('kam_client_assignments')
-      .select('client_id')
-      .eq('kam_id', kamIdForScope);
-
-    if (assignErr) throw assignErr;
-
-    const clientIds = (assignments ?? []).map((a) => a.client_id).filter(Boolean);
-    kamAssignedClientIdsRef.current = { kamId: kamIdForScope, clientIds };
-    return clientIds;
-  }
-
   async function fetchClients(opts: { search?: string; append?: boolean } = {}) {
     if (!user?.company_id) return;
 
@@ -910,46 +694,22 @@ export function KeyAccountPurchaseOrderPage() {
     }
 
     try {
-      const kamClientIds = await resolveKamAssignedClientIds();
-      if (kamClientIds && kamClientIds.length === 0) {
-        if (fetchGen !== clientFetchGenRef.current) return;
-        setClients([]);
-        setClientsHasMore(false);
-        return;
-      }
-
-      let query = supabase
-        .from('key_account_clients')
-        .select('*')
-        .eq('company_id', user.company_id)
-        .eq('status', 'active')
-        .order('client_name')
-        .range(offset, offset + CLIENT_PAGE_SIZE - 1);
-
-      if (kamClientIds) {
-        query = query.in('id', kamClientIds);
-      }
-
-      if (search) {
-        // Strip chars that break PostgREST `.or()` filter parsing
-        const safe = search.replace(/[,.()]/g, ' ').replace(/%/g, '').trim();
-        if (safe) {
-          query = query.or(`client_name.ilike.%${safe}%,client_code.ilike.%${safe}%`);
-        }
-      }
-
-      const { data, error } = await query;
-
-      if (error) throw error;
+      const kamId =
+        isSalesAdmin && selectedOwner?.role === 'key_account_manager'
+          ? selectedOwnerId
+          : undefined;
+      const result = await dispatch(
+        fetchKAPoClients({ search, offset, kamId })
+      ).unwrap();
       if (fetchGen !== clientFetchGenRef.current) return;
 
-      const rows = (data || []) as KeyAccountClient[];
+      const rows = (result.clients || []) as KeyAccountClient[];
       setClients((prev) => {
         if (!append) return rows;
         const seen = new Set(prev.map((c) => c.id));
         return [...prev, ...rows.filter((c) => !seen.has(c.id))];
       });
-      setClientsHasMore(rows.length === CLIENT_PAGE_SIZE);
+      setClientsHasMore(Boolean(result.hasMore));
     } catch (error: any) {
       if (fetchGen !== clientFetchGenRef.current) return;
       toast({
@@ -977,15 +737,8 @@ export function KeyAccountPurchaseOrderPage() {
 
   async function fetchShops(clientId: string) {
     try {
-      const { data, error } = await supabase
-        .from('key_account_shops')
-        .select('*')
-        .eq('client_id', clientId)
-        .eq('is_active', true)
-        .order('shop_name');
-
-      if (error) throw error;
-      setShops(data || []);
+      const result = await dispatch(fetchKAPoShops(clientId)).unwrap();
+      setShops(result.shops || []);
     } catch (error: any) {
       toast({
         variant: 'destructive',
@@ -997,17 +750,10 @@ export function KeyAccountPurchaseOrderPage() {
 
   async function fetchAddresses(shopId: string) {
     try {
-      const { data, error } = await supabase
-        .from('key_account_delivery_addresses')
-        .select('*')
-        .eq('shop_id', shopId)
-        .eq('is_active', true)
-        .order('is_default', { ascending: false })
-        .order('address_label');
-
-      if (error) throw error;
-      setAddresses(data || []);
-      return (data || []) as KeyAccountDeliveryAddress[];
+      const result = await dispatch(fetchKAPoAddresses(shopId)).unwrap();
+      const rows = (result.addresses || []) as KeyAccountDeliveryAddress[];
+      setAddresses(rows);
+      return rows;
     } catch (error: any) {
       toast({
         variant: 'destructive',
@@ -1035,46 +781,30 @@ export function KeyAccountPurchaseOrderPage() {
     if (!user?.company_id) return;
 
     try {
-      // Resolve linked warehouse hub (same approach as old warehouse-connected PO flow)
-      const { data: hubCompanyId, error: hubErr } = await supabase.rpc('get_linked_warehouse_company_id', {});
-
-      if (hubErr) throw hubErr;
-      const hubId = (hubCompanyId as string | null) ?? null;
+      const result = await dispatch(fetchKAPoWarehouses()).unwrap();
+      const hubId = result.linkedWarehouseCompanyId ?? null;
       setLinkedWarehouseCompanyId(hubId);
 
       if (!hubId) {
         setWarehouses([]);
         setSelectedWarehouseLocationId('');
-        // Still clear catalog if no hub is linked
         setBrands([]);
         setVariants([]);
         return;
       }
 
-      // Fetch warehouse company name for display
-      const { data: whCompany, error: whCompanyErr } = await supabase
-        .from('companies')
-        .select('id, company_name')
-        .eq('id', hubId)
-        .maybeSingle();
-
-      if (whCompanyErr) throw whCompanyErr;
-
-      // Load ALL linked warehouse locations (main + sub-warehouses), like the Super Admin PO flow
-      const { data: locations, error: locErr } = await supabase.rpc('get_linked_warehouse_locations', {});
-      if (locErr) throw locErr;
-      const rows = (locations as any[]) || [];
-
-      const formattedWarehouses: Warehouse[] = rows.map((loc) => ({
-        id: `${hubId}:${loc.id}`,
-        company_id: hubId,
-        company_name: whCompany?.company_name || 'Warehouse',
-        location_id: loc.id,
-        location_name: loc.name,
-        is_main: !!loc.is_main,
+      const formattedWarehouses: Warehouse[] = (result.warehouses || []).map((w) => ({
+        id: w.id,
+        company_id: w.company_id,
+        company_name: w.company_name,
+        location_id: w.location_id,
+        location_name: w.location_name,
+        is_main: !!w.is_main,
       }));
 
       setWarehouses(formattedWarehouses);
+      setBrands(result.brands || []);
+      setVariants(result.variants || []);
 
       if (formattedWarehouses.length > 0) {
         const main = formattedWarehouses.find((w) => w.is_main);
@@ -1086,9 +816,6 @@ export function KeyAccountPurchaseOrderPage() {
           setActiveWarehouseTabId(defaultLoc);
         }
       }
-
-      // Load catalog from the linked hub (brands/variants in public schema)
-      await fetchBrandsAndVariants(hubId);
     } catch (error: any) {
       toast({
         variant: 'destructive',
@@ -1097,39 +824,6 @@ export function KeyAccountPurchaseOrderPage() {
       });
     } finally {
       setLoadingWarehouses(false);
-    }
-  }
-
-  async function fetchBrandsAndVariants(catalogCompanyId: string) {
-    try {
-      // Match old warehouse-connected PO flow: use public.brands + public.variants with hub company_id
-      const [{ data: brandsData, error: brandsError }, { data: variantsData, error: variantsError }] =
-        await Promise.all([
-          supabase
-            .from('brands')
-            .select('id, name')
-            .eq('company_id', catalogCompanyId)
-            .eq('is_active', true)
-            .order('name'),
-          supabase
-            .from('variants')
-            .select('id, name, variant_type, brand_id')
-            .eq('company_id', catalogCompanyId)
-            .eq('is_active', true)
-            .order('name'),
-        ]);
-
-      if (brandsError) throw brandsError;
-      if (variantsError) throw variantsError;
-
-      setBrands(brandsData || []);
-      setVariants(variantsData || []);
-    } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Error loading products',
-        description: error.message,
-      });
     }
   }
 
@@ -1194,7 +888,7 @@ export function KeyAccountPurchaseOrderPage() {
       brandName: brand.name,
       variantId: selectedVariantId,
       variantName: variant.name,
-      variantType: variant.variant_type,
+      variantType: variant.variant_type || '',
       quantity: newTotalQty,
       unitPrice,
       totalPrice: unitPrice * newTotalQty,
@@ -1352,8 +1046,6 @@ export function KeyAccountPurchaseOrderPage() {
     }
 
     setSubmitting(true);
-    /** Set only for brand-new POs so a failed payment/items step can roll the row back. */
-    let createdPoId: string | null = null;
 
     try {
       const isDirector = user?.role === 'sales_director';
@@ -1381,13 +1073,13 @@ export function KeyAccountPurchaseOrderPage() {
         return null;
       })();
 
-      const headerFields = {
+      const headerFields: KAPoHeaderPayload = {
         warehouse_company_id: linkedWarehouseCompanyId,
         warehouse_location_id: sourceMode === 'single' ? selectedWarehouseLocationId : null,
         key_account_client_id: selectedClientId,
         key_account_shop_id: selectedShopId,
         key_account_address_id: selectedAddressId,
-        kam_id: kamId,
+        kam_id: kamId ?? null,
         order_date: orderDate,
         expected_delivery_date: expectedDeliveryDate,
         notes: notes,
@@ -1419,41 +1111,52 @@ export function KeyAccountPurchaseOrderPage() {
 
       const { logPurchaseOrderEvent } = await import('@/features/orders/purchaseOrderEventsApi');
 
+      const payloadItems = orderItems.map((item) => ({
+        variant_id: item.variant_id,
+        warehouse_location_id: item.warehouse_location_id,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        total_price: item.total_price,
+      }));
+
+      const paymentPayload = () => ({
+        amount: paymentMode === 'full' ? orderTotalRounded : firstPaymentAmount,
+        payment_method: paymentMethod,
+        bank_type: paymentMethod === 'BANK_TRANSFER' ? bankType : null,
+      });
+
       if (isEditMode && poId) {
-        const { data: currentPo, error: currentErr } = await supabase
-          .from('purchase_orders')
-          .select('id, status, workflow_status, kam_id, created_by, po_order_kind, key_account_payment_status')
-          .eq('id', poId)
-          .single();
-        if (currentErr) throw currentErr;
-        if (!canEditKeyAccountPo(currentPo, user)) {
-          throw new Error(
-            'This PO can no longer be edited (owner approved, or it was already submitted to warehouse).'
+        const needsPaymentInsert =
+          !isConsignment &&
+          !editHasPayments &&
+          String(editPaymentStatus || 'unpaid') === 'unpaid';
+        let payment = null as null | {
+          amount: number;
+          payment_method: string;
+          bank_type: string | null;
+          proof_storage_path: string;
+        };
+        if (needsPaymentInsert) {
+          if (!user.company_id) {
+            throw new Error('Missing company context for payment proof upload.');
+          }
+          if (!paymentProofFile) {
+            throw new Error('Payment proof is required.');
+          }
+          const proofPath = await uploadKeyAccountPaymentProof(
+            user.company_id,
+            poId,
+            paymentProofFile
           );
+          payment = { ...paymentPayload(), proof_storage_path: proofPath };
         }
 
-        const { error: poError } = await supabase
-          .from('purchase_orders')
-          .update({
-            ...headerFields,
-            ...(canChangeOwner ? { kam_id: selectedOwnerId } : {}),
+        await dispatch(
+          updateKAPurchaseOrder({
+            poId,
+            payload: { header: headerFields, items: payloadItems, payment },
           })
-          .eq('id', poId);
-        if (poError) throw poError;
-
-        const { error: deleteItemsErr } = await supabase
-          .from('purchase_order_items')
-          .delete()
-          .eq('purchase_order_id', poId);
-        if (deleteItemsErr) throw deleteItemsErr;
-
-        const { error: itemsError } = await supabase.from('purchase_order_items').insert(
-          orderItems.map((item) => ({
-            ...item,
-            purchase_order_id: poId,
-          }))
-        );
-        if (itemsError) throw itemsError;
+        ).unwrap();
 
         void logPurchaseOrderEvent({
           purchaseOrderId: poId,
@@ -1468,111 +1171,45 @@ export function KeyAccountPurchaseOrderPage() {
           createdBy: user?.id,
         });
 
-        const needsPaymentInsert =
-          !isConsignment &&
-          !editHasPayments &&
-          String(editPaymentStatus || 'unpaid') === 'unpaid';
-        if (needsPaymentInsert) {
-          if (!user.company_id) {
-            throw new Error('Missing company context for payment proof upload.');
-          }
-          if (!paymentProofFile) {
-            throw new Error('Payment proof is required.');
-          }
-          const proofPath = await uploadKeyAccountPaymentProof(
-            user.company_id,
-            poId,
-            paymentProofFile
-          );
-          const { error: payErr } = await supabase.from('purchase_order_key_account_payments').insert({
-            purchase_order_id: poId,
-            company_id: user.company_id,
-            amount: paymentMode === 'full' ? orderTotalRounded : firstPaymentAmount,
-            payment_method: paymentMethod,
-            bank_type: paymentMethod === 'BANK_TRANSFER' ? bankType : null,
-            proof_storage_path: proofPath,
-          });
-          if (payErr) throw payErr;
-        }
-
         toast({
           title: 'Order updated',
-          description: `${editPoNumber || 'PO'} saved. Workflow status unchanged.`,
+          description: `${editPoNumber || "PO"} saved. Workflow status unchanged.`,
         });
         setConfirmOpen(false);
         navigate('/key-accounts/purchase-orders');
         return;
       }
 
-      // Generate Key Account PO number (PO-{INITIALS}-KA-YYYYMM-####); does not use generate_po_number()
       if (!user?.company_id) throw new Error('Company is required');
-      const { data: poNumber, error: poNumberErr } = await supabase.rpc('generate_key_account_po_number', {
-        p_company_id: user.company_id,
-      });
-      if (poNumberErr) throw poNumberErr;
 
-      const workflowStatus = isSalesAdmin
-        ? 'owner_pending'
-        : isDirector || isSalesHead
-          ? 'admin_pending'
-          : 'kam_pending';
-
-      const orderData = {
-        company_id: user?.company_id,
-        po_number: poNumber,
-        supplier_id: null,
-        fulfillment_type: 'warehouse_transfer',
-        ...headerFields,
-        company_account_type: 'Key Accounts',
-        workflow_status: workflowStatus,
-        status: 'pending',
-        created_by: user?.id,
-        key_account_payment_status: 'unpaid',
+      let payment = null as null | {
+        amount: number;
+        payment_method: string;
+        bank_type: string | null;
+        proof_storage_path: string;
       };
-
-      // Create the purchase order
-      const { data: poData, error: poError } = await supabase
-        .from('purchase_orders')
-        .insert(orderData)
-        .select('id')
-        .single();
-
-      if (poError) throw poError;
-      createdPoId = poData.id;
-
-      const { error: itemsError } = await supabase.from('purchase_order_items').insert(
-        orderItems.map((item) => ({
-          ...item,
-          purchase_order_id: poData.id,
-        }))
-      );
-
-      if (itemsError) throw itemsError;
-
-      // Require initial payment before treating the create as successful (non-consignment).
-      // If payment fails, the catch block deletes this PO so it does not remain in the list.
       if (!isConsignment) {
-        if (!user.company_id) {
-          throw new Error('Missing company context for payment proof upload.');
-        }
         if (!paymentProofFile) {
           throw new Error('Payment proof is required.');
         }
-        const proofPath = await uploadKeyAccountPaymentProof(user.company_id, poData.id, paymentProofFile);
-
-        const { error: payErr } = await supabase.from('purchase_order_key_account_payments').insert({
-          purchase_order_id: poData.id,
-          company_id: user.company_id,
-          amount: paymentMode === 'full' ? orderTotalRounded : firstPaymentAmount,
-          payment_method: paymentMethod,
-          bank_type: paymentMethod === 'BANK_TRANSFER' ? bankType : null,
-          proof_storage_path: proofPath,
-        });
-        if (payErr) throw payErr;
+        const proofPath = await uploadKeyAccountPaymentProof(
+          user.company_id,
+          crypto.randomUUID(),
+          paymentProofFile
+        );
+        payment = { ...paymentPayload(), proof_storage_path: proofPath };
       }
 
+      const created = await dispatch(
+        createKAPurchaseOrder({
+          header: headerFields,
+          items: payloadItems,
+          payment,
+        })
+      ).unwrap();
+
       void logPurchaseOrderEvent({
-        purchaseOrderId: poData.id,
+        purchaseOrderId: created.po.id,
         eventType: 'created',
         note: isSalesAdmin && selectedOwner
           ? `Created by Sales Admin on behalf of ${selectedOwner.full_name || selectedOwner.email || 'order owner'}`
@@ -1593,14 +1230,11 @@ export function KeyAccountPurchaseOrderPage() {
           companyId: user.company_id,
           type: 'key_account_order_created',
           title: 'PO awaiting your approval',
-          message: `Sales Admin created PO ${poNumber} on your behalf (${ownerName}). Please review and approve.`,
+          message: `Sales Admin created PO ${created.po.po_number} on your behalf (${ownerName}). Please review and approve.`,
           referenceType: 'key_account_purchase_order',
-          referenceId: poData.id,
+          referenceId: created.po.id,
         });
       }
-
-      // Clear so catch does not delete a successfully created PO.
-      createdPoId = null;
 
       toast({
         title: 'Order created successfully',
@@ -1614,15 +1248,6 @@ export function KeyAccountPurchaseOrderPage() {
       setConfirmOpen(false);
       navigate('/key-accounts/purchase-orders');
     } catch (error: any) {
-      if (createdPoId) {
-        const { error: rollbackErr } = await supabase
-          .from('purchase_orders')
-          .delete()
-          .eq('id', createdPoId);
-        if (rollbackErr) {
-          console.error('Failed to roll back incomplete Key Account PO:', createdPoId, rollbackErr);
-        }
-      }
       toast({
         variant: 'destructive',
         title: isEditMode ? 'Error updating order' : 'Error creating order',

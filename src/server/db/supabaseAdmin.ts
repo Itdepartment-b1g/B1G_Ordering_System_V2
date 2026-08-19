@@ -25,3 +25,21 @@ export function getSupabaseAdmin(): SupabaseClient {
 
   return globalForAdmin.supabaseAdmin;
 }
+
+/** Anon-key client with the caller's JWT so Postgres auth.uid() is set. */
+export function getSupabaseUser(accessToken: string): SupabaseClient {
+  const url = (process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '').replace(/\/$/, '');
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '';
+
+  if (!url || !anonKey) {
+    throw new HttpError(500, 'Supabase auth is not configured on the server');
+  }
+  if (!accessToken) {
+    throw new HttpError(401, 'Missing access token');
+  }
+
+  return createClient(url, anonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  });
+}
