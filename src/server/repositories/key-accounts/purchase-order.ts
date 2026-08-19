@@ -629,3 +629,514 @@ export async function updateKAPurchaseOrder(
 
   return { po: { id: poId } };
 }
+
+function requireUserClient(ctx: UserContext) {
+  if (!ctx.accessToken) throw new HttpError(401, 'Missing access token');
+  return getSupabaseUser(ctx.accessToken);
+}
+
+const KA_PO_LIST_SELECT = `
+  id,
+  po_number,
+  company_id,
+  company_account_type,
+  po_order_kind,
+  source_rebate_id,
+  workflow_status,
+  status,
+  order_date,
+  expected_delivery_date,
+  created_at,
+  total_amount,
+  subtotal,
+  tax_rate,
+  tax_amount,
+  discount,
+  kam_id,
+  rfpf_number,
+  dr_number,
+  key_account_payment_terms,
+  key_account_payment_mode,
+  key_account_payment_status,
+  key_account_payment_terms_source,
+  key_account_payment_terms_created_by,
+  director_approved_at,
+  director_approved_by,
+  admin_approved_at,
+  admin_approved_by,
+  created_by,
+  warehouse_location_id,
+  warehouse_location:warehouse_locations(name),
+  key_account_client_id,
+  key_account_shop_id,
+  key_account_address_id,
+  client:key_account_clients(client_name, client_code, contact_phone),
+  shop:key_account_shops(shop_name, cor_pdf_path, city, province, region),
+  address:key_account_delivery_addresses(address_label,full_address,city,province,zip_code,contact_name,contact_phone,is_default),
+  kam:profiles!purchase_orders_kam_id_fkey(full_name,email),
+  created_by_user:profiles!purchase_orders_created_by_fkey(full_name,email)
+`;
+
+export async function listKAPurchaseOrders(ctx: UserContext) {
+  const sb = getSupabaseAdmin();
+  let query = sb
+    .from('purchase_orders')
+    .select(KA_PO_LIST_SELECT)
+    .eq('company_account_type', 'Key Accounts')
+    .eq('company_id', ctx.companyId)
+    .order('created_at', { ascending: false });
+
+  if (ctx.role === 'key_account_manager') {
+    query = query.or(`created_by.eq.${ctx.userId},kam_id.eq.${ctx.userId}`);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+
+  const rawRows = (data || []) as Array<Record<string, unknown>>;
+  const creatorIds = [
+    ...new Set(
+      rawRows
+        .map((r) => r.key_account_payment_terms_created_by)
+        .filter((id): id is string => typeof id === 'string' && Boolean(id))
+    ),
+  ];
+
+  const creatorById = new Map<string, { full_name: string | null; email: string | null }>();
+  if (creatorIds.length > 0) {
+    const { data: creators, error: creatorsErr } = await sb
+      .from('profiles')
+      .select('id, full_name, email')
+      .in('id', creatorIds);
+    if (creatorsErr) throw creatorsErr;
+    for (const profile of creators || []) {
+      creatorById.set(profile.id, {
+        full_name: profile.full_name ?? null,
+        email: profile.email ?? null,
+      });
+    }
+  }
+
+  const rows = rawRows.map((row) => ({
+    ...row,
+    payment_terms_creator:
+      typeof row.key_account_payment_terms_created_by === 'string'
+        ? creatorById.get(row.key_account_payment_terms_created_by) ?? null
+        : null,
+  }));
+
+  return { rows };
+}
+
+export async function listKADirectorKamIds(ctx: UserContext) {
+  if (ctx.role !== 'sales_director') return { kamIds: [] as string[] };
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb
+    .from('kam_director_assignments')
+    .select('kam_id')
+    .eq('director_id', ctx.userId);
+  if (error) throw error;
+  return { kamIds: (data || []).map((r: { kam_id: string }) => r.kam_id) };
+}
+
+export async function getKAWarehouseLocationNames(ctx: UserContext) {
+  const hubId = await resolveLinkedHubCompanyId(ctx.companyId);
+  if (!hubId) return { namesById: {} as Record<string, string> };
+
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb.from('warehouse_locations').select('id, name').eq('company_id', hubId);
+  if (error) throw error;
+
+  const namesById: Record<string, string> = {};
+  for (const row of data || []) {
+    if (row?.id && row?.name) namesById[row.id] = row.name;
+  }
+  return { namesById };
+}
+
+export async function getKAPoItems(ctx: UserContext, poId: string) {
+  const sb = getSupabaseAdmin();
+  await assertPoInCompany(sb, poId, ctx.companyId);
+
+  const { data, error } = await sb
+    .from('purchase_order_items')
+    .select(
+      `
+      id,
+      variant_id,
+      warehouse_location_id,
+      quantity,
+      unit_price,
+      total_price,
+      warehouse_locations:warehouse_location_id ( name ),
+      variants:variant_id (
+        name,
+        variant_type,
+        brands:brand_id ( name )
+      )
+    `
+    )
+    .eq('purchase_order_id', poId);
+  if (error) throw error;
+  return { items: data || [] };
+}
+
+export async function getKAPoPayments(ctx: UserContext, poId: string) {
+  const sb = getSupabaseAdmin();
+  await assertPoInCompany(sb, poId, ctx.companyId);
+
+  const { data, error } = await sb
+    .from('purchase_order_key_account_payments')
+    .select(
+      `
+      *,
+      recorder:profiles!purchase_order_key_account_payments_recorded_by_fkey(full_name,email)
+    `
+    )
+    .eq('purchase_order_id', poId)
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return { payments: data || [] };
+}
+
+export async function getKAPoPaymentSummary(ctx: UserContext, poId: string) {
+  const sb = getSupabaseAdmin();
+  await assertPoInCompany(sb, poId, ctx.companyId);
+
+  const { data, error } = await sb
+    .from('purchase_order_key_account_payments')
+    .select('amount, settlement_discount')
+    .eq('purchase_order_id', poId);
+  if (error) throw error;
+
+  const rows = data || [];
+  const paid = rows.reduce((s, r) => s + Number(r.amount || 0), 0);
+  const discount = rows.reduce((s, r) => s + Number(r.settlement_discount || 0), 0);
+  return { paid, discount, entryCount: rows.length };
+}
+
+export async function getKAPoDiscountRequests(ctx: UserContext, poId: string) {
+  const sb = getSupabaseAdmin();
+  await assertPoInCompany(sb, poId, ctx.companyId);
+
+  const { data, error } = await sb
+    .from('key_account_settlement_discount_requests')
+    .select(
+      `
+      *,
+      requester:profiles!key_account_settlement_discount_requests_requested_by_fkey(full_name,email)
+    `
+    )
+    .eq('purchase_order_id', poId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return { requests: data || [] };
+}
+
+export async function getKACompanyPendingDiscounts(ctx: UserContext) {
+  if (ctx.role !== 'sales_head') return { requests: [] };
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb
+    .from('key_account_settlement_discount_requests')
+    .select(
+      `
+      *,
+      requester:profiles!key_account_settlement_discount_requests_requested_by_fkey(full_name,email),
+      purchase_order:purchase_orders!key_account_settlement_discount_requests_purchase_order_id_fkey(po_number)
+    `
+    )
+    .eq('company_id', ctx.companyId)
+    .eq('status', 'pending')
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return { requests: data || [] };
+}
+
+export async function getKAPoRfpfRevisions(ctx: UserContext, poId: string) {
+  const sb = getSupabaseAdmin();
+  await assertPoInCompany(sb, poId, ctx.companyId);
+
+  const { data, error } = await sb
+    .from('purchase_order_rfpf_revisions')
+    .select(
+      `
+      id,
+      previous_rfpf_number,
+      new_rfpf_number,
+      reason,
+      created_at,
+      changer:profiles!purchase_order_rfpf_revisions_changed_by_fkey(full_name)
+    `
+    )
+    .eq('purchase_order_id', poId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+
+  const revisions = (data || []).map((row: Record<string, unknown>) => {
+    const changer = row.changer as { full_name?: string | null } | null;
+    return {
+      id: row.id,
+      previousRfpfNumber: row.previous_rfpf_number,
+      newRfpfNumber: row.new_rfpf_number,
+      reason: row.reason,
+      changedByName: changer?.full_name || 'Unknown',
+      createdAt: row.created_at,
+    };
+  });
+  return { revisions };
+}
+
+export async function getKAPoRebateSource(ctx: UserContext, rebateId: string) {
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb
+    .from('key_account_po_rebates')
+    .select(
+      'rebate_number, disputed_total, replacement_total, source_po:purchase_orders!key_account_po_rebates_purchase_order_id_fkey(po_number, company_id)'
+    )
+    .eq('id', rebateId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return { source: null };
+
+  const src = (data as { source_po?: unknown }).source_po;
+  const poRow = Array.isArray(src) ? src[0] : src;
+  if (!poRow || (poRow as { company_id?: string }).company_id !== ctx.companyId) {
+    return { source: null };
+  }
+
+  const poNum = (poRow as { po_number?: string }).po_number;
+  if (!poNum) return { source: null };
+
+  return {
+    source: {
+      rebate_number: (data as { rebate_number?: string }).rebate_number,
+      source_po_number: poNum,
+      disputed_total: Number((data as { disputed_total?: number }).disputed_total) || 0,
+      replacement_total: Number((data as { replacement_total?: number }).replacement_total) || 0,
+    },
+  };
+}
+
+export async function getKAPoRebateReturnLines(ctx: UserContext, rebateId: string) {
+  const sb = getSupabaseAdmin();
+  const { data: rebateRow, error: rebateErr } = await sb
+    .from('key_account_po_rebates')
+    .select('company_id')
+    .eq('id', rebateId)
+    .maybeSingle();
+  if (rebateErr) throw rebateErr;
+  if (!rebateRow || rebateRow.company_id !== ctx.companyId) return { lines: [] };
+
+  const { data, error } = await sb
+    .from('key_account_po_rebate_lines')
+    .select(
+      `
+      disputed_quantity,
+      purchase_order_item:purchase_order_items (
+        warehouse_location_id
+      ),
+      variant:variants (
+        name,
+        variant_type,
+        brand:brands ( name )
+      )
+    `
+    )
+    .eq('rebate_id', rebateId);
+  if (error) throw error;
+
+  const lines = (data || []).map((r: Record<string, unknown>) => {
+    const variant = r.variant as Record<string, unknown> | null;
+    const brand = variant?.brand as { name?: string } | null;
+    const poi = r.purchase_order_item as { warehouse_location_id?: string | null } | null;
+    return {
+      brand_name: brand?.name ?? '—',
+      variant_name: (variant?.name as string) ?? '—',
+      variant_type: (variant?.variant_type as string) ?? '—',
+      disputed_quantity: Number(r.disputed_quantity) || 0,
+      warehouse_location_id: poi?.warehouse_location_id ?? null,
+    };
+  });
+  return { lines };
+}
+
+export async function listKAPoRebatesForPo(ctx: UserContext, poId: string) {
+  const sb = getSupabaseAdmin();
+  await assertPoInCompany(sb, poId, ctx.companyId);
+
+  const { data, error } = await sb
+    .from('key_account_po_rebates')
+    .select('id, rebate_number, status, disputed_total, resolution_type')
+    .eq('purchase_order_id', poId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return { rebates: data || [] };
+}
+
+export async function getKAPoPaymentStatus(ctx: UserContext, poId: string) {
+  const sb = getSupabaseAdmin();
+  await assertPoInCompany(sb, poId, ctx.companyId);
+
+  const { data, error } = await sb
+    .from('purchase_orders')
+    .select('key_account_payment_status')
+    .eq('id', poId)
+    .maybeSingle();
+  if (error) throw error;
+  return { key_account_payment_status: data?.key_account_payment_status ?? null };
+}
+
+async function assertPoInCompany(
+  sb: ReturnType<typeof getSupabaseAdmin>,
+  poId: string,
+  companyId: string
+) {
+  const { data, error } = await sb.from('purchase_orders').select('id').eq('id', poId).eq('company_id', companyId).maybeSingle();
+  if (error) throw error;
+  if (!data) throw new HttpError(404, 'Purchase order not found');
+}
+
+export async function updateKAPoWorkflow(
+  ctx: UserContext,
+  poId: string,
+  patch: Record<string, unknown>
+) {
+  if (ctx.role === 'key_account_accounting') {
+    throw new HttpError(403, 'Accounting users cannot update purchase orders');
+  }
+  const sb = getSupabaseAdmin();
+  await assertPoInCompany(sb, poId, ctx.companyId);
+
+  const { data, error } = await sb
+    .from('purchase_orders')
+    .update(patch)
+    .eq('id', poId)
+    .select()
+    .single();
+  if (error) throw error;
+  return {
+    ok: true,
+    poId,
+    patched: patch,
+    po: data,
+  };
+}
+
+export async function setKAPoRfpf(
+  ctx: UserContext,
+  poId: string,
+  rfpfNumber: string,
+  reason?: string | null
+) {
+  const userSb = requireUserClient(ctx);
+  const { data, error } = await userSb.rpc('set_key_account_rfpf', {
+    p_po_id: poId,
+    p_rfpf_number: rfpfNumber,
+    p_reason: reason ?? null,
+  });
+  if (error) throw error;
+  const result = data as { success?: boolean; message?: string } | null;
+  if (!result?.success) throw new HttpError(400, result?.message || 'Failed to set RFPF');
+  return result;
+}
+
+export type KAPoListPaymentInput = {
+  poId: string;
+  amount: number;
+  settlementDiscount?: number;
+  settlementDiscountReason?: string | null;
+  paymentMethod: string;
+  bankType?: string | null;
+  proofStoragePath?: string | null;
+};
+
+export async function recordKAPoListPayment(ctx: UserContext, input: KAPoListPaymentInput) {
+  if (ctx.role === 'key_account_accounting') {
+    throw new HttpError(403, 'Accounting users cannot record payments');
+  }
+  const sb = getSupabaseAdmin();
+  await assertPoInCompany(sb, input.poId, ctx.companyId);
+
+  const userSb = requireUserClient(ctx);
+  const amt = Number(input.amount) || 0;
+  const discount = Number(input.settlementDiscount) || 0;
+  const reason = input.settlementDiscountReason?.trim() || null;
+  const isSalesHead = ctx.role === 'sales_head';
+  const needsDiscountApproval = discount > 0 && !isSalesHead;
+  let sourcePaymentId: string | null = null;
+
+  if (amt > 0 || (discount > 0 && isSalesHead)) {
+    const method = amt > 0 ? input.paymentMethod : 'CASH';
+    const { data: insertedPay, error } = await userSb
+      .from('purchase_order_key_account_payments')
+      .insert({
+        purchase_order_id: input.poId,
+        company_id: ctx.companyId,
+        amount: amt,
+        settlement_discount: needsDiscountApproval ? 0 : discount,
+        settlement_discount_reason: !needsDiscountApproval && discount > 0 ? reason : null,
+        payment_method: method,
+        bank_type: method === 'BANK_TRANSFER' ? input.bankType || null : null,
+        proof_storage_path: input.proofStoragePath || null,
+      })
+      .select('id')
+      .single();
+    if (error) throw error;
+    if (needsDiscountApproval && amt > 0 && insertedPay?.id) {
+      sourcePaymentId = insertedPay.id;
+    }
+  }
+
+  if (needsDiscountApproval) {
+    const { data, error } = await userSb.rpc('request_key_account_settlement_discount', {
+      p_purchase_order_id: input.poId,
+      p_settlement_discount: discount,
+      p_settlement_discount_reason: reason,
+      p_source_payment_id: sourcePaymentId,
+    });
+    if (error) throw error;
+    const result = data as { success?: boolean; error?: string } | null;
+    if (!result?.success) {
+      throw new HttpError(400, result?.error || 'Could not submit settlement discount for approval');
+    }
+  }
+
+  return getKAPoPaymentStatus(ctx, input.poId);
+}
+
+export async function approveKASettlementDiscount(ctx: UserContext, requestId: string) {
+  if (ctx.role !== 'sales_head') {
+    throw new HttpError(403, 'Only sales heads can approve settlement discounts');
+  }
+  const userSb = requireUserClient(ctx);
+  const { data, error } = await userSb.rpc('approve_key_account_settlement_discount', {
+    p_request_id: requestId,
+  });
+  if (error) throw error;
+  const result = data as { success?: boolean; error?: string; purchase_order_id?: string } | null;
+  if (!result?.success) {
+    throw new HttpError(400, result?.error || 'Could not approve settlement discount');
+  }
+  return result;
+}
+
+export async function rejectKASettlementDiscount(
+  ctx: UserContext,
+  requestId: string,
+  reason?: string | null
+) {
+  if (ctx.role !== 'sales_head') {
+    throw new HttpError(403, 'Only sales heads can reject settlement discounts');
+  }
+  const userSb = requireUserClient(ctx);
+  const { data, error } = await userSb.rpc('reject_key_account_settlement_discount', {
+    p_request_id: requestId,
+    p_reason: reason?.trim() || null,
+  });
+  if (error) throw error;
+  const result = data as { success?: boolean; error?: string; purchase_order_id?: string } | null;
+  if (!result?.success) {
+    throw new HttpError(400, result?.error || 'Could not reject settlement discount');
+  }
+  return result;
+}

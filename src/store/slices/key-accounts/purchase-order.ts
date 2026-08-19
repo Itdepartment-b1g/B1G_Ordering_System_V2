@@ -118,6 +118,16 @@ type KAPurchaseOrderState = {
   createStatus: QueryStatus;
   updateStatus: QueryStatus;
   writeError: string | null;
+
+  listRows: Record<string, unknown>[];
+  listStatus: QueryStatus;
+  listError: string | null;
+
+  directorKamIds: string[];
+  directorKamIdsStatus: QueryStatus;
+
+  warehouseLocationNames: Record<string, string>;
+  warehouseLocationNamesStatus: QueryStatus;
 };
 
 const initialState: KAPurchaseOrderState = {
@@ -162,6 +172,16 @@ const initialState: KAPurchaseOrderState = {
   createStatus: 'idle',
   updateStatus: 'idle',
   writeError: null,
+
+  listRows: [],
+  listStatus: 'idle',
+  listError: null,
+
+  directorKamIds: [],
+  directorKamIdsStatus: 'idle',
+
+  warehouseLocationNames: {},
+  warehouseLocationNamesStatus: 'idle',
 };
 
 async function kaRequest<T>(
@@ -266,6 +286,141 @@ export const updateKAPurchaseOrder = createAsyncThunk(
       method: 'PATCH',
       params: { poId },
       body: payload,
+    })
+);
+
+export const fetchKAPoList = createAsyncThunk('kaPurchaseOrder/fetchList', () =>
+  kaRequest<{ rows: Record<string, unknown>[] }>('purchase-order', { params: { resource: 'list' } })
+);
+
+export const fetchKADirectorKamIds = createAsyncThunk('kaPurchaseOrder/fetchDirectorKams', () =>
+  kaRequest<{ kamIds: string[] }>('purchase-order', { params: { resource: 'director-kams' } })
+);
+
+export const fetchKAWarehouseLocationNames = createAsyncThunk('kaPurchaseOrder/fetchWarehouseNames', () =>
+  kaRequest<{ namesById: Record<string, string> }>('purchase-order', {
+    params: { resource: 'warehouse-names' },
+  })
+);
+
+export const fetchKAPoItems = createAsyncThunk('kaPurchaseOrder/fetchPoItems', (poId: string) =>
+  kaRequest<{ items: unknown[] }>('purchase-order', { params: { resource: 'po-items', poId } })
+);
+
+export const fetchKAPoPayments = createAsyncThunk('kaPurchaseOrder/fetchPoPayments', (poId: string) =>
+  kaRequest<{ payments: unknown[] }>('purchase-order', { params: { resource: 'po-payments', poId } })
+);
+
+export const fetchKAPoPaymentSummary = createAsyncThunk(
+  'kaPurchaseOrder/fetchPoPaymentSummary',
+  (poId: string) =>
+    kaRequest<{ paid: number; discount: number; entryCount: number }>('purchase-order', {
+      params: { resource: 'po-payment-summary', poId },
+    })
+);
+
+export const fetchKAPoDiscountRequests = createAsyncThunk(
+  'kaPurchaseOrder/fetchPoDiscountRequests',
+  (poId: string) =>
+    kaRequest<{ requests: unknown[] }>('purchase-order', {
+      params: { resource: 'po-discount-requests', poId },
+    })
+);
+
+export const fetchKACompanyPendingDiscounts = createAsyncThunk(
+  'kaPurchaseOrder/fetchCompanyPendingDiscounts',
+  () =>
+    kaRequest<{ requests: unknown[] }>('purchase-order', {
+      params: { resource: 'company-pending-discounts' },
+    })
+);
+
+export const fetchKAPoRfpfRevisions = createAsyncThunk(
+  'kaPurchaseOrder/fetchPoRfpfRevisions',
+  (poId: string) =>
+    kaRequest<{ revisions: unknown[] }>('purchase-order', {
+      params: { resource: 'po-rfpf-revisions', poId },
+    })
+);
+
+export const fetchKAPoRebateSource = createAsyncThunk(
+  'kaPurchaseOrder/fetchPoRebateSource',
+  (rebateId: string) =>
+    kaRequest<{ source: Record<string, unknown> | null }>('purchase-order', {
+      params: { resource: 'po-rebate-source', rebateId },
+    })
+);
+
+export const fetchKAPoRebateReturnLines = createAsyncThunk(
+  'kaPurchaseOrder/fetchPoRebateReturnLines',
+  (rebateId: string) =>
+    kaRequest<{ lines: unknown[] }>('purchase-order', {
+      params: { resource: 'po-rebate-return-lines', rebateId },
+    })
+);
+
+export const fetchKAPoRebates = createAsyncThunk('kaPurchaseOrder/fetchPoRebates', (poId: string) =>
+  kaRequest<{ rebates: unknown[] }>('purchase-order', { params: { resource: 'po-rebates', poId } })
+);
+
+export const patchKAPoWorkflow = createAsyncThunk(
+  'kaPurchaseOrder/patchWorkflow',
+  ({ poId, patch }: { poId: string; patch: Record<string, unknown> }) =>
+    kaRequest<{
+      ok: boolean;
+      poId: string;
+      patched: Record<string, unknown>;
+      po: Record<string, unknown>;
+    }>('purchase-order', {
+      method: 'PATCH',
+      params: { poId, action: 'workflow' },
+      body: patch,
+    })
+);
+
+export const setKAPoRfpf = createAsyncThunk(
+  'kaPurchaseOrder/setRfpf',
+  ({ poId, rfpfNumber, reason }: { poId: string; rfpfNumber: string; reason?: string | null }) =>
+    kaRequest<{ success?: boolean; message?: string }>('purchase-order', {
+      method: 'POST',
+      body: { action: 'set-rfpf', poId, rfpfNumber, reason: reason ?? null },
+    })
+);
+
+export type KAPoListPaymentPayload = {
+  poId: string;
+  amount: number;
+  settlementDiscount?: number;
+  settlementDiscountReason?: string | null;
+  paymentMethod: string;
+  bankType?: string | null;
+  proofStoragePath?: string | null;
+};
+
+export const recordKAPoListPayment = createAsyncThunk(
+  'kaPurchaseOrder/recordListPayment',
+  (payload: KAPoListPaymentPayload) =>
+    kaRequest<{ key_account_payment_status: string | null }>('purchase-order', {
+      method: 'POST',
+      body: { action: 'record-payment', ...payload },
+    })
+);
+
+export const approveKASettlementDiscount = createAsyncThunk(
+  'kaPurchaseOrder/approveDiscount',
+  (requestId: string) =>
+    kaRequest<{ success?: boolean; error?: string; purchase_order_id?: string }>('purchase-order', {
+      method: 'POST',
+      body: { action: 'approve-discount', requestId },
+    })
+);
+
+export const rejectKASettlementDiscount = createAsyncThunk(
+  'kaPurchaseOrder/rejectDiscount',
+  ({ requestId, reason }: { requestId: string; reason?: string | null }) =>
+    kaRequest<{ success?: boolean; error?: string; purchase_order_id?: string }>('purchase-order', {
+      method: 'POST',
+      body: { action: 'reject-discount', requestId, reason: reason ?? null },
     })
 );
 
@@ -462,6 +617,26 @@ const kaPurchaseOrderSlice = createSlice({
       .addCase(updateKAPurchaseOrder.rejected, (state, action) => {
         state.updateStatus = 'failed';
         state.writeError = action.error.message || 'Failed to update purchase order';
+      })
+      .addCase(fetchKAPoList.pending, (state) => {
+        state.listError = null;
+        if (state.listStatus !== 'succeeded') state.listStatus = 'loading';
+      })
+      .addCase(fetchKAPoList.fulfilled, (state, action) => {
+        state.listStatus = 'succeeded';
+        state.listRows = action.payload.rows || [];
+      })
+      .addCase(fetchKAPoList.rejected, (state, action) => {
+        state.listStatus = 'failed';
+        state.listError = action.error.message || 'Failed to load purchase orders';
+      })
+      .addCase(fetchKADirectorKamIds.fulfilled, (state, action) => {
+        state.directorKamIdsStatus = 'succeeded';
+        state.directorKamIds = action.payload.kamIds || [];
+      })
+      .addCase(fetchKAWarehouseLocationNames.fulfilled, (state, action) => {
+        state.warehouseLocationNamesStatus = 'succeeded';
+        state.warehouseLocationNames = action.payload.namesById || {};
       });
   },
 });

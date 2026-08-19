@@ -2,17 +2,36 @@ import { requireAuthUser } from '../../auth/requireAuthUser';
 import { HttpError, toErrorResult } from '../../http/errors';
 import { firstString } from '../../http/queryParams';
 import {
+  approveKASettlementDiscount,
   createKAPurchaseOrder,
+  getKACompanyPendingDiscounts,
   getKAExistingPo,
+  getKAPoDiscountRequests,
+  getKAPoItems,
+  getKAPoPaymentStatus,
+  getKAPoPaymentSummary,
+  getKAPoPayments,
+  getKAPoRebateReturnLines,
+  getKAPoRebateSource,
+  getKAPoRfpfRevisions,
   getKAPoStock,
+  getKAWarehouseLocationNames,
+  listKADirectorKamIds,
   listKAPoAddresses,
   listKAPoClients,
   listKAPoOwners,
+  listKAPoRebatesForPo,
   listKAPoShops,
   listKAPoWarehouses,
+  listKAPurchaseOrders,
+  recordKAPoListPayment,
+  rejectKASettlementDiscount,
+  setKAPoRfpf,
+  updateKAPoWorkflow,
   updateKAPurchaseOrder,
   type KAPoHeaderInput,
   type KAPoItemInput,
+  type KAPoListPaymentInput,
   type KAPoPaymentInput,
 } from '../../repositories/key-accounts/purchase-order';
 import type { ApiResult } from '../executive/executiveController';
@@ -20,14 +39,19 @@ import { getSupabaseAdmin } from '../../db/supabaseAdmin';
 
 type QueryMap = Record<string, string | string[] | undefined>;
 
-const ALLOWED_ROLES = ['sales_head', 'sales_admin', 'sales_director', 'key_account_manager'];
+const WRITE_ROLES = ['sales_head', 'sales_admin', 'sales_director', 'key_account_manager'];
+const LIST_ROLES = [...WRITE_ROLES, 'key_account_accounting'];
 
 function accessTokenFromAuthorization(authorization?: string) {
   if (!authorization) return '';
   return authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : authorization.trim();
 }
 
-async function resolveUserContext(userId: string, accessToken?: string) {
+async function resolveUserContext(
+  userId: string,
+  accessToken?: string,
+  options?: { allowAccounting?: boolean }
+) {
   const sb = getSupabaseAdmin();
   const { data, error } = await sb
     .from('profiles')
@@ -37,7 +61,9 @@ async function resolveUserContext(userId: string, accessToken?: string) {
 
   if (error || !data) throw new HttpError(403, 'Could not resolve user profile');
   if (!data.company_id) throw new HttpError(403, 'User has no company assigned');
-  if (!ALLOWED_ROLES.includes(data.role)) {
+
+  const allowed = options?.allowAccounting ? LIST_ROLES : WRITE_ROLES;
+  if (!allowed.includes(data.role)) {
     throw new HttpError(403, 'You do not have access to Key Account Purchase Orders');
   }
 
@@ -55,8 +81,27 @@ export async function getKAPurchaseOrder(
 ): Promise<ApiResult<unknown>> {
   try {
     const user = await requireAuthUser(authorization);
-    const ctx = await resolveUserContext(user.id, accessTokenFromAuthorization(authorization));
     const resource = firstString(query.resource) || '';
+    const listResources = new Set([
+      'list',
+      'director-kams',
+      'warehouse-names',
+      'po-items',
+      'po-payments',
+      'po-payment-summary',
+      'po-discount-requests',
+      'company-pending-discounts',
+      'po-rfpf-revisions',
+      'po-rebate-source',
+      'po-rebate-return-lines',
+      'po-rebates',
+      'po-payment-status',
+    ]);
+    const ctx = await resolveUserContext(
+      user.id,
+      accessTokenFromAuthorization(authorization),
+      { allowAccounting: listResources.has(resource) }
+    );
 
     switch (resource) {
       case 'owners':
@@ -89,6 +134,59 @@ export async function getKAPurchaseOrder(
         if (!poId) throw new HttpError(400, 'poId is required');
         return { status: 200, body: await getKAExistingPo(ctx, poId) };
       }
+      case 'list':
+        return { status: 200, body: await listKAPurchaseOrders(ctx) };
+      case 'director-kams':
+        return { status: 200, body: await listKADirectorKamIds(ctx) };
+      case 'warehouse-names':
+        return { status: 200, body: await getKAWarehouseLocationNames(ctx) };
+      case 'po-items': {
+        const poId = firstString(query.poId);
+        if (!poId) throw new HttpError(400, 'poId is required');
+        return { status: 200, body: await getKAPoItems(ctx, poId) };
+      }
+      case 'po-payments': {
+        const poId = firstString(query.poId);
+        if (!poId) throw new HttpError(400, 'poId is required');
+        return { status: 200, body: await getKAPoPayments(ctx, poId) };
+      }
+      case 'po-payment-summary': {
+        const poId = firstString(query.poId);
+        if (!poId) throw new HttpError(400, 'poId is required');
+        return { status: 200, body: await getKAPoPaymentSummary(ctx, poId) };
+      }
+      case 'po-discount-requests': {
+        const poId = firstString(query.poId);
+        if (!poId) throw new HttpError(400, 'poId is required');
+        return { status: 200, body: await getKAPoDiscountRequests(ctx, poId) };
+      }
+      case 'company-pending-discounts':
+        return { status: 200, body: await getKACompanyPendingDiscounts(ctx) };
+      case 'po-rfpf-revisions': {
+        const poId = firstString(query.poId);
+        if (!poId) throw new HttpError(400, 'poId is required');
+        return { status: 200, body: await getKAPoRfpfRevisions(ctx, poId) };
+      }
+      case 'po-rebate-source': {
+        const rebateId = firstString(query.rebateId);
+        if (!rebateId) throw new HttpError(400, 'rebateId is required');
+        return { status: 200, body: await getKAPoRebateSource(ctx, rebateId) };
+      }
+      case 'po-rebate-return-lines': {
+        const rebateId = firstString(query.rebateId);
+        if (!rebateId) throw new HttpError(400, 'rebateId is required');
+        return { status: 200, body: await getKAPoRebateReturnLines(ctx, rebateId) };
+      }
+      case 'po-rebates': {
+        const poId = firstString(query.poId);
+        if (!poId) throw new HttpError(400, 'poId is required');
+        return { status: 200, body: await listKAPoRebatesForPo(ctx, poId) };
+      }
+      case 'po-payment-status': {
+        const poId = firstString(query.poId);
+        if (!poId) throw new HttpError(400, 'poId is required');
+        return { status: 200, body: await getKAPoPaymentStatus(ctx, poId) };
+      }
       default:
         throw new HttpError(400, 'Unknown resource');
     }
@@ -104,12 +202,42 @@ export async function createKAPurchaseOrderHandler(
   try {
     const user = await requireAuthUser(authorization);
     const ctx = await resolveUserContext(user.id, accessTokenFromAuthorization(authorization));
-    const payload = (body || {}) as {
-      header: KAPoHeaderInput;
-      items: KAPoItemInput[];
-      payment?: KAPoPaymentInput | null;
-    };
-    return { status: 201, body: await createKAPurchaseOrder(ctx, payload) };
+    const payload = (body || {}) as Record<string, unknown>;
+    const action = typeof payload.action === 'string' ? payload.action : '';
+
+    switch (action) {
+      case 'set-rfpf': {
+        const poId = typeof payload.poId === 'string' ? payload.poId : '';
+        const rfpfNumber = typeof payload.rfpfNumber === 'string' ? payload.rfpfNumber : '';
+        const reason = typeof payload.reason === 'string' ? payload.reason : null;
+        if (!poId) throw new HttpError(400, 'poId is required');
+        return { status: 200, body: await setKAPoRfpf(ctx, poId, rfpfNumber, reason) };
+      }
+      case 'record-payment': {
+        const payment = payload as unknown as KAPoListPaymentInput;
+        if (!payment.poId) throw new HttpError(400, 'poId is required');
+        return { status: 200, body: await recordKAPoListPayment(ctx, payment) };
+      }
+      case 'approve-discount': {
+        const requestId = typeof payload.requestId === 'string' ? payload.requestId : '';
+        if (!requestId) throw new HttpError(400, 'requestId is required');
+        return { status: 200, body: await approveKASettlementDiscount(ctx, requestId) };
+      }
+      case 'reject-discount': {
+        const requestId = typeof payload.requestId === 'string' ? payload.requestId : '';
+        const reason = typeof payload.reason === 'string' ? payload.reason : null;
+        if (!requestId) throw new HttpError(400, 'requestId is required');
+        return { status: 200, body: await rejectKASettlementDiscount(ctx, requestId, reason) };
+      }
+      default: {
+        const createPayload = body as {
+          header: KAPoHeaderInput;
+          items: KAPoItemInput[];
+          payment?: KAPoPaymentInput | null;
+        };
+        return { status: 201, body: await createKAPurchaseOrder(ctx, createPayload) };
+      }
+    }
   } catch (error) {
     return toErrorResult(error);
   }
@@ -125,6 +253,13 @@ export async function updateKAPurchaseOrderHandler(
     const ctx = await resolveUserContext(user.id, accessTokenFromAuthorization(authorization));
     const poId = firstString(query.poId);
     if (!poId) throw new HttpError(400, 'poId is required');
+
+    const action = firstString(query.action);
+    if (action === 'workflow') {
+      const patch = (body || {}) as Record<string, unknown>;
+      return { status: 200, body: await updateKAPoWorkflow(ctx, poId, patch) };
+    }
+
     const payload = (body || {}) as {
       header: KAPoHeaderInput;
       items: KAPoItemInput[];

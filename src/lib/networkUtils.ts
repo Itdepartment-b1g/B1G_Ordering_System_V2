@@ -34,7 +34,7 @@ export function resetSessionCheckCooldown(): void {
  * If Supabase already passed its own signal, we race our timeout against it
  * instead of replacing it — this preserves Supabase's internal abort logic.
  */
-export async function fetchWithTimeout(
+export async function fetchWithTimeout( 
     input: RequestInfo | URL,
     init?: RequestInit,
     timeout: number = NETWORK_TIMEOUT
