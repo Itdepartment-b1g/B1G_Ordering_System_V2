@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
-import { useAppDispatch } from '@/store/store';
+import { useAppDispatch, useAppSelector } from '@/store/store';
 import {
   createKAPurchaseOrder,
   fetchKAExistingPo,
@@ -12,6 +12,13 @@ import {
   fetchKAPoShops,
   fetchKAPoStock,
   fetchKAPoWarehouses,
+  resetAddresses,
+  resetClients,
+  resetKAPurchaseOrder,
+  resetShops,
+  resetStock,
+  resetWriteStatus,
+  setClientsList,
   updateKAPurchaseOrder,
   type KAPoHeaderPayload,
 } from '@/store/slices/key-accounts/purchase-order';
@@ -124,15 +131,6 @@ interface POItem {
   warehouseLocationId?: string;
 }
 
-interface Warehouse {
-  id: string;
-  company_id: string; // hub company_id
-  company_name?: string; // hub company name (display)
-  location_id: string; // warehouse_locations.id
-  location_name: string; // warehouse_locations.name
-  is_main: boolean;
-}
-
 /**
  * Key Account Purchase Order Page
  * Allows KAMs to create POs with client/shop/address selection
@@ -141,6 +139,51 @@ interface Warehouse {
 export function KeyAccountPurchaseOrderPage() {
   const { user } = useAuth();
   const dispatch = useAppDispatch();
+  const navigate = useNavigate();
+  const { poId } = useParams<{ poId: string }>();
+  const isEditMode = Boolean(poId);
+  const {
+    owners: orderOwners,
+    ownersStatus,
+    ownersError,
+    clients,
+    clientsHasMore,
+    clientsStatus,
+    clientsLoadingMore,
+    clientsError,
+    shops,
+    shopsError,
+    addresses,
+    addressesError,
+    linkedWarehouseCompanyId,
+    warehouses,
+    brands,
+    variants,
+    warehousesStatus,
+    warehousesError,
+    stockMap,
+    onHandMap,
+    reservedMap,
+    stockStatus,
+    stockError,
+    existingPo,
+    existingItems,
+    existingPayments,
+    existingPoStatus,
+    existingPoError,
+    createStatus,
+    updateStatus,
+  } = useAppSelector((state) => state.kaPurchaseOrder);
+
+  const loadingClients = clientsStatus === 'loading' && clients.length === 0;
+  const loadingMoreClients = clientsLoadingMore;
+  const loadingWarehouses = warehousesStatus === 'loading' || warehousesStatus === 'idle';
+  const loadingOwners = ownersStatus === 'loading';
+  const loadingExistingPo =
+    isEditMode && (existingPoStatus === 'loading' || existingPoStatus === 'idle');
+  const stockLoading = stockStatus === 'loading';
+  const submitting = createStatus === 'loading' || updateStatus === 'loading';
+
   const { toast } = useToast();
   const { settings: paymentSettings, loading: loadingPaymentSettings } = useKeyAccountPaymentSettings();
   const {
@@ -157,21 +200,9 @@ export function KeyAccountPurchaseOrderPage() {
     () => getKeyAccountEnabledBankAccounts(paymentSettings),
     [paymentSettings]
   );
-  const navigate = useNavigate();
-  const { poId } = useParams<{ poId: string }>();
-  const isEditMode = Boolean(poId);
   const isSalesAdmin = isKeyAccountSalesAdmin(user?.role);
 
-  // Loading states
-  const [loadingClients, setLoadingClients] = useState(true);
-  const [loadingMoreClients, setLoadingMoreClients] = useState(false);
-  const [loadingWarehouses, setLoadingWarehouses] = useState(true);
-  const [loadingOwners, setLoadingOwners] = useState(false);
-  const [loadingExistingPo, setLoadingExistingPo] = useState(isEditMode);
-  const [submitting, setSubmitting] = useState(false);
-
-  // Data states
-  const [orderOwners, setOrderOwners] = useState<OrderOwnerOption[]>([]);
+  // Form / UI state (server lists live in Redux)
   const [selectedOwnerId, setSelectedOwnerId] = useState('');
   const [editPoNumber, setEditPoNumber] = useState('');
   const [editWorkflowStatus, setEditWorkflowStatus] = useState<string | null>(null);
@@ -181,25 +212,11 @@ export function KeyAccountPurchaseOrderPage() {
     { id: string; proof_storage_path: string | null; amount: number; payment_method: string | null }[]
   >([]);
   const suppressCascadeRef = useRef(false);
-  const [clients, setClients] = useState<KeyAccountClient[]>([]);
-  const [clientsHasMore, setClientsHasMore] = useState(false);
+  const existingPoHydratedRef = useRef(false);
+  const clientFetchGenRef = useRef(0);
   const [clientSearch, setClientSearch] = useState('');
   const [clientPickerOpen, setClientPickerOpen] = useState(false);
   const [selectedClient, setSelectedClient] = useState<KeyAccountClient | null>(null);
-  const clientFetchGenRef = useRef(0);
-  const [shops, setShops] = useState<KeyAccountShop[]>([]);
-  const [addresses, setAddresses] = useState<KeyAccountDeliveryAddress[]>([]);
-  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
-  const [linkedWarehouseCompanyId, setLinkedWarehouseCompanyId] = useState<string | null>(null);
-  const [brands, setBrands] = useState<any[]>([]);
-  const [variants, setVariants] = useState<any[]>([]);
-  /** Available-to-order qty by `${variantId}::${locationId}` */
-  const [stockMap, setStockMap] = useState<Record<string, number>>({});
-  /** On-hand (physical) qty by same key — for stock modal breakdown */
-  const [onHandMap, setOnHandMap] = useState<Record<string, number>>({});
-  /** Open PO holds (hard + soft) by same key */
-  const [reservedMap, setReservedMap] = useState<Record<string, number>>({});
-  const [stockLoading, setStockLoading] = useState(false);
 
   // UI state: warehouse stock modal
   const [stockModalOpen, setStockModalOpen] = useState(false);
@@ -381,45 +398,84 @@ export function KeyAccountPurchaseOrderPage() {
     }
   }, [paymentMethod, enabledBankAccounts, bankType]);
 
+  useEffect(() => {
+    return () => {
+      dispatch(resetKAPurchaseOrder());
+    };
+  }, [dispatch]);
+
+  useEffect(() => {
+    if (ownersError) {
+      toast({ variant: 'destructive', title: 'Error loading order owners', description: ownersError });
+    }
+  }, [ownersError, toast]);
+
+  useEffect(() => {
+    if (clientsError) {
+      toast({ variant: 'destructive', title: 'Error loading clients', description: clientsError });
+    }
+  }, [clientsError, toast]);
+
+  useEffect(() => {
+    if (shopsError) {
+      toast({ variant: 'destructive', title: 'Error loading shops', description: shopsError });
+    }
+  }, [shopsError, toast]);
+
+  useEffect(() => {
+    if (addressesError) {
+      toast({ variant: 'destructive', title: 'Error loading addresses', description: addressesError });
+    }
+  }, [addressesError, toast]);
+
+  useEffect(() => {
+    if (warehousesError) {
+      toast({ variant: 'destructive', title: 'Error loading warehouses', description: warehousesError });
+    }
+  }, [warehousesError, toast]);
+
+  useEffect(() => {
+    if (stockError) {
+      toast({ variant: 'destructive', title: 'Error loading warehouse stock', description: stockError });
+    }
+  }, [stockError, toast]);
+
+  useEffect(() => {
+    if (existingPoError) {
+      toast({
+        variant: 'destructive',
+        title: 'Failed to load PO',
+        description: existingPoError,
+      });
+      navigate('/key-accounts/purchase-orders');
+    }
+  }, [existingPoError, navigate, toast]);
+
   // Fetch warehouses on mount; clients load via search/pagination effect below
   useEffect(() => {
-    fetchWarehouses();
-  }, []);
+    if (user?.company_id) dispatch(fetchKAPoWarehouses());
+  }, [dispatch, user?.company_id]);
+
+  // Default warehouse tab when catalog loads
+  useEffect(() => {
+    if (warehousesStatus !== 'succeeded' || warehouses.length === 0) return;
+    const main = warehouses.find((w) => w.is_main);
+    const defaultLoc = (main || warehouses[0]).location_id;
+    setSelectedWarehouseLocationId((current) => current || defaultLoc);
+    setActiveWarehouseTabId((current) => current || defaultLoc);
+  }, [warehousesStatus, warehouses]);
 
   // Sales Admin: load Sales Head / Director / KAM options for create-on-behalf
   useEffect(() => {
     if (!isSalesAdmin || !user?.company_id) {
-      setOrderOwners([]);
       setSelectedOwnerId('');
       return;
     }
-    let cancelled = false;
-    (async () => {
-      setLoadingOwners(true);
-      try {
-        const result = await dispatch(fetchKAPoOwners()).unwrap();
-        if (cancelled) return;
-        setOrderOwners((result.owners || []) as OrderOwnerOption[]);
-      } catch (e: any) {
-        if (!cancelled) {
-          toast({
-            variant: 'destructive',
-            title: 'Error loading order owners',
-            description: e?.message || 'Failed to load Sales Head / Director / KAM list',
-          });
-          setOrderOwners([]);
-        }
-      } finally {
-        if (!cancelled) setLoadingOwners(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [isSalesAdmin, user?.company_id]);
+    dispatch(fetchKAPoOwners());
+  }, [dispatch, isSalesAdmin, user?.company_id]);
 
   const selectedOwner = useMemo(
-    () => orderOwners.find((o) => o.id === selectedOwnerId) ?? null,
+    () => (orderOwners as OrderOwnerOption[]).find((o) => o.id === selectedOwnerId) ?? null,
     [orderOwners, selectedOwnerId]
   );
 
@@ -440,17 +496,17 @@ export function KeyAccountPurchaseOrderPage() {
     setSelectedClient(null);
     setSelectedShopId('');
     setSelectedAddressId('');
-    setClients([]);
-  }, [selectedOwnerId, isSalesAdmin]);
+    dispatch(resetClients());
+  }, [selectedOwnerId, isSalesAdmin, dispatch]);
 
   // Fetch shops when client changes
   useEffect(() => {
     if (!selectedClientId) return;
     if (suppressCascadeRef.current) {
-      void fetchShops(selectedClientId);
+      dispatch(fetchKAPoShops(selectedClientId));
       return;
     }
-    fetchShops(selectedClientId);
+    dispatch(fetchKAPoShops(selectedClientId));
     setSelectedShopId('');
     setSelectedAddressId('');
     setPaymentTermsSource('client');
@@ -459,18 +515,18 @@ export function KeyAccountPurchaseOrderPage() {
       clients.find((c) => c.id === selectedClientId)?.payment_terms
     );
     setSelectedClientPaymentTerm(terms.length === 1 ? terms[0] : '');
-  }, [selectedClientId]);
+  }, [selectedClientId, dispatch]);
 
   // Fetch addresses when shop changes
   useEffect(() => {
     if (!selectedShopId) return;
     if (suppressCascadeRef.current) {
-      void fetchAddresses(selectedShopId);
+      dispatch(fetchKAPoAddresses(selectedShopId));
       return;
     }
-    fetchAddresses(selectedShopId);
+    dispatch(fetchKAPoAddresses(selectedShopId));
     setSelectedAddressId('');
-  }, [selectedShopId]);
+  }, [selectedShopId, dispatch]);
 
   // Auto-select default address
   useEffect(() => {
@@ -483,170 +539,127 @@ export function KeyAccountPurchaseOrderPage() {
     }
   }, [filteredAddresses, selectedAddressId]);
 
-  // Edit mode: load existing PO and hydrate the form
+  // Edit mode: fetch existing PO
   useEffect(() => {
     if (!isEditMode || !poId || !user?.id) return;
+    existingPoHydratedRef.current = false;
+    dispatch(fetchKAExistingPo(poId));
+  }, [dispatch, isEditMode, poId, user?.id]);
 
-    let cancelled = false;
-    (async () => {
-      setLoadingExistingPo(true);
-      try {
-        const { po, items: itemRows, payments: paymentRows } = await dispatch(
-          fetchKAExistingPo(poId)
-        ).unwrap();
-        if (cancelled) return;
+  // Edit mode: hydrate form from Redux when PO loads
+  useEffect(() => {
+    if (!isEditMode || existingPoStatus !== 'succeeded' || !existingPo || existingPoHydratedRef.current) {
+      return;
+    }
+    existingPoHydratedRef.current = true;
 
-        suppressCascadeRef.current = true;
-        setEditPoNumber(po.po_number || '');
-        setEditWorkflowStatus(po.workflow_status || null);
-        setEditPaymentStatus(String(po.key_account_payment_status || 'unpaid'));
-        setEditHasPayments((paymentRows || []).length > 0);
-        setEditPaymentProofs(
-          (paymentRows || []).map((row: any) => ({
-            id: String(row.id),
-            proof_storage_path: row.proof_storage_path || null,
-            amount: Number(row.amount || 0),
-            payment_method: row.payment_method || null,
-          }))
-        );
+    const po = existingPo as Record<string, any>;
+    const itemRows = existingItems as any[];
+    const paymentRows = existingPayments as any[];
 
-        if (po.kam_id) setSelectedOwnerId(po.kam_id);
+    suppressCascadeRef.current = true;
+    setEditPoNumber(String(po.po_number || ''));
+    setEditWorkflowStatus(po.workflow_status || null);
+    setEditPaymentStatus(String(po.key_account_payment_status || 'unpaid'));
+    setEditHasPayments(paymentRows.length > 0);
+    setEditPaymentProofs(
+      paymentRows.map((row) => ({
+        id: String(row.id),
+        proof_storage_path: row.proof_storage_path || null,
+        amount: Number(row.amount || 0),
+        payment_method: row.payment_method || null,
+      }))
+    );
 
-        const client = Array.isArray(po.client) ? po.client[0] : po.client;
-        if (client) {
-          setSelectedClient(client as KeyAccountClient);
-          setClients([client as KeyAccountClient]);
-        }
-        setSelectedClientId(po.key_account_client_id || '');
-        setSelectedShopId(po.key_account_shop_id || '');
-        setSelectedAddressId(po.key_account_address_id || '');
+    if (po.kam_id) setSelectedOwnerId(po.kam_id);
 
-        const locIds = new Set<string>();
-        if (po.warehouse_location_id) locIds.add(po.warehouse_location_id);
-        for (const row of itemRows || []) {
-          if (row.warehouse_location_id) locIds.add(row.warehouse_location_id);
-        }
-        const multi = locIds.size > 1;
-        setSourceMode(multi ? 'multi' : 'single');
-        if (po.warehouse_location_id) {
-          setSelectedWarehouseLocationId(po.warehouse_location_id);
-          setActiveWarehouseTabId(po.warehouse_location_id);
-        } else if (locIds.size === 1) {
-          const only = [...locIds][0];
-          setSelectedWarehouseLocationId(only);
-          setActiveWarehouseTabId(only);
-        }
+    const client = Array.isArray(po.client) ? po.client[0] : po.client;
+    if (client) {
+      setSelectedClient(client as KeyAccountClient);
+      dispatch(setClientsList([client as KeyAccountClient]));
+    }
+    setSelectedClientId(po.key_account_client_id || '');
+    setSelectedShopId(po.key_account_shop_id || '');
+    setSelectedAddressId(po.key_account_address_id || '');
 
-        const orderDateRaw = String(po.order_date || '').slice(0, 10);
-        setOrderDate(orderDateRaw || new Date().toISOString().split('T')[0]);
-        setExpectedDeliveryDate(
-          po.expected_delivery_date ? String(po.expected_delivery_date).slice(0, 10) : ''
-        );
-        setNotes(po.notes || '');
-        setTaxRate(Number(po.tax_rate || 0));
-        setDiscount(Number(po.discount || 0));
-        setIsConsignment(String(po.po_order_kind || '') === 'consignment');
-        setPaymentMode((po.key_account_payment_mode as KeyAccountPoPaymentMode) || 'full');
+    const locIds = new Set<string>();
+    if (po.warehouse_location_id) locIds.add(po.warehouse_location_id);
+    for (const row of itemRows || []) {
+      if (row.warehouse_location_id) locIds.add(row.warehouse_location_id);
+    }
+    const multi = locIds.size > 1;
+    setSourceMode(multi ? 'multi' : 'single');
+    if (po.warehouse_location_id) {
+      setSelectedWarehouseLocationId(po.warehouse_location_id);
+      setActiveWarehouseTabId(po.warehouse_location_id);
+    } else if (locIds.size === 1) {
+      const only = [...locIds][0];
+      setSelectedWarehouseLocationId(only);
+      setActiveWarehouseTabId(only);
+    }
 
-        const termsSource =
-          po.key_account_payment_terms_source === 'company' ? 'company' : 'client';
-        setPaymentTermsSource(termsSource);
-        if (termsSource === 'company') {
-          setSelectedCompanyPaymentTerm(po.key_account_payment_terms || '');
-        } else {
-          setSelectedClientPaymentTerm(po.key_account_payment_terms || '');
-        }
+    const orderDateRaw = String(po.order_date || '').slice(0, 10);
+    setOrderDate(orderDateRaw || new Date().toISOString().split('T')[0]);
+    setExpectedDeliveryDate(
+      po.expected_delivery_date ? String(po.expected_delivery_date).slice(0, 10) : ''
+    );
+    setNotes(po.notes || '');
+    setTaxRate(Number(po.tax_rate || 0));
+    setDiscount(Number(po.discount || 0));
+    setIsConsignment(String(po.po_order_kind || '') === 'consignment');
+    setPaymentMode((po.key_account_payment_mode as KeyAccountPoPaymentMode) || 'full');
 
-        const hydratedItems: POItem[] = (itemRows || []).map((row: any) => {
-          const variant = Array.isArray(row.variant) ? row.variant[0] : row.variant;
-          const brand = variant
-            ? Array.isArray(variant.brand)
-              ? variant.brand[0]
-              : variant.brand
-            : null;
-          return {
-            id: row.id || crypto.randomUUID(),
-            brandId: brand?.id || variant?.brand_id || '',
-            brandName: brand?.name || '—',
-            variantId: row.variant_id,
-            variantName: variant?.name || '—',
-            variantType: variant?.variant_type || '',
-            quantity: Number(row.quantity || 0),
-            unitPrice: Number(row.unit_price || 0),
-            totalPrice: Number(row.total_price || 0),
-            warehouseLocationId: row.warehouse_location_id || undefined,
-          };
-        });
-        setItems(hydratedItems);
+    const termsSource = po.key_account_payment_terms_source === 'company' ? 'company' : 'client';
+    setPaymentTermsSource(termsSource);
+    if (termsSource === 'company') {
+      setSelectedCompanyPaymentTerm(po.key_account_payment_terms || '');
+    } else {
+      setSelectedClientPaymentTerm(po.key_account_payment_terms || '');
+    }
 
-        window.setTimeout(() => {
-          suppressCascadeRef.current = false;
-        }, 300);
-      } catch (e: any) {
-        if (!cancelled) {
-          toast({
-            variant: 'destructive',
-            title: 'Failed to load PO',
-            description: e?.message || 'Could not load purchase order for editing.',
-          });
-          navigate('/key-accounts/purchase-orders');
-        }
-      } finally {
-        if (!cancelled) setLoadingExistingPo(false);
-      }
-    })();
+    const hydratedItems: POItem[] = (itemRows || []).map((row: any) => {
+      const variant = Array.isArray(row.variant) ? row.variant[0] : row.variant;
+      const brand = variant
+        ? Array.isArray(variant.brand)
+          ? variant.brand[0]
+          : variant.brand
+        : null;
+      return {
+        id: row.id || crypto.randomUUID(),
+        brandId: brand?.id || variant?.brand_id || '',
+        brandName: brand?.name || '—',
+        variantId: row.variant_id,
+        variantName: variant?.name || '—',
+        variantType: variant?.variant_type || '',
+        quantity: Number(row.quantity || 0),
+        unitPrice: Number(row.unit_price || 0),
+        totalPrice: Number(row.total_price || 0),
+        warehouseLocationId: row.warehouse_location_id || undefined,
+      };
+    });
+    setItems(hydratedItems);
 
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isEditMode, poId, user?.id]);
+    window.setTimeout(() => {
+      suppressCascadeRef.current = false;
+    }, 300);
+  }, [dispatch, isEditMode, existingPo, existingItems, existingPayments, existingPoStatus]);
 
   // Reset variant when brand changes
   useEffect(() => {
     setSelectedVariantId('');
   }, [selectedBrandId]);
 
-  const loadWarehouseAvailableStock = async () => {
-    if (!linkedWarehouseCompanyId) {
-      setStockMap({});
-      setOnHandMap({});
-      setReservedMap({});
+  const loadWarehouseAvailableStock = () => {
+    if (!linkedWarehouseCompanyId || !variants?.length) {
+      dispatch(resetStock());
       return;
     }
-    if (!variants || variants.length === 0) {
-      setStockMap({});
-      setOnHandMap({});
-      setReservedMap({});
-      return;
-    }
-
     const variantIds = variants.map((v) => v.id).filter(Boolean);
     if (variantIds.length === 0) {
-      setStockMap({});
-      setOnHandMap({});
-      setReservedMap({});
+      dispatch(resetStock());
       return;
     }
-
-    setStockLoading(true);
-    try {
-      const result = await dispatch(fetchKAPoStock(variantIds)).unwrap();
-      setStockMap(result.stockMap || {});
-      setOnHandMap(result.onHandMap || {});
-      setReservedMap(result.reservedMap || {});
-    } catch (e: any) {
-      setStockMap({});
-      setOnHandMap({});
-      setReservedMap({});
-      toast({
-        variant: 'destructive',
-        title: 'Error loading warehouse stock',
-        description: e?.message || 'Failed to load warehouse stock',
-      });
-    } finally {
-      setStockLoading(false);
-    }
+    dispatch(fetchKAPoStock(variantIds));
   };
 
   // Load stock for all linked warehouse locations (supports single + multi source modes)
@@ -670,63 +683,23 @@ export function KeyAccountPurchaseOrderPage() {
     );
   }, [sourceMode, selectedWarehouseLocationId]);
 
-  async function fetchClients(opts: { search?: string; append?: boolean } = {}) {
+  function fetchClients(opts: { search?: string; append?: boolean } = {}) {
     if (!user?.company_id) return;
 
-    // Sales Admin must pick an order owner before clients are scoped/loaded.
     if (isSalesAdmin && !selectedOwnerId) {
-      setClients([]);
-      setClientsHasMore(false);
-      setLoadingClients(false);
-      setLoadingMoreClients(false);
+      dispatch(resetClients());
       return;
     }
 
     const search = (opts.search ?? clientSearch).trim();
     const append = opts.append ?? false;
     const offset = append ? clients.length : 0;
-    const fetchGen = append ? clientFetchGenRef.current : ++clientFetchGenRef.current;
+    const fetchId = append ? clientFetchGenRef.current : ++clientFetchGenRef.current;
 
-    if (append) {
-      setLoadingMoreClients(true);
-    } else {
-      setLoadingClients(true);
-    }
+    const kamId =
+      isSalesAdmin && selectedOwner?.role === 'key_account_manager' ? selectedOwnerId : undefined;
 
-    try {
-      const kamId =
-        isSalesAdmin && selectedOwner?.role === 'key_account_manager'
-          ? selectedOwnerId
-          : undefined;
-      const result = await dispatch(
-        fetchKAPoClients({ search, offset, kamId })
-      ).unwrap();
-      if (fetchGen !== clientFetchGenRef.current) return;
-
-      const rows = (result.clients || []) as KeyAccountClient[];
-      setClients((prev) => {
-        if (!append) return rows;
-        const seen = new Set(prev.map((c) => c.id));
-        return [...prev, ...rows.filter((c) => !seen.has(c.id))];
-      });
-      setClientsHasMore(Boolean(result.hasMore));
-    } catch (error: any) {
-      if (fetchGen !== clientFetchGenRef.current) return;
-      toast({
-        variant: 'destructive',
-        title: 'Error loading clients',
-        description: error.message,
-      });
-      if (!append) {
-        setClients([]);
-        setClientsHasMore(false);
-      }
-    } finally {
-      if (fetchGen === clientFetchGenRef.current) {
-        setLoadingClients(false);
-        setLoadingMoreClients(false);
-      }
-    }
+    dispatch(fetchKAPoClients({ search, offset, kamId, append, fetchId }));
   }
 
   function handleSelectClient(client: KeyAccountClient) {
@@ -735,97 +708,18 @@ export function KeyAccountPurchaseOrderPage() {
     setClientPickerOpen(false);
   }
 
-  async function fetchShops(clientId: string) {
-    try {
-      const result = await dispatch(fetchKAPoShops(clientId)).unwrap();
-      setShops(result.shops || []);
-    } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Error loading shops',
-        description: error.message,
-      });
-    }
-  }
-
-  async function fetchAddresses(shopId: string) {
-    try {
-      const result = await dispatch(fetchKAPoAddresses(shopId)).unwrap();
-      const rows = (result.addresses || []) as KeyAccountDeliveryAddress[];
-      setAddresses(rows);
-      return rows;
-    } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Error loading addresses',
-        description: error.message,
-      });
-      return [];
-    }
-  }
-
   const handleShopCreated = async (shop: KeyAccountShop) => {
     if (!selectedClientId) return;
-    await fetchShops(selectedClientId);
+    dispatch(fetchKAPoShops(selectedClientId));
     setSelectedShopId(shop.id);
     setSelectedAddressId('');
   };
 
   const handleAddressCreated = async (address: KeyAccountDeliveryAddress) => {
     if (!selectedShopId) return;
-    await fetchAddresses(selectedShopId);
+    dispatch(fetchKAPoAddresses(selectedShopId));
     setSelectedAddressId(address.id);
   };
-
-  async function fetchWarehouses() {
-    if (!user?.company_id) return;
-
-    try {
-      const result = await dispatch(fetchKAPoWarehouses()).unwrap();
-      const hubId = result.linkedWarehouseCompanyId ?? null;
-      setLinkedWarehouseCompanyId(hubId);
-
-      if (!hubId) {
-        setWarehouses([]);
-        setSelectedWarehouseLocationId('');
-        setBrands([]);
-        setVariants([]);
-        return;
-      }
-
-      const formattedWarehouses: Warehouse[] = (result.warehouses || []).map((w) => ({
-        id: w.id,
-        company_id: w.company_id,
-        company_name: w.company_name,
-        location_id: w.location_id,
-        location_name: w.location_name,
-        is_main: !!w.is_main,
-      }));
-
-      setWarehouses(formattedWarehouses);
-      setBrands(result.brands || []);
-      setVariants(result.variants || []);
-
-      if (formattedWarehouses.length > 0) {
-        const main = formattedWarehouses.find((w) => w.is_main);
-        const defaultLoc = (main || formattedWarehouses[0]).location_id;
-        if (!selectedWarehouseLocationId) {
-          setSelectedWarehouseLocationId(defaultLoc);
-        }
-        if (!activeWarehouseTabId) {
-          setActiveWarehouseTabId(defaultLoc);
-        }
-      }
-    } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Error loading warehouses',
-        description: error.message,
-      });
-    } finally {
-      setLoadingWarehouses(false);
-    }
-  }
 
   function addItem() {
     const locId = activeLocationId;
@@ -1045,9 +939,8 @@ export function KeyAccountPurchaseOrderPage() {
       }
     }
 
-    setSubmitting(true);
-
     try {
+      dispatch(resetWriteStatus());
       const isDirector = user?.role === 'sales_director';
       const isSalesHead = user?.role === 'sales_head';
       const isKam = user?.role === 'key_account_manager';
@@ -1253,8 +1146,6 @@ export function KeyAccountPurchaseOrderPage() {
         title: isEditMode ? 'Error updating order' : 'Error creating order',
         description: error.message,
       });
-    } finally {
-      setSubmitting(false);
     }
   }
 
