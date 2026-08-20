@@ -648,6 +648,17 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
   .bank-cols .bank-name { font-weight: 700; margin-top: 6px; }
   .bank-cols .bank-acct { font-family: ui-monospace, monospace; }
 
+  .handover-section {
+    margin: 16px 0 8px;
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+    line-height: 1.9;
+  }
+  .handover-section .sig {
+    margin-top: 10px;
+  }
+
   .signoff-table {
     width: 100%;
     border-collapse: collapse;
@@ -819,6 +830,15 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
         </tr>
       </tbody>
     </table>
+
+    <div class="handover-section">
+      <div>TOTAL BOXES :</div>
+      <div>DRIVER NAMES :</div>
+      <div>CONTACT NUMBER :</div>
+      <div class="sig">SIGNATURE :</div>
+      <div>PLATE NUMBER :</div>
+      <div>DATE AND TIME</div>
+    </div>
 
     ${footerNoteHtml}
   </div>
