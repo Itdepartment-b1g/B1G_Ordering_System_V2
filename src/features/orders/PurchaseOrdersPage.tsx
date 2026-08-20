@@ -52,6 +52,7 @@ import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
 import { useWarehouseLocationMembership } from '@/features/inventory/useWarehouseLocationMembership';
 import { generateAndOpenCofPdf } from './cof/generateCofPdf';
+import { generateAndOpenWarehouseCofPdf } from './cof/generateWarehouseCofPdf';
 import {
   generateAndOpenKeyAccountCofPdf,
   orderToKeyAccountPoForCof,
@@ -343,9 +344,6 @@ export default function PurchaseOrdersPage() {
 
   // Track fulfillment status for current user's warehouse location
   const [myLocationStatuses, setMyLocationStatuses] = useState<Record<string, string>>({});
-  const [myLocationDrByPo, setMyLocationDrByPo] = useState<
-    Record<string, { dr_number: string; warehouse_location_id: string; warehouse_name: string }>
-  >({});
 
   // View Dialog States
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
@@ -438,6 +436,16 @@ export default function PurchaseOrdersPage() {
 
   const openCofForOrder = async (order: any) => {
     try {
+      if (isWarehouse) {
+        if (order.company_account_type === 'Key Accounts') {
+          await generateAndOpenKeyAccountCofPdf(orderToKeyAccountPoForCof(order), {
+            generatePdf: generateAndOpenWarehouseCofPdf,
+          });
+          return;
+        }
+        await generateAndOpenWarehouseCofPdf(order);
+        return;
+      }
       if (order.company_account_type === 'Key Accounts') {
         await generateAndOpenKeyAccountCofPdf(orderToKeyAccountPoForCof(order));
         return;
@@ -470,57 +478,88 @@ export default function PurchaseOrdersPage() {
     return `Warehouse ${shortId(locationId)}`;
   };
 
-  const canPrintDrForOrder = (order: { id: string }) => !!myLocationDrByPo[order.id]?.dr_number;
-
   const openDrForOrder = async (order: any) => {
-    const drMeta = myLocationDrByPo[order.id];
-    if (!drMeta?.dr_number) return;
+    const locationId = membership.locationId;
+    if (!isWarehouse || !locationId) {
+      toast({
+        title: 'Print DR',
+        description: 'Only warehouse users can print a delivery receipt from this menu.',
+        variant: 'destructive',
+      });
+      return;
+    }
     try {
-      // Prefer this DR's dispatched lines (partial multi-DR) over full PO qty
-      let dispatchLines: DrPdfDispatchLine[] | undefined;
-
-      const { data: deliveryRow } = await supabase
+      const { data: deliveryRows, error: deliveryErr } = await supabase
         .from('purchase_order_deliveries')
-        .select('id, status')
+        .select(
+          'id, status, dr_number, warehouse_location_id, dispatched_at, created_at, warehouse_locations:warehouse_location_id(name)'
+        )
         .eq('purchase_order_id', order.id)
-        .eq('dr_number', drMeta.dr_number)
-        .eq('warehouse_location_id', drMeta.warehouse_location_id)
-        .maybeSingle();
+        .eq('warehouse_location_id', locationId)
+        .not('dr_number', 'is', null)
+        .order('dispatched_at', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false })
+        .limit(1);
 
-      if (deliveryRow?.id) {
-        const { data: itemData } = await supabase
-          .from('purchase_order_delivery_items')
-          .select(
-            'variant_id,quantity_dispatched,variants:variant_id(name,brands:brand_id(name))'
-          )
-          .eq('delivery_id', deliveryRow.id);
-        dispatchLines = ((itemData || []) as any[])
-          .filter((item) => Number(item.quantity_dispatched) > 0)
-          .map((item) => {
-            const variant = Array.isArray(item.variants) ? item.variants[0] : item.variants;
-            const brand = variant?.brands
-              ? Array.isArray(variant.brands)
-                ? variant.brands[0]
-                : variant.brands
-              : null;
-            return {
-              variant_id: String(item.variant_id),
-              brand_name: brand?.name ?? null,
-              variant_name: variant?.name ?? null,
-              quantity: Number(item.quantity_dispatched) || 0,
-            };
-          });
-        if (dispatchLines.length > 0) {
-          dispatchLines = await enrichDispatchLinesWithLots(deliveryRow.id, dispatchLines);
-        }
+      if (deliveryErr) throw deliveryErr;
+
+      const deliveryRow = (deliveryRows || [])[0] as
+        | {
+            id: string;
+            status: string | null;
+            dr_number: string | null;
+            warehouse_location_id: string | null;
+            warehouse_locations?: { name: string } | { name: string }[] | null;
+          }
+        | undefined;
+
+      const drNumber = String(deliveryRow?.dr_number || '').trim();
+      const locId = String(deliveryRow?.warehouse_location_id || locationId);
+      if (!deliveryRow?.id || !drNumber) {
+        toast({
+          title: 'No DR yet',
+          description: 'Dispatch this order first, then print the latest delivery receipt.',
+        });
+        return;
+      }
+
+      const warehouseName =
+        resolveWarehouseLocationName(deliveryRow.warehouse_locations) ||
+        resolveWarehouseNameForLocation(order, locId);
+
+      let dispatchLines: DrPdfDispatchLine[] | undefined;
+      const { data: itemData } = await supabase
+        .from('purchase_order_delivery_items')
+        .select(
+          'variant_id,quantity_dispatched,variants:variant_id(name,brands:brand_id(name))'
+        )
+        .eq('delivery_id', deliveryRow.id);
+      dispatchLines = ((itemData || []) as any[])
+        .filter((item) => Number(item.quantity_dispatched) > 0)
+        .map((item) => {
+          const variant = Array.isArray(item.variants) ? item.variants[0] : item.variants;
+          const brand = variant?.brands
+            ? Array.isArray(variant.brands)
+              ? variant.brands[0]
+              : variant.brands
+            : null;
+          return {
+            variant_id: String(item.variant_id),
+            brand_name: brand?.name ?? null,
+            variant_name: variant?.name ?? null,
+            quantity: Number(item.quantity_dispatched) || 0,
+          };
+        });
+      if (dispatchLines.length > 0) {
+        dispatchLines = await enrichDispatchLinesWithLots(deliveryRow.id, dispatchLines);
       }
 
       await generateAndOpenDrPdf(order, {
-        drNumber: drMeta.dr_number,
-        warehouseLocationId: drMeta.warehouse_location_id,
-        warehouseLocationName: drMeta.warehouse_name,
+        drNumber,
+        warehouseLocationId: locId,
+        warehouseLocationName: warehouseName,
         dispatchLines: dispatchLines && dispatchLines.length > 0 ? dispatchLines : undefined,
-        cancelled: deliveryRow?.status === 'cancelled',
+        cancelled: deliveryRow.status === 'cancelled',
       });
     } catch (e: any) {
       toast({
@@ -765,7 +804,7 @@ export default function PurchaseOrdersPage() {
             <FileText className="mr-2 h-4 w-4" />
             View / Print COF
           </DropdownMenuItem>
-          {canPrintDrForOrder(order) ? (
+          {isWarehouse ? (
             <DropdownMenuItem onClick={() => void openDrForOrder(order)}>
               <Receipt className="mr-2 h-4 w-4" />
               Print DR
@@ -1190,63 +1229,6 @@ export default function PurchaseOrdersPage() {
       cancelled = true;
     };
   }, [purchaseOrders]);
-
-  // DR numbers issued by this warehouse user's location (for Print DR button visibility).
-  useEffect(() => {
-    if (!isWarehouse || !membership.locationId || purchaseOrders.length === 0) {
-      setMyLocationDrByPo({});
-      return;
-    }
-
-    const transferPoIds = purchaseOrders
-      .filter((o) => o.fulfillment_type === 'warehouse_transfer')
-      .map((o) => o.id);
-
-    if (transferPoIds.length === 0) {
-      setMyLocationDrByPo({});
-      return;
-    }
-
-    let cancelled = false;
-    supabase
-      .from('purchase_order_deliveries')
-      .select(
-        'purchase_order_id, dr_number, warehouse_location_id, warehouse_locations:warehouse_location_id(name)'
-      )
-      .in('purchase_order_id', transferPoIds)
-      .eq('warehouse_location_id', membership.locationId)
-      .not('dr_number', 'is', null)
-      .then(({ data, error }) => {
-        if (cancelled) return;
-        if (error) {
-          console.warn('[PO List] Failed to load DR numbers', error);
-          setMyLocationDrByPo({});
-          return;
-        }
-        const drMap: Record<
-          string,
-          { dr_number: string; warehouse_location_id: string; warehouse_name: string }
-        > = {};
-        for (const row of (data || []) as any[]) {
-          const poId = String(row.purchase_order_id || '');
-          const drNumber = String(row.dr_number || '').trim();
-          const locId = String(row.warehouse_location_id || '');
-          if (!poId || !drNumber || !locId) continue;
-          const locName =
-            resolveWarehouseLocationName(row.warehouse_locations) || `Warehouse ${shortId(locId)}`;
-          drMap[poId] = {
-            dr_number: drNumber,
-            warehouse_location_id: locId,
-            warehouse_name: locName,
-          };
-        }
-        setMyLocationDrByPo(drMap);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [purchaseOrders, membership.locationId, isWarehouse]);
 
   // Approve modal: preload stock availability (warehouse_transfer only).
   useEffect(() => {
@@ -3189,15 +3171,6 @@ export default function PurchaseOrdersPage() {
                           };
                         })
                       );
-
-                      setMyLocationDrByPo((prev) => ({
-                        ...prev,
-                        [dispatchPo.id]: {
-                          dr_number: drNumber,
-                          warehouse_location_id: locId,
-                          warehouse_name: whName,
-                        },
-                      }));
 
                       setMyLocationStatuses((prev) => ({
                         ...prev,
