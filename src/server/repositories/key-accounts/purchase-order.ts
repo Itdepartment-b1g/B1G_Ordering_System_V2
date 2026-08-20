@@ -1,5 +1,13 @@
+import { fetchAllPaginated } from '../../../lib/supabasePaginate';
 import { HttpError } from '../../http/errors';
 import { getSupabaseAdmin, getSupabaseUser } from '../../db/supabaseAdmin';
+
+export type KAPoPaymentBulkRow = {
+  purchase_order_id: string;
+  amount: number | null;
+  settlement_discount?: number | null;
+  created_at: string;
+};
 
 export type UserContext = {
   userId: string;
@@ -797,6 +805,58 @@ export async function getKAPoPayments(ctx: UserContext, poId: string) {
     .order('created_at', { ascending: true });
   if (error) throw error;
   return { payments: data || [] };
+}
+
+async function resolveAccessiblePoIds(
+  sb: ReturnType<typeof getSupabaseAdmin>,
+  ctx: UserContext,
+  poIds: string[]
+): Promise<string[]> {
+  const uniqueIds = [...new Set(poIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return [];
+
+  let query = sb
+    .from('purchase_orders')
+    .select('id')
+    .in('id', uniqueIds)
+    .eq('company_id', ctx.companyId)
+    .eq('company_account_type', 'Key Accounts');
+
+  if (ctx.role === 'key_account_manager') {
+    query = query.or(`created_by.eq.${ctx.userId},kam_id.eq.${ctx.userId}`);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data || []).map((row) => row.id as string);
+}
+
+export async function getKAPoPaymentsBulk(ctx: UserContext, poIds: string[]) {
+  if (poIds.length === 0) return { payments: [] as KAPoPaymentBulkRow[] };
+
+  const sb = getSupabaseAdmin();
+  const accessibleIds = await resolveAccessiblePoIds(sb, ctx, poIds);
+  if (accessibleIds.length === 0) return { payments: [] as KAPoPaymentBulkRow[] };
+
+  const chunkSize = 100;
+  const all: KAPoPaymentBulkRow[] = [];
+
+  for (let i = 0; i < accessibleIds.length; i += chunkSize) {
+    const chunk = accessibleIds.slice(i, i + chunkSize);
+    const rows = await fetchAllPaginated<KAPoPaymentBulkRow>(async (from, to) => {
+      const { data, error } = await sb
+        .from('purchase_order_key_account_payments')
+        .select('purchase_order_id, amount, settlement_discount, created_at')
+        .in('purchase_order_id', chunk)
+        .order('created_at', { ascending: true })
+        .order('purchase_order_id', { ascending: true })
+        .range(from, to);
+      return { data: (data as KAPoPaymentBulkRow[] | null) ?? null, error };
+    });
+    all.push(...rows);
+  }
+
+  return { payments: all };
 }
 
 export async function getKAPoPaymentSummary(ctx: UserContext, poId: string) {

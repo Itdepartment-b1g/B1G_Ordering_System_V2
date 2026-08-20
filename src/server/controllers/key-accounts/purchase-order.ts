@@ -11,6 +11,7 @@ import {
   getKAPoPaymentStatus,
   getKAPoPaymentSummary,
   getKAPoPayments,
+  getKAPoPaymentsBulk,
   getKAPoRebateReturnLines,
   getKAPoRebateSource,
   getKAPoRfpfRevisions,
@@ -149,6 +150,11 @@ export async function getKAPurchaseOrder(
         const poId = firstString(query.poId);
         if (!poId) throw new HttpError(400, 'poId is required');
         return { status: 200, body: await getKAPoPayments(ctx, poId) };
+      }
+      case 'bulk-po-payments': {
+        const raw = firstString(query.poIds) || '';
+        const poIds = raw.split(',').map((id) => id.trim()).filter(Boolean);
+        return { status: 200, body: await getKAPoPaymentsBulk(ctx, poIds) };
       }
       case 'po-payment-summary': {
         const poId = firstString(query.poId);

@@ -311,6 +311,21 @@ export const fetchKAPoPayments = createAsyncThunk('kaPurchaseOrder/fetchPoPaymen
   kaRequest<{ payments: unknown[] }>('purchase-order', { params: { resource: 'po-payments', poId } })
 );
 
+export type KAPoPaymentBulkRow = {
+  purchase_order_id: string;
+  amount: number | null;
+  settlement_discount?: number | null;
+  created_at: string;
+};
+
+export const fetchKAPoPaymentsBulk = createAsyncThunk(
+  'kaPurchaseOrder/fetchPoPaymentsBulk',
+  (poIds: string[]) =>
+    kaRequest<{ payments: KAPoPaymentBulkRow[] }>('purchase-order', {
+      params: { resource: 'bulk-po-payments', poIds: poIds.join(',') },
+    })
+);
+
 export const fetchKAPoPaymentSummary = createAsyncThunk(
   'kaPurchaseOrder/fetchPoPaymentSummary',
   (poId: string) =>
