@@ -3172,15 +3172,6 @@ export default function PurchaseOrdersPage() {
                         })
                       );
 
-                      setMyLocationDrByPo((prev) => ({
-                        ...prev,
-                        [dispatchPo.id]: {
-                          dr_number: drNumber,
-                          warehouse_location_id: locId,
-                          warehouse_name: whName,
-                        },
-                      }));
-
                       setMyLocationStatuses((prev) => ({
                         ...prev,
                         [dispatchPo.id]: locationFullyFulfilled ? 'fulfilled' : 'partial',

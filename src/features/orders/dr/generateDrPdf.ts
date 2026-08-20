@@ -625,7 +625,8 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
     padding-top: 8px;
     border-top: 1.5px solid #000;
   }
-  .delivery-section .section-label {
+  .delivery-section .section-label,
+  .courier-section .section-label {
     font-weight: 700;
     margin-bottom: 10px;
   }
@@ -664,7 +665,7 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
   .bank-cols .bank-acct { font-family: ui-monospace, monospace; }
 
   .handover-section {
-    margin: 16px 0 8px;
+    margin: 4px 0 0;
     font-size: 11px;
     font-weight: 800;
     text-transform: uppercase;
@@ -672,6 +673,11 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
   }
   .handover-section .sig {
     margin-top: 10px;
+  }
+  .courier-section {
+    margin: 18px 0;
+    padding-top: 8px;
+    border-top: 1.5px solid #000;
   }
 
   .signoff-table {
@@ -814,6 +820,22 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
       </div>
     </div>
 
+    ${
+      showWarehouseHandover
+        ? `<div class="courier-section">
+      <div class="section-label">Courier details:</div>
+      <div class="handover-section">
+        <div>TOTAL BOXES :</div>
+        <div>DRIVER NAMES :</div>
+        <div>CONTACT NUMBER :</div>
+        <div class="sig">SIGNATURE :</div>
+        <div>PLATE NUMBER :</div>
+        <div>DATE AND TIME</div>
+      </div>
+    </div>`
+        : ''
+    }
+
     ${bankSection}
 
     <table class="signoff-table">
@@ -845,19 +867,6 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
         </tr>
       </tbody>
     </table>
-
-    ${
-      showWarehouseHandover
-        ? `<div class="handover-section">
-      <div>TOTAL BOXES :</div>
-      <div>DRIVER NAMES :</div>
-      <div>CONTACT NUMBER :</div>
-      <div class="sig">SIGNATURE :</div>
-      <div>PLATE NUMBER :</div>
-      <div>DATE AND TIME</div>
-    </div>`
-        : ''
-    }
 
     ${footerNoteHtml}
   </div>
