@@ -22,6 +22,7 @@ import {
   updateKAPurchaseOrder,
   type KAPoHeaderPayload,
 } from '@/store/slices/key-accounts/purchase-order';
+import { createKAPaymentTermOption } from '@/store/slices/key-accounts/payment-terms';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -1161,37 +1162,20 @@ export function KeyAccountPurchaseOrderPage() {
 
   async function addCompanyPaymentTerm() {
     const label = newCompanyPaymentTermInput.trim();
-    if (!label || !user?.company_id || !user?.id || !canAddCompanyPaymentTerms) return;
+    if (!label || !user?.company_id || !canAddCompanyPaymentTerms) return;
 
     setAddingCompanyPaymentTerm(true);
     try {
-      const nextSort =
-        companyPaymentTermOptions.length === 0
-          ? 0
-          : Math.max(...companyPaymentTermOptions.map((o) => o.sort_order)) + 1;
-
-      const { error: insertError } = await supabase
-        .from('key_account_payment_term_options')
-        .insert({
-          company_id: user.company_id,
-          label,
-          is_active: true,
-          sort_order: nextSort,
-          created_by: user.id,
-        });
-
-      if (insertError) throw insertError;
+      await dispatch(createKAPaymentTermOption(label)).unwrap();
 
       setNewCompanyPaymentTermInput('');
       setSelectedCompanyPaymentTerm(label);
       setCompanyPaymentTermDialogOpen(false);
       toast({ title: 'Payment term added' });
       await refetchCompanyPaymentTerms();
-    } catch (err: any) {
+    } catch (err: unknown) {
       const message =
-        err?.code === '23505'
-          ? 'That payment term already exists for this company.'
-          : err?.message || 'Failed to add payment term';
+        err instanceof Error ? err.message : 'Failed to add payment term';
       toast({ variant: 'destructive', title: 'Error', description: message });
     } finally {
       setAddingCompanyPaymentTerm(false);
