@@ -460,6 +460,7 @@ export default function LeaderCashDepositsPage() {
   const [selectedOrderDetails, setSelectedOrderDetails] = useState<{
     summary: DepositOrderBreakdown;
     items: OrderItemDetail[];
+    deposit?: CashDeposit;
   } | null>(null);
   const [loadingOrderDetails, setLoadingOrderDetails] = useState(false);
 
@@ -502,56 +503,36 @@ export default function LeaderCashDepositsPage() {
     );
   };
 
-  // Orders sharing one deposit (for example, a remittance group) must be
-  // deposited together, so selecting one toggles all pending sibling orders.
   const getSelectedOrdersForDay = (dateKey: string): string[] =>
     selectedOrderIds[dateKey] || [];
 
-  const getDepositSiblingOrderIds = (
-    order: DailyOrderSummary,
-    allDayOrders: DailyOrderSummary[]
-  ): string[] =>
-    allDayOrders
-      .filter(o => o.depositId === order.depositId && !o.depositRecorded)
-      .map(o => o.orderId);
-
-  const toggleOrderSelection = (
-    dateKey: string,
-    order: DailyOrderSummary,
-    allDayOrders: DailyOrderSummary[]
-  ) => {
-    const siblingIds = getDepositSiblingOrderIds(order, allDayOrders);
+  const toggleOrderSelection = (dateKey: string, orderId: string) => {
     setSelectedOrderIds(prev => {
       const current = prev[dateKey] || [];
-      const isSelected = current.includes(order.orderId);
+      const isSelected = current.includes(orderId);
       return {
         ...prev,
         [dateKey]: isSelected
-          ? current.filter(id => !siblingIds.includes(id))
-          : Array.from(new Set([...current, ...siblingIds]))
+          ? current.filter(id => id !== orderId)
+          : [...current, orderId]
       };
     });
   };
 
-  const toggleAgentOrders = (
-    dateKey: string,
-    agent: DailyAgentGroup,
-    allDayOrders: DailyOrderSummary[]
-  ) => {
-    const pendingOrders = agent.orders.filter(o => !o.depositRecorded);
-    const expandedIds = Array.from(
-      new Set(pendingOrders.flatMap(o => getDepositSiblingOrderIds(o, allDayOrders)))
-    );
+  const toggleAgentOrders = (dateKey: string, agent: DailyAgentGroup) => {
+    const pendingIds = agent.orders
+      .filter(o => !o.depositRecorded)
+      .map(o => o.orderId);
 
     setSelectedOrderIds(prev => {
       const current = prev[dateKey] || [];
       const allSelected =
-        pendingOrders.length > 0 && pendingOrders.every(o => current.includes(o.orderId));
+        pendingIds.length > 0 && pendingIds.every(id => current.includes(id));
       return {
         ...prev,
         [dateKey]: allSelected
-          ? current.filter(id => !expandedIds.includes(id))
-          : Array.from(new Set([...current, ...expandedIds]))
+          ? current.filter(id => !pendingIds.includes(id))
+          : Array.from(new Set([...current, ...pendingIds]))
       };
     });
   };
@@ -1307,15 +1288,22 @@ export default function LeaderCashDepositsPage() {
   const hasCashPortion = modalCashAmount > 0;
   const hasChequePortion = modalChequeAmount > 0;
 
+  const resolveDepositForOrder = (order: DepositOrderBreakdown): CashDeposit | undefined => {
+    const depositId = 'depositId' in order ? (order as DailyOrderSummary).depositId : undefined;
+    if (depositId) {
+      return findDepositById(depositId) || selectedDepositToView || undefined;
+    }
+    return selectedDepositToView ?? undefined;
+  };
+
   const handleViewOrderBreakdown = async (order: DepositOrderBreakdown) => {
     try {
-      console.log('Viewing order breakdown:', order);
-      // Open modal immediately with loading state
+      const deposit = resolveDepositForOrder(order);
       setLoadingOrderDetails(true);
-      // Initialize with summary only (items empty) to allow modal to render header
       setSelectedOrderDetails({
         summary: order,
-        items: []
+        items: [],
+        deposit,
       });
       setOrderDialogOpen(true);
 
@@ -1351,10 +1339,10 @@ export default function LeaderCashDepositsPage() {
         subtotal: (item.quantity || 0) * (item.unit_price || 0),
       }));
 
-      // Update with items
       setSelectedOrderDetails({
         summary: order,
         items,
+        deposit,
       });
     } catch (error) {
       console.error('Error fetching order details:', error);
@@ -1501,41 +1489,213 @@ export default function LeaderCashDepositsPage() {
     );
   };
 
-  const handleOpenDayDeposit = (dateKey: string) => {
+  const mapCashDepositRow = (d: any): CashDeposit => ({
+    id: d.id,
+    depositDate: d.deposit_date,
+    amount: Number(d.amount) || 0,
+    bankAccount: d.bank_account,
+    referenceNumber: d.reference_number,
+    status: d.status,
+    agentName: d.agent?.full_name || 'Unknown',
+    agentId: d.agent_id,
+    performedById: d.performed_by,
+    performedByName: d.performer?.full_name || 'Unknown',
+    depositSlipUrl: d.deposit_slip_url,
+    depositType: d.deposit_type as 'CASH' | 'CHEQUE' | null,
+    notes: d.notes || null,
+    createdAt: d.created_at || undefined,
+  });
+
+  // If selected orders still share a remittance deposit, peel them onto their own
+  // cash_deposits rows so Record Deposit cannot mark unselected siblings as recorded.
+  const ensurePerOrderDepositsForSelection = async (selectedIds: string[]): Promise<string[]> => {
+    if (!selectedIds.length || !user?.id || !user.company_id) return [];
+
+    const { data: selectedRows, error: selectedError } = await supabase
+      .from('client_orders')
+      .select('id, deposit_id, total_amount, payment_method, payment_mode, payment_splits, agent_id')
+      .in('id', selectedIds);
+
+    if (selectedError) throw selectedError;
+
+    const sourceDepositIds = Array.from(
+      new Set((selectedRows || []).map((o: any) => o.deposit_id).filter(Boolean))
+    ) as string[];
+    if (sourceDepositIds.length === 0) return [];
+
+    const { data: siblingRows, error: siblingError } = await supabase
+      .from('client_orders')
+      .select('id, deposit_id, total_amount, payment_method, payment_mode, payment_splits, agent_id')
+      .in('deposit_id', sourceDepositIds);
+
+    if (siblingError) throw siblingError;
+
+    const { data: sourceDeposits, error: sourceError } = await supabase
+      .from('cash_deposits')
+      .select('id, company_id, agent_id, performed_by, deposit_date, bank_account, status, deposit_slip_url')
+      .in('id', sourceDepositIds);
+
+    if (sourceError) throw sourceError;
+
+    const selectedSet = new Set(selectedIds);
+    const depositIdsToRecord: string[] = [];
+
+    for (const sourceDepositId of sourceDepositIds) {
+      const original = (sourceDeposits || []).find((d: any) => d.id === sourceDepositId);
+      if (!original) continue;
+      if (checkDepositRecorded(sourceDepositId, pendingDeposits) || original.deposit_slip_url) {
+        continue;
+      }
+
+      const siblings = (siblingRows || []).filter((o: any) => o.deposit_id === sourceDepositId);
+      const selectedOnDeposit = siblings.filter((o: any) => selectedSet.has(o.id));
+      const unselectedOnDeposit = siblings.filter((o: any) => !selectedSet.has(o.id));
+
+      if (selectedOnDeposit.length === 0) continue;
+      if (unselectedOnDeposit.length === 0) {
+        depositIdsToRecord.push(sourceDepositId);
+        continue;
+      }
+
+      for (const order of selectedOnDeposit) {
+        const portions = getOrderPaymentBreakdown(order);
+        if (portions.remittedAmount <= 0) continue;
+
+        const depositType = portions.chequePortion > 0 && portions.cashPortion === 0 ? 'CHEQUE' : 'CASH';
+        const bankAccount = depositType === 'CHEQUE' ? 'Cheque Remittance' : 'Cash Remittance';
+        const referenceNumber = `REMIT-${depositType}-${format(new Date(), 'yyyyMMdd')}-${String(order.id).replace(/-/g, '').slice(0, 12)}`;
+
+        const { data: created, error: insertError } = await supabase
+          .from('cash_deposits')
+          .insert({
+            company_id: user.company_id,
+            agent_id: original.agent_id || order.agent_id,
+            performed_by: user.id,
+            amount: portions.remittedAmount,
+            bank_account: bankAccount,
+            reference_number: referenceNumber,
+            deposit_date: original.deposit_date,
+            status: 'pending_verification',
+            deposit_type: depositType,
+          })
+          .select('id')
+          .single();
+
+        if (insertError || !created?.id) {
+          throw insertError || new Error('Failed to split deposit for selected order');
+        }
+
+        const { error: linkError } = await supabase
+          .from('client_orders')
+          .update({ deposit_id: created.id, updated_at: new Date().toISOString() })
+          .eq('id', order.id);
+
+        if (linkError) throw linkError;
+
+        const { error: txnError } = await supabase.from('financial_transactions').insert({
+          company_id: user.company_id,
+          transaction_date: original.deposit_date,
+          transaction_type: 'revenue',
+          category: 'cash_deposit',
+          amount: portions.remittedAmount,
+          reference_type: 'cash_deposit',
+          reference_id: created.id,
+          agent_id: original.agent_id || order.agent_id,
+          description: `Split remittance deposit: ${referenceNumber}`,
+          status: 'pending',
+          created_by: user.id,
+        });
+        if (txnError) {
+          console.warn('Split deposit financial transaction failed (non-blocking):', txnError);
+        }
+
+        depositIdsToRecord.push(created.id);
+      }
+
+      const remainingAmount = unselectedOnDeposit.reduce((sum: number, order: any) => {
+        return sum + getOrderPaymentBreakdown(order).remittedAmount;
+      }, 0);
+
+      const { error: amountError } = await supabase
+        .from('cash_deposits')
+        .update({ amount: remainingAmount, updated_at: new Date().toISOString() })
+        .eq('id', sourceDepositId);
+      if (amountError) throw amountError;
+
+      const { error: remainingTxnError } = await supabase
+        .from('financial_transactions')
+        .update({ amount: remainingAmount, updated_at: new Date().toISOString() })
+        .eq('reference_type', 'cash_deposit')
+        .eq('reference_id', sourceDepositId)
+        .eq('status', 'pending');
+      if (remainingTxnError) {
+        console.warn('Could not update original remittance transaction amount:', remainingTxnError);
+      }
+    }
+
+    return Array.from(new Set(depositIdsToRecord));
+  };
+
+  const handleOpenDayDeposit = async (dateKey: string) => {
     if (isFinanceViewOnly) return;
     const group = pendingDailyGroups.find(g => g.dateKey === dateKey);
     if (!group) return;
-    
+
     const selectedOrderIdsForDay = getSelectedOrdersForDay(dateKey);
-    const dayDetails = dayDetailsByDate[dateKey];
-    
-    // Only include deposits that haven't had real bank details recorded yet (exclude already-recorded ones)
+
     let depositsForDay = pendingDeposits.filter(
       d => group.depositIds.includes(d.id) && !checkDepositRecorded(d.id, pendingDeposits)
     );
-    
-    // Limit the submission to deposits linked to the selected orders.
-    if (selectedOrderIdsForDay.length > 0 && dayDetails) {
-      const selectedDepositIds = dayDetails.agents
-        .flatMap((a: any) => a.orders)
-        .filter((o: any) => selectedOrderIdsForDay.includes(o.orderId))
-        .map((o: any) => o.depositId);
-      
-      depositsForDay = depositsForDay.filter(d => selectedDepositIds.includes(d.id));
+
+    if (selectedOrderIdsForDay.length > 0) {
+      try {
+        setSubmitting(true);
+        const splitDepositIds = await ensurePerOrderDepositsForSelection(selectedOrderIdsForDay);
+        if (splitDepositIds.length === 0) {
+          toast({
+            title: 'No Deposit Found',
+            description: 'No pending deposits found for the selected orders.',
+            variant: 'destructive',
+          });
+          return;
+        }
+
+        const { data: splitRows, error: splitFetchError } = await supabase
+          .from('cash_deposits')
+          .select(`
+            id, deposit_date, amount, bank_account, reference_number, status, deposit_slip_url, agent_id, performed_by, deposit_type, notes, created_at,
+            agent:profiles!cash_deposits_agent_id_fkey(full_name),
+            performer:profiles!cash_deposits_performed_by_fkey(full_name)
+          `)
+          .in('id', splitDepositIds);
+
+        if (splitFetchError) throw splitFetchError;
+        depositsForDay = (splitRows || []).map(mapCashDepositRow);
+        void fetchData(false);
+      } catch (error) {
+        console.error('Error preparing selected deposits', error);
+        toast({
+          title: 'Could not prepare deposit',
+          description: 'Failed to separate the selected orders for deposit. Please try again.',
+          variant: 'destructive',
+        });
+        return;
+      } finally {
+        setSubmitting(false);
+      }
     }
-    
+
     if (!depositsForDay.length) {
       toast({
         title: 'No Deposit Found',
-        description: selectedOrderIdsForDay.length > 0 
+        description: selectedOrderIdsForDay.length > 0
           ? 'No pending deposits found for the selected orders.'
           : 'There is no pending cash/cheque deposit for this day.',
         variant: 'destructive',
       });
       return;
     }
-    
-    // Use the first deposit as the "base" for agent/date info, but aggregate all for amount/orders
+
     const base = depositsForDay[0];
     setSelectedPendingDeposit(base);
     setSelectedDepositIds(depositsForDay.map(d => d.id));
@@ -2375,7 +2535,7 @@ export default function LeaderCashDepositsPage() {
                                             }
                                           }}
                                           onChange={() =>
-                                            toggleAgentOrders(day.date, agent, allDayOrders)
+                                            toggleAgentOrders(day.date, agent)
                                           }
                                           className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
                                         />
@@ -2441,11 +2601,7 @@ export default function LeaderCashDepositsPage() {
                                                   type="checkbox"
                                                   checked={selectedForDay.includes(order.orderId)}
                                                   onChange={() =>
-                                                    toggleOrderSelection(
-                                                      day.date,
-                                                      order,
-                                                      allDayOrders
-                                                    )
+                                                    toggleOrderSelection(day.date, order.orderId)
                                                   }
                                                   className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
                                                 />
@@ -2638,13 +2794,16 @@ export default function LeaderCashDepositsPage() {
                               <Button
                                 className="gap-2 bg-green-600 hover:bg-green-700"
                                 onClick={() => handleOpenDayDeposit(day.date)}
-                                disabled={(() => {
-                                  const totals = calculateSelectedTotals(day, day.date);
-                                  return totals.orders === 0 && day.agents.some((a: any) => a.orders.some((o: any) => !o.depositRecorded));
-                                })()}
+                                disabled={
+                                  submitting ||
+                                  (() => {
+                                    const totals = calculateSelectedTotals(day, day.date);
+                                    return totals.orders === 0 && day.agents.some((a: any) => a.orders.some((o: any) => !o.depositRecorded));
+                                  })()
+                                }
                               >
                                 <Upload className="h-4 w-4" />
-                                Record Deposit
+                                {submitting ? 'Preparing…' : 'Record Deposit'}
                                 {getSelectedOrdersForDay(day.date).length > 0 && (
                                   <span className="ml-1 text-xs bg-white/20 px-1.5 py-0.5 rounded">
                                     {getSelectedOrdersForDay(day.date).length}
@@ -4230,11 +4389,7 @@ export default function LeaderCashDepositsPage() {
             </DialogDescription>
           </DialogHeader>
 
-          {loadingOrderDetails ? (
-            <div className="flex justify-center items-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : selectedOrderDetails ? (
+          {selectedOrderDetails ? (
             <div className="space-y-4 py-4">
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
@@ -4261,6 +4416,96 @@ export default function LeaderCashDepositsPage() {
                 </div>
               )}
 
+              {(() => {
+                const deposit = selectedOrderDetails.deposit;
+                if (!deposit) return null;
+                const depositRecorded = isDepositRecordedForDisplay(
+                  deposit.id,
+                  pendingDeposits,
+                  depositHistory
+                ) || !!deposit.depositSlipUrl;
+                const displayType = getEffectiveDepositType(deposit);
+
+                return (
+                  <div className="border rounded-md overflow-hidden">
+                    <div className="bg-muted/40 px-3 py-2 flex items-center justify-between">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Deposit Details
+                      </span>
+                      {depositRecorded ? (
+                        deposit.status === 'verified' ? (
+                          <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs">
+                            <CheckCircle2 className="h-3 w-3 mr-1" />
+                            Finance Verified
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
+                            <Clock className="h-3 w-3 mr-1" />
+                            Awaiting Finance
+                          </Badge>
+                        )
+                      ) : (
+                        <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-xs">
+                          <AlertCircle className="h-3 w-3 mr-1" />
+                          Pending Deposit
+                        </Badge>
+                      )}
+                    </div>
+
+                    {depositRecorded ? (
+                      <div className="p-3 space-y-3">
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                          <div>
+                            <span className="text-muted-foreground block text-xs">Type</span>
+                            <Badge variant="outline" className={`${getDepositTypeBadgeClass(displayType)} mt-1`}>
+                              {displayType === 'CHEQUE' ? (
+                                <CreditCard className="h-3 w-3 mr-1" />
+                              ) : (
+                                <BanknoteIcon className="h-3 w-3 mr-1" />
+                              )}
+                              {displayType}
+                            </Badge>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-muted-foreground block text-xs">Date</span>
+                            <span className="font-medium">
+                              {format(new Date(deposit.depositDate), 'MMM dd, yyyy')}
+                            </span>
+                          </div>
+                          <div className="col-span-2">
+                            <span className="text-muted-foreground block text-xs">Bank</span>
+                            <span className="font-medium break-all">{deposit.bankAccount}</span>
+                          </div>
+                          {deposit.referenceNumber && (
+                            <div className="col-span-2">
+                              <span className="text-muted-foreground block text-xs">Reference</span>
+                              <span className="font-mono text-xs">{deposit.referenceNumber}</span>
+                            </div>
+                          )}
+                          {deposit.performedByName && (
+                            <div className="col-span-2">
+                              <span className="text-muted-foreground block text-xs">Deposited by</span>
+                              <span className="font-medium">{deposit.performedByName}</span>
+                            </div>
+                          )}
+                          {deposit.notes && (
+                            <div className="col-span-2">
+                              <span className="text-muted-foreground block text-xs">Notes</span>
+                              <span className="text-sm">{deposit.notes}</span>
+                            </div>
+                          )}
+                        </div>
+                        {renderDepositSlipBlock(deposit)}
+                      </div>
+                    ) : (
+                      <p className="px-3 py-2 text-xs text-muted-foreground">
+                        This order is still awaiting a bank deposit. The slip will appear here after it is recorded.
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
+
               <div className="border rounded-md overflow-hidden">
                 <Table>
                   <TableHeader>
@@ -4273,60 +4518,70 @@ export default function LeaderCashDepositsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {(() => {
-                      // Group items by Product Name
-                      const grouped = selectedOrderDetails.items.reduce((acc, item) => {
-                        const key = item.productName;
-                        if (!acc[key]) acc[key] = [];
-                        acc[key].push(item);
-                        return acc;
-                      }, {} as Record<string, OrderItemDetail[]>);
-
-                      return Object.entries(grouped).map(([productName, groupItems]) => (
-                        <>
-                          {/* Product Group Header */}
-                          <TableRow key={`group-${productName}`} className="hover:bg-muted/10">
-                            <TableCell className="font-bold text-sm align-top pt-3 pb-1">
-                              {productName}
-                            </TableCell>
-                            <TableCell colSpan={4} className="p-0"></TableCell>
-                          </TableRow>
-                          
-                          {/* Variant Items */}
-                          {groupItems.map((item) => (
-                            <TableRow key={item.id} className="border-0 hover:bg-transparent">
-                              <TableCell className="py-1"></TableCell>
-                              <TableCell className="py-1 align-top">
-                                <div className="text-sm font-medium">{item.variantName}</div>
-                                {item.variantType && (
-                                  <div className="text-xs text-muted-foreground capitalize">
-                                    {item.variantType}
-                                  </div>
-                                )}
-                              </TableCell>
-                              <TableCell className="text-right py-1 align-top text-sm">
-                                {item.quantity}
-                              </TableCell>
-                              <TableCell className="text-right py-1 align-top text-sm">
-                                ₱{item.unitPrice.toLocaleString()}
-                              </TableCell>
-                              <TableCell className="text-right py-1 align-top font-medium text-sm">
-                                ₱{item.subtotal.toLocaleString()}
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                          {/* Spacer Row for visual separation between groups */}
-                          <TableRow className="h-2 border-0 hover:bg-transparent"><TableCell colSpan={5} className="p-0" /></TableRow>
-                        </>
-                      ));
-                    })()}
-
-                    {selectedOrderDetails.items.length === 0 && (
+                    {loadingOrderDetails ? (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center text-muted-foreground py-4">
-                          No items found.
+                        <TableCell colSpan={5} className="py-8">
+                          <div className="flex justify-center items-center">
+                            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                          </div>
                         </TableCell>
                       </TableRow>
+                    ) : (
+                      <>
+                        {(() => {
+                          const grouped = selectedOrderDetails.items.reduce((acc, item) => {
+                            const key = item.productName;
+                            if (!acc[key]) acc[key] = [];
+                            acc[key].push(item);
+                            return acc;
+                          }, {} as Record<string, OrderItemDetail[]>);
+
+                          return Object.entries(grouped).map(([productName, groupItems]) => (
+                            <>
+                              <TableRow key={`group-${productName}`} className="hover:bg-muted/10">
+                                <TableCell className="font-bold text-sm align-top pt-3 pb-1">
+                                  {productName}
+                                </TableCell>
+                                <TableCell colSpan={4} className="p-0"></TableCell>
+                              </TableRow>
+
+                              {groupItems.map((item) => (
+                                <TableRow key={item.id} className="border-0 hover:bg-transparent">
+                                  <TableCell className="py-1"></TableCell>
+                                  <TableCell className="py-1 align-top">
+                                    <div className="text-sm font-medium">{item.variantName}</div>
+                                    {item.variantType && (
+                                      <div className="text-xs text-muted-foreground capitalize">
+                                        {item.variantType}
+                                      </div>
+                                    )}
+                                  </TableCell>
+                                  <TableCell className="text-right py-1 align-top text-sm">
+                                    {item.quantity}
+                                  </TableCell>
+                                  <TableCell className="text-right py-1 align-top text-sm">
+                                    ₱{item.unitPrice.toLocaleString()}
+                                  </TableCell>
+                                  <TableCell className="text-right py-1 align-top font-medium text-sm">
+                                    ₱{item.subtotal.toLocaleString()}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                              <TableRow className="h-2 border-0 hover:bg-transparent">
+                                <TableCell colSpan={5} className="p-0" />
+                              </TableRow>
+                            </>
+                          ));
+                        })()}
+
+                        {selectedOrderDetails.items.length === 0 && (
+                          <TableRow>
+                            <TableCell colSpan={5} className="text-center text-muted-foreground py-4">
+                              No items found.
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </>
                     )}
                   </TableBody>
                 </Table>
@@ -4347,6 +4602,10 @@ export default function LeaderCashDepositsPage() {
                  </div>
               </div>
 
+            </div>
+          ) : loadingOrderDetails ? (
+            <div className="flex justify-center items-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
           ) : (
             <div className="py-8 text-center text-muted-foreground">

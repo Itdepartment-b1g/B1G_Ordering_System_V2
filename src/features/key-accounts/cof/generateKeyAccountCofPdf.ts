@@ -330,7 +330,10 @@ function applyRebateCofItemPricing(
   }));
 }
 
-export async function generateAndOpenKeyAccountCofPdf(po: KeyAccountPoForCof) {
+export async function generateAndOpenKeyAccountCofPdf(
+  po: KeyAccountPoForCof,
+  options?: { generatePdf?: typeof generateAndOpenCofPdf }
+) {
   if (po.company_account_type !== 'Key Accounts') {
     throw new Error('COF is only available for Key Account purchase orders');
   }
@@ -385,6 +388,7 @@ export async function generateAndOpenKeyAccountCofPdf(po: KeyAccountPoForCof) {
   const paymentAmounts =
     enriched.key_account_payment_mode ? await fetchPaymentAmounts(enriched.id) : [];
   const overrides = buildKeyAccountCofOverrides(enriched, paymentAmounts);
+  const generatePdf = options?.generatePdf ?? generateAndOpenCofPdf;
 
-  await generateAndOpenCofPdf(toPurchaseOrder(enriched, items), overrides);
+  await generatePdf(toPurchaseOrder(enriched, items), overrides);
 }
