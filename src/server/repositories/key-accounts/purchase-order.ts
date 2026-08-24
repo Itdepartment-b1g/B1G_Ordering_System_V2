@@ -68,6 +68,13 @@ export type KAPoHeaderInput = {
   key_account_payment_terms_source?: string | null;
   key_account_payment_terms_created_by?: string | null;
   key_account_payment_mode?: string | null;
+  // Internal KAM pay-reminder scheduling (optional)
+  key_account_notification_option?: string | null;
+  /**
+   * UI "Custom date" value (YYYY-MM-DD). For non-custom presets, server ignores this and recomputes.
+   * This is the client-input date, not necessarily the persisted send date.
+   */
+  key_account_notification_date?: string | null;
 };
 
 export type KAPoPaymentInput = {
@@ -83,6 +90,102 @@ const LOCKED_WORKFLOWS = new Set(['warehouse_reserved', 'partial_delivered', 'de
 
 function stockKey(variantId: string, locationId: string) {
   return `${variantId}::${locationId}`;
+}
+
+function getTodayISODateManila(now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+
+  const map = Object.fromEntries(parts.map((p) => [p.type, p.value])) as Record<string, string>;
+  // en-CA ensures YYYY-MM-DD ordering, but we build explicitly for safety.
+  return `${map.year}-${map.month}-${map.day}`;
+}
+
+function addDaysToISODate(isoDate: string, days: number): string {
+  // Interpret the date as "UTC midnight" to avoid local timezone shifting the day.
+  const [y, m, d] = isoDate.split('-').map((x) => Number(x));
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) {
+    throw new HttpError(400, `Invalid ISO date: ${isoDate}`);
+  }
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
+}
+
+function parseNetDaysFromPaymentTerms(paymentTerms?: string | null): number | null {
+  const match = String(paymentTerms || '').match(/net\s*(\d+)/i);
+  if (!match) return null;
+  const n = parseInt(match[1], 10);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
+
+type KAPoNotificationOption =
+  | 'none'
+  | 'net_15'
+  | 'net_30'
+  | 'net_60'
+  | 'days_before_3'
+  | 'days_before_1'
+  | 'custom'
+  | string
+  | null
+  | undefined;
+
+function resolveKAPoNotificationDate(params: {
+  orderDate: string; // YYYY-MM-DD
+  notificationOption?: KAPoNotificationOption;
+  customNotificationDate?: string | null; // YYYY-MM-DD
+  paymentTerms?: string | null;
+}): { optionToStore: string | null; dateToStore: string | null } {
+  const todayManila = getTodayISODateManila();
+  const orderDate = params.orderDate;
+
+  const option = String(params.notificationOption || '').trim();
+  const customDate = String(params.customNotificationDate || '').trim();
+  const paymentTerms = params.paymentTerms;
+
+  if (!option || option === 'none') {
+    return { optionToStore: 'none', dateToStore: null };
+  }
+
+  if (option === 'custom') {
+    if (!customDate) throw new HttpError(400, 'Notification custom date is required.');
+    // Block past custom dates (Manila calendar).
+    if (customDate < todayManila) {
+      throw new HttpError(400, 'Notification custom date cannot be in the past.');
+    }
+    // Keep it as YYYY-MM-DD.
+    return { optionToStore: 'custom', dateToStore: customDate };
+  }
+
+  const notificationOption = option;
+
+  // Presets: compute from PO order date (not delivery date).
+  // - net_X: notification on order_date + X
+  // - days_before_X: due date derived from payment term "Net N" when possible, else fallback Net 30
+  let notificationDate: string | null = null;
+
+  if (notificationOption === 'net_15') {
+    notificationDate = addDaysToISODate(orderDate, 15);
+  } else if (notificationOption === 'net_30') {
+    notificationDate = addDaysToISODate(orderDate, 30);
+  } else if (notificationOption === 'net_60') {
+    notificationDate = addDaysToISODate(orderDate, 60);
+  } else if (notificationOption === 'days_before_3' || notificationOption === 'days_before_1') {
+    const daysBefore = notificationOption === 'days_before_3' ? 3 : 1;
+    const dueDays = parseNetDaysFromPaymentTerms(paymentTerms) ?? 30;
+    const dueDate = addDaysToISODate(orderDate, dueDays);
+    notificationDate = addDaysToISODate(dueDate, -daysBefore);
+  } else {
+    throw new HttpError(400, `Unknown notification option: ${notificationOption}`);
+  }
+
+  return { optionToStore: notificationOption, dateToStore: notificationDate };
 }
 
 async function insertKAPoPayment(
@@ -410,6 +513,8 @@ export async function getKAExistingPo(ctx: UserContext, poId: string) {
       key_account_payment_terms_source,
       key_account_payment_mode,
       key_account_payment_status,
+      key_account_notification_option,
+      key_account_notification_date,
       company_account_type,
       company_id,
       client:key_account_clients(*)
@@ -486,6 +591,14 @@ export async function createKAPurchaseOrder(
         ? 'admin_pending'
         : 'kam_pending';
 
+  const { optionToStore: resolvedNotificationOption, dateToStore: resolvedNotificationDate } =
+    resolveKAPoNotificationDate({
+      orderDate: header.order_date,
+      notificationOption: header.key_account_notification_option,
+      customNotificationDate: header.key_account_notification_date,
+      paymentTerms: header.key_account_payment_terms,
+    });
+
   const poNumber = await generatePoNumber(ctx.companyId);
   const sb = getSupabaseAdmin();
 
@@ -515,6 +628,9 @@ export async function createKAPurchaseOrder(
       key_account_payment_terms_source: header.key_account_payment_terms_source || null,
       key_account_payment_terms_created_by: header.key_account_payment_terms_created_by || null,
       key_account_payment_mode: isConsignment ? 'full' : header.key_account_payment_mode,
+      key_account_notification_option: resolvedNotificationOption,
+      key_account_notification_date: resolvedNotificationDate,
+      key_account_notification_sent_at: null,
       company_account_type: 'Key Accounts',
       workflow_status: workflowStatus,
       status: 'pending',
@@ -564,7 +680,10 @@ export async function updateKAPurchaseOrder(
   const sb = getSupabaseAdmin();
   const { data: currentPo, error: currentErr } = await sb
     .from('purchase_orders')
-    .select('id, status, workflow_status, kam_id, created_by, po_order_kind, key_account_payment_status, company_id')
+    .select(
+      'id, status, workflow_status, kam_id, created_by, po_order_kind, key_account_payment_status, company_id, ' +
+        'key_account_notification_option, key_account_notification_date, key_account_notification_sent_at'
+    )
     .eq('id', poId)
     .maybeSingle();
   if (currentErr) throw currentErr;
@@ -576,6 +695,30 @@ export async function updateKAPurchaseOrder(
   const header = body.header;
   const isConsignment = header.po_order_kind === 'consignment';
   const canChangeOwner = ctx.role === 'sales_admin' && currentPo.workflow_status === 'owner_pending';
+
+  const todayManila = getTodayISODateManila();
+  const { optionToStore: resolvedNotificationOption, dateToStore: resolvedNotificationDate } =
+    resolveKAPoNotificationDate({
+      orderDate: header.order_date,
+      notificationOption: header.key_account_notification_option,
+      customNotificationDate: header.key_account_notification_date,
+      paymentTerms: header.key_account_payment_terms,
+    });
+
+  const existingSentAt = currentPo.key_account_notification_sent_at
+    ? String(currentPo.key_account_notification_sent_at)
+    : null;
+
+  const existingNotificationDate = currentPo.key_account_notification_date
+    ? String(currentPo.key_account_notification_date)
+    : null;
+
+  // Re-arm only when the new computed date is in the future.
+  const shouldClearSentAt =
+    !!existingSentAt &&
+    !!resolvedNotificationDate &&
+    resolvedNotificationDate > todayManila &&
+    resolvedNotificationDate !== existingNotificationDate;
 
   const { error: poError } = await sb
     .from('purchase_orders')
@@ -599,6 +742,13 @@ export async function updateKAPurchaseOrder(
       key_account_payment_terms_source: header.key_account_payment_terms_source || null,
       key_account_payment_terms_created_by: header.key_account_payment_terms_created_by || null,
       key_account_payment_mode: isConsignment ? 'full' : header.key_account_payment_mode,
+      key_account_notification_option: resolvedNotificationOption,
+      key_account_notification_date: resolvedNotificationDate,
+      key_account_notification_sent_at: resolvedNotificationDate
+        ? shouldClearSentAt
+          ? null
+          : currentPo.key_account_notification_sent_at
+        : null,
     })
     .eq('id', poId);
   if (poError) throw poError;
@@ -668,6 +818,9 @@ const KA_PO_LIST_SELECT = `
   key_account_payment_status,
   key_account_payment_terms_source,
   key_account_payment_terms_created_by,
+  key_account_notification_option,
+  key_account_notification_date,
+  key_account_notification_sent_at,
   director_approved_at,
   director_approved_by,
   admin_approved_at,
@@ -734,6 +887,142 @@ export async function listKAPurchaseOrders(ctx: UserContext) {
   }));
 
   return { rows };
+}
+
+export type KAPoPaymentReminderItem = {
+  brandName?: string | null;
+  variantName?: string | null;
+  variantType?: string | null;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+};
+
+export type KAPoPaymentReminderDueRow = {
+  id: string;
+  po_number: string;
+  kam_id: string | null;
+  kam?: { full_name?: string | null; email?: string | null } | null;
+  client?: { client_name?: string | null } | null;
+  total_amount?: number | null;
+  key_account_payment_terms?: string | null;
+  key_account_notification_option?: string | null;
+  key_account_notification_date?: string | null;
+  key_account_notification_sent_at?: string | null;
+  items?: KAPoPaymentReminderItem[];
+};
+
+const KA_PO_REMINDER_SELECT = `
+  id,
+  po_number,
+  kam_id,
+  total_amount,
+  key_account_payment_terms,
+  key_account_notification_option,
+  key_account_notification_date,
+  key_account_notification_sent_at,
+  kam:profiles!purchase_orders_kam_id_fkey(full_name,email),
+  client:key_account_clients(client_name),
+  items:purchase_order_items(
+    quantity,
+    unit_price,
+    total_price,
+    variants:variant_id (
+      name,
+      variant_type,
+      brands:brand_id ( name )
+    )
+  )
+`;
+
+function firstRel<T>(value: T | T[] | null | undefined): T | null {
+  if (!value) return null;
+  return Array.isArray(value) ? value[0] ?? null : value;
+}
+
+function mapKAPoPaymentReminderRow(row: Record<string, unknown> | null): KAPoPaymentReminderDueRow | null {
+  if (!row) return null;
+
+  const kam = firstRel(row.kam as KAPoPaymentReminderDueRow['kam']);
+  const client = firstRel(row.client as KAPoPaymentReminderDueRow['client']);
+  const itemsRaw = Array.isArray(row.items) ? row.items : [];
+  const items: KAPoPaymentReminderItem[] = itemsRaw.map((raw) => {
+    const it = raw as {
+      quantity?: number | null;
+      unit_price?: number | null;
+      total_price?: number | null;
+      variants?: unknown;
+    };
+    const variant = firstRel(it.variants as { name?: string | null; variant_type?: string | null; brands?: unknown } | null);
+    const brand = firstRel(variant?.brands as { name?: string | null } | null);
+    const quantity = Number(it.quantity) || 0;
+    const unitPrice = Number(it.unit_price) || 0;
+    const lineTotal = Number(it.total_price) || quantity * unitPrice;
+    return {
+      brandName: brand?.name ?? null,
+      variantName: variant?.name ?? null,
+      variantType: variant?.variant_type ?? null,
+      quantity,
+      unitPrice,
+      lineTotal,
+    };
+  });
+
+  return {
+    id: String(row.id),
+    po_number: String(row.po_number || ''),
+    kam_id: (row.kam_id as string | null) ?? null,
+    kam,
+    client,
+    total_amount: row.total_amount == null ? null : Number(row.total_amount),
+    key_account_payment_terms: (row.key_account_payment_terms as string | null) ?? null,
+    key_account_notification_option: (row.key_account_notification_option as string | null) ?? null,
+    key_account_notification_date: (row.key_account_notification_date as string | null) ?? null,
+    key_account_notification_sent_at: (row.key_account_notification_sent_at as string | null) ?? null,
+    items,
+  };
+}
+
+/**
+ * Internal reminders: send an email to the assigned KAM once when `notification_date <= asOfDate`
+ * and `notification_sent_at` is still null.
+ */
+export async function listDueKAPoPaymentReminders(asOfDate: string): Promise<KAPoPaymentReminderDueRow[]> {
+  const sb = getSupabaseAdmin();
+
+  const { data, error } = await sb
+    .from('purchase_orders')
+    .select(KA_PO_REMINDER_SELECT)
+    .eq('company_account_type', 'Key Accounts')
+    .lte('key_account_notification_date', asOfDate)
+    .is('key_account_notification_sent_at', null);
+
+  if (error) throw error;
+  return (data || [])
+    .map((row) => mapKAPoPaymentReminderRow(row as Record<string, unknown>))
+    .filter((row): row is KAPoPaymentReminderDueRow => Boolean(row));
+}
+
+export async function getKAPoPaymentReminderById(poId: string): Promise<KAPoPaymentReminderDueRow | null> {
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb
+    .from('purchase_orders')
+    .select(KA_PO_REMINDER_SELECT)
+    .eq('id', poId)
+    .eq('company_account_type', 'Key Accounts')
+    .maybeSingle();
+  if (error) throw error;
+  return mapKAPoPaymentReminderRow((data as Record<string, unknown> | null) ?? null);
+}
+
+export async function markKAPoPaymentReminderSent(poId: string): Promise<void> {
+  const sb = getSupabaseAdmin();
+  const { error } = await sb
+    .from('purchase_orders')
+    .update({ key_account_notification_sent_at: new Date().toISOString() })
+    .eq('id', poId)
+    .is('key_account_notification_sent_at', null);
+  if (error) throw error;
 }
 
 export async function listKADirectorKamIds(ctx: UserContext) {

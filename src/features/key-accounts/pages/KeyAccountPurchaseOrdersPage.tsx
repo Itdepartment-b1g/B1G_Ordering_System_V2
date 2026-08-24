@@ -174,6 +174,9 @@ type Row = {
   key_account_payment_status?: KeyAccountPoPaymentStatus | null;
   key_account_payment_terms_source?: 'client' | 'company' | 'custom' | null;
   key_account_payment_terms_created_by?: string | null;
+  key_account_notification_option?: string | null;
+  key_account_notification_date?: string | null;
+  key_account_notification_sent_at?: string | null;
   client?: {
     client_name: string;
     client_code?: string;
@@ -300,6 +303,48 @@ function paymentStatusBadgeClass(s: string | null | undefined) {
     default:
       return 'bg-slate-500 text-white';
   }
+}
+
+function notificationOptionLabel(option: string | null | undefined): string {
+  switch (option) {
+    case 'none':
+    case undefined:
+    case null:
+      return "Don't notify";
+    case 'net_15':
+      return 'Net 15';
+    case 'net_30':
+      return 'Net 30';
+    case 'net_60':
+      return 'Net 60';
+    case 'days_before_3':
+      return '3 days before due';
+    case 'days_before_1':
+      return '1 day before due';
+    case 'custom':
+      return 'Custom date';
+    default:
+      return String(option);
+  }
+}
+
+function formatISODateManila(isoDate: string | null | undefined): string {
+  if (!isoDate) return '—';
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('en-PH', { timeZone: 'Asia/Manila' });
+}
+
+/** Display timestamptz values in Asia/Manila (storage remains UTC). */
+function formatDateTimeManila(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('en-PH', {
+    timeZone: 'Asia/Manila',
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
 }
 
 function RfpfRevisionEntry({ revision }: { revision: RfpfRevision }) {
@@ -2188,6 +2233,29 @@ export function KeyAccountPurchaseOrdersPage() {
                             </div>
                           ) : null}
                         </div>
+                      </div>
+
+                      <div className="mt-2">
+                        <Label className="text-xs text-muted-foreground">Notify KAM</Label>
+                        <div className="font-medium">
+                          {active.key_account_notification_option &&
+                          active.key_account_notification_option !== 'none' &&
+                          active.key_account_notification_date ? (
+                            <>
+                              {formatISODateManila(active.key_account_notification_date)}{' '}
+                              <span className="text-muted-foreground text-xs">
+                                ({notificationOptionLabel(active.key_account_notification_option)})
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </div>
+                        {active.key_account_notification_sent_at ? (
+                          <div className="text-xs text-muted-foreground mt-0.5">
+                            Sent {formatDateTimeManila(active.key_account_notification_sent_at)} (Asia/Manila)
+                          </div>
+                        ) : null}
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
                         <div>

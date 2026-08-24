@@ -53,6 +53,13 @@ export type KAPoHeaderPayload = {
   key_account_payment_terms_source?: string | null;
   key_account_payment_terms_created_by?: string | null;
   key_account_payment_mode?: string | null;
+  /**
+   * Internal KAM pay-reminder scheduling.
+   * - `key_account_notification_date` is only meaningful for `custom` option from the UI.
+   * - Server recomputes persisted dates for preset options.
+   */
+  key_account_notification_option?: string | null;
+  key_account_notification_date?: string | null;
 };
 
 export type KAPoItemPayload = {

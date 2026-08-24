@@ -119,6 +119,15 @@ type OrderOwnerOption = {
 
 type PaymentTermsSource = 'client' | 'company';
 
+type NotificationOption =
+  | 'none'
+  | 'net_15'
+  | 'net_30'
+  | 'net_60'
+  | 'days_before_3'
+  | 'days_before_1'
+  | 'custom';
+
 interface POItem {
   id: string;
   brandId: string;
@@ -246,6 +255,12 @@ export function KeyAccountPurchaseOrderPage() {
   const [paymentTermsSource, setPaymentTermsSource] = useState<PaymentTermsSource>('client');
   const [selectedClientPaymentTerm, setSelectedClientPaymentTerm] = useState('');
   const [selectedCompanyPaymentTerm, setSelectedCompanyPaymentTerm] = useState('');
+
+  // Internal reminder scheduling (email KAM)
+  const [notificationOption, setNotificationOption] = useState<NotificationOption>('none');
+  // Stored/picked date for `custom` option (YYYY-MM-DD)
+  const [notificationCustomDate, setNotificationCustomDate] = useState('');
+
   const [newCompanyPaymentTermInput, setNewCompanyPaymentTermInput] = useState('');
   const [addingCompanyPaymentTerm, setAddingCompanyPaymentTerm] = useState(false);
   const [companyPaymentTermDialogOpen, setCompanyPaymentTermDialogOpen] = useState(false);
@@ -371,6 +386,79 @@ export function KeyAccountPurchaseOrderPage() {
     selectedCompanyPaymentTerm,
   ]);
 
+  const todayManilaISO = useMemo(() => {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(new Date());
+    const map = Object.fromEntries(parts.map((p) => [p.type, p.value])) as Record<string, string>;
+    return `${map.year}-${map.month}-${map.day}`;
+  }, []);
+
+  function addDaysToISODate(isoDate: string, days: number): string {
+    const [y, m, d] = isoDate.split('-').map((x) => Number(x));
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    dt.setUTCDate(dt.getUTCDate() + days);
+    return dt.toISOString().slice(0, 10);
+  }
+
+  function parseNetDaysFromPaymentTerms(paymentTerms: string): number | null {
+    const match = String(paymentTerms || '').match(/net\s*(\d+)/i);
+    if (!match) return null;
+    const n = parseInt(match[1], 10);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return n;
+  }
+
+  const notificationDatePreview = useMemo(() => {
+    if (!notificationOption || notificationOption === 'none') return null;
+    if (notificationOption === 'custom') {
+      return notificationCustomDate ? notificationCustomDate : null;
+    }
+
+    if (!orderDate) return null;
+
+    if (notificationOption === 'net_15') return addDaysToISODate(orderDate, 15);
+    if (notificationOption === 'net_30') return addDaysToISODate(orderDate, 30);
+    if (notificationOption === 'net_60') return addDaysToISODate(orderDate, 60);
+
+    if (notificationOption === 'days_before_3' || notificationOption === 'days_before_1') {
+      const daysBefore = notificationOption === 'days_before_3' ? 3 : 1;
+      const dueDays = parseNetDaysFromPaymentTerms(resolvedPaymentTerms) ?? 30;
+      const dueDate = addDaysToISODate(orderDate, dueDays);
+      return addDaysToISODate(dueDate, -daysBefore);
+    }
+
+    return null;
+  }, [notificationOption, notificationCustomDate, orderDate, resolvedPaymentTerms]);
+
+  const notificationDatePreviewLabel = notificationDatePreview
+    ? new Date(`${notificationDatePreview}T00:00:00`).toLocaleDateString('en-PH')
+    : '';
+
+  const notificationOptionLabel = useMemo(() => {
+    switch (notificationOption) {
+      case 'none':
+        return "Don't notify";
+      case 'net_15':
+        return 'Net 15';
+      case 'net_30':
+        return 'Net 30';
+      case 'net_60':
+        return 'Net 60';
+      case 'days_before_3':
+        return '3 days before due';
+      case 'days_before_1':
+        return '1 day before due';
+      case 'custom':
+        return 'Custom date';
+      default:
+        return String(notificationOption || '');
+    }
+  }, [notificationOption]);
+
   useEffect(() => {
     if (paymentTermsSource !== 'company') return;
     if (companyPaymentTermOptions.length === 1) {
@@ -379,6 +467,7 @@ export function KeyAccountPurchaseOrderPage() {
     }
     if (
       selectedCompanyPaymentTerm &&
+      selectedCompanyPaymentTerm !== 'N/A' &&
       !companyPaymentTermOptions.some((o) => o.label === selectedCompanyPaymentTerm)
     ) {
       setSelectedCompanyPaymentTerm('');
@@ -618,6 +707,13 @@ export function KeyAccountPurchaseOrderPage() {
       setSelectedClientPaymentTerm(po.key_account_payment_terms || '');
     }
 
+    setNotificationOption(
+      ((po.key_account_notification_option as NotificationOption) || 'none') as NotificationOption
+    );
+    setNotificationCustomDate(
+      po.key_account_notification_date ? String(po.key_account_notification_date).slice(0, 10) : ''
+    );
+
     const hydratedItems: POItem[] = (itemRows || []).map((row: any) => {
       const variant = Array.isArray(row.variant) ? row.variant[0] : row.variant;
       const brand = variant
@@ -809,6 +905,25 @@ export function KeyAccountPurchaseOrderPage() {
           ? selectedCompanyPaymentTerm.trim()
           : selectedClientPaymentTerm.trim();
 
+    if (notificationOption === 'custom') {
+      if (!notificationCustomDate) {
+        toast({
+          variant: 'destructive',
+          title: 'Notification date required',
+          description: 'Pick a custom date for when the KAM should be notified.',
+        });
+        return;
+      }
+      if (notificationCustomDate < todayManilaISO) {
+        toast({
+          variant: 'destructive',
+          title: 'Invalid date',
+          description: 'Notification custom date cannot be in the past (Manila timezone).',
+        });
+        return;
+      }
+    }
+
     if (!selectedClientId || !selectedShopId || !selectedAddressId || !linkedWarehouseCompanyId) {
       toast({
         variant: 'destructive',
@@ -957,7 +1072,7 @@ export function KeyAccountPurchaseOrderPage() {
             : null;
 
       const paymentTermsCreatedBy = (() => {
-        if (!finalResolvedPaymentTerms) return null;
+        if (!finalResolvedPaymentTerms || finalResolvedPaymentTerms === 'N/A') return null;
         if (paymentTermsSource === 'company') {
           const option = companyPaymentTermOptions.find(
             (o) => o.label === selectedCompanyPaymentTerm
@@ -989,6 +1104,8 @@ export function KeyAccountPurchaseOrderPage() {
           : null,
         key_account_payment_terms_created_by: paymentTermsCreatedBy,
         key_account_payment_mode: isConsignment ? 'full' : paymentMode,
+      key_account_notification_option: notificationOption,
+      key_account_notification_date: notificationOption === 'custom' ? notificationCustomDate : null,
       };
 
       const orderItems = items.map((item) => ({
@@ -1937,96 +2054,161 @@ export function KeyAccountPurchaseOrderPage() {
                 </p>
               ) : null}
 
-              <div className="space-y-2">
-                <Label>Payment terms{isConsignment ? ' (optional)' : ' *'}</Label>
-                <Select
-                  value={paymentTermsSource}
-                  onValueChange={(v) => setPaymentTermsSource(v as PaymentTermsSource)}
-                  disabled={!selectedClientId}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Choose how to set terms…" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="client">Use client profile terms</SelectItem>
-                    <SelectItem value="company">Use company payment terms</SelectItem>
-                  </SelectContent>
-                </Select>
-                {paymentTermsSource === 'client' ? (
-                  clientPaymentTerms.length === 0 ? (
-                    <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
-                      No payment terms on file for this client — choose company terms, or update
-                      the client record.
-                    </p>
-                  ) : clientPaymentTerms.length === 1 ? (
-                    <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
-                      {clientPaymentTerms[0]}
-                    </p>
-                  ) : (
-                    <Select
-                      value={selectedClientPaymentTerm || undefined}
-                      onValueChange={setSelectedClientPaymentTerm}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a client payment term…" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {clientPaymentTerms.map((term) => (
-                          <SelectItem key={term} value={term}>
-                            {term}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )
-                ) : (
-                  <div className="space-y-2">
-                    {loadingCompanyPaymentTerms ? (
-                      <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3 flex items-center gap-2">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Loading company payment terms…
-                      </p>
-                    ) : (
-                      <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
-                        {companyPaymentTermOptions.length === 0 ? (
-                          <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3 sm:flex-1 w-full">
-                            No company payment terms yet
-                            {canAddCompanyPaymentTerms
-                              ? ' — use Add term to create one.'
-                              : ' — ask Sales Head/Director to add them.'}
-                          </p>
-                        ) : (
-                          <Select
-                            value={selectedCompanyPaymentTerm || undefined}
-                            onValueChange={setSelectedCompanyPaymentTerm}
-                          >
-                            <SelectTrigger className="sm:flex-1 w-full">
-                              <SelectValue placeholder="Select a company payment term…" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {companyPaymentTermOptions.map((option) => (
-                                <SelectItem key={option.id} value={option.label}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        )}
-                        {canAddCompanyPaymentTerms ? (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="shrink-0 w-full sm:w-auto"
-                            onClick={() => setCompanyPaymentTermDialogOpen(true)}
-                          >
-                            <Plus className="h-4 w-4 mr-2" />
-                            Add term
-                          </Button>
-                        ) : null}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Payment terms{isConsignment ? ' (optional)' : ' *'}</Label>
+                  <Select
+                    value={paymentTermsSource}
+                    onValueChange={(v) => setPaymentTermsSource(v as PaymentTermsSource)}
+                    disabled={!selectedClientId}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose how to set terms…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="client">Use client profile terms</SelectItem>
+                      <SelectItem value="company">Use company payment terms</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {paymentTermsSource === 'client' ? (
+                    clientPaymentTerms.length === 0 ? (
+                      <div className="space-y-2">
+                        <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
+                          No payment terms on file for this client. Choose <span className="font-medium">N/A</span>
+                          {" "}if you don’t want to set payment terms for this PO.
+                        </p>
+                        <Select
+                          value={selectedClientPaymentTerm || undefined}
+                          onValueChange={setSelectedClientPaymentTerm}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select a client payment term…" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="N/A">N/A</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
-                    )}
-                  </div>
-                )}
+                    ) : clientPaymentTerms.length === 1 ? (
+                      <Select
+                        value={selectedClientPaymentTerm || undefined}
+                        onValueChange={setSelectedClientPaymentTerm}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select a client payment term…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={clientPaymentTerms[0]}>{clientPaymentTerms[0]}</SelectItem>
+                          <SelectItem value="N/A">N/A</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Select
+                        value={selectedClientPaymentTerm || undefined}
+                        onValueChange={setSelectedClientPaymentTerm}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select a client payment term…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {clientPaymentTerms.map((term) => (
+                            <SelectItem key={term} value={term}>
+                              {term}
+                            </SelectItem>
+                          ))}
+                          <SelectItem value="N/A">N/A</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    )
+                  ) : (
+                    <div className="space-y-2">
+                      {loadingCompanyPaymentTerms ? (
+                        <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3 flex items-center gap-2">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Loading company payment terms…
+                        </p>
+                      ) : (
+                        <>
+                          {companyPaymentTermOptions.length === 0 ? (
+                            <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
+                              No company payment terms yet. Choose <span className="font-medium">N/A</span> or add a term.
+                            </p>
+                          ) : null}
+                          <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                            <Select
+                              value={selectedCompanyPaymentTerm || undefined}
+                              onValueChange={setSelectedCompanyPaymentTerm}
+                            >
+                              <SelectTrigger className="sm:flex-1 w-full">
+                                <SelectValue placeholder="Select a company payment term…" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {companyPaymentTermOptions.map((option) => (
+                                  <SelectItem key={option.id} value={option.label}>
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                                <SelectItem value="N/A">N/A</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            {canAddCompanyPaymentTerms ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="shrink-0 w-full sm:w-auto"
+                                onClick={() => setCompanyPaymentTermDialogOpen(true)}
+                              >
+                                <Plus className="h-4 w-4 mr-2" />
+                                Add term
+                              </Button>
+                            ) : null}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Notify KAM */}
+                <div className="space-y-2">
+                  <Label>Notify KAM</Label>
+                  <Select value={notificationOption} onValueChange={(v) => setNotificationOption(v as NotificationOption)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Don't notify</SelectItem>
+                      <SelectItem value="net_15">Net 15</SelectItem>
+                      <SelectItem value="net_30">Net 30</SelectItem>
+                      <SelectItem value="net_60">Net 60</SelectItem>
+                      <SelectItem value="days_before_3">3 days before due</SelectItem>
+                      <SelectItem value="days_before_1">1 day before due</SelectItem>
+                      <SelectItem value="custom">Custom date</SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  {notificationOption === 'custom' ? (
+                    <div className="space-y-2">
+                      <Input
+                        type="date"
+                        value={notificationCustomDate}
+                        min={todayManilaISO}
+                        onChange={(e) => setNotificationCustomDate(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {notificationDatePreviewLabel
+                          ? `KAM will be emailed on ${notificationDatePreviewLabel}.`
+                          : 'Pick a date.'}
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      {notificationDatePreview
+                        ? `KAM will be emailed on ${notificationDatePreviewLabel}.`
+                        : '—'}
+                    </p>
+                  )}
+                </div>
               </div>
 
               {!isConsignment ? (
@@ -2361,6 +2543,16 @@ export function KeyAccountPurchaseOrderPage() {
               </p>
               <p>
                 <span className="text-muted-foreground">Payment terms:</span> {resolvedPaymentTerms || '—'}
+              </p>
+              <p>
+                <span className="text-muted-foreground">Notify KAM:</span>{' '}
+                {notificationOption === 'none' ? (
+                  '—'
+                ) : notificationDatePreview ? (
+                  `${notificationDatePreviewLabel} (${notificationOptionLabel})`
+                ) : (
+                  '—'
+                )}
               </p>
               {isConsignment ? (
                 <p className="text-muted-foreground">
