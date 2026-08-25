@@ -6,7 +6,7 @@ import type {
   PurchaseOrderHistoryLine,
   PurchaseOrderHistoryPayload,
 } from './purchaseOrderHistoryTypes';
-import { isPurchaseOrderHistoryEventType } from './purchaseOrderHistoryTypes';
+import { resolvePurchaseOrderHistoryEventType } from './purchaseOrderHistoryTypes';
 
 export type LogPurchaseOrderEventInput = {
   purchaseOrderId: string;
@@ -149,14 +149,22 @@ async function enrichLogLinesWithVariantNames(
   });
 }
 
+function profileFullName(raw: unknown): string | null {
+  const row = Array.isArray(raw) ? raw[0] : raw;
+  if (!row || typeof row !== 'object') return null;
+  const name = String((row as { full_name?: string | null }).full_name || '').trim();
+  return name || null;
+}
+
 function mapEvent(row: PoEventRow): PurchaseOrderHistoryEvent | null {
-  if (!isPurchaseOrderHistoryEventType(row.event_type)) {
+  const eventType = resolvePurchaseOrderHistoryEventType(row.event_type, row.note);
+  if (!eventType) {
     return null;
   }
 
   return {
     id: row.id,
-    type: row.event_type,
+    type: eventType,
     at: row.created_at,
     note: row.note || undefined,
     byName: row.created_by_user?.full_name || undefined,
@@ -251,7 +259,12 @@ export async function fetchPurchaseOrderHistory(
   const { data: po, error: poErr } = await supabase
     .from('purchase_orders')
     .select(
-      'id, po_number, status, workflow_status, notes, created_at, company_account_type, key_account_client_id'
+      `
+      id, po_number, status, workflow_status, notes, created_at,
+      company_account_type, key_account_client_id, kam_id, created_by,
+      kam:profiles!purchase_orders_kam_id_fkey ( full_name ),
+      created_by_user:profiles!purchase_orders_created_by_fkey ( full_name )
+    `
     )
     .eq('id', purchaseOrderId)
     .single();
@@ -456,6 +469,11 @@ export async function fetchPurchaseOrderHistory(
     };
   });
   const items = adjustDispatchedForFoundRedeliver(rawItems, history);
+  const ownerName = profileFullName((po as { kam?: unknown }).kam);
+  const createdByName = profileFullName((po as { created_by_user?: unknown }).created_by_user);
+  const kamId = (po as { kam_id?: string | null }).kam_id;
+  const createdBy = (po as { created_by?: string | null }).created_by;
+  const isOnBehalf = !!createdBy && !!kamId && createdBy !== kamId;
 
   return {
     purchaseOrderId: po.id,
@@ -464,6 +482,9 @@ export async function fetchPurchaseOrderHistory(
     workflowStatus: po.workflow_status,
     notes: po.notes,
     createdAt: po.created_at,
+    ownerName,
+    createdByName,
+    isOnBehalf,
     items,
     history,
   };

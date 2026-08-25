@@ -36,6 +36,11 @@ export type DrPdfOptions = {
    * Buyers / other roles get Description | Qty only.
    */
   showLotColumns?: boolean;
+  /**
+   * Show TOTAL BOXES / DRIVER NAMES / etc. handwritten fields.
+   * Defaults to current user role === warehouse.
+   */
+  showWarehouseHandover?: boolean;
 };
 
 type DrReceiptInfo = {
@@ -123,8 +128,7 @@ async function fetchDrReceiptInfoFallback(po: PurchaseOrder): Promise<DrReceiptI
   return payment ? { payment } : {};
 }
 
-async function resolveShowLotColumns(explicit?: boolean): Promise<boolean> {
-  if (typeof explicit === 'boolean') return explicit;
+async function resolveIsWarehouseRole(): Promise<boolean> {
   try {
     const { data: authData } = await supabase.auth.getUser();
     const uid = authData.user?.id;
@@ -146,11 +150,21 @@ async function resolveShowLotColumns(explicit?: boolean): Promise<boolean> {
  * save as PDF or send to a printer (same pattern as COF).
  */
 export async function generateAndOpenDrPdf(po: PurchaseOrder, options: DrPdfOptions) {
-  const [receiptInfo, showLotColumns] = await Promise.all([
+  const [receiptInfo, isWarehouse] = await Promise.all([
     fetchDrReceiptInfo(po),
-    resolveShowLotColumns(options.showLotColumns),
+    resolveIsWarehouseRole(),
   ]);
-  const html = buildDrHtml(po, { ...options, showLotColumns }, receiptInfo);
+  const showLotColumns =
+    typeof options.showLotColumns === 'boolean' ? options.showLotColumns : isWarehouse;
+  const showWarehouseHandover =
+    typeof options.showWarehouseHandover === 'boolean'
+      ? options.showWarehouseHandover
+      : isWarehouse;
+  const html = buildDrHtml(
+    po,
+    { ...options, showLotColumns, showWarehouseHandover },
+    receiptInfo
+  );
 
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -447,6 +461,7 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
     : '';
   const logoUrl = escapeHtml(new URL('/logo/B1G_LOGO_BLACK.png', window.location.origin).toString());
   const showLotColumns = !!options.showLotColumns;
+  const showWarehouseHandover = !!options.showWarehouseHandover;
   const expandedRows = expandDispatchRows(warehouseItems, options.dispatchLines, showLotColumns);
   const itemsBodyHtml = itemRowsHtml(warehouseItems, options.dispatchLines, showLotColumns);
   const totalQuantity = expandedRows.reduce((sum, row) => sum + Math.max(0, Number(row.quantity) || 0), 0);
@@ -610,7 +625,8 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
     padding-top: 8px;
     border-top: 1.5px solid #000;
   }
-  .delivery-section .section-label {
+  .delivery-section .section-label,
+  .courier-section .section-label {
     font-weight: 700;
     margin-bottom: 10px;
   }
@@ -647,6 +663,22 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
   .bank-cols .corp { font-weight: 700; margin-bottom: 4px; }
   .bank-cols .bank-name { font-weight: 700; margin-top: 6px; }
   .bank-cols .bank-acct { font-family: ui-monospace, monospace; }
+
+  .handover-section {
+    margin: 4px 0 0;
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+    line-height: 1.9;
+  }
+  .handover-section .sig {
+    margin-top: 10px;
+  }
+  .courier-section {
+    margin: 18px 0;
+    padding-top: 8px;
+    border-top: 1.5px solid #000;
+  }
 
   .signoff-table {
     width: 100%;
@@ -787,6 +819,22 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
         <span class="fvalue">${escapeHtml(delivery.contactPhone)}</span>
       </div>
     </div>
+
+    ${
+      showWarehouseHandover
+        ? `<div class="courier-section">
+      <div class="section-label">Courier details:</div>
+      <div class="handover-section">
+        <div>TOTAL BOXES :</div>
+        <div>DRIVER NAMES :</div>
+        <div>CONTACT NUMBER :</div>
+        <div class="sig">SIGNATURE :</div>
+        <div>PLATE NUMBER :</div>
+        <div>DATE AND TIME</div>
+      </div>
+    </div>`
+        : ''
+    }
 
     ${bankSection}
 
