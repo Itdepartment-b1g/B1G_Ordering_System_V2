@@ -439,6 +439,11 @@ export interface PurchaseOrderKeyAccountPayment {
   proof_storage_path?: string | null;
   recorded_by?: string | null;
   created_at: string;
+  allocations?: Array<{
+    allocated_amount?: number | null;
+    allocated_discount?: number | null;
+    purchase_order_item_id?: string;
+  }>;
 }
 
 export type KeyAccountSettlementDiscountRequestStatus = 'pending' | 'approved' | 'rejected';
@@ -460,6 +465,7 @@ export interface KeyAccountSettlementDiscountRequest {
   payment_id?: string | null;
   /** Cash payment submitted with this discount; discount attaches here on approve. */
   source_payment_id?: string | null;
+  line_allocations?: Array<{ purchase_order_item_id: string; discount: number }> | null;
   created_at: string;
   updated_at: string;
 }

@@ -7,6 +7,7 @@ import {
   getKACompanyPendingDiscounts,
   getKAExistingPo,
   getKAPoDiscountRequests,
+  getKAPoBrandBalances,
   getKAPoItems,
   getKAPoPaymentStatus,
   getKAPoPaymentSummary,
@@ -89,6 +90,7 @@ export async function getKAPurchaseOrder(
       'warehouse-names',
       'po-items',
       'po-payments',
+      'po-brand-balances',
       'po-payment-summary',
       'po-discount-requests',
       'company-pending-discounts',
@@ -150,6 +152,11 @@ export async function getKAPurchaseOrder(
         const poId = firstString(query.poId);
         if (!poId) throw new HttpError(400, 'poId is required');
         return { status: 200, body: await getKAPoPayments(ctx, poId) };
+      }
+      case 'po-brand-balances': {
+        const poId = firstString(query.poId);
+        if (!poId) throw new HttpError(400, 'poId is required');
+        return { status: 200, body: await getKAPoBrandBalances(ctx, poId) };
       }
       case 'bulk-po-payments': {
         const raw = firstString(query.poIds) || '';

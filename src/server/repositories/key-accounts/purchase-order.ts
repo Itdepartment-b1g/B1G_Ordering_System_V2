@@ -1,6 +1,17 @@
 import { fetchAllPaginated } from '../../../lib/supabasePaginate';
 import { HttpError } from '../../http/errors';
 import { getSupabaseAdmin, getSupabaseUser } from '../../db/supabaseAdmin';
+import {
+  applyApprovedDiscountAllocations,
+  getKAPoBrandBalances,
+  insertPaymentAllocations,
+  resolvePaymentAllocations,
+  savePendingDiscountAllocations,
+  type KAPoPaymentAllocationInput,
+} from './payment-allocations';
+
+export { getKAPoBrandBalances };
+export type { KAPoBrandBalance, KAPoBrandBalancesResult, KAPoPaymentAllocationInput } from './payment-allocations';
 
 export type KAPoPaymentBulkRow = {
   purchase_order_id: string;
@@ -82,6 +93,8 @@ export type KAPoPaymentInput = {
   payment_method: string;
   bank_type?: string | null;
   proof_storage_path: string;
+  /** Brand/line split for this payment. Omit on full pay — server allocates across all lines. */
+  allocations?: KAPoPaymentAllocationInput[] | null;
 };
 
 const CLIENT_PAGE_SIZE = 10;
@@ -195,15 +208,33 @@ async function insertKAPoPayment(
 ) {
   if (!ctx.accessToken) throw new HttpError(401, 'Missing access token');
   const userSb = getSupabaseUser(ctx.accessToken);
-  const { error } = await userSb.from('purchase_order_key_account_payments').insert({
-    purchase_order_id: poId,
-    company_id: ctx.companyId,
-    amount: payment.amount,
-    payment_method: payment.payment_method,
-    bank_type: payment.bank_type || null,
-    proof_storage_path: payment.proof_storage_path,
-  });
+  const amount = Number(payment.amount) || 0;
+  const resolvedAllocations = await resolvePaymentAllocations(
+    poId,
+    amount,
+    0,
+    payment.allocations
+  );
+
+  const { data: insertedPay, error } = await userSb
+    .from('purchase_order_key_account_payments')
+    .insert({
+      purchase_order_id: poId,
+      company_id: ctx.companyId,
+      amount,
+      payment_method: payment.payment_method,
+      bank_type: payment.bank_type || null,
+      proof_storage_path: payment.proof_storage_path,
+    })
+    .select('id')
+    .single();
   if (error) throw error;
+
+  if (insertedPay?.id && resolvedAllocations.length > 0) {
+    await insertPaymentAllocations(ctx.companyId, insertedPay.id, resolvedAllocations, {
+      includeDiscount: true,
+    });
+  }
 }
 
 function canEditPo(
@@ -1080,7 +1111,8 @@ export async function getKAPoItems(ctx: UserContext, poId: string) {
       variants:variant_id (
         name,
         variant_type,
-        brands:brand_id ( name )
+        brand_id,
+        brands:brand_id ( id, name )
       )
     `
     )
@@ -1093,7 +1125,29 @@ export async function getKAPoPayments(ctx: UserContext, poId: string) {
   const sb = getSupabaseAdmin();
   await assertPoInCompany(sb, poId, ctx.companyId);
 
+  const withAllocations = `
+      *,
+      recorder:profiles!purchase_order_key_account_payments_recorded_by_fkey(full_name,email),
+      allocations:purchase_order_key_account_payment_allocations(
+        allocated_amount,
+        allocated_discount,
+        purchase_order_item_id,
+        item:purchase_order_items(
+          variants:variant_id (
+            name,
+            brands:brand_id ( name )
+          )
+        )
+      )
+    `;
   const { data, error } = await sb
+    .from('purchase_order_key_account_payments')
+    .select(withAllocations)
+    .eq('purchase_order_id', poId)
+    .order('created_at', { ascending: true });
+  if (!error) return { payments: data || [] };
+
+  const { data: fallback, error: fallbackError } = await sb
     .from('purchase_order_key_account_payments')
     .select(
       `
@@ -1103,8 +1157,8 @@ export async function getKAPoPayments(ctx: UserContext, poId: string) {
     )
     .eq('purchase_order_id', poId)
     .order('created_at', { ascending: true });
-  if (error) throw error;
-  return { payments: data || [] };
+  if (fallbackError) throw error;
+  return { payments: fallback || [] };
 }
 
 async function resolveAccessiblePoIds(
@@ -1408,6 +1462,7 @@ export type KAPoListPaymentInput = {
   paymentMethod: string;
   bankType?: string | null;
   proofStoragePath?: string | null;
+  allocations?: KAPoPaymentAllocationInput[] | null;
 };
 
 export async function recordKAPoListPayment(ctx: UserContext, input: KAPoListPaymentInput) {
@@ -1424,6 +1479,13 @@ export async function recordKAPoListPayment(ctx: UserContext, input: KAPoListPay
   const isSalesHead = ctx.role === 'sales_head';
   const needsDiscountApproval = discount > 0 && !isSalesHead;
   let sourcePaymentId: string | null = null;
+
+  const resolvedAllocations = await resolvePaymentAllocations(
+    input.poId,
+    amt,
+    discount,
+    input.allocations
+  );
 
   if (amt > 0 || (discount > 0 && isSalesHead)) {
     const method = amt > 0 ? input.paymentMethod : 'CASH';
@@ -1442,6 +1504,11 @@ export async function recordKAPoListPayment(ctx: UserContext, input: KAPoListPay
       .select('id')
       .single();
     if (error) throw error;
+    if (insertedPay?.id) {
+      await insertPaymentAllocations(ctx.companyId, insertedPay.id, resolvedAllocations, {
+        includeDiscount: !needsDiscountApproval,
+      });
+    }
     if (needsDiscountApproval && amt > 0 && insertedPay?.id) {
       sourcePaymentId = insertedPay.id;
     }
@@ -1455,9 +1522,12 @@ export async function recordKAPoListPayment(ctx: UserContext, input: KAPoListPay
       p_source_payment_id: sourcePaymentId,
     });
     if (error) throw error;
-    const result = data as { success?: boolean; error?: string } | null;
+    const result = data as { success?: boolean; error?: string; request_id?: string } | null;
     if (!result?.success) {
       throw new HttpError(400, result?.error || 'Could not submit settlement discount for approval');
+    }
+    if (result.request_id) {
+      await savePendingDiscountAllocations(result.request_id, resolvedAllocations);
     }
   }
 
@@ -1473,9 +1543,17 @@ export async function approveKASettlementDiscount(ctx: UserContext, requestId: s
     p_request_id: requestId,
   });
   if (error) throw error;
-  const result = data as { success?: boolean; error?: string; purchase_order_id?: string } | null;
+  const result = data as {
+    success?: boolean;
+    error?: string;
+    purchase_order_id?: string;
+    payment_id?: string;
+  } | null;
   if (!result?.success) {
     throw new HttpError(400, result?.error || 'Could not approve settlement discount');
+  }
+  if (result.payment_id) {
+    await applyApprovedDiscountAllocations(requestId, result.payment_id);
   }
   return result;
 }

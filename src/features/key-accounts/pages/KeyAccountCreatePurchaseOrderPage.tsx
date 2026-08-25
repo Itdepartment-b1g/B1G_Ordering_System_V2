@@ -21,6 +21,7 @@ import {
   setClientsList,
   updateKAPurchaseOrder,
   type KAPoHeaderPayload,
+  type KAPoPaymentAllocationPayload,
 } from '@/store/slices/key-accounts/purchase-order';
 import { createKAPaymentTermOption } from '@/store/slices/key-accounts/payment-terms';
 import { Button } from '@/components/ui/button';
@@ -109,6 +110,12 @@ import {
   isKeyAccountSalesAdmin,
 } from '@/features/key-accounts/keyAccountRoles';
 import { sendNotification } from '@/features/shared/lib/notification.helpers';
+import {
+  KeyAccountBrandPaymentSplit,
+  buildBrandPaymentAllocations,
+  type BrandPaymentAllocationDraft,
+  type BrandPaymentSplitRow,
+} from '@/features/key-accounts/components/KeyAccountBrandPaymentSplit';
 
 type OrderOwnerOption = {
   id: string;
@@ -270,6 +277,7 @@ export function KeyAccountPurchaseOrderPage() {
   const [paymentMethod, setPaymentMethod] = useState<KeyAccountPaymentMethod>('CASH');
   const [bankType, setBankType] = useState('');
   const [splitFirstAmount, setSplitFirstAmount] = useState('');
+  const [splitCashByBrand, setSplitCashByBrand] = useState<Record<string, string>>({});
   const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
 
   // Item management
@@ -376,6 +384,87 @@ export function KeyAccountPurchaseOrderPage() {
   const subtotal = items.reduce((sum, item) => sum + item.totalPrice, 0);
   const taxAmount = subtotal * (taxRate / 100);
   const total = subtotal + taxAmount - discount;
+
+  const cartBrandRows = useMemo(() => {
+    const map = new Map<string, { brandId: string; brandName: string; billed: number }>();
+    for (const item of items) {
+      const brandId = item.brandId || 'unknown';
+      const existing = map.get(brandId);
+      if (!existing) {
+        map.set(brandId, {
+          brandId,
+          brandName: item.brandName || 'Unknown',
+          billed: Math.round(Number(item.totalPrice || 0) * 100) / 100,
+        });
+        continue;
+      }
+      existing.billed = Math.round((existing.billed + Number(item.totalPrice || 0)) * 100) / 100;
+    }
+    return [...map.values()].sort((a, b) => a.brandName.localeCompare(b.brandName));
+  }, [items]);
+
+  const cartBrandSplitRows = useMemo<BrandPaymentSplitRow[]>(
+    () =>
+      cartBrandRows.map((row) => ({
+        brandId: row.brandId,
+        brandName: row.brandName,
+        remaining: row.billed,
+      })),
+    [cartBrandRows]
+  );
+
+  const parsedSplitFirstAmount = useMemo(() => {
+    if (splitFirstAmount.trim() === '') return 0;
+    const n = parseFloat(String(splitFirstAmount).replace(/,/g, ''));
+    return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
+  }, [splitFirstAmount]);
+
+  const createPoSplitAllocations = useMemo(() => {
+    if (paymentMode !== 'split' || cartBrandSplitRows.length === 0) {
+      return { allocations: [] as BrandPaymentAllocationDraft[], error: null as string | null };
+    }
+    if (cartBrandSplitRows.length === 1) {
+      return {
+        allocations: [
+          {
+            brandId: cartBrandSplitRows[0].brandId,
+            amount: parsedSplitFirstAmount,
+            discount: 0,
+          },
+        ],
+        error: null as string | null,
+      };
+    }
+    return buildBrandPaymentAllocations({
+      brands: cartBrandSplitRows,
+      cashByBrand: splitCashByBrand,
+      cashTotal: parsedSplitFirstAmount,
+      discountTotal: 0,
+    });
+  }, [paymentMode, cartBrandSplitRows, parsedSplitFirstAmount, splitCashByBrand]);
+
+  const createPoSplitSummaryLabel = useMemo(() => {
+    if (createPoSplitAllocations.allocations.length === 0) return '—';
+    const nameById = new Map(cartBrandSplitRows.map((row) => [row.brandId, row.brandName]));
+    return createPoSplitAllocations.allocations
+      .filter((row) => row.amount > 0)
+      .map((row) => `${nameById.get(row.brandId) || row.brandId} ₱${row.amount.toFixed(2)}`)
+      .join(' · ');
+  }, [createPoSplitAllocations.allocations, cartBrandSplitRows]);
+
+  useEffect(() => {
+    if (paymentMode !== 'split') {
+      setSplitCashByBrand({});
+      return;
+    }
+    setSplitCashByBrand((prev) => {
+      const next: Record<string, string> = {};
+      for (const row of cartBrandRows) {
+        if (prev[row.brandId] != null) next[row.brandId] = prev[row.brandId];
+      }
+      return next;
+    });
+  }, [paymentMode, cartBrandRows]);
 
   const resolvedPaymentTerms = useMemo(() => {
     if (paymentTermsSource === 'company') return selectedCompanyPaymentTerm.trim();
@@ -1054,6 +1143,22 @@ export function KeyAccountPurchaseOrderPage() {
         });
         return;
       }
+      if (cartBrandSplitRows.length > 1) {
+        const built = buildBrandPaymentAllocations({
+          brands: cartBrandSplitRows,
+          cashByBrand: splitCashByBrand,
+          cashTotal: firstPaymentAmount,
+          discountTotal: 0,
+        });
+        if (built.error) {
+          toast({
+            variant: 'destructive',
+            title: 'Brand split',
+            description: built.error,
+          });
+          return;
+        }
+      }
     }
 
     try {
@@ -1132,11 +1237,37 @@ export function KeyAccountPurchaseOrderPage() {
         total_price: item.total_price,
       }));
 
-      const paymentPayload = () => ({
-        amount: paymentMode === 'full' ? orderTotalRounded : firstPaymentAmount,
-        payment_method: paymentMethod,
-        bank_type: paymentMethod === 'BANK_TRANSFER' ? bankType : null,
-      });
+      const paymentPayload = (): {
+        amount: number;
+        payment_method: string;
+        bank_type: string | null;
+        allocations?: KAPoPaymentAllocationPayload[] | null;
+      } => {
+        const amount = paymentMode === 'full' ? orderTotalRounded : firstPaymentAmount;
+        // Full mode: omit allocations — server spreads cash across all brands/lines.
+        let allocations: KAPoPaymentAllocationPayload[] | undefined;
+        if (paymentMode === 'split') {
+          if (cartBrandSplitRows.length === 1) {
+            allocations = [
+              { brandId: cartBrandSplitRows[0].brandId, amount, discount: 0 },
+            ];
+          } else if (cartBrandSplitRows.length > 1) {
+            const built = buildBrandPaymentAllocations({
+              brands: cartBrandSplitRows,
+              cashByBrand: splitCashByBrand,
+              cashTotal: amount,
+              discountTotal: 0,
+            });
+            allocations = built.allocations;
+          }
+        }
+        return {
+          amount,
+          payment_method: paymentMethod,
+          bank_type: paymentMethod === 'BANK_TRANSFER' ? bankType : null,
+          allocations,
+        };
+      };
 
       if (isEditMode && poId) {
         const needsPaymentInsert =
@@ -1148,6 +1279,7 @@ export function KeyAccountPurchaseOrderPage() {
           payment_method: string;
           bank_type: string | null;
           proof_storage_path: string;
+          allocations?: KAPoPaymentAllocationPayload[] | null;
         };
         if (needsPaymentInsert) {
           if (!user.company_id) {
@@ -1200,6 +1332,7 @@ export function KeyAccountPurchaseOrderPage() {
         payment_method: string;
         bank_type: string | null;
         proof_storage_path: string;
+        allocations?: KAPoPaymentAllocationPayload[] | null;
       };
       if (!isConsignment) {
         if (!paymentProofFile) {
@@ -2144,6 +2277,23 @@ export function KeyAccountPurchaseOrderPage() {
                     </div>
                   )}
 
+                  {paymentMode === 'split' && cartBrandSplitRows.length > 0 ? (
+                    <KeyAccountBrandPaymentSplit
+                      brands={cartBrandSplitRows}
+                      cashTotal={parsedSplitFirstAmount}
+                      cashByBrand={splitCashByBrand}
+                      onCashByBrandChange={setSplitCashByBrand}
+                      required={cartBrandSplitRows.length > 1}
+                    />
+                  ) : null}
+
+                  {paymentMode === 'full' && cartBrandRows.length > 0 ? (
+                    <p className="text-xs text-muted-foreground rounded-md border bg-muted/30 p-3">
+                      Full payment marks every brand on this PO as paid (
+                      {cartBrandRows.map((row) => row.brandName).join(', ')}).
+                    </p>
+                  ) : null}
+
                   {paymentMode === 'split' && (
                     <div className="space-y-2">
                       <Label>Select a notification option</Label>
@@ -2440,6 +2590,12 @@ export function KeyAccountPurchaseOrderPage() {
                   (sourceMode === 'multi' && items.some((i) => !i.warehouseLocationId)) ||
                   items.length === 0 ||
                   (requiresPaymentProof && !paymentProofFile) ||
+                  (!isConsignment &&
+                    paymentMode === 'split' &&
+                    cartBrandSplitRows.length > 1 &&
+                    (!!createPoSplitAllocations.error ||
+                      createPoSplitAllocations.allocations.length === 0 ||
+                      parsedSplitFirstAmount <= 0)) ||
                   !expectedDeliveryDate
                 }
                 className="w-full"
@@ -2590,6 +2746,17 @@ export function KeyAccountPurchaseOrderPage() {
                   <p>
                     <span className="text-muted-foreground">First payment:</span> ₱{firstPaymentPreview.toFixed(2)}
                   </p>
+                  {!isConsignment && paymentMode === 'full' ? (
+                    <p>
+                      <span className="text-muted-foreground">Brand allocation:</span> All brands marked paid
+                    </p>
+                  ) : null}
+                  {!isConsignment && paymentMode === 'split' ? (
+                    <p>
+                      <span className="text-muted-foreground">Applied to brand(s):</span>{' '}
+                      {createPoSplitSummaryLabel}
+                    </p>
+                  ) : null}
                   <p>
                     <span className="text-muted-foreground">Payment proof:</span>{' '}
                     {paymentProofFile?.name || '—'}

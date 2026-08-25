@@ -70,17 +70,46 @@ export type KAPoItemPayload = {
   total_price: number;
 };
 
+export type KAPoPaymentAllocationPayload = {
+  purchaseOrderItemId?: string;
+  brandId?: string;
+  amount?: number;
+  discount?: number;
+};
+
 export type KAPoPaymentPayload = {
   amount: number;
   payment_method: string;
   bank_type?: string | null;
   proof_storage_path: string;
+  /** Omit on full payment — server allocates cash across all brands/lines. */
+  allocations?: KAPoPaymentAllocationPayload[] | null;
 };
 
 export type KAPoWritePayload = {
   header: KAPoHeaderPayload;
   items: KAPoItemPayload[];
   payment?: KAPoPaymentPayload | null;
+};
+
+export type KAPoBrandBalance = {
+  brandId: string;
+  brandName: string;
+  billed: number;
+  paid: number;
+  discount: number;
+  pendingDiscount: number;
+  remaining: number;
+  quantity: number;
+  remainingQty: number;
+  status: 'unpaid' | 'partial' | 'paid';
+  itemIds: string[];
+};
+
+export type KAPoBrandBalancesResult = {
+  brands: KAPoBrandBalance[];
+  unallocatedPaid: number;
+  unallocatedDiscount: number;
 };
 
 type KAPurchaseOrderState = {
@@ -135,6 +164,13 @@ type KAPurchaseOrderState = {
 
   warehouseLocationNames: Record<string, string>;
   warehouseLocationNamesStatus: QueryStatus;
+
+  brandBalancesPoId: string | null;
+  brandBalances: KAPoBrandBalance[];
+  unallocatedPaid: number;
+  unallocatedDiscount: number;
+  brandBalancesStatus: QueryStatus;
+  brandBalancesError: string | null;
 };
 
 const initialState: KAPurchaseOrderState = {
@@ -189,6 +225,13 @@ const initialState: KAPurchaseOrderState = {
 
   warehouseLocationNames: {},
   warehouseLocationNamesStatus: 'idle',
+
+  brandBalancesPoId: null,
+  brandBalances: [],
+  unallocatedPaid: 0,
+  unallocatedDiscount: 0,
+  brandBalancesStatus: 'idle',
+  brandBalancesError: null,
 };
 
 async function kaRequest<T>(
@@ -318,6 +361,14 @@ export const fetchKAPoPayments = createAsyncThunk('kaPurchaseOrder/fetchPoPaymen
   kaRequest<{ payments: unknown[] }>('purchase-order', { params: { resource: 'po-payments', poId } })
 );
 
+export const fetchKAPoBrandBalances = createAsyncThunk(
+  'kaPurchaseOrder/fetchPoBrandBalances',
+  (poId: string) =>
+    kaRequest<KAPoBrandBalancesResult>('purchase-order', {
+      params: { resource: 'po-brand-balances', poId },
+    })
+);
+
 export type KAPoPaymentBulkRow = {
   purchase_order_id: string;
   amount: number | null;
@@ -417,6 +468,7 @@ export type KAPoListPaymentPayload = {
   paymentMethod: string;
   bankType?: string | null;
   proofStoragePath?: string | null;
+  allocations?: KAPoPaymentAllocationPayload[] | null;
 };
 
 export const recordKAPoListPayment = createAsyncThunk(
@@ -659,6 +711,31 @@ const kaPurchaseOrderSlice = createSlice({
       .addCase(fetchKAWarehouseLocationNames.fulfilled, (state, action) => {
         state.warehouseLocationNamesStatus = 'succeeded';
         state.warehouseLocationNames = action.payload.namesById || {};
+      })
+      .addCase(fetchKAPoBrandBalances.pending, (state, action) => {
+        state.brandBalancesError = null;
+        if (state.brandBalancesPoId !== action.meta.arg) {
+          state.brandBalances = [];
+          state.unallocatedPaid = 0;
+          state.unallocatedDiscount = 0;
+        }
+        state.brandBalancesPoId = action.meta.arg;
+        state.brandBalancesStatus = 'loading';
+      })
+      .addCase(fetchKAPoBrandBalances.fulfilled, (state, action) => {
+        if (state.brandBalancesPoId !== action.meta.arg) return;
+        state.brandBalancesStatus = 'succeeded';
+        state.brandBalances = action.payload.brands || [];
+        state.unallocatedPaid = action.payload.unallocatedPaid || 0;
+        state.unallocatedDiscount = action.payload.unallocatedDiscount || 0;
+      })
+      .addCase(fetchKAPoBrandBalances.rejected, (state, action) => {
+        if (state.brandBalancesPoId !== action.meta.arg) return;
+        state.brandBalancesStatus = 'failed';
+        state.brandBalancesError = action.error.message || 'Failed to load brand balances';
+        state.brandBalances = [];
+        state.unallocatedPaid = 0;
+        state.unallocatedDiscount = 0;
       });
   },
 });

@@ -9,6 +9,7 @@ import {
   fetchKAPoDiscountRequests,
   fetchKAPoItems,
   fetchKAPoList,
+  fetchKAPoBrandBalances,
   fetchKAPoPaymentSummary,
   fetchKAPoPayments,
   fetchKAPoRebateReturnLines,
@@ -20,6 +21,7 @@ import {
   recordKAPoListPayment,
   rejectKASettlementDiscount,
   setKAPoRfpf,
+  type KAPoBrandBalance,
 } from '@/store/slices/key-accounts/purchase-order';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
@@ -96,6 +98,11 @@ import type {
   PurchaseOrderKeyAccountPayment,
 } from '@/types/database.types';
 import { uploadKeyAccountPaymentProof } from '@/features/key-accounts/kaPaymentProofUpload';
+import {
+  KeyAccountBrandPaymentSplit,
+  buildBrandPaymentAllocations,
+  type BrandPaymentSplitRow,
+} from '@/features/key-accounts/components/KeyAccountBrandPaymentSplit';
 import {
   keyAccountWorkflowBadgeClass,
   keyAccountWorkflowLabel,
@@ -305,6 +312,55 @@ function paymentStatusBadgeClass(s: string | null | undefined) {
   }
 }
 
+function brandBalanceStatusClass(status: string) {
+  switch (status) {
+    case 'paid':
+      return 'bg-emerald-600 text-white hover:bg-emerald-600';
+    case 'partial':
+      return 'bg-amber-500 text-white hover:bg-amber-500';
+    default:
+      return 'bg-slate-500 text-white hover:bg-slate-500';
+  }
+}
+
+function formatPaymentAllocationSummary(
+  allocations:
+    | Array<{
+        allocated_amount?: number | null;
+        allocated_discount?: number | null;
+        item?:
+          | {
+              variants?:
+                | { name?: string | null; brands?: { name?: string | null } | { name?: string | null }[] | null }
+                | { name?: string | null; brands?: { name?: string | null } | { name?: string | null }[] | null }[]
+                | null;
+            }
+          | Array<{
+              variants?:
+                | { name?: string | null; brands?: { name?: string | null } | { name?: string | null }[] | null }
+                | { name?: string | null; brands?: { name?: string | null } | { name?: string | null }[] | null }[]
+                | null;
+            }>
+          | null;
+      }>
+    | null
+    | undefined
+) {
+  if (!allocations?.length) return [];
+  const byBrand = new Map<string, { cash: number; discount: number }>();
+  for (const row of allocations) {
+    const item = firstRelation(row.item);
+    const variant = firstRelation(item?.variants);
+    const brand = firstRelation(variant?.brands);
+    const name = brand?.name || variant?.name || 'Allocated';
+    const current = byBrand.get(name) || { cash: 0, discount: 0 };
+    current.cash += Number(row.allocated_amount || 0);
+    current.discount += Number(row.allocated_discount || 0);
+    byBrand.set(name, current);
+  }
+  return [...byBrand.entries()].map(([brand, amounts]) => ({ brand, ...amounts }));
+}
+
 function notificationOptionLabel(option: string | null | undefined): string {
   switch (option) {
     case 'none':
@@ -405,6 +461,11 @@ export function KeyAccountPurchaseOrdersPage() {
   const listRowsRaw = useAppSelector((s) => s.kaPurchaseOrder.listRows);
   const directorKamIdsFromStore = useAppSelector((s) => s.kaPurchaseOrder.directorKamIds);
   const linkedWarehouseNamesById = useAppSelector((s) => s.kaPurchaseOrder.warehouseLocationNames);
+  const brandBalancesPoId = useAppSelector((s) => s.kaPurchaseOrder.brandBalancesPoId);
+  const brandBalancesFromStore = useAppSelector((s) => s.kaPurchaseOrder.brandBalances);
+  const unallocatedPaid = useAppSelector((s) => s.kaPurchaseOrder.unallocatedPaid);
+  const unallocatedDiscount = useAppSelector((s) => s.kaPurchaseOrder.unallocatedDiscount);
+  const brandBalancesStatus = useAppSelector((s) => s.kaPurchaseOrder.brandBalancesStatus);
   const { toast } = useToast();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -457,6 +518,14 @@ export function KeyAccountPurchaseOrdersPage() {
   >([]);
   const [paymentsLoading, setPaymentsLoading] = useState(false);
   const directorKamIds = useMemo(() => new Set(directorKamIdsFromStore), [directorKamIdsFromStore]);
+  const brandBalances = useMemo<KAPoBrandBalance[]>(
+    () => (active?.id && brandBalancesPoId === active.id ? brandBalancesFromStore : []),
+    [active?.id, brandBalancesPoId, brandBalancesFromStore]
+  );
+  const openBrandBalances = useMemo(
+    () => brandBalances.filter((row) => row.remaining > 0.001),
+    [brandBalances]
+  );
 
   const [recordPayOpen, setRecordPayOpen] = useState(false);
   const [newPayAmount, setNewPayAmount] = useState('');
@@ -465,7 +534,48 @@ export function KeyAccountPurchaseOrdersPage() {
   const [newPayMethod, setNewPayMethod] = useState<'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE'>('BANK_TRANSFER');
   const [newPayBank, setNewPayBank] = useState<'Unionbank' | 'BPI' | 'PBCOM'>('BPI');
   const [newPayFile, setNewPayFile] = useState<File | null>(null);
+  const [newPayCashByBrand, setNewPayCashByBrand] = useState<Record<string, string>>({});
+  const [newPayPerPieceDiscount, setNewPayPerPieceDiscount] = useState('');
   const [savingPayment, setSavingPayment] = useState(false);
+
+  const openBrandSplitRows = useMemo<BrandPaymentSplitRow[]>(
+    () =>
+      openBrandBalances.map((row) => ({
+        brandId: row.brandId,
+        brandName: row.brandName,
+        remaining: row.remaining,
+      })),
+    [openBrandBalances]
+  );
+  const parsedNewPayCash = useMemo(() => {
+    if (newPayAmount.trim() === '') return 0;
+    const n = parseFloat(String(newPayAmount).replace(/,/g, ''));
+    return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
+  }, [newPayAmount]);
+  const parsedNewPayDiscount = useMemo(() => {
+    if (newPaySettlementDiscount.trim() === '') return 0;
+    const n = parseFloat(String(newPaySettlementDiscount).replace(/,/g, ''));
+    return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
+  }, [newPaySettlementDiscount]);
+  /** When exactly one brand has cash entered, allow per-piece discount helper. */
+  const singleCashBrandForDiscount = useMemo(() => {
+    const withCash = openBrandBalances.filter((row) => {
+      const raw = newPayCashByBrand[row.brandId] ?? '';
+      if (raw.trim() === '') return false;
+      const n = parseFloat(String(raw).replace(/,/g, ''));
+      return Number.isFinite(n) && n > 0;
+    });
+    if (openBrandBalances.length === 1) return openBrandBalances[0];
+    return withCash.length === 1 ? withCash[0] : null;
+  }, [openBrandBalances, newPayCashByBrand]);
+
+  const unpaidWholePcsForDiscount = useMemo(() => {
+    if (!singleCashBrandForDiscount) return 0;
+    const qty = Number(singleCashBrandForDiscount.remainingQty || 0);
+    if (!Number.isFinite(qty) || qty <= 0) return 0;
+    return Math.max(0, Math.floor(qty + 1e-9));
+  }, [singleCashBrandForDiscount]);
+
   const [paymentHistoryOpen, setPaymentHistoryOpen] = useState(false);
   const [paymentSummaryPaid, setPaymentSummaryPaid] = useState<number | null>(null);
   const [paymentSummaryDiscount, setPaymentSummaryDiscount] = useState<number | null>(null);
@@ -604,6 +714,43 @@ export function KeyAccountPurchaseOrdersPage() {
   const paymentAvailableToApply =
     Math.round((Number(active?.total_amount || 0) - paymentReservedSoFar) * 100) / 100;
 
+  const money2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
+
+  /** Trim cash so cash + settlement discount never exceeds available remaining. */
+  const trimCashForDiscount = (discount: number, currentCashRaw: string) => {
+    const available = money2(Math.max(0, paymentAvailableToApply));
+    const disc = money2(Math.max(0, Math.min(discount, available)));
+    const maxCash = money2(Math.max(0, available - disc));
+    if (currentCashRaw.trim() === '') return currentCashRaw;
+    const cash = money2(parseFloat(String(currentCashRaw).replace(/,/g, '')));
+    if (!Number.isFinite(cash) || cash < 0) return currentCashRaw;
+    if (cash <= maxCash + 0.011) return currentCashRaw;
+    return maxCash > 0 ? String(maxCash) : '';
+  };
+
+  const applySettlementDiscountValue = (raw: string) => {
+    setNewPaySettlementDiscount(raw);
+    if (raw.trim() === '') return;
+    const n = parseFloat(String(raw).replace(/,/g, ''));
+    if (!Number.isFinite(n) || n < 0) return;
+    setNewPayAmount((prev) => trimCashForDiscount(n, prev));
+  };
+
+  const recordPayCoverage = useMemo(() => {
+    const available = money2(Math.max(0, paymentAvailableToApply));
+    const cash = parsedNewPayCash;
+    const discount = parsedNewPayDiscount;
+    const combined = money2(cash + discount);
+    return {
+      available,
+      cash,
+      discount,
+      combined,
+      remainingAfter: money2(Math.max(0, available - combined)),
+      overBy: money2(Math.max(0, combined - available)),
+    };
+  }, [paymentAvailableToApply, parsedNewPayCash, parsedNewPayDiscount]);
+
   async function loadPaymentSummary(poId: string) {
     setPaymentSummaryLoading(true);
     try {
@@ -624,6 +771,24 @@ export function KeyAccountPurchaseOrdersPage() {
       setPaymentSummaryLoading(false);
     }
   }
+
+  const loadBrandBalances = async (poId: string) => {
+    try {
+      await dispatch(fetchKAPoBrandBalances(poId)).unwrap();
+    } catch (e: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Error loading brand balances',
+        description: e?.message || 'Failed to load brand remaining balances',
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (!recordPayOpen) return;
+    setNewPayCashByBrand({});
+    setNewPayPerPieceDiscount('');
+  }, [recordPayOpen, active?.id]);
 
   const loadDiscountRequests = async (poId: string) => {
     setDiscountRequestsLoading(true);
@@ -890,6 +1055,8 @@ export function KeyAccountPurchaseOrdersPage() {
     setNewPayMethod('BANK_TRANSFER');
     setNewPayBank('BPI');
     setNewPayFile(null);
+    setNewPayCashByBrand({});
+    setNewPayPerPieceDiscount('');
     setPayments([]);
     setDiscountRequests([]);
     setPaymentHistoryOpen(po.key_account_payment_mode === 'split');
@@ -900,6 +1067,7 @@ export function KeyAccountPurchaseOrdersPage() {
       void loadPaymentSummary(po.id);
       void loadPayments(po.id);
       void loadDiscountRequests(po.id);
+      void loadBrandBalances(po.id);
     }
     if (po.rfpf_number?.trim()) void fetchRfpfRevisions(po.id);
 
@@ -1372,6 +1540,36 @@ export function KeyAccountPurchaseOrdersPage() {
       toast({ variant: 'destructive', title: 'Bank required', description: 'Select a bank.' });
       return;
     }
+
+    let allocations:
+      | Array<{ brandId: string; amount: number; discount: number }>
+      | undefined;
+    if (openBrandSplitRows.length === 1) {
+      allocations = [
+        {
+          brandId: openBrandSplitRows[0].brandId,
+          amount: amt,
+          discount,
+        },
+      ];
+    } else if (openBrandSplitRows.length > 1) {
+      const built = buildBrandPaymentAllocations({
+        brands: openBrandSplitRows,
+        cashByBrand: newPayCashByBrand,
+        cashTotal: amt,
+        discountTotal: discount,
+      });
+      if (built.error) {
+        toast({
+          variant: 'destructive',
+          title: 'Brand split',
+          description: built.error,
+        });
+        return;
+      }
+      allocations = built.allocations;
+    }
+
     setSavingPayment(true);
     markLocalRefresh();
     try {
@@ -1399,6 +1597,7 @@ export function KeyAccountPurchaseOrdersPage() {
           paymentMethod: amt > 0 ? newPayMethod : 'CASH',
           bankType: amt > 0 && newPayMethod === 'BANK_TRANSFER' ? newPayBank : null,
           proofStoragePath: proofPath,
+          allocations,
         })
       ).unwrap();
 
@@ -1416,10 +1615,13 @@ export function KeyAccountPurchaseOrdersPage() {
       setNewPaySettlementDiscount('');
       setNewPaySettlementReason('');
       setNewPayFile(null);
+      setNewPayCashByBrand({});
+      setNewPayPerPieceDiscount('');
       setPaymentHistoryOpen(true);
       await loadPaymentSummary(active.id);
       await loadPayments(active.id);
       await loadDiscountRequests(active.id);
+      await loadBrandBalances(active.id);
       if (isSalesHead) void loadCompanyPendingDiscounts();
       if (payResult.key_account_payment_status) {
         setActive((prev) =>
@@ -1454,6 +1656,7 @@ export function KeyAccountPurchaseOrdersPage() {
         await loadPaymentSummary(poId);
         await loadPayments(poId);
         await loadDiscountRequests(poId);
+        await loadBrandBalances(poId);
       }
       await loadCompanyPendingDiscounts();
       await fetchRows(false);
@@ -1483,6 +1686,7 @@ export function KeyAccountPurchaseOrdersPage() {
       const poId = result.purchase_order_id || active?.id;
       if (poId) {
         await loadDiscountRequests(poId);
+        await loadBrandBalances(poId);
       }
       setRejectDiscountId(null);
       setRejectDiscountReason('');
@@ -2306,6 +2510,73 @@ export function KeyAccountPurchaseOrdersPage() {
                         </div>
                       </div>
 
+                      {(brandBalancesStatus === 'loading' || brandBalances.length > 0) && (
+                        <div className="space-y-2">
+                          <Label className="text-xs text-muted-foreground">Brand remaining</Label>
+                          {brandBalancesStatus === 'loading' && brandBalances.length === 0 ? (
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Loading brand balances…
+                            </div>
+                          ) : (
+                            <div className="rounded-md border overflow-x-auto">
+                              <Table className="text-xs">
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead>Brand</TableHead>
+                                    <TableHead className="text-right">Billed</TableHead>
+                                    <TableHead className="text-right">Paid</TableHead>
+                                    <TableHead className="text-right">Discount</TableHead>
+                                    <TableHead className="text-right">Remaining</TableHead>
+                                    <TableHead>Status</TableHead>
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {brandBalances.map((row) => (
+                                    <TableRow key={row.brandId}>
+                                      <TableCell className="font-medium whitespace-nowrap">
+                                        {row.brandName}
+                                        {row.pendingDiscount > 0 ? (
+                                          <div className="text-[10px] font-normal text-amber-700 dark:text-amber-400">
+                                            ₱{row.pendingDiscount.toFixed(2)} pending discount
+                                          </div>
+                                        ) : null}
+                                      </TableCell>
+                                      <TableCell className="text-right tabular-nums">
+                                        ₱{row.billed.toFixed(2)}
+                                      </TableCell>
+                                      <TableCell className="text-right tabular-nums">
+                                        ₱{row.paid.toFixed(2)}
+                                      </TableCell>
+                                      <TableCell className="text-right tabular-nums">
+                                        ₱{row.discount.toFixed(2)}
+                                      </TableCell>
+                                      <TableCell className="text-right font-semibold tabular-nums">
+                                        ₱{row.remaining.toFixed(2)}
+                                      </TableCell>
+                                      <TableCell>
+                                        <Badge className={brandBalanceStatusClass(row.status)}>
+                                          {row.status}
+                                        </Badge>
+                                      </TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </div>
+                          )}
+                          {unallocatedPaid > 0.001 || unallocatedDiscount > 0.001 ? (
+                            <p className="text-[11px] text-muted-foreground">
+                              Legacy unallocated on this PO: cash ₱{unallocatedPaid.toFixed(2)}
+                              {unallocatedDiscount > 0.001
+                                ? ` · discount ₱${unallocatedDiscount.toFixed(2)}`
+                                : ''}
+                              . New payments should be assigned to a brand.
+                            </p>
+                          ) : null}
+                        </div>
+                      )}
+
                       {canRecordRemainingPayment(active) && !isReadOnlyAccounting && (
                         <Button type="button" variant="default" size="sm" onClick={() => setRecordPayOpen(true)}>
                           <Plus className="h-4 w-4 mr-2" />
@@ -2445,6 +2716,28 @@ export function KeyAccountPurchaseOrdersPage() {
                                             {p.settlement_discount_reason}
                                           </p>
                                         ) : null}
+                                      </div>
+                                    ) : null}
+                                    {formatPaymentAllocationSummary(
+                                      (p as { allocations?: Parameters<typeof formatPaymentAllocationSummary>[0] })
+                                        .allocations
+                                    ).length > 0 ? (
+                                      <div className="sm:col-span-2">
+                                        <span className="text-muted-foreground">Applied to</span>
+                                        <div className="mt-1 space-y-1">
+                                          {formatPaymentAllocationSummary(
+                                            (p as { allocations?: Parameters<typeof formatPaymentAllocationSummary>[0] })
+                                              .allocations
+                                          ).map((row) => (
+                                            <div key={row.brand} className="text-sm">
+                                              <span className="font-medium">{row.brand}</span>
+                                              {row.cash > 0 ? ` · cash ₱${row.cash.toFixed(2)}` : ''}
+                                              {row.discount > 0
+                                                ? ` · discount ₱${row.discount.toFixed(2)}`
+                                                : ''}
+                                            </div>
+                                          ))}
+                                        </div>
                                       </div>
                                     ) : null}
                                     <div>
@@ -3027,10 +3320,12 @@ export function KeyAccountPurchaseOrdersPage() {
                 setNewPayFile(null);
                 setNewPaySettlementDiscount('');
                 setNewPaySettlementReason('');
+                setNewPayCashByBrand({});
+                setNewPayPerPieceDiscount('');
               }
             }}
           >
-        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
                 <DialogTitle>
                   {String(active?.key_account_payment_status || 'unpaid') === 'unpaid'
@@ -3060,10 +3355,96 @@ export function KeyAccountPurchaseOrdersPage() {
                   min={0}
                   step="0.01"
                   value={newPayAmount}
-                  onChange={(e) => setNewPayAmount(e.target.value)}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    if (raw.trim() === '') {
+                      setNewPayAmount('');
+                      return;
+                    }
+                    const n = parseFloat(String(raw).replace(/,/g, ''));
+                    if (!Number.isFinite(n) || n < 0) {
+                      setNewPayAmount(raw);
+                      return;
+                    }
+                    const maxCash = money2(
+                      Math.max(0, paymentAvailableToApply - parsedNewPayDiscount)
+                    );
+                    if (n - maxCash > 0.0001) {
+                      setNewPayAmount(maxCash > 0 ? String(maxCash) : '');
+                      return;
+                    }
+                    setNewPayAmount(raw);
+                  }}
                   placeholder="Cash collected (optional if discount only)"
                 />
+                <p className="text-[11px] text-muted-foreground">
+                  Cash + settlement discount cannot exceed remaining. If you add a discount, cash is
+                  reduced automatically (e.g. remaining ₱300 with ₱30 discount → cash max ₱270).
+                </p>
+                {openBrandSplitRows.length === 1 ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-auto px-0 text-xs"
+                    onClick={() => {
+                      const remainingForBrand = Math.min(
+                        openBrandSplitRows[0].remaining,
+                        paymentAvailableToApply
+                      );
+                      const cash = Math.max(
+                        0,
+                        Math.round((remainingForBrand - parsedNewPayDiscount) * 100) / 100
+                      );
+                      setNewPayAmount(cash > 0 ? String(cash) : '');
+                    }}
+                  >
+                    Fill remaining cash for {openBrandSplitRows[0].brandName}
+                  </Button>
+                ) : null}
               </div>
+              {openBrandSplitRows.length > 0 ? (
+                <KeyAccountBrandPaymentSplit
+                  brands={openBrandSplitRows}
+                  cashTotal={parsedNewPayCash}
+                  cashByBrand={newPayCashByBrand}
+                  onCashByBrandChange={setNewPayCashByBrand}
+                  required={openBrandSplitRows.length > 1}
+                />
+              ) : null}
+              {singleCashBrandForDiscount && unpaidWholePcsForDiscount > 0 ? (
+                <div className="space-y-2">
+                  <Label>Discount per piece (₱)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={newPayPerPieceDiscount}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setNewPayPerPieceDiscount(value);
+                      const perPiece = parseFloat(String(value).replace(/,/g, ''));
+                      if (!Number.isFinite(perPiece) || perPiece < 0) return;
+                      const computed =
+                        Math.round(perPiece * unpaidWholePcsForDiscount * 100) / 100;
+                      const capped = Math.min(
+                        computed,
+                        singleCashBrandForDiscount.remaining,
+                        paymentAvailableToApply
+                      );
+                      applySettlementDiscountValue(capped > 0 ? String(capped) : '');
+                    }}
+                    placeholder="e.g. 5.00 to drop 230 → 225"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Uses {unpaidWholePcsForDiscount} whole unpaid pc
+                    {unpaidWholePcsForDiscount === 1 ? '' : 's'} on{' '}
+                    {singleCashBrandForDiscount.brandName} (leftover pesos under 1 pc are not included).
+                    Fills settlement discount below and trims cash if needed. Original billed unit
+                    price is not changed.
+                  </p>
+                </div>
+              ) : null}
               <div className="space-y-2">
                 <Label>Settlement discount (₱)</Label>
                 <Input
@@ -3071,15 +3452,35 @@ export function KeyAccountPurchaseOrdersPage() {
                   min={0}
                   step="0.01"
                   value={newPaySettlementDiscount}
-                  onChange={(e) => setNewPaySettlementDiscount(e.target.value)}
+                  onChange={(e) => applySettlementDiscountValue(e.target.value)}
                   placeholder="Write-off / commercial concession"
                 />
                 <p className="text-[11px] text-muted-foreground">
                   {isSalesHead
-                    ? 'Your settlement discount is applied immediately (auto-approved). Not counted as cash.'
-                    : 'Discount needs Sales Head approval before it reduces the PO balance. Cash is recorded immediately. If rejected or left pending, only the cash counts toward paid.'}
+                    ? 'Applied immediately (auto-approved). Not counted as cash. On multi-brand splits it uses leftover room after cash, in brand order.'
+                    : 'Needs Sales Head approval before it reduces the PO balance. Cash is recorded immediately. If rejected or left pending, only the cash counts toward paid.'}
                 </p>
               </div>
+              {(recordPayCoverage.cash > 0 || recordPayCoverage.discount > 0) && (
+                <p
+                  className={`text-xs tabular-nums rounded-md border px-3 py-2 ${
+                    recordPayCoverage.overBy > 0.011
+                      ? 'border-destructive/40 text-destructive'
+                      : 'bg-muted/40 text-muted-foreground'
+                  }`}
+                >
+                  Covering ₱{recordPayCoverage.combined.toFixed(2)} of ₱
+                  {recordPayCoverage.available.toFixed(2)} available
+                  {recordPayCoverage.discount > 0
+                    ? ` (cash ₱${recordPayCoverage.cash.toFixed(2)} + discount ₱${recordPayCoverage.discount.toFixed(2)})`
+                    : ` (cash ₱${recordPayCoverage.cash.toFixed(2)})`}
+                  {recordPayCoverage.overBy > 0.011
+                    ? ` · over by ₱${recordPayCoverage.overBy.toFixed(2)}`
+                    : recordPayCoverage.remainingAfter > 0.011
+                      ? ` · ₱${recordPayCoverage.remainingAfter.toFixed(2)} still open after this`
+                      : ' · closes available balance'}
+                </p>
+              )}
               {Number(newPaySettlementDiscount || 0) > 0 || newPaySettlementDiscount.trim() !== '' ? (
                 <div className="space-y-2">
                   <Label>Settlement discount reason *</Label>
