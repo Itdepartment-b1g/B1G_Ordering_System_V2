@@ -33,7 +33,13 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth/hooks';
 import { useKeyAccountPaymentSettings } from '@/features/key-accounts/hooks/useKeyAccountPaymentSettings';
-import type { BankAccount } from '@/types/database.types';
+import { useAppDispatch } from '@/store/store';
+import {
+  createKAPaymentSettings,
+  updateKAPaymentSettings,
+  type KAPaymentSettingsWritePayload,
+} from '@/store/slices/key-accounts/payment-settings';
+import type { BankAccount, KeyAccountPaymentSettings } from '@/types/database.types';
 
 type DraftSettings = {
   bankAccounts: BankAccount[];
@@ -45,6 +51,19 @@ type DraftSettings = {
   chequeEnabled: boolean;
   bankTransferEnabled: boolean;
 };
+
+function draftFromSettings(settings: KeyAccountPaymentSettings): DraftSettings {
+  return {
+    bankAccounts: settings.bank_accounts || [],
+    gcashEnabled: settings.gcash_enabled,
+    gcashNumber: settings.gcash_number || '',
+    gcashName: settings.gcash_name || '',
+    gcashQrUrl: settings.gcash_qr_url || '',
+    cashEnabled: settings.cash_enabled,
+    chequeEnabled: settings.cheque_enabled,
+    bankTransferEnabled: settings.bank_transfer_enabled,
+  };
+}
 
 function isDraftValid(draft: DraftSettings): boolean {
   if (!draft.cashEnabled && !draft.chequeEnabled && !draft.gcashEnabled && !draft.bankTransferEnabled) {
@@ -61,6 +80,7 @@ function isDraftValid(draft: DraftSettings): boolean {
 
 export default function PaymentSettingsList() {
   const { user } = useAuth();
+  const dispatch = useAppDispatch();
   const { toast } = useToast();
   const { settings, createdByName, loading: loadingSettings, refetch } = useKeyAccountPaymentSettings();
   const canEdit = user?.role === 'sales_head';
@@ -148,7 +168,7 @@ export default function PaymentSettingsList() {
 
   const persistDraft = useCallback(
     async (draft: DraftSettings) => {
-      if (!canEdit || !user?.company_id || !user?.id) return;
+      if (!canEdit || !user?.company_id) return;
       if (!isDraftValid(draft)) return;
 
       const snapshot = snapshotDraft(draft);
@@ -158,8 +178,9 @@ export default function PaymentSettingsList() {
       try {
         setSaving(true);
 
-        const payload = {
-          company_id: user.company_id,
+        const existingId = settingsIdRef.current;
+        const wasInsert = !existingId;
+        const writePayload: KAPaymentSettingsWritePayload = {
           bank_accounts: draft.bankAccounts,
           gcash_number: draft.gcashNumber.trim() || null,
           gcash_name: draft.gcashName.trim() || null,
@@ -169,31 +190,19 @@ export default function PaymentSettingsList() {
           gcash_enabled: draft.gcashEnabled,
           bank_transfer_enabled: draft.bankTransferEnabled,
         };
-
-        const existingId = settingsIdRef.current;
-        const wasInsert = !existingId;
-        if (existingId) {
-          const { error } = await supabase
-            .from('key_account_payment_settings')
-            .update(payload)
-            .eq('id', existingId);
-          if (error) throw error;
-        } else {
-          const { data, error } = await supabase
-            .from('key_account_payment_settings')
-            .insert({
-              ...payload,
-              created_by: user.id,
-            })
-            .select('id')
-            .single();
-          if (error) throw error;
-          if (data?.id) settingsIdRef.current = data.id;
-        }
+        const result = wasInsert
+          ? await dispatch(createKAPaymentSettings(writePayload)).unwrap()
+          : await dispatch(
+              updateKAPaymentSettings({ id: existingId, ...writePayload })
+            ).unwrap();
 
         if (generation !== saveGenerationRef.current) return;
 
-        lastSavedSnapshotRef.current = snapshot;
+        if (result.settings?.id) settingsIdRef.current = result.settings.id;
+
+        lastSavedSnapshotRef.current = result.settings
+          ? snapshotDraft(draftFromSettings(result.settings as KeyAccountPaymentSettings))
+          : snapshot;
         setLastSavedAt(new Date());
         // Only refetch after first create (for created_by label); updates skip to avoid loops
         if (wasInsert) {
@@ -213,7 +222,7 @@ export default function PaymentSettingsList() {
         }
       }
     },
-    [canEdit, user?.company_id, user?.id, refetch, toast]
+    [canEdit, dispatch, refetch, toast, user?.company_id]
   );
 
   const currentDraft = useCallback(
@@ -243,11 +252,10 @@ export default function PaymentSettingsList() {
   useEffect(() => {
     if (!canEdit || loadingSettings || skipAutoSaveRef.current) return;
 
-    const draft = currentDraft();
-    if (!isDraftValid(draft)) return;
+    if (!isDraftValid(currentDraft())) return;
 
     const timer = window.setTimeout(() => {
-      void persistDraft(draft);
+      void persistDraft(currentDraft());
     }, 500);
 
     return () => window.clearTimeout(timer);
@@ -277,7 +285,7 @@ export default function PaymentSettingsList() {
       return;
     }
 
-    setBankAccounts([
+    const nextBanks: BankAccount[] = [
       ...bankAccounts,
       {
         name: newBank.name,
@@ -285,10 +293,15 @@ export default function PaymentSettingsList() {
         enabled: true,
         qr_code_url: undefined,
       },
-    ]);
-
+    ];
+    setBankAccounts(nextBanks);
     setNewBank({ name: '', account_number: '' });
     setShowAddBankDialog(false);
+
+    void persistDraft({
+      ...currentDraft(),
+      bankAccounts: nextBanks,
+    });
   };
 
   const handleRemoveBank = (index: number) => {
@@ -328,6 +341,11 @@ export default function PaymentSettingsList() {
     setEditBank({ name: '', account_number: '' });
     setEditingBankIndex(null);
     setShowEditBankDialog(false);
+
+    void persistDraft({
+      ...currentDraft(),
+      bankAccounts: updatedBanks,
+    });
   };
 
   const handleToggleBankEnabled = (index: number) => {

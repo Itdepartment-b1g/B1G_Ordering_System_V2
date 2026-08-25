@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '@/lib/supabase';
+import { useCallback, useEffect } from 'react';
 import { useAuth } from '@/features/auth/hooks';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import { fetchKAPaymentSettings } from '@/store/slices/key-accounts/payment-settings';
 import type { KeyAccountPaymentSettings } from '@/types/database.types';
 
 interface UseKeyAccountPaymentSettingsReturn {
@@ -13,66 +14,26 @@ interface UseKeyAccountPaymentSettingsReturn {
 
 export function useKeyAccountPaymentSettings(): UseKeyAccountPaymentSettingsReturn {
   const { user } = useAuth();
-  const [settings, setSettings] = useState<KeyAccountPaymentSettings | null>(null);
-  const [createdByName, setCreatedByName] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const dispatch = useAppDispatch();
+  const { settings, createdByName, status, error } = useAppSelector(
+    (state) => state.kaPaymentSettings
+  );
 
-  const fetchSettings = useCallback(async () => {
-    if (!user?.company_id) {
-      setLoading(false);
-      return;
-    }
-
-    try {
-      setLoading(true);
-      setError(null);
-
-      const { data, error: fetchError } = await supabase
-        .from('key_account_payment_settings')
-        .select('*')
-        .eq('company_id', user.company_id)
-        .maybeSingle();
-
-      if (fetchError) throw fetchError;
-
-      if (!data) {
-        setSettings(null);
-        setCreatedByName(null);
-        return;
-      }
-
-      setSettings(data as KeyAccountPaymentSettings);
-
-      if (data.created_by) {
-        const { data: creator } = await supabase
-          .from('profiles')
-          .select('full_name, email')
-          .eq('id', data.created_by)
-          .maybeSingle();
-        setCreatedByName(creator?.full_name?.trim() || creator?.email || null);
-      } else {
-        setCreatedByName(null);
-      }
-    } catch (err) {
-      console.error('Error fetching key account payment settings:', err);
-      setError(err instanceof Error ? err.message : 'Failed to fetch payment settings');
-      setSettings(null);
-      setCreatedByName(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [user?.company_id]);
+  const refetch = useCallback(async () => {
+    if (!user?.company_id) return;
+    await dispatch(fetchKAPaymentSettings()).unwrap();
+  }, [dispatch, user?.company_id]);
 
   useEffect(() => {
-    fetchSettings();
-  }, [fetchSettings]);
+    if (!user?.company_id) return;
+    void dispatch(fetchKAPaymentSettings());
+  }, [dispatch, user?.company_id]);
 
   return {
     settings,
     createdByName,
-    loading,
+    loading: status === 'loading' || (status === 'idle' && !!user?.company_id),
     error,
-    refetch: fetchSettings,
+    refetch,
   };
 }

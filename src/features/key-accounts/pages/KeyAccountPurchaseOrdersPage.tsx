@@ -1,6 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import {
+  approveKASettlementDiscount,
+  fetchKACompanyPendingDiscounts,
+  fetchKADirectorKamIds,
+  fetchKAPoDiscountRequests,
+  fetchKAPoItems,
+  fetchKAPoList,
+  fetchKAPoPaymentSummary,
+  fetchKAPoPayments,
+  fetchKAPoRebateReturnLines,
+  fetchKAPoRebateSource,
+  fetchKAPoRebates,
+  fetchKAPoRfpfRevisions,
+  fetchKAWarehouseLocationNames,
+  patchKAPoWorkflow,
+  recordKAPoListPayment,
+  rejectKASettlementDiscount,
+  setKAPoRfpf,
+} from '@/store/slices/key-accounts/purchase-order';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
@@ -154,6 +174,9 @@ type Row = {
   key_account_payment_status?: KeyAccountPoPaymentStatus | null;
   key_account_payment_terms_source?: 'client' | 'company' | 'custom' | null;
   key_account_payment_terms_created_by?: string | null;
+  key_account_notification_option?: string | null;
+  key_account_notification_date?: string | null;
+  key_account_notification_sent_at?: string | null;
   client?: {
     client_name: string;
     client_code?: string;
@@ -282,6 +305,48 @@ function paymentStatusBadgeClass(s: string | null | undefined) {
   }
 }
 
+function notificationOptionLabel(option: string | null | undefined): string {
+  switch (option) {
+    case 'none':
+    case undefined:
+    case null:
+      return "Don't notify";
+    case 'net_15':
+      return 'Net 15';
+    case 'net_30':
+      return 'Net 30';
+    case 'net_60':
+      return 'Net 60';
+    case 'days_before_3':
+      return '3 days before due';
+    case 'days_before_1':
+      return '1 day before due';
+    case 'custom':
+      return 'Custom date';
+    default:
+      return String(option);
+  }
+}
+
+function formatISODateManila(isoDate: string | null | undefined): string {
+  if (!isoDate) return '—';
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('en-PH', { timeZone: 'Asia/Manila' });
+}
+
+/** Display timestamptz values in Asia/Manila (storage remains UTC). */
+function formatDateTimeManila(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('en-PH', {
+    timeZone: 'Asia/Manila',
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+}
+
 function RfpfRevisionEntry({ revision }: { revision: RfpfRevision }) {
   const [open, setOpen] = useState(false);
 
@@ -336,6 +401,10 @@ function isKeyAccountPaymentNotComplete(po: {
 
 export function KeyAccountPurchaseOrdersPage() {
   const { user } = useAuth();
+  const dispatch = useAppDispatch();
+  const listRowsRaw = useAppSelector((s) => s.kaPurchaseOrder.listRows);
+  const directorKamIdsFromStore = useAppSelector((s) => s.kaPurchaseOrder.directorKamIds);
+  const linkedWarehouseNamesById = useAppSelector((s) => s.kaPurchaseOrder.warehouseLocationNames);
   const { toast } = useToast();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -387,7 +456,7 @@ export function KeyAccountPurchaseOrdersPage() {
     (PurchaseOrderKeyAccountPayment & { recorder?: { full_name: string | null; email: string | null } | null })[]
   >([]);
   const [paymentsLoading, setPaymentsLoading] = useState(false);
-  const [directorKamIds, setDirectorKamIds] = useState<Set<string>>(new Set());
+  const directorKamIds = useMemo(() => new Set(directorKamIdsFromStore), [directorKamIdsFromStore]);
 
   const [recordPayOpen, setRecordPayOpen] = useState(false);
   const [newPayAmount, setNewPayAmount] = useState('');
@@ -401,7 +470,6 @@ export function KeyAccountPurchaseOrdersPage() {
   const [paymentSummaryPaid, setPaymentSummaryPaid] = useState<number | null>(null);
   const [paymentSummaryDiscount, setPaymentSummaryDiscount] = useState<number | null>(null);
   const [paymentSummaryLoading, setPaymentSummaryLoading] = useState(false);
-  const [linkedWarehouseNamesById, setLinkedWarehouseNamesById] = useState<Record<string, string>>({});
   const [paymentEntryCount, setPaymentEntryCount] = useState(0);
   const [discountRequests, setDiscountRequests] = useState<
     (KeyAccountSettlementDiscountRequest & {
@@ -461,13 +529,8 @@ export function KeyAccountPurchaseOrdersPage() {
     if (!active?.id || !isDeliveredKeyAccountOrder(active)) return;
     setPoRebatesLoading(true);
     try {
-      const { data: rebateRows, error: rebateErr } = await supabase
-        .from('key_account_po_rebates')
-        .select('id, rebate_number, status, disputed_total, resolution_type')
-        .eq('purchase_order_id', active.id)
-        .order('created_at', { ascending: false });
-      if (rebateErr) throw rebateErr;
-      setPoRebates(rebateRows || []);
+      const result = await dispatch(fetchKAPoRebates(active.id)).unwrap();
+      setPoRebates((result.rebates as typeof poRebates) || []);
     } catch {
       setPoRebates([]);
     } finally {
@@ -544,21 +607,10 @@ export function KeyAccountPurchaseOrdersPage() {
   async function loadPaymentSummary(poId: string) {
     setPaymentSummaryLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('purchase_order_key_account_payments')
-        .select('amount, settlement_discount')
-        .eq('purchase_order_id', poId);
-      if (error) throw error;
-      const rows = data || [];
-      const paid = rows.reduce((s: number, r: { amount: number }) => s + Number(r.amount || 0), 0);
-      const discount = rows.reduce(
-        (s: number, r: { settlement_discount?: number | null }) =>
-          s + Number(r.settlement_discount || 0),
-        0
-      );
-      setPaymentSummaryPaid(paid);
-      setPaymentSummaryDiscount(discount);
-      setPaymentEntryCount(rows.length);
+      const result = await dispatch(fetchKAPoPaymentSummary(poId)).unwrap();
+      setPaymentSummaryPaid(result.paid);
+      setPaymentSummaryDiscount(result.discount);
+      setPaymentEntryCount(result.entryCount);
     } catch (e: any) {
       toast({
         variant: 'destructive',
@@ -576,18 +628,8 @@ export function KeyAccountPurchaseOrdersPage() {
   const loadDiscountRequests = async (poId: string) => {
     setDiscountRequestsLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('key_account_settlement_discount_requests')
-        .select(
-          `
-          *,
-          requester:profiles!key_account_settlement_discount_requests_requested_by_fkey(full_name,email)
-        `
-        )
-        .eq('purchase_order_id', poId)
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      setDiscountRequests((data as any) || []);
+      const result = await dispatch(fetchKAPoDiscountRequests(poId)).unwrap();
+      setDiscountRequests((result.requests as typeof discountRequests) || []);
     } catch (e: any) {
       toast({
         variant: 'destructive',
@@ -606,20 +648,8 @@ export function KeyAccountPurchaseOrdersPage() {
       return;
     }
     try {
-      const { data, error } = await supabase
-        .from('key_account_settlement_discount_requests')
-        .select(
-          `
-          *,
-          requester:profiles!key_account_settlement_discount_requests_requested_by_fkey(full_name,email),
-          purchase_order:purchase_orders!key_account_settlement_discount_requests_purchase_order_id_fkey(po_number)
-        `
-        )
-        .eq('company_id', user.company_id)
-        .eq('status', 'pending')
-        .order('created_at', { ascending: true });
-      if (error) throw error;
-      setCompanyPendingDiscounts((data as any) || []);
+      const result = await dispatch(fetchKACompanyPendingDiscounts()).unwrap();
+      setCompanyPendingDiscounts((result.requests as typeof companyPendingDiscounts) || []);
     } catch {
       setCompanyPendingDiscounts([]);
     }
@@ -643,19 +673,9 @@ export function KeyAccountPurchaseOrdersPage() {
   const loadPayments = async (poId: string) => {
     setPaymentsLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('purchase_order_key_account_payments')
-        .select(
-          `
-          *,
-          recorder:profiles!purchase_order_key_account_payments_recorded_by_fkey(full_name,email)
-        `
-        )
-        .eq('purchase_order_id', poId)
-        .order('created_at', { ascending: true });
-      if (error) throw error;
-      setPayments((data as any) || []);
-      const rows = (data as any) || [];
+      const result = await dispatch(fetchKAPoPayments(poId)).unwrap();
+      const rows = (result.payments as typeof payments) || [];
+      setPayments(rows);
       setPaymentSummaryPaid(paidTotalForPayments(rows));
       setPaymentSummaryDiscount(discountTotalForPayments(rows));
       setPaymentEntryCount(rows.length);
@@ -678,101 +698,7 @@ export function KeyAccountPurchaseOrdersPage() {
     if (!user?.id) return;
     if (showLoading) setLoading(true);
     try {
-      // RLS controls broad role access. KAMs are further scoped to only POs they created.
-      let query = supabase
-        .from('purchase_orders')
-        .select(
-          `
-          id,
-          po_number,
-          company_id,
-          company_account_type,
-          po_order_kind,
-          source_rebate_id,
-          workflow_status,
-          status,
-          order_date,
-          expected_delivery_date,
-          created_at,
-          total_amount,
-          subtotal,
-          tax_rate,
-          tax_amount,
-          discount,
-          kam_id,
-          rfpf_number,
-          dr_number,
-          key_account_payment_terms,
-          key_account_payment_mode,
-          key_account_payment_status,
-          key_account_payment_terms_source,
-          key_account_payment_terms_created_by,
-          director_approved_at,
-          director_approved_by,
-          admin_approved_at,
-          admin_approved_by,
-          created_by,
-          warehouse_location_id,
-          warehouse_location:warehouse_locations(name),
-          key_account_client_id,
-          key_account_shop_id,
-          key_account_address_id,
-          client:key_account_clients(client_name, client_code, contact_phone),
-          shop:key_account_shops(shop_name, cor_pdf_path, city, province, region),
-          address:key_account_delivery_addresses(address_label,full_address,city,province,zip_code,contact_name,contact_phone,is_default),
-          kam:profiles!purchase_orders_kam_id_fkey(full_name,email),
-          created_by_user:profiles!purchase_orders_created_by_fkey(full_name,email)
-        `
-        )
-        .eq('company_account_type', 'Key Accounts')
-        .order('created_at', { ascending: false });
-
-      if (isKAM) {
-        query = query.or(`created_by.eq.${user.id},kam_id.eq.${user.id}`);
-      }
-
-      const { data, error } = await query;
-
-      if (error) throw error;
-
-      const rawRows = (data || []) as any[];
-      const creatorIds = [
-        ...new Set(
-          rawRows
-            .map((r) => r.key_account_payment_terms_created_by)
-            .filter((id): id is string => Boolean(id))
-        ),
-      ];
-
-      const creatorById = new Map<string, { full_name: string | null; email: string | null }>();
-      if (creatorIds.length > 0) {
-        const { data: creators } = await supabase
-          .from('profiles')
-          .select('id, full_name, email')
-          .in('id', creatorIds);
-        for (const profile of creators || []) {
-          creatorById.set(profile.id, {
-            full_name: profile.full_name ?? null,
-            email: profile.email ?? null,
-          });
-        }
-      }
-
-      const nextRows = rawRows
-        .map((row) => ({
-          ...row,
-          payment_terms_creator: row.key_account_payment_terms_created_by
-            ? creatorById.get(row.key_account_payment_terms_created_by) ?? null
-            : null,
-        }))
-        .map(normalizePoRow);
-      setRows(nextRows);
-      setActive((prev) => {
-        if (!prev?.id) return prev;
-        const updated = nextRows.find((r) => r.id === prev.id);
-        if (!updated) return prev;
-        return { ...updated, items: prev.items };
-      });
+      await dispatch(fetchKAPoList()).unwrap();
     } catch (e: any) {
       if (showLoading) {
         toast({
@@ -785,6 +711,17 @@ export function KeyAccountPurchaseOrdersPage() {
       if (showLoading) setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const nextRows = (listRowsRaw as Row[]).map(normalizePoRow);
+    setRows(nextRows);
+    setActive((prev) => {
+      if (!prev?.id) return prev;
+      const updated = nextRows.find((r) => r.id === prev.id);
+      if (!updated) return prev;
+      return { ...updated, items: prev.items };
+    });
+  }, [listRowsRaw]);
 
   const scheduleRowsRefresh = () => {
     if (Date.now() < manualRefreshUntilRef.current) return;
@@ -821,20 +758,8 @@ export function KeyAccountPurchaseOrdersPage() {
 
   useEffect(() => {
     if (!user?.company_id) return;
-    let cancelled = false;
-    (async () => {
-      const { data, error } = await supabase.rpc('get_linked_warehouse_locations');
-      if (cancelled || error) return;
-      const map: Record<string, string> = {};
-      for (const row of (data as { id: string; name: string }[]) || []) {
-        if (row?.id && row?.name) map[row.id] = row.name;
-      }
-      setLinkedWarehouseNamesById(map);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.company_id]);
+    dispatch(fetchKAWarehouseLocationNames());
+  }, [user?.company_id, dispatch]);
 
   useEffect(() => {
     if (!user?.company_id || !isSalesHead) {
@@ -850,23 +775,9 @@ export function KeyAccountPurchaseOrdersPage() {
   }, [q, orderDateRange.start, orderDateRange.end]);
 
   useEffect(() => {
-    if (!user?.id || user.role !== 'sales_director') {
-      setDirectorKamIds(new Set());
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      const { data, error } = await supabase
-        .from('kam_director_assignments')
-        .select('kam_id')
-        .eq('director_id', user.id);
-      if (error || cancelled) return;
-      setDirectorKamIds(new Set((data || []).map((r: { kam_id: string }) => r.kam_id)));
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.id, user?.role]);
+    if (!user?.id || user.role !== 'sales_director') return;
+    dispatch(fetchKADirectorKamIds());
+  }, [user?.id, user?.role, dispatch]);
 
   useEffect(() => {
     const fromUrl = searchParams.get('search')?.trim() || searchParams.get('po')?.trim() || '';
@@ -952,31 +863,8 @@ export function KeyAccountPurchaseOrdersPage() {
   const fetchRfpfRevisions = async (poId: string) => {
     setRfpfRevisionsLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('purchase_order_rfpf_revisions')
-        .select(`
-          id,
-          previous_rfpf_number,
-          new_rfpf_number,
-          reason,
-          created_at,
-          changer:profiles!purchase_order_rfpf_revisions_changed_by_fkey(full_name)
-        `)
-        .eq('purchase_order_id', poId)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-
-      setRfpfRevisions(
-        (data || []).map((row: any) => ({
-          id: row.id,
-          previousRfpfNumber: row.previous_rfpf_number,
-          newRfpfNumber: row.new_rfpf_number,
-          reason: row.reason,
-          changedByName: row.changer?.full_name || 'Unknown',
-          createdAt: row.created_at,
-        }))
-      );
+      const result = await dispatch(fetchKAPoRfpfRevisions(poId)).unwrap();
+      setRfpfRevisions((result.revisions as RfpfRevision[]) || []);
     } catch (e: any) {
       console.error('Error fetching RFPF revisions', e);
       setRfpfRevisions([]);
@@ -1016,27 +904,8 @@ export function KeyAccountPurchaseOrdersPage() {
     if (po.rfpf_number?.trim()) void fetchRfpfRevisions(po.id);
 
     try {
-      const { data: items, error } = await supabase
-        .from('purchase_order_items')
-        .select(
-          `
-          id,
-          variant_id,
-          warehouse_location_id,
-          quantity,
-          unit_price,
-          total_price,
-          warehouse_locations:warehouse_location_id ( name ),
-          variants:variant_id (
-            name,
-            variant_type,
-            brands:brand_id ( name )
-          )
-        `
-        )
-        .eq('purchase_order_id', po.id);
-      if (error) throw error;
-      const normalized = ((items as any[]) || []).map(normalizePoItemRow);
+      const result = await dispatch(fetchKAPoItems(po.id)).unwrap();
+      const normalized = ((result.items as any[]) || []).map(normalizePoItemRow);
       setActive((prev) => (prev ? { ...prev, items: normalized } : prev));
     } catch (e: any) {
       toast({
@@ -1048,57 +917,19 @@ export function KeyAccountPurchaseOrdersPage() {
 
     if (String(po.po_order_kind || '') === 'rebate_fulfillment' && po.source_rebate_id) {
       try {
-        const { data, error } = await supabase
-          .from('key_account_po_rebates')
-          .select(
-            'rebate_number, disputed_total, replacement_total, source_po:purchase_orders!key_account_po_rebates_purchase_order_id_fkey(po_number)'
-          )
-          .eq('id', po.source_rebate_id)
-          .maybeSingle();
-        if (!error && data) {
-          const src = (data as any).source_po;
-          const poNum = Array.isArray(src) ? src?.[0]?.po_number : src?.po_number;
-          if (poNum) {
-            setRebateSource({
-              rebate_number: (data as any).rebate_number,
-              source_po_number: poNum,
-              disputed_total: Number((data as any).disputed_total) || 0,
-              replacement_total: Number((data as any).replacement_total) || 0,
-            });
-          }
+        const result = await dispatch(fetchKAPoRebateSource(po.source_rebate_id)).unwrap();
+        if (result.source) {
+          setRebateSource(result.source as typeof rebateSource);
+        } else {
+          setRebateSource(null);
         }
       } catch {
         setRebateSource(null);
       }
       setRebateReturnLinesLoading(true);
       try {
-        const { data: linesData, error: linesErr } = await supabase
-          .from('key_account_po_rebate_lines')
-          .select(
-            `
-            disputed_quantity,
-            purchase_order_item:purchase_order_items (
-              warehouse_location_id
-            ),
-            variant:variants (
-              name,
-              variant_type,
-              brand:brands ( name )
-            )
-          `
-          )
-          .eq('rebate_id', po.source_rebate_id);
-        if (linesErr) throw linesErr;
-        const raw = (linesData || []) as any[];
-        setRebateReturnLines(
-          raw.map((r) => ({
-            brand_name: r?.variant?.brand?.name ?? '—',
-            variant_name: r?.variant?.name ?? '—',
-            variant_type: r?.variant?.variant_type ?? '—',
-            disputed_quantity: Number(r?.disputed_quantity) || 0,
-            warehouse_location_id: r?.purchase_order_item?.warehouse_location_id ?? null,
-          }))
-        );
+        const linesResult = await dispatch(fetchKAPoRebateReturnLines(po.source_rebate_id)).unwrap();
+        setRebateReturnLines((linesResult.lines as typeof rebateReturnLines) || []);
       } catch {
         setRebateReturnLines([]);
       } finally {
@@ -1114,13 +945,8 @@ export function KeyAccountPurchaseOrdersPage() {
       setPoRebatesLoading(true);
       try {
         if (isDeliveredKeyAccountOrder(po)) {
-          const { data: rebateRows, error: rebateErr } = await supabase
-            .from('key_account_po_rebates')
-            .select('id, rebate_number, status, disputed_total, resolution_type')
-            .eq('purchase_order_id', po.id)
-            .order('created_at', { ascending: false });
-          if (rebateErr) throw rebateErr;
-          setPoRebates(rebateRows || []);
+          const result = await dispatch(fetchKAPoRebates(po.id)).unwrap();
+          setPoRebates((result.rebates as typeof poRebates) || []);
         } else {
           setPoRebates([]);
         }
@@ -1157,8 +983,7 @@ export function KeyAccountPurchaseOrdersPage() {
     setActingId(poId);
     markLocalRefresh();
     try {
-      const { error } = await supabase.from('purchase_orders').update(patch).eq('id', poId);
-      if (error) throw error;
+      await dispatch(patchKAPoWorkflow({ poId, patch: patch as Record<string, unknown> })).unwrap();
       await fetchRows(false);
       setViewOpen(false);
       setActive(null);
@@ -1343,16 +1168,9 @@ export function KeyAccountPurchaseOrdersPage() {
     setActingId(active.id);
     markLocalRefresh();
     try {
-      const { data, error } = await supabase.rpc('set_key_account_rfpf', {
-        p_po_id: active.id,
-        p_rfpf_number: rfpf,
-        p_reason: null,
-      });
-      if (error) throw error;
-      const result = data as { success?: boolean; message?: string };
-      if (!result?.success) {
-        throw new Error(result?.message || 'Failed to save RFPF');
-      }
+      await dispatch(
+        setKAPoRfpf({ poId: active.id, rfpfNumber: rfpf, reason: null })
+      ).unwrap();
       await fetchRows(false);
       setActive((prev) => (prev ? { ...prev, rfpf_number: rfpf } : prev));
       toast({ title: 'RFPF saved' });
@@ -1405,16 +1223,9 @@ export function KeyAccountPurchaseOrdersPage() {
     setSubmittingRfpfEdit(true);
     markLocalRefresh();
     try {
-      const { data, error } = await supabase.rpc('set_key_account_rfpf', {
-        p_po_id: active.id,
-        p_rfpf_number: rfpf,
-        p_reason: reason,
-      });
-      if (error) throw error;
-      const result = data as { success?: boolean; message?: string };
-      if (!result?.success) {
-        throw new Error(result?.message || 'Failed to update RFPF');
-      }
+      await dispatch(
+        setKAPoRfpf({ poId: active.id, rfpfNumber: rfpf, reason })
+      ).unwrap();
       await fetchRows(false);
       await fetchRfpfRevisions(active.id);
       setActive((prev) => (prev ? { ...prev, rfpf_number: rfpf } : prev));
@@ -1479,16 +1290,9 @@ export function KeyAccountPurchaseOrdersPage() {
     markLocalRefresh();
     try {
       if (withRfpf && !existingRfpf && draftRfpf) {
-        const { data, error } = await supabase.rpc('set_key_account_rfpf', {
-          p_po_id: active.id,
-          p_rfpf_number: draftRfpf,
-          p_reason: null,
-        });
-        if (error) throw error;
-        const result = data as { success?: boolean; message?: string };
-        if (!result?.success) {
-          throw new Error(result?.message || 'Failed to save RFPF');
-        }
+        await dispatch(
+          setKAPoRfpf({ poId: active.id, rfpfNumber: draftRfpf, reason: null })
+        ).unwrap();
         setActive((prev) => (prev ? { ...prev, rfpf_number: draftRfpf } : prev));
       }
 
@@ -1584,47 +1388,19 @@ export function KeyAccountPurchaseOrdersPage() {
         }
       }
 
-      // Sales Head: cash + discount apply immediately (auto-approve).
-      // Others: cash applies now; discount goes to Sales Head for approval
-      // and attaches to this cash row when approved.
       const needsDiscountApproval = discount > 0 && !isSalesHead;
-      let sourcePaymentId: string | null = null;
 
-      if (amt > 0 || (discount > 0 && isSalesHead)) {
-        const method = amt > 0 ? newPayMethod : 'CASH';
-        const { data: insertedPay, error } = await supabase
-          .from('purchase_order_key_account_payments')
-          .insert({
-            purchase_order_id: active.id,
-            company_id: user.company_id,
-            amount: amt,
-            settlement_discount: needsDiscountApproval ? 0 : discount,
-            settlement_discount_reason: !needsDiscountApproval && discount > 0 ? reason : null,
-            payment_method: method,
-            bank_type: method === 'BANK_TRANSFER' ? newPayBank : null,
-            proof_storage_path: proofPath,
-          })
-          .select('id')
-          .single();
-        if (error) throw error;
-        if (needsDiscountApproval && amt > 0 && insertedPay?.id) {
-          sourcePaymentId = insertedPay.id;
-        }
-      }
-
-      if (needsDiscountApproval) {
-        const { data, error } = await supabase.rpc('request_key_account_settlement_discount', {
-          p_purchase_order_id: active.id,
-          p_settlement_discount: discount,
-          p_settlement_discount_reason: reason,
-          p_source_payment_id: sourcePaymentId,
-        });
-        if (error) throw error;
-        const result = data as { success?: boolean; error?: string; auto_approved?: boolean } | null;
-        if (!result?.success) {
-          throw new Error(result?.error || 'Could not submit settlement discount for approval');
-        }
-      }
+      const payResult = await dispatch(
+        recordKAPoListPayment({
+          poId: active.id,
+          amount: amt,
+          settlementDiscount: discount,
+          settlementDiscountReason: reason,
+          paymentMethod: amt > 0 ? newPayMethod : 'CASH',
+          bankType: amt > 0 && newPayMethod === 'BANK_TRANSFER' ? newPayBank : null,
+          proofStoragePath: proofPath,
+        })
+      ).unwrap();
 
       toast({
         title: needsDiscountApproval
@@ -1645,14 +1421,14 @@ export function KeyAccountPurchaseOrdersPage() {
       await loadPayments(active.id);
       await loadDiscountRequests(active.id);
       if (isSalesHead) void loadCompanyPendingDiscounts();
-      const { data: poRow } = await supabase
-        .from('purchase_orders')
-        .select('key_account_payment_status')
-        .eq('id', active.id)
-        .maybeSingle();
-      if (poRow) {
+      if (payResult.key_account_payment_status) {
         setActive((prev) =>
-          prev ? { ...prev, key_account_payment_status: (poRow as any).key_account_payment_status } : prev
+          prev
+            ? {
+                ...prev,
+                key_account_payment_status: payResult.key_account_payment_status as KeyAccountPoPaymentStatus,
+              }
+            : prev
         );
       }
       await fetchRows(false);
@@ -1671,30 +1447,13 @@ export function KeyAccountPurchaseOrdersPage() {
     setActingDiscountId(requestId);
     markLocalRefresh();
     try {
-      const { data, error } = await supabase.rpc('approve_key_account_settlement_discount', {
-        p_request_id: requestId,
-      });
-      if (error) throw error;
-      const result = data as { success?: boolean; error?: string; purchase_order_id?: string } | null;
-      if (!result?.success) {
-        throw new Error(result?.error || 'Could not approve settlement discount');
-      }
+      const result = await dispatch(approveKASettlementDiscount(requestId)).unwrap();
       toast({ title: 'Settlement discount approved' });
       const poId = result.purchase_order_id || active?.id;
       if (poId) {
         await loadPaymentSummary(poId);
         await loadPayments(poId);
         await loadDiscountRequests(poId);
-        const { data: poRow } = await supabase
-          .from('purchase_orders')
-          .select('key_account_payment_status')
-          .eq('id', poId)
-          .maybeSingle();
-        if (poRow && active?.id === poId) {
-          setActive((prev) =>
-            prev ? { ...prev, key_account_payment_status: (poRow as any).key_account_payment_status } : prev
-          );
-        }
       }
       await loadCompanyPendingDiscounts();
       await fetchRows(false);
@@ -1714,15 +1473,12 @@ export function KeyAccountPurchaseOrdersPage() {
     setActingDiscountId(rejectDiscountId);
     markLocalRefresh();
     try {
-      const { data, error } = await supabase.rpc('reject_key_account_settlement_discount', {
-        p_request_id: rejectDiscountId,
-        p_reason: rejectDiscountReason.trim() || null,
-      });
-      if (error) throw error;
-      const result = data as { success?: boolean; error?: string; purchase_order_id?: string } | null;
-      if (!result?.success) {
-        throw new Error(result?.error || 'Could not reject settlement discount');
-      }
+      const result = await dispatch(
+        rejectKASettlementDiscount({
+          requestId: rejectDiscountId,
+          reason: rejectDiscountReason.trim() || null,
+        })
+      ).unwrap();
       toast({ title: 'Settlement discount rejected' });
       const poId = result.purchase_order_id || active?.id;
       if (poId) {
@@ -2477,6 +2233,29 @@ export function KeyAccountPurchaseOrdersPage() {
                             </div>
                           ) : null}
                         </div>
+                      </div>
+
+                      <div className="mt-2">
+                        <Label className="text-xs text-muted-foreground">Notify KAM</Label>
+                        <div className="font-medium">
+                          {active.key_account_notification_option &&
+                          active.key_account_notification_option !== 'none' &&
+                          active.key_account_notification_date ? (
+                            <>
+                              {formatISODateManila(active.key_account_notification_date)}{' '}
+                              <span className="text-muted-foreground text-xs">
+                                ({notificationOptionLabel(active.key_account_notification_option)})
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </div>
+                        {active.key_account_notification_sent_at ? (
+                          <div className="text-xs text-muted-foreground mt-0.5">
+                            Sent {formatDateTimeManila(active.key_account_notification_sent_at)} (Asia/Manila)
+                          </div>
+                        ) : null}
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
                         <div>

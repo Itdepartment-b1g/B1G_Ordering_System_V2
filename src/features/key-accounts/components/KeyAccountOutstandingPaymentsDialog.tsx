@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
-import { fetchAllPaginated } from '@/lib/supabasePaginate';
 import {
   Dialog,
   DialogContent,
@@ -37,10 +35,15 @@ import {
   paginateAnalyticsRows,
 } from '@/features/key-accounts/key-accounts-analytics/AnalyticsTablePagination';
 import {
-  fetchKeyAccountDashboardPayments,
   formatKeyAccountDashboardCurrency,
   splitKeyAccountPoPaymentRevenue,
 } from '@/features/key-accounts/dashboard/keyAccountDashboardRevenue';
+import { useAppDispatch } from '@/store/store';
+import {
+  fetchKAPoPayments,
+  fetchKAPoPaymentsBulk,
+  type KAPoPaymentBulkRow,
+} from '@/store/slices/key-accounts/purchase-order';
 
 export type KeyAccountOutstandingPoInput = {
   id: string;
@@ -160,7 +163,7 @@ function buildPaymentHistoryDisplayRows(payments: PaymentHistoryRow[]): PaymentH
 
 function buildOutstandingRows(
   orders: KeyAccountOutstandingPoInput[],
-  payments: Awaited<ReturnType<typeof fetchKeyAccountDashboardPayments>>
+  payments: KAPoPaymentBulkRow[]
 ): OutstandingPoRow[] {
   const paidByOrderId = new Map<string, number>();
   const discountByOrderId = new Map<string, number>();
@@ -213,6 +216,7 @@ export function KeyAccountOutstandingPaymentsDialog({
   onOpenChange: (open: boolean) => void;
   orders: KeyAccountOutstandingPoInput[];
 }) {
+  const dispatch = useAppDispatch();
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<OutstandingPoRow[]>([]);
   const [search, setSearch] = useState('');
@@ -236,12 +240,11 @@ export function KeyAccountOutstandingPaymentsDialog({
 
     void (async () => {
       try {
-        const payments = await fetchKeyAccountDashboardPayments(
-          supabase,
-          orders.map((order) => order.id)
-        );
+        const result = await dispatch(
+          fetchKAPoPaymentsBulk(orders.map((order) => order.id))
+        ).unwrap();
         if (cancelled) return;
-        setRows(buildOutstandingRows(orders, payments));
+        setRows(buildOutstandingRows(orders, result.payments));
       } catch {
         if (!cancelled) setRows(buildOutstandingRows(orders, []));
       } finally {
@@ -252,7 +255,7 @@ export function KeyAccountOutstandingPaymentsDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, orders]);
+  }, [dispatch, open, orders]);
 
   useEffect(() => {
     setPoPage(1);
@@ -340,27 +343,8 @@ export function KeyAccountOutstandingPaymentsDialog({
     setHistoryPage(1);
     setHistoryLoading(true);
     try {
-      const history = await fetchAllPaginated<PaymentHistoryRow>(async (from, to) => {
-        const { data, error } = await supabase
-          .from('purchase_order_key_account_payments')
-          .select(
-            `
-            id,
-            amount,
-            settlement_discount,
-            created_at,
-            payment_method,
-            bank_type,
-            recorder:profiles!purchase_order_key_account_payments_recorded_by_fkey(full_name,email)
-          `
-          )
-          .eq('purchase_order_id', row.orderId)
-          .order('created_at', { ascending: true })
-          .order('id', { ascending: true })
-          .range(from, to);
-        return { data: (data as PaymentHistoryRow[] | null) ?? null, error };
-      });
-      setHistoryPayments(history);
+      const result = await dispatch(fetchKAPoPayments(row.orderId)).unwrap();
+      setHistoryPayments((result.payments as PaymentHistoryRow[]) || []);
     } catch {
       setHistoryPayments([]);
     } finally {

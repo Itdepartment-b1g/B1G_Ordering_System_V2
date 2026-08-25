@@ -1,7 +1,22 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { format } from 'date-fns';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import {
+  createKAAddress,
+  createKAClient,
+  createKAShop,
+  fetchKAAddresses,
+  fetchKAClients,
+  fetchKAShops,
+  resetAddresses,
+  resetClientHierarchy,
+  resetShops,
+  updateKAAddress,
+  updateKAClient,
+  updateKAShop,
+} from '@/store/slices/key-accounts/client-hierarchy';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -55,8 +70,6 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import type { KeyAccountClient, KeyAccountShop, KeyAccountDeliveryAddress } from '@/types/database.types';
 import {
-  generateKeyAccountClientCode,
-  generateKeyAccountShopCode,
   KEY_ACCOUNT_CLIENT_CATEGORIES,
   parsePaymentTerms,
   formatPaymentTerms,
@@ -168,6 +181,17 @@ function HierarchyViewToolbar({
 export function ClientHierarchyManager() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const dispatch = useAppDispatch();
+  const {
+    clients,
+    shops,
+    addresses,
+    clientsStatus,
+    clientsError,
+    shopsError,
+    addressesError,
+  } = useAppSelector((state) => state.kaClientHierarchy);
+  const loading = clientsStatus === 'loading' || clientsStatus === 'idle';
   const isKeyAccountManager = user?.role === 'key_account_manager';
   const canManageClients =
     user?.role === 'sales_admin' ||
@@ -175,12 +199,8 @@ export function ClientHierarchyManager() {
     user?.role === 'sales_director' ||
     user?.role === 'key_account_manager';
   const canCreateClients = canManageClients;
-  const [clients, setClients] = useState<KeyAccountClient[]>([]);
-  const [shops, setShops] = useState<KeyAccountShop[]>([]);
-  const [addresses, setAddresses] = useState<KeyAccountDeliveryAddress[]>([]);
   const [selectedClient, setSelectedClient] = useState<string | null>(null);
   const [selectedShop, setSelectedShop] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('clients');
   const [viewMode, setViewMode] = useState<HierarchyViewMode>('card');
   const [clientsPage, setClientsPage] = useState(0);
@@ -301,28 +321,86 @@ export function ClientHierarchyManager() {
     [hierarchyTab]
   );
 
+  const fetchClients = useCallback(() => {
+    if (!user?.company_id) {
+      dispatch(resetClientHierarchy());
+      setSelectedClient(null);
+      setSelectedShop(null);
+      return;
+    }
+    dispatch(fetchKAClients());
+  }, [user?.company_id, dispatch]);
+
+  const fetchShops = useCallback(
+    (clientId: string) => {
+      dispatch(fetchKAShops(clientId));
+    },
+    [dispatch]
+  );
+
+  const fetchAddresses = useCallback(
+    (shopId: string) => {
+      dispatch(fetchKAAddresses(shopId));
+    },
+    [dispatch]
+  );
+
   // Fetch data
   useEffect(() => {
     fetchClients();
-  }, [user?.company_id, user?.id, user?.role]);
+    return () => {
+      dispatch(resetClientHierarchy());
+    };
+  }, [fetchClients, dispatch]);
+
+  useEffect(() => {
+    if (clientsStatus !== 'succeeded') return;
+    setSelectedClient((currentClientId) => {
+      if (currentClientId && !clients.some((client) => client.id === currentClientId)) {
+        dispatch(resetShops());
+        dispatch(resetAddresses());
+        setSelectedShop(null);
+        return null;
+      }
+      return currentClientId;
+    });
+  }, [clients, clientsStatus, dispatch]);
+
+  useEffect(() => {
+    if (clientsError) {
+      toast({ variant: 'destructive', title: 'Error', description: clientsError });
+    }
+  }, [clientsError, toast]);
+
+  useEffect(() => {
+    if (shopsError) {
+      toast({ variant: 'destructive', title: 'Error', description: shopsError });
+    }
+  }, [shopsError, toast]);
+
+  useEffect(() => {
+    if (addressesError) {
+      toast({ variant: 'destructive', title: 'Error', description: addressesError });
+    }
+  }, [addressesError, toast]);
 
   useEffect(() => {
     if (selectedClient) {
       fetchShops(selectedClient);
       return;
     }
-    setShops([]);
-    setAddresses([]);
+    dispatch(resetShops());
+    dispatch(resetAddresses());
     setSelectedShop(null);
-  }, [selectedClient]);
+  }, [selectedClient, fetchShops, dispatch]);
 
   useEffect(() => {
     if (selectedShop) {
       fetchAddresses(selectedShop);
       return;
     }
-    setAddresses([]);
-  }, [selectedShop]);
+    dispatch(resetAddresses());
+  }, [selectedShop, fetchAddresses, dispatch]);
 
   const skipClientsSearchReset = useRef(true);
   useEffect(() => {
@@ -333,8 +411,8 @@ export function ClientHierarchyManager() {
 
     setSelectedClient(null);
     setSelectedShop(null);
-    setShops([]);
-    setAddresses([]);
+    dispatch(resetShops());
+    dispatch(resetAddresses());
     setSearchByTab((prev) => ({ ...prev, shops: '', addresses: '' }));
     setActiveTab('clients');
   }, [searchByTab.clients]);
@@ -347,7 +425,7 @@ export function ClientHierarchyManager() {
     }
 
     setSelectedShop(null);
-    setAddresses([]);
+    dispatch(resetAddresses());
     setSearchByTab((prev) => ({ ...prev, addresses: '' }));
     setActiveTab((current) => (current === 'addresses' ? 'shops' : current));
   }, [searchByTab.shops]);
@@ -490,103 +568,6 @@ export function ClientHierarchyManager() {
     setActiveTab('addresses');
   };
 
-  const fetchClients = async () => {
-    setLoading(true);
-    try {
-      if (!user?.company_id) {
-        setClients([]);
-        setShops([]);
-        setAddresses([]);
-        setSelectedClient(null);
-        setSelectedShop(null);
-        return;
-      }
-
-      let query = supabase
-        .from('key_account_clients')
-        .select('*')
-        .eq('company_id', user.company_id)
-        .eq('status', 'active')
-        .order('client_name');
-
-      if (isKeyAccountManager) {
-        const { data: assignments, error: assignmentsError } = await supabase
-          .from('kam_client_assignments')
-          .select('client_id')
-          .eq('company_id', user.company_id)
-          .eq('kam_id', user.id);
-
-        if (assignmentsError) throw assignmentsError;
-
-        const assignedClientIds = assignments?.map((assignment) => assignment.client_id) || [];
-
-        if (assignedClientIds.length === 0) {
-          setClients([]);
-          setShops([]);
-          setAddresses([]);
-          setSelectedClient(null);
-          setSelectedShop(null);
-          return;
-        }
-
-        query = query.in('id', assignedClientIds);
-      }
-
-      const { data, error } = await query;
-
-      if (error) throw error;
-
-      const nextClients = data || [];
-      setClients(nextClients);
-      setSelectedClient((currentClientId) => {
-        if (currentClientId && !nextClients.some((client) => client.id === currentClientId)) {
-          setShops([]);
-          setAddresses([]);
-          setSelectedShop(null);
-          return null;
-        }
-
-        return currentClientId;
-      });
-    } catch (error: any) {
-      toast({ variant: 'destructive', title: 'Error', description: error.message });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchShops = async (clientId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('key_account_shops')
-        .select('*')
-        .eq('client_id', clientId)
-        .eq('is_active', true)
-        .order('shop_name');
-
-      if (error) throw error;
-      setShops(data || []);
-    } catch (error: any) {
-      toast({ variant: 'destructive', title: 'Error', description: error.message });
-    }
-  };
-
-  const fetchAddresses = async (shopId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('key_account_delivery_addresses')
-        .select('*')
-        .eq('shop_id', shopId)
-        .eq('is_active', true)
-        .order('is_default', { ascending: false });
-
-      if (error) throw error;
-      setAddresses(data || []);
-    } catch (error: any) {
-      toast({ variant: 'destructive', title: 'Error', description: error.message });
-    }
-  };
-
   const openCreateClientDialog = () => {
     setEditingClientId(null);
     setNewClient(EMPTY_CLIENT_FORM);
@@ -707,30 +688,15 @@ export function ClientHierarchyManager() {
       };
 
       if (editingClientId) {
-        const { error } = await supabase
-          .from('key_account_clients')
-          .update(payload)
-          .eq('id', editingClientId);
-
-        if (error) throw error;
+        await dispatch(updateKAClient({ clientId: editingClientId, ...payload })).unwrap();
         toast({ title: 'Success', description: 'Client updated successfully' });
       } else {
-        const clientCode = await generateKeyAccountClientCode(user.company_id);
-        const { error } = await supabase.from('key_account_clients').insert({
-          ...payload,
-          client_code: clientCode,
-          company_id: user.company_id,
-          created_by: user.id,
-          industry: null,
-          credit_limit: 0,
-        });
-
-        if (error) throw error;
+        const result = await dispatch(createKAClient(payload)).unwrap();
         toast({
           title: 'Success',
           description: isKeyAccountManager
-            ? `Client created with code ${clientCode} and assigned to you`
-            : `Client created with code ${clientCode}`,
+            ? `Client created with code ${result.client.client_code} and assigned to you`
+            : `Client created with code ${result.client.client_code}`,
         });
       }
 
@@ -769,41 +735,29 @@ export function ClientHierarchyManager() {
           corPdfPath = await uploadShopCorPdf(editingShopId, selectedClient);
         }
 
-        const { error } = await supabase
-          .from('key_account_shops')
-          .update({
+        await dispatch(
+          updateKAShop({
+            shopId: editingShopId,
             ...shopPayload,
             ...(corPdfPath !== editingShopCorPath ? { cor_pdf_path: corPdfPath } : {}),
           })
-          .eq('id', editingShopId);
-
-        if (error) throw error;
+        ).unwrap();
         toast({ title: 'Success', description: 'Shop updated successfully' });
       } else {
-        const shopCode = await generateKeyAccountShopCode(selectedClient);
-        const { data: shopRow, error } = await supabase
-          .from('key_account_shops')
-          .insert({
-            ...shopPayload,
-            shop_code: shopCode,
-            client_id: selectedClient,
-            created_by: user.id,
-          })
-          .select()
-          .single();
-
-        if (error) throw error;
+        const result = await dispatch(createKAShop({ clientId: selectedClient, ...shopPayload })).unwrap();
 
         if (corPdfFile) {
-          const path = await uploadShopCorPdf(shopRow.id, selectedClient);
-          const { error: corErr } = await supabase
-            .from('key_account_shops')
-            .update({ cor_pdf_path: path })
-            .eq('id', shopRow.id);
-          if (corErr) throw corErr;
+          const path = await uploadShopCorPdf(result.shop.id, selectedClient);
+          await dispatch(
+            updateKAShop({
+              shopId: result.shop.id,
+              ...shopPayload,
+              cor_pdf_path: path,
+            })
+          ).unwrap();
         }
 
-        toast({ title: 'Success', description: `Shop created with code ${shopCode}` });
+        toast({ title: 'Success', description: `Shop created with code ${result.shop.shop_code}` });
       }
 
       setShopDialogOpen(false);
@@ -838,21 +792,10 @@ export function ClientHierarchyManager() {
       };
 
       if (editingAddressId) {
-        const { error } = await supabase
-          .from('key_account_delivery_addresses')
-          .update(payload)
-          .eq('id', editingAddressId);
-
-        if (error) throw error;
+        await dispatch(updateKAAddress({ addressId: editingAddressId, ...payload })).unwrap();
         toast({ title: 'Success', description: 'Delivery address updated successfully' });
       } else {
-        const { error } = await supabase.from('key_account_delivery_addresses').insert({
-          ...payload,
-          receiving_hours: null,
-          shop_id: selectedShop,
-        });
-
-        if (error) throw error;
+        await dispatch(createKAAddress({ shopId: selectedShop, ...payload })).unwrap();
         toast({ title: 'Success', description: 'Delivery address created successfully' });
       }
 

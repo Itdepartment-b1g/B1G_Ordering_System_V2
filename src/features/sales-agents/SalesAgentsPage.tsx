@@ -789,16 +789,8 @@ export default function SalesAgentsPage() {
     <div className="p-4 md:p-8 space-y-4 md:space-y-6">
       <div className="flex flex-col gap-4 md:flex-row md:justify-between md:items-center">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold">
-            {user?.role === 'sales_admin' || user?.role === 'sales_head'
-              ? 'Key Account Users'
-              : 'Sales Agents'}
-          </h1>
-          <p className="text-sm md:text-base text-muted-foreground">
-            {user?.role === 'sales_admin' || user?.role === 'sales_head'
-              ? 'Manage Sales Admin, Directors, KAMs, and Accounting users'
-              : 'Manage your sales team and their performance'}
-          </p>
+          <h1 className="text-2xl md:text-3xl font-bold">Sales Agents</h1>
+          <p className="text-sm md:text-base text-muted-foreground">Manage your sales team and their performance</p>
         </div>
         <div className="hidden md:flex gap-2">
           {canAllocateFromMain(user?.role) && (
@@ -812,17 +804,13 @@ export default function SalesAgentsPage() {
               <DialogTrigger asChild>
                 <Button>
                   <Plus className="h-4 w-4 mr-2" />
-                  {user?.role === 'sales_admin' || user?.role === 'sales_head'
-                    ? 'Add Key Account User'
-                    : 'Add Sales Agent'}
+                  Add Sales Agent
                 </Button>
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
                   <DialogTitle>
-                    {user?.role === 'sales_admin' || user?.role === 'sales_head'
-                      ? 'Add New Key Account User'
-                      : 'Add New Sales Agent'}
+                    Add New Sales Agent
                   </DialogTitle>
                 </DialogHeader>
                 <div className="space-y-4 py-4">

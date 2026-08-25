@@ -37,7 +37,7 @@ import PaymentSettingsPage from "@/features/finance/PaymentSettingsPage";
 import SystemAdminPage from "@/features/system-admin/SystemAdminPage";
 import ManagementPortal from "@/features/system-admin/ManagementPortal";
 import { WarRoomPage } from "@/features/war-room";
-import { KeyAccountsDashboardWrapper, ClientHierarchyPage, ClientAssignmentPage, KeyAccountTeamPage, KeyAccountPurchaseOrderPage, KeyAccountPurchaseOrdersPage, KeyAccountAnalyticsPage, KeyAccountClientAnalyticsPage, KeyAccountRebatesPage, KeyAccountCreateRebatePage, KeyAccountPaymentSettingsPage, KeyAccountPaymentTermsPage } from "@/features/key-accounts";
+import { KeyAccountsDashboardWrapper, ClientHierarchyPage, ClientAssignmentPage, KeyAccountTeamPage, KeyAccountUserManagementPage, KeyAccountPurchaseOrderPage, KeyAccountPurchaseOrdersPage, KeyAccountAnalyticsPage, KeyAccountClientAnalyticsPage, KeyAccountRebatesPage, KeyAccountCreateRebatePage, KeyAccountPaymentSettingsPage, KeyAccountPaymentTermsPage } from "@/features/key-accounts";
 import NotFound from "@/features/shared/NotFound";
 import { AgentRemittanceReminder } from "@/features/shared/components/AgentRemittanceReminder";
 import { SupportWidget } from "@/components/SupportWidget";
@@ -84,6 +84,14 @@ const App = () => (
                     <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
                     <Route path="/member-management" element={<ProtectedRoute><SalesAgentsPage /></ProtectedRoute>} />
                     <Route path="/sales-agents" element={<ProtectedRoute><SalesAgentsOnlyPage /></ProtectedRoute>} />
+                    <Route
+                      path="/key-accounts/users"
+                      element={
+                        <ProtectedRoute allowedRoles={['sales_head', 'sales_admin']}>
+                          <KeyAccountUserManagementPage />
+                        </ProtectedRoute>
+                      }
+                    />
                     <Route path="/team-management" element={<ProtectedRoute><TeamManagementPage /></ProtectedRoute>} />
                     <Route
                       path="/hub-management"

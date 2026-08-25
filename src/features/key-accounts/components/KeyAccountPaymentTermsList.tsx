@@ -23,12 +23,17 @@ import {
 } from '@/components/ui/dialog';
 import { Loader2, Pencil, Plus, Trash2, AlertCircle, Search } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth/hooks';
 import {
   useKeyAccountPaymentTermOptions,
   type KeyAccountPaymentTermOptionRow,
 } from '@/features/key-accounts/hooks/useKeyAccountPaymentTermOptions';
+import { useAppDispatch } from '@/store/store';
+import {
+  createKAPaymentTermOption,
+  deleteKAPaymentTermOption,
+  updateKAPaymentTermOption,
+} from '@/store/slices/key-accounts/payment-terms';
 import {
   DEFAULT_PAGE_SIZE,
   getListPaginationSlice,
@@ -48,6 +53,7 @@ function formatCreatedAt(value: string) {
 
 export function KeyAccountPaymentTermsList() {
   const { user } = useAuth();
+  const dispatch = useAppDispatch();
   const { toast } = useToast();
   const { options, loading, error, refetch } = useKeyAccountPaymentTermOptions(false);
   const canEdit = user?.role === 'sales_head' || user?.role === 'sales_director';
@@ -87,34 +93,19 @@ export function KeyAccountPaymentTermsList() {
 
   const addTerm = async () => {
     const label = newLabel.trim();
-    if (!label || !user?.company_id || !user?.id || !canEdit) return;
+    if (!label || !user?.company_id || !canEdit) return;
 
     setAdding(true);
     try {
-      const nextSort =
-        options.length === 0 ? 0 : Math.max(...options.map((o) => o.sort_order)) + 1;
-
-      const { error: insertError } = await supabase
-        .from('key_account_payment_term_options')
-        .insert({
-          company_id: user.company_id,
-          label,
-          is_active: true,
-          sort_order: nextSort,
-          created_by: user.id,
-        });
-
-      if (insertError) throw insertError;
+      await dispatch(createKAPaymentTermOption(label)).unwrap();
 
       setNewLabel('');
       setAddOpen(false);
       toast({ title: 'Payment term added' });
       await refetch();
-    } catch (err: any) {
+    } catch (err: unknown) {
       const message =
-        err?.code === '23505'
-          ? 'That payment term already exists for this company.'
-          : err?.message || 'Failed to add payment term';
+        err instanceof Error ? err.message : 'Failed to add payment term';
       toast({ variant: 'destructive', title: 'Error', description: message });
     } finally {
       setAdding(false);
@@ -133,22 +124,17 @@ export function KeyAccountPaymentTermsList() {
 
     setSavingId(editing.id);
     try {
-      const { error: updateError } = await supabase
-        .from('key_account_payment_term_options')
-        .update({ label })
-        .eq('id', editing.id);
-
-      if (updateError) throw updateError;
+      await dispatch(
+        updateKAPaymentTermOption({ id: editing.id, label })
+      ).unwrap();
 
       setEditOpen(false);
       setEditing(null);
       toast({ title: 'Payment term updated' });
       await refetch();
-    } catch (err: any) {
+    } catch (err: unknown) {
       const message =
-        err?.code === '23505'
-          ? 'That payment term already exists for this company.'
-          : err?.message || 'Failed to update payment term';
+        err instanceof Error ? err.message : 'Failed to update payment term';
       toast({ variant: 'destructive', title: 'Error', description: message });
     } finally {
       setSavingId(null);
@@ -159,18 +145,15 @@ export function KeyAccountPaymentTermsList() {
     if (!canEdit) return;
     setSavingId(option.id);
     try {
-      const { error: updateError } = await supabase
-        .from('key_account_payment_term_options')
-        .update({ is_active: !option.is_active })
-        .eq('id', option.id);
-
-      if (updateError) throw updateError;
+      await dispatch(
+        updateKAPaymentTermOption({ id: option.id, is_active: !option.is_active })
+      ).unwrap();
       await refetch();
-    } catch (err: any) {
+    } catch (err: unknown) {
       toast({
         variant: 'destructive',
         title: 'Error',
-        description: err?.message || 'Failed to update status',
+        description: err instanceof Error ? err.message : 'Failed to update status',
       });
     } finally {
       setSavingId(null);
@@ -183,19 +166,14 @@ export function KeyAccountPaymentTermsList() {
 
     setSavingId(option.id);
     try {
-      const { error: deleteError } = await supabase
-        .from('key_account_payment_term_options')
-        .delete()
-        .eq('id', option.id);
-
-      if (deleteError) throw deleteError;
+      await dispatch(deleteKAPaymentTermOption(option.id)).unwrap();
       toast({ title: 'Payment term deleted' });
       await refetch();
-    } catch (err: any) {
+    } catch (err: unknown) {
       toast({
         variant: 'destructive',
         title: 'Error',
-        description: err?.message || 'Failed to delete payment term',
+        description: err instanceof Error ? err.message : 'Failed to delete payment term',
       });
     } finally {
       setSavingId(null);

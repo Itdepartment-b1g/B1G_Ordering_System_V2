@@ -1,11 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '@/lib/supabase';
+import { useCallback, useEffect } from 'react';
 import { useAuth } from '@/features/auth/hooks';
-import type { KeyAccountPaymentTermOption } from '@/types/database.types';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import {
+  fetchKAPaymentTermOptions,
+  type KAPaymentTermOptionRow,
+} from '@/store/slices/key-accounts/payment-terms';
 
-export type KeyAccountPaymentTermOptionRow = KeyAccountPaymentTermOption & {
-  created_by_name: string | null;
-};
+export type KeyAccountPaymentTermOptionRow = KAPaymentTermOptionRow;
 
 interface UseKeyAccountPaymentTermOptionsReturn {
   options: KeyAccountPaymentTermOptionRow[];
@@ -18,78 +19,30 @@ export function useKeyAccountPaymentTermOptions(
   activeOnly = false
 ): UseKeyAccountPaymentTermOptionsReturn {
   const { user } = useAuth();
-  const [options, setOptions] = useState<KeyAccountPaymentTermOptionRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const dispatch = useAppDispatch();
+  const { options, activeOnlyFilter, status, error } = useAppSelector(
+    (state) => state.kaPaymentTerms
+  );
 
-  const fetchOptions = useCallback(async () => {
-    if (!user?.company_id) {
-      setOptions([]);
-      setLoading(false);
-      return;
-    }
-
-    try {
-      setLoading(true);
-      setError(null);
-
-      let query = supabase
-        .from('key_account_payment_term_options')
-        .select('*')
-        .eq('company_id', user.company_id)
-        .order('sort_order', { ascending: true })
-        .order('label', { ascending: true });
-
-      if (activeOnly) {
-        query = query.eq('is_active', true);
-      }
-
-      const { data, error: fetchError } = await query;
-      if (fetchError) throw fetchError;
-
-      const rows = (data as KeyAccountPaymentTermOption[]) || [];
-      const creatorIds = [
-        ...new Set(rows.map((r) => r.created_by).filter((id): id is string => Boolean(id))),
-      ];
-
-      const nameById = new Map<string, string>();
-      if (creatorIds.length > 0) {
-        const { data: profiles } = await supabase
-          .from('profiles')
-          .select('id, full_name, email')
-          .in('id', creatorIds);
-
-        for (const profile of profiles || []) {
-          nameById.set(
-            profile.id,
-            profile.full_name?.trim() || profile.email || '—'
-          );
-        }
-      }
-
-      setOptions(
-        rows.map((row) => ({
-          ...row,
-          created_by_name: row.created_by ? nameById.get(row.created_by) ?? null : null,
-        }))
-      );
-    } catch (err) {
-      console.error('Error fetching key account payment term options:', err);
-      setError(err instanceof Error ? err.message : 'Failed to fetch payment terms');
-      setOptions([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [user?.company_id, activeOnly]);
+  const refetch = useCallback(async () => {
+    if (!user?.company_id) return;
+    await dispatch(fetchKAPaymentTermOptions(activeOnly)).unwrap();
+  }, [activeOnly, dispatch, user?.company_id]);
 
   useEffect(() => {
-    fetchOptions();
-  }, [fetchOptions]);
+    if (!user?.company_id) return;
+    void dispatch(fetchKAPaymentTermOptions(activeOnly));
+  }, [activeOnly, dispatch, user?.company_id]);
+
+  const loading =
+    status === 'loading' ||
+    (status === 'idle' && !!user?.company_id) ||
+    (status === 'succeeded' && activeOnlyFilter !== activeOnly);
 
   return {
-    options,
+    options: activeOnlyFilter === activeOnly ? options : [],
     loading,
     error,
-    refetch: fetchOptions,
+    refetch,
   };
 }
