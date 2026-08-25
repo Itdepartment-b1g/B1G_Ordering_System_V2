@@ -681,8 +681,19 @@ export async function updateKAPurchaseOrder(
   const { data: currentPo, error: currentErr } = await sb
     .from('purchase_orders')
     .select(
-      'id, status, workflow_status, kam_id, created_by, po_order_kind, key_account_payment_status, company_id, ' +
-        'key_account_notification_option, key_account_notification_date, key_account_notification_sent_at'
+      `
+      id,
+      status,
+      workflow_status,
+      kam_id,
+      created_by,
+      po_order_kind,
+      key_account_payment_status,
+      company_id,
+      key_account_notification_option,
+      key_account_notification_date,
+      key_account_notification_sent_at
+    `
     )
     .eq('id', poId)
     .maybeSingle();
