@@ -905,7 +905,8 @@ export function KeyAccountPurchaseOrderPage() {
           ? selectedCompanyPaymentTerm.trim()
           : selectedClientPaymentTerm.trim();
 
-    if (notificationOption === 'custom') {
+    const notifyEnabled = !isConsignment && paymentMode === 'split';
+    if (notifyEnabled && notificationOption === 'custom') {
       if (!notificationCustomDate) {
         toast({
           variant: 'destructive',
@@ -1104,8 +1105,9 @@ export function KeyAccountPurchaseOrderPage() {
           : null,
         key_account_payment_terms_created_by: paymentTermsCreatedBy,
         key_account_payment_mode: isConsignment ? 'full' : paymentMode,
-      key_account_notification_option: notificationOption,
-      key_account_notification_date: notificationOption === 'custom' ? notificationCustomDate : null,
+        key_account_notification_option: notifyEnabled ? notificationOption : 'none',
+        key_account_notification_date:
+          notifyEnabled && notificationOption === 'custom' ? notificationCustomDate : null,
       };
 
       const orderItems = items.map((item) => ({
@@ -2054,6 +2056,156 @@ export function KeyAccountPurchaseOrderPage() {
                 </p>
               ) : null}
 
+              {!isConsignment ? (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Payment mode *</Label>
+                      <Select
+                        value={paymentMode}
+                        onValueChange={(v) => {
+                          const next = v as KeyAccountPoPaymentMode;
+                          setPaymentMode(next);
+                          if (next !== 'split') {
+                            setNotificationOption('none');
+                            setNotificationCustomDate('');
+                          }
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="full">Full (pay order total now)</SelectItem>
+                          <SelectItem value="split">Split (first installment now)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Payment method *</Label>
+                      {availablePaymentMethods.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">
+                          No payment methods are enabled. Ask your Sales Head to configure them under
+                          Key Account payment settings.
+                        </p>
+                      ) : (
+                        <Select
+                          value={paymentMethod}
+                          onValueChange={(v) => setPaymentMethod(v as KeyAccountPaymentMethod)}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {availablePaymentMethods.map((method) => (
+                              <SelectItem key={method} value={method}>
+                                {KEY_ACCOUNT_PAYMENT_METHOD_LABELS[method]}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
+                  </div>
+
+                  {paymentMethod === 'BANK_TRANSFER' && enabledBankAccounts.length > 0 && (
+                    <div className="space-y-2">
+                      <Label>Bank *</Label>
+                      <Select value={bankType} onValueChange={setBankType}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select bank account" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {enabledBankAccounts.map((bank) => (
+                            <SelectItem key={bank.name} value={bank.name}>
+                              {bank.name} · {bank.account_number}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+
+                  {paymentMode === 'split' && (
+                    <div className="space-y-2">
+                      <Label>First payment amount (₱) *</Label>
+                      <Input
+                        type="number"
+                        min={0.01}
+                        step="0.01"
+                        value={splitFirstAmount}
+                        onChange={(e) => setSplitFirstAmount(e.target.value)}
+                        placeholder="Less than order total"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Order total after tax/discount: <span className="font-medium">₱{total.toFixed(2)}</span>. You can
+                        record the balance later when the PO is warehouse reserved, fulfilled, or delivered.
+                      </p>
+                    </div>
+                  )}
+
+                  {paymentMode === 'split' && (
+                    <div className="space-y-2">
+                      <Label>Select a notification option</Label>
+                      <Select
+                        value={notificationOption}
+                        onValueChange={(v) => setNotificationOption(v as NotificationOption)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Don't notify</SelectItem>
+                          <SelectItem value="net_15">Net 15</SelectItem>
+                          <SelectItem value="net_30">Net 30</SelectItem>
+                          <SelectItem value="net_60">Net 60</SelectItem>
+                          <SelectItem value="days_before_3">3 days before due</SelectItem>
+                          <SelectItem value="days_before_1">1 day before due</SelectItem>
+                          <SelectItem value="custom">Custom date</SelectItem>
+                        </SelectContent>
+                      </Select>
+
+                      {notificationOption === 'custom' ? (
+                        <div className="space-y-2">
+                          <Input
+                            type="date"
+                            value={notificationCustomDate}
+                            min={todayManilaISO}
+                            onChange={(e) => setNotificationCustomDate(e.target.value)}
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            {notificationDatePreviewLabel
+                              ? `KAM will be emailed on ${notificationDatePreviewLabel}.`
+                              : 'Pick a date.'}
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          {notificationDatePreview
+                            ? `KAM will be emailed on ${notificationDatePreviewLabel}.`
+                            : '—'}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {paymentMode === 'full' && (
+                    <p className="text-sm text-muted-foreground">
+                      First payment will be the full order total: <span className="font-medium">₱{total.toFixed(2)}</span>.
+                    </p>
+                  )}
+
+                  {(!isEditMode || !editHasPayments) && (
+                    <KeyAccountPaymentProofUploadField
+                      file={paymentProofFile}
+                      onFileChange={setPaymentProofFile}
+                      inputId="create-po-payment-proof"
+                      label={requiresPaymentProof ? 'Payment proof *' : 'Payment proof (optional)'}
+                    />
+                  )}
+                </div>
+              ) : null}
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Payment terms{isConsignment ? ' (optional)' : ' *'}</Label>
@@ -2168,143 +2320,7 @@ export function KeyAccountPurchaseOrderPage() {
                     </div>
                   )}
                 </div>
-
-                {/* Notify KAM */}
-                <div className="space-y-2">
-                  <Label>Notify KAM</Label>
-                  <Select value={notificationOption} onValueChange={(v) => setNotificationOption(v as NotificationOption)}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Don't notify</SelectItem>
-                      <SelectItem value="net_15">Net 15</SelectItem>
-                      <SelectItem value="net_30">Net 30</SelectItem>
-                      <SelectItem value="net_60">Net 60</SelectItem>
-                      <SelectItem value="days_before_3">3 days before due</SelectItem>
-                      <SelectItem value="days_before_1">1 day before due</SelectItem>
-                      <SelectItem value="custom">Custom date</SelectItem>
-                    </SelectContent>
-                  </Select>
-
-                  {notificationOption === 'custom' ? (
-                    <div className="space-y-2">
-                      <Input
-                        type="date"
-                        value={notificationCustomDate}
-                        min={todayManilaISO}
-                        onChange={(e) => setNotificationCustomDate(e.target.value)}
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        {notificationDatePreviewLabel
-                          ? `KAM will be emailed on ${notificationDatePreviewLabel}.`
-                          : 'Pick a date.'}
-                      </p>
-                    </div>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">
-                      {notificationDatePreview
-                        ? `KAM will be emailed on ${notificationDatePreviewLabel}.`
-                        : '—'}
-                    </p>
-                  )}
-                </div>
               </div>
-
-              {!isConsignment ? (
-                <>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Payment mode *</Label>
-                      <Select value={paymentMode} onValueChange={(v) => setPaymentMode(v as KeyAccountPoPaymentMode)}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="full">Full (pay order total now)</SelectItem>
-                          <SelectItem value="split">Split (first installment now)</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Payment method *</Label>
-                      {availablePaymentMethods.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">
-                          No payment methods are enabled. Ask your Sales Head to configure them under
-                          Key Account payment settings.
-                        </p>
-                      ) : (
-                        <Select
-                          value={paymentMethod}
-                          onValueChange={(v) => setPaymentMethod(v as KeyAccountPaymentMethod)}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {availablePaymentMethods.map((method) => (
-                              <SelectItem key={method} value={method}>
-                                {KEY_ACCOUNT_PAYMENT_METHOD_LABELS[method]}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      )}
-                    </div>
-                  </div>
-
-                  {paymentMethod === 'BANK_TRANSFER' && enabledBankAccounts.length > 0 && (
-                    <div className="space-y-2">
-                      <Label>Bank *</Label>
-                      <Select value={bankType} onValueChange={setBankType}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select bank account" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {enabledBankAccounts.map((bank) => (
-                            <SelectItem key={bank.name} value={bank.name}>
-                              {bank.name} · {bank.account_number}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
-
-                  {paymentMode === 'split' && (
-                    <div className="space-y-2">
-                      <Label>First payment amount (₱) *</Label>
-                      <Input
-                        type="number"
-                        min={0.01}
-                        step="0.01"
-                        value={splitFirstAmount}
-                        onChange={(e) => setSplitFirstAmount(e.target.value)}
-                        placeholder="Less than order total"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Order total after tax/discount: <span className="font-medium">₱{total.toFixed(2)}</span>. You can
-                        record the balance later when the PO is warehouse reserved, fulfilled, or delivered.
-                      </p>
-                    </div>
-                  )}
-
-                  {paymentMode === 'full' && (
-                    <p className="text-sm text-muted-foreground">
-                      First payment will be the full order total: <span className="font-medium">₱{total.toFixed(2)}</span>.
-                    </p>
-                  )}
-
-                  {(!isEditMode || !editHasPayments) && (
-                    <KeyAccountPaymentProofUploadField
-                      file={paymentProofFile}
-                      onFileChange={setPaymentProofFile}
-                      inputId="create-po-payment-proof"
-                      label={requiresPaymentProof ? 'Payment proof *' : 'Payment proof (optional)'}
-                    />
-                  )}
-                </>
-              ) : null}
 
               {isEditMode && editPaymentProofs.length > 0 ? (
                 <div className="space-y-3 pt-2">
@@ -2541,29 +2557,33 @@ export function KeyAccountPurchaseOrderPage() {
                 <span className="text-muted-foreground">Order type:</span>{' '}
                 {isConsignment ? 'Consignment (payment deferred)' : 'Standard'}
               </p>
+              {!isConsignment ? (
+                <p>
+                  <span className="text-muted-foreground">Payment mode:</span>{' '}
+                  {paymentMode === 'full' ? 'Full payment' : 'Split payment'}
+                </p>
+              ) : null}
               <p>
                 <span className="text-muted-foreground">Payment terms:</span> {resolvedPaymentTerms || '—'}
               </p>
-              <p>
-                <span className="text-muted-foreground">Notify KAM:</span>{' '}
-                {notificationOption === 'none' ? (
-                  '—'
-                ) : notificationDatePreview ? (
-                  `${notificationDatePreviewLabel} (${notificationOptionLabel})`
-                ) : (
-                  '—'
-                )}
-              </p>
+              {!isConsignment && paymentMode === 'split' ? (
+                <p>
+                  <span className="text-muted-foreground">Notify KAM:</span>{' '}
+                  {notificationOption === 'none' ? (
+                    '—'
+                  ) : notificationDatePreview ? (
+                    `${notificationDatePreviewLabel} (${notificationOptionLabel})`
+                  ) : (
+                    '—'
+                  )}
+                </p>
+              ) : null}
               {isConsignment ? (
                 <p className="text-muted-foreground">
                   No payment proof required at create. Record payment later on the PO.
                 </p>
               ) : (
                 <>
-                  <p>
-                    <span className="text-muted-foreground">Payment mode:</span>{' '}
-                    {paymentMode === 'full' ? 'Full payment' : 'Split payment'}
-                  </p>
                   <p>
                     <span className="text-muted-foreground">Method:</span> {paymentMethodLabel}
                   </p>
