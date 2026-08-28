@@ -199,7 +199,10 @@ export function KeyAccountPurchaseOrderPage() {
   const loadingExistingPo =
     isEditMode && (existingPoStatus === 'loading' || existingPoStatus === 'idle');
   const stockLoading = stockStatus === 'loading';
-  const submitting = createStatus === 'loading' || updateStatus === 'loading';
+  const [localSubmitting, setLocalSubmitting] = useState(false);
+  const submitInFlightRef = useRef(false);
+  const submitting =
+    localSubmitting || createStatus === 'loading' || updateStatus === 'loading';
 
   const { toast } = useToast();
   const { settings: paymentSettings, loading: loadingPaymentSettings } = useKeyAccountPaymentSettings();
@@ -989,6 +992,12 @@ export function KeyAccountPurchaseOrderPage() {
   }
 
   async function handleSubmit() {
+    // Sync lock so a double-click cannot start a second create before React re-renders.
+    if (submitInFlightRef.current) return;
+    submitInFlightRef.current = true;
+    setLocalSubmitting(true);
+
+    try {
     const finalResolvedPaymentTerms =
       paymentTermsSource === 'company'
           ? selectedCompanyPaymentTerm.trim()
@@ -1399,6 +1408,10 @@ export function KeyAccountPurchaseOrderPage() {
         title: isEditMode ? 'Error updating order' : 'Error creating order',
         description: error.message,
       });
+    }
+    } finally {
+      submitInFlightRef.current = false;
+      setLocalSubmitting(false);
     }
   }
 

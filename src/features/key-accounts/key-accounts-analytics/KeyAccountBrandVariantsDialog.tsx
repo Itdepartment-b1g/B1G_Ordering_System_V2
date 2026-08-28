@@ -23,17 +23,31 @@ import type {
   KeyAccountProductAnalyticsRow,
 } from './keyAccountAnalyticsShared';
 
+export type BrandCollectionsSummary = {
+  billed: number;
+  paid: number;
+  discount: number;
+  remaining: number;
+  status?: 'unpaid' | 'partial' | 'paid';
+};
+
+function formatMoney(value: number) {
+  return `₱${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 export function KeyAccountBrandVariantsDialog({
   open,
   onOpenChange,
   brandRow,
   dateRangeLabel,
+  brandCollections,
   onSelectVariant,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   brandRow: KeyAccountBrandAnalyticsRow | null;
   dateRangeLabel: string;
+  brandCollections?: BrandCollectionsSummary | null;
   onSelectVariant: (variant: KeyAccountProductAnalyticsRow) => void;
 }) {
   const [search, setSearch] = useState('');
@@ -93,6 +107,33 @@ export function KeyAccountBrandVariantsDialog({
               <div>
                 <p className="text-muted-foreground text-xs">Clients</p>
                 <p className="font-semibold">{brandRow.clientCount}</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 rounded-md border bg-muted/30 px-3 py-3">
+              <div>
+                <p className="text-muted-foreground text-xs">Billed</p>
+                <p className="font-semibold tabular-nums">
+                  {formatMoney(brandCollections?.billed || 0)}
+                </p>
+              </div>
+              <div>
+                <p className="text-muted-foreground text-xs">Collected</p>
+                <p className="font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+                  {formatMoney(brandCollections?.paid || 0)}
+                </p>
+              </div>
+              <div>
+                <p className="text-muted-foreground text-xs">Discount</p>
+                <p className="font-semibold tabular-nums">
+                  {formatMoney(brandCollections?.discount || 0)}
+                </p>
+              </div>
+              <div>
+                <p className="text-muted-foreground text-xs">Remaining</p>
+                <p className="font-semibold tabular-nums">
+                  {formatMoney(brandCollections?.remaining || 0)}
+                </p>
               </div>
             </div>
 

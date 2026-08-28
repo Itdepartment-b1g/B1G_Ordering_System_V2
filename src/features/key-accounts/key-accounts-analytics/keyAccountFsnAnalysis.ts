@@ -1,5 +1,4 @@
 import { format, subDays } from 'date-fns';
-import { supabase } from '@/lib/supabase';
 import type { Brand, Variant } from '@/features/inventory/InventoryContext';
 import {
   buildFsnVariantRows,
@@ -85,96 +84,37 @@ export function computeKeyAccountFsnFromDelivered({
   return buildFsnVariantRows(catalogBrands, movementByVariant);
 }
 
-export async function fetchLinkedWarehouseLocations(): Promise<{
-  hubCompanyId: string | null;
-  locations: LinkedWarehouseLocation[];
-}> {
-  const { data: hubCompanyId, error: hubErr } = await supabase.rpc('get_linked_warehouse_company_id', {});
-  if (hubErr) throw hubErr;
-  const hubId = (hubCompanyId as string | null) ?? null;
-  if (!hubId) return { hubCompanyId: null, locations: [] };
-
-  const { data: locations, error: locErr } = await supabase.rpc('get_linked_warehouse_locations', {});
-  if (locErr) throw locErr;
-
-  const rows = ((locations as { id: string; name: string; is_main: boolean }[]) || []).map((loc) => ({
-    id: loc.id,
-    name: loc.name,
-    is_main: !!loc.is_main,
-  }));
-
-  return { hubCompanyId: hubId, locations: rows };
-}
-
-/** Matches Key Account create PO: main = available (stock − allocated), sub = location stock. */
-async function fetchStockByVariantForLocation(
-  hubCompanyId: string,
-  locationId: string,
-  isMain: boolean,
-  variantIds: string[]
-): Promise<Map<string, number>> {
-  const stockByVariant = new Map<string, number>();
-  if (variantIds.length === 0) return stockByVariant;
-
-  if (isMain) {
-    const { data, error } = await supabase
-      .from('main_inventory')
-      .select('variant_id, stock, allocated_stock')
-      .eq('company_id', hubCompanyId)
-      .in('variant_id', variantIds);
-    if (error) throw error;
-    for (const row of data ?? []) {
-      const stock = Number(row.stock) || 0;
-      const allocated = Number(row.allocated_stock) || 0;
-      stockByVariant.set(row.variant_id, Math.max(0, stock - allocated));
-    }
-    return stockByVariant;
-  }
-
-  const { data, error } = await supabase
-    .from('warehouse_location_inventory')
-    .select('variant_id, stock')
-    .eq('company_id', hubCompanyId)
-    .eq('location_id', locationId)
-    .in('variant_id', variantIds);
-  if (error) throw error;
-  for (const row of data ?? []) {
-    stockByVariant.set(row.variant_id, Number(row.stock) || 0);
-  }
-  return stockByVariant;
-}
-
-function mapBrandsFromCatalogData(
-  brandsData: unknown[],
-  stockByVariant: Map<string, number>
+export function brandsFromFsnCatalog(
+  rows: Array<{
+    id: string;
+    name: string;
+    allVariants: Array<{
+      id: string;
+      name: string;
+      variantType: string;
+      stock: number;
+      allocatedStock: number;
+      price: number;
+      status: 'in-stock' | 'out-of-stock';
+    }>;
+  }>
 ): Brand[] {
-  return (brandsData || [])
-    .map((brand: any) => {
-      const allVariants: Variant[] = (brand.variants || [])
-        .filter((v: any) => v.is_active !== false)
-        .sort(
-          (a: any, b: any) =>
-            new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
-        )
-        .map((v: any) => {
-          const stock = stockByVariant.get(v.id) ?? 0;
-          return {
-            id: v.id,
-            name: v.name,
-            variantType: v.variant_type,
-            stock,
-            allocatedStock: 0,
-            price: 0,
-            status: stock === 0 ? ('out-of-stock' as const) : ('in-stock' as const),
-          } satisfies Variant;
-        });
-
+  return rows
+    .map((brand) => {
+      const allVariants: Variant[] = brand.allVariants.map((variant) => ({
+        id: variant.id,
+        name: variant.name,
+        variantType: variant.variantType,
+        stock: variant.stock,
+        allocatedStock: variant.allocatedStock,
+        price: variant.price,
+        status: variant.status,
+      }));
       const variantsByType = new Map<string, Variant[]>();
       for (const variant of allVariants) {
         if (!variantsByType.has(variant.variantType)) variantsByType.set(variant.variantType, []);
         variantsByType.get(variant.variantType)!.push(variant);
       }
-
       return {
         id: brand.id,
         name: brand.name,
@@ -188,43 +128,3 @@ function mapBrandsFromCatalogData(
     .filter((b) => b.allVariants.length > 0);
 }
 
-export async function fetchHubCatalogBrandsWithStock(
-  hubCompanyId: string,
-  locationId: string,
-  isMain: boolean
-): Promise<Brand[]> {
-  const { data: brandsData, error } = await supabase
-    .from('brands')
-    .select(
-      `
-      id,
-      name,
-      is_active,
-      variants (
-        id,
-        name,
-        variant_type,
-        created_at,
-        is_active
-      )
-    `
-    )
-    .eq('company_id', hubCompanyId)
-    .or('is_active.eq.true,is_active.is.null')
-    .order('name');
-
-  if (error) throw error;
-
-  const variantIds = (brandsData || []).flatMap((b: any) =>
-    (b.variants || []).filter((v: any) => v.is_active !== false).map((v: any) => v.id as string)
-  );
-
-  const stockByVariant = await fetchStockByVariantForLocation(
-    hubCompanyId,
-    locationId,
-    isMain,
-    variantIds
-  );
-
-  return mapBrandsFromCatalogData(brandsData || [], stockByVariant);
-}

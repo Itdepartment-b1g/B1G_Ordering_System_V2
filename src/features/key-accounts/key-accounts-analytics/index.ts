@@ -3,6 +3,5 @@ export { default as KeyAccountClientAnalyticsPage } from './KeyAccountClientAnal
 export { default as KeyAccountKamAnalyticsTab } from './KeyAccountKamAnalyticsTab';
 export { default as KeyAccountClientAnalyticsTab } from './KeyAccountClientAnalyticsTab';
 export { default as KeyAccountCityAnalyticsTab } from './KeyAccountCityAnalyticsTab';
-export { default as KeyAccountComboAnalyticsTab } from './KeyAccountComboAnalyticsTab';
 export { default as KeyAccountFsnAnalyticsTab } from './KeyAccountFsnAnalyticsTab';
 

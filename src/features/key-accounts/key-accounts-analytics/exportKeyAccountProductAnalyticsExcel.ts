@@ -4,15 +4,16 @@ import { formatExportGeneratedAt } from '@/lib/excel.helpers';
 
 export interface KeyAccountProductAnalyticsExportRow {
   brand: string;
-  variant: string;
   totalUnits: number;
   consignmentUnits: number;
   consignmentPoCount: number;
   poCount: number;
   clientCount: number;
-  grossRevenue: number;
-  rebatedRevenue: number;
-  revenue: number;
+  billed: number;
+  paidCash: number;
+  paidDiscount: number;
+  paidRemaining: number;
+  status: string;
 }
 
 export interface KeyAccountProductAnalyticsExportMeta {
@@ -57,11 +58,10 @@ export async function exportKeyAccountProductAnalyticsExcel(
   meta: KeyAccountProductAnalyticsExportMeta
 ) {
   const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet('Key Account Products');
+  const worksheet = workbook.addWorksheet('Key Account Brands');
 
   worksheet.columns = [
     { width: 22 },
-    { width: 28 },
     { width: 14 },
     { width: 18 },
     { width: 16 },
@@ -70,18 +70,20 @@ export async function exportKeyAccountProductAnalyticsExcel(
     { width: 16 },
     { width: 16 },
     { width: 16 },
+    { width: 16 },
+    { width: 12 },
   ];
 
   const titleRow = worksheet.getRow(1);
-  worksheet.mergeCells('A1:J1');
-  titleRow.getCell(1).value = 'Key Account Product Analytics Export';
+  worksheet.mergeCells('A1:K1');
+  titleRow.getCell(1).value = 'Key Account Brand Analytics Export';
   titleRow.getCell(1).font = { bold: true, size: 14 };
   titleRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
 
   let cursor = 3;
   cursor = addMetaRow(worksheet, cursor, 'Generated at', formatExportGeneratedAt());
   cursor = addMetaRow(worksheet, cursor, 'Export', 'Filtered (date range)');
-  cursor = addMetaRow(worksheet, cursor, 'Section', 'Product Performance');
+  cursor = addMetaRow(worksheet, cursor, 'Section', 'Brand collections');
   cursor = addMetaRow(worksheet, cursor, 'Date range', meta.dateRangeLabel);
   cursor = addMetaRow(
     worksheet,
@@ -98,21 +100,16 @@ export async function exportKeyAccountProductAnalyticsExcel(
   cursor = addMetaRow(
     worksheet,
     cursor,
-    'Rebated',
-    'Money/credit rebates on source PO lines. Change-item rebates swap the disputed SKU for the replacement SKU.'
+    'Collections',
+    'Billed / paid / discount / remaining from brand payment allocations: standard by order date; consignment cash by payment date.'
   );
-  cursor = addMetaRow(
-    worksheet,
-    cursor,
-    'Net revenue',
-    'Gross line revenue minus rebated credits (product demand; payment is PO-level)'
-  );
-  cursor = addMetaRow(worksheet, cursor, 'Products exported', rows.length);
+  cursor = addMetaRow(worksheet, cursor, 'Brands exported', rows.length);
   cursor += 1;
 
-  const grossRevenue = rows.reduce((sum, r) => sum + r.grossRevenue, 0);
-  const rebatedRevenue = rows.reduce((sum, r) => sum + r.rebatedRevenue, 0);
-  const totalRevenue = rows.reduce((sum, r) => sum + r.revenue, 0);
+  const billed = rows.reduce((sum, r) => sum + r.billed, 0);
+  const paidCash = rows.reduce((sum, r) => sum + r.paidCash, 0);
+  const paidDiscount = rows.reduce((sum, r) => sum + r.paidDiscount, 0);
+  const paidRemaining = rows.reduce((sum, r) => sum + r.paidRemaining, 0);
 
   const summaryTitle = worksheet.getRow(cursor);
   worksheet.mergeCells(`A${cursor}:B${cursor}`);
@@ -120,22 +117,24 @@ export async function exportKeyAccountProductAnalyticsExcel(
   summaryTitle.getCell(1).font = { bold: true, size: 12 };
   cursor += 1;
 
-  cursor = addMetaRow(worksheet, cursor, 'Gross revenue', formatPeso(grossRevenue));
-  cursor = addMetaRow(worksheet, cursor, 'Rebated (credit)', formatPeso(rebatedRevenue));
-  cursor = addMetaRow(worksheet, cursor, 'Net revenue', formatPeso(totalRevenue));
+  cursor = addMetaRow(worksheet, cursor, 'Billed', formatPeso(billed));
+  cursor = addMetaRow(worksheet, cursor, 'Paid (allocated)', formatPeso(paidCash));
+  cursor = addMetaRow(worksheet, cursor, 'Settlement discount', formatPeso(paidDiscount));
+  cursor = addMetaRow(worksheet, cursor, 'Remaining', formatPeso(paidRemaining));
   cursor += 1;
 
   const tableHeaders = [
     'Brand',
-    'Product',
     'Total Units',
     'Consignment Units',
     'Consignment POs',
     'POs',
     'Clients',
-    'Gross Revenue',
-    'Rebated',
-    'Net Revenue',
+    'Billed',
+    'Paid',
+    'Discount',
+    'Remaining',
+    'Status',
   ];
 
   const headerRow = worksheet.getRow(cursor);
@@ -145,36 +144,38 @@ export async function exportKeyAccountProductAnalyticsExcel(
   styleHeaderRow(headerRow);
   cursor += 1;
 
-  rows.forEach((product) => {
+  rows.forEach((brand) => {
     const dataRow = worksheet.getRow(cursor);
-    dataRow.getCell(1).value = product.brand;
-    dataRow.getCell(2).value = product.variant;
-    dataRow.getCell(3).value = product.totalUnits;
-    dataRow.getCell(4).value = product.consignmentUnits;
-    dataRow.getCell(5).value = product.consignmentPoCount;
-    dataRow.getCell(6).value = product.poCount;
-    dataRow.getCell(7).value = product.clientCount;
-    dataRow.getCell(8).value = formatPeso(product.grossRevenue);
-    dataRow.getCell(9).value = formatPeso(product.rebatedRevenue);
-    dataRow.getCell(10).value = formatPeso(product.revenue);
-    [3, 4, 5, 6, 7, 8, 9, 10].forEach((col) => {
+    dataRow.getCell(1).value = brand.brand;
+    dataRow.getCell(2).value = brand.totalUnits;
+    dataRow.getCell(3).value = brand.consignmentUnits;
+    dataRow.getCell(4).value = brand.consignmentPoCount;
+    dataRow.getCell(5).value = brand.poCount;
+    dataRow.getCell(6).value = brand.clientCount;
+    dataRow.getCell(7).value = formatPeso(brand.billed);
+    dataRow.getCell(8).value = formatPeso(brand.paidCash);
+    dataRow.getCell(9).value = formatPeso(brand.paidDiscount);
+    dataRow.getCell(10).value = formatPeso(brand.paidRemaining);
+    dataRow.getCell(11).value = brand.status;
+    [2, 3, 4, 5, 6, 7, 8, 9, 10].forEach((col) => {
       dataRow.getCell(col).alignment = { horizontal: 'right' };
     });
     cursor += 1;
   });
 
   const totalRow = worksheet.getRow(cursor);
-  totalRow.getCell(2).value = 'TOTAL';
-  totalRow.getCell(2).font = { bold: true };
-  totalRow.getCell(3).value = rows.reduce((sum, r) => sum + r.totalUnits, 0);
-  totalRow.getCell(4).value = rows.reduce((sum, r) => sum + r.consignmentUnits, 0);
-  totalRow.getCell(5).value = rows.reduce((sum, r) => sum + r.consignmentPoCount, 0);
-  totalRow.getCell(6).value = rows.reduce((sum, r) => sum + r.poCount, 0);
-  totalRow.getCell(8).value = formatPeso(grossRevenue);
-  totalRow.getCell(9).value = formatPeso(rebatedRevenue);
-  totalRow.getCell(10).value = formatPeso(totalRevenue);
+  totalRow.getCell(1).value = 'TOTAL';
+  totalRow.getCell(1).font = { bold: true };
+  totalRow.getCell(2).value = rows.reduce((sum, r) => sum + r.totalUnits, 0);
+  totalRow.getCell(3).value = rows.reduce((sum, r) => sum + r.consignmentUnits, 0);
+  totalRow.getCell(4).value = rows.reduce((sum, r) => sum + r.consignmentPoCount, 0);
+  totalRow.getCell(5).value = rows.reduce((sum, r) => sum + r.poCount, 0);
+  totalRow.getCell(7).value = formatPeso(billed);
+  totalRow.getCell(8).value = formatPeso(paidCash);
+  totalRow.getCell(9).value = formatPeso(paidDiscount);
+  totalRow.getCell(10).value = formatPeso(paidRemaining);
   totalRow.font = { bold: true };
-  [3, 4, 5, 6, 8, 9, 10].forEach((col) => {
+  [2, 3, 4, 5, 7, 8, 9, 10].forEach((col) => {
     totalRow.getCell(col).alignment = { horizontal: 'right' };
   });
 
@@ -187,7 +188,7 @@ export async function exportKeyAccountProductAnalyticsExcel(
   const date = new Date().toISOString().split('T')[0];
   const anchor = document.createElement('a');
   anchor.href = downloadUrl;
-  anchor.download = `key_account_product_analytics_${slug}_${date}.xlsx`;
+  anchor.download = `key_account_brand_analytics_${slug}_${date}.xlsx`;
   document.body.appendChild(anchor);
   anchor.click();
   document.body.removeChild(anchor);
