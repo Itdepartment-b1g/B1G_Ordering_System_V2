@@ -252,7 +252,6 @@ function buildOrderReceiptHtml(options: OrderReceiptPdfOptions): string {
     font-size: 11px;
   }
   .items-table tbody tr:last-child td { border-bottom: 0; }
-  .items-table tbody tr:nth-child(even) td { background: #fcfdfe; }
   .items-table .col-brand { font-weight: 600; }
   .items-table .col-variant { color: #334155; }
   .items-table .col-qty {
@@ -321,7 +320,6 @@ function buildOrderReceiptHtml(options: OrderReceiptPdfOptions): string {
       width: auto; margin: 0; padding: 0;
       box-shadow: none;
     }
-    .items-table tbody tr:nth-child(even) td { background: #f8fafc !important; }
     * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   }
 </style>
