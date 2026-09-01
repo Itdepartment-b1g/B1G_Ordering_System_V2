@@ -342,8 +342,8 @@ function buildOrderReceiptHtml(options: OrderReceiptPdfOptions): string {
   <div class="page">
     <div class="doc-header">
       <div class="doc-title-block">
-        <h1 class="doc-title">ORDER RECEIPT</h1>
-        <div class="doc-subtitle">Client order confirmation</div>
+        <h1 class="doc-title">SALES ORDER</h1>
+        <div class="doc-subtitle">Client Order Summary</div>
       </div>
       <div class="meta-panel">
         <div class="meta-item">
