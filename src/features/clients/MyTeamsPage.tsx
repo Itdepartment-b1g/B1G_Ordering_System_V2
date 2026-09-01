@@ -766,7 +766,7 @@ export default function MyTeamsPage() {
                 <TableRow>
                   <TableHead className="text-center">Photo</TableHead>
                   <SortableTableHead
-                    label="Trade Name"
+                    label="Client Name"
                     sortKey="tradeName"
                     sortDirection={getTableSortDisplayDirection(clientSortState, 'tradeName')}
                     onSort={handleClientSort}
@@ -1063,7 +1063,7 @@ export default function MyTeamsPage() {
               {/* Basic Info */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <Label className="text-xs text-muted-foreground">Trade Name</Label>
+                  <Label className="text-xs text-muted-foreground">Client Name</Label>
                   <p className="font-medium">{viewingClient.name}</p>
                 </div>
                 <div>
@@ -1163,11 +1163,11 @@ export default function MyTeamsPage() {
           <div className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <Label>Trade Name *</Label>
+                <Label>Client Name *</Label>
                 <Input
                   value={editForm.name}
                   onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                  placeholder="Enter trade name"
+                  placeholder="Enter client name"
                 />
               </div>
               <div>
