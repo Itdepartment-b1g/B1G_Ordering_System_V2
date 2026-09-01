@@ -4607,7 +4607,7 @@ export default function ClientsPage() {
                   <h3 className="text-sm font-semibold text-primary border-b pb-2">Basic Information</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>Trade Name *</Label>
+                      <Label>Client Name *</Label>
                       <Input
                         placeholder="Enter client name"
                         value={editForm.name}
