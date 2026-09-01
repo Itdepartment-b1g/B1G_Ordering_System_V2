@@ -13,10 +13,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Search, CheckCircle, XCircle, Eye, Package, ChevronLeft, ChevronRight, CheckSquare, AlertCircle, Filter, Download, Upload, Loader2, RotateCcw, FileDown } from 'lucide-react';
+import { Search, CheckCircle, XCircle, Eye, Package, ChevronLeft, ChevronRight, CheckSquare, AlertCircle, Filter, Download, Upload, Loader2, RotateCcw, FileDown, Printer } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { useOrders, type Order } from './OrderContext';
+import { generateAndOpenOrderReceiptFromOrder } from './generateOrderReceiptPdf';
 import { useAuth } from '@/features/auth';
 import { canApproveFinance } from '@/lib/roleUtils';
 import { supabase } from '@/lib/supabase';
@@ -414,6 +415,7 @@ export default function OrdersPage() {
   const isFinance = user?.role === 'finance';
   const isSuperAdmin = user?.role === 'super_admin';
   const isLeader = user?.role === 'team_leader';
+  const canPrintOrderReceipt = isSuperAdmin || isLeader;
   /** Same order list visibility as tabs/table — export uses `visibleOrders` / `filterOrders`. */
   const canExportOrderList = canViewCompanyOrders || isLeader;
   
@@ -622,6 +624,18 @@ export default function OrdersPage() {
       setClientDetails(null);
     } finally {
       setLoadingClient(false);
+    }
+  };
+
+  const handlePrintOrderReceipt = (order: Order) => {
+    try {
+      generateAndOpenOrderReceiptFromOrder(order);
+    } catch (e) {
+      toast({
+        title: 'Could not open receipt',
+        description: e instanceof Error ? e.message : 'Failed to generate order receipt',
+        variant: 'destructive',
+      });
     }
   };
 
@@ -2196,9 +2210,22 @@ export default function OrdersPage() {
       {/* View Order Dialog */}
       <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Order Details</DialogTitle>
-            <DialogDescription>Review details and take action on this order.</DialogDescription>
+          <DialogHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+            <div className="space-y-1">
+              <DialogTitle>Order Details</DialogTitle>
+              <DialogDescription>Review details and take action on this order.</DialogDescription>
+            </div>
+            {canPrintOrderReceipt && viewingOrder && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={() => handlePrintOrderReceipt(viewingOrder)}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                Print
+              </Button>
+            )}
           </DialogHeader>
           {viewingOrder && (
             <div className="space-y-6 py-4">
@@ -2867,8 +2894,19 @@ export default function OrdersPage() {
       {/* Bulk Order View Dialog */}
       <Dialog open={bulkViewDialogOpen} onOpenChange={setBulkViewDialogOpen}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
+          <DialogHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
             <DialogTitle>Order Details - {viewingOrderInBulk?.orderNumber}</DialogTitle>
+            {canPrintOrderReceipt && viewingOrderInBulk && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={() => handlePrintOrderReceipt(viewingOrderInBulk)}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                Print
+              </Button>
+            )}
           </DialogHeader>
 
           {viewingOrderInBulk && (
