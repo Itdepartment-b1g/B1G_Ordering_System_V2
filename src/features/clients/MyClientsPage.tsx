@@ -2263,7 +2263,7 @@ export default function MyClientsPage() {
 
               {/* Client Information Fields */}
               <div className="space-y-2">
-                <Label>Trade Name *</Label>
+                <Label>Client Name *</Label>
                 <Input
                   placeholder="Enter trade name"
                   value={formData.name}
@@ -2725,7 +2725,7 @@ export default function MyClientsPage() {
                 <TableRow>
                   <TableHead className="text-center">Photo</TableHead>
                   <SortableTableHead
-                    label="Trade Name"
+                    label="Client Name"
                     sortKey="tradeName"
                     sortDirection={getTableSortDisplayDirection(clientSortState, 'tradeName')}
                     onSort={handleClientSort}
@@ -3372,7 +3372,7 @@ export default function MyClientsPage() {
                 <div className="flex-1 space-y-4">
                   <div className="grid grid-cols-1 gap-4">
                     <div className="space-y-2">
-                      <Label>Trade Name</Label>
+                      <Label>Client Name</Label>
                       <Input
                         placeholder="Enter trade name"
                         value={editForm.name}
