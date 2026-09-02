@@ -270,20 +270,26 @@ export default function AdminRequestsPage() {
         let successCount = 0;
         for (const item of selectedGroup.items) {
            if (reviewAction === 'approve') {
-               const { error } = await supabase.rpc('admin_approve_stock_request', {
+               const { data, error } = await supabase.rpc('admin_approve_stock_request', {
                    p_request_id: item.id,
                    p_admin_id: user.id,
                    p_notes: notes || null
                });
                if (error) throw error;
+               if (data && (data as { success?: boolean }).success === false) {
+                 throw new Error((data as { message?: string }).message || 'Failed to approve request');
+               }
                successCount++;
            } else if (reviewAction === 'deny') {
-               const { error } = await supabase.rpc('admin_reject_stock_request', {
+               const { data, error } = await supabase.rpc('admin_reject_stock_request', {
                   p_request_id: item.id,
                   p_admin_id: user.id,
                   p_reason: denialReason
                });
                if (error) throw error;
+               if (data && (data as { success?: boolean }).success === false) {
+                 throw new Error((data as { message?: string }).message || 'Failed to reject request');
+               }
                successCount++;
            }
         }

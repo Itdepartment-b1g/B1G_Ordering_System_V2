@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, CreditCard, Camera, RotateCcw, Smartphone, CheckCircle, Split, Pencil, Loader2, FileDown, Filter, Download, ChevronDown } from 'lucide-react';
+import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, CreditCard, Camera, RotateCcw, Smartphone, CheckCircle, Split, Pencil, Loader2, FileDown, Filter, Download, ChevronDown, Printer } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -34,6 +34,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useOrders, type Order, type OrderItem, type PaymentSplit } from './OrderContext';
+import { generateAndOpenOrderReceiptFromOrder } from './generateOrderReceiptPdf';
 import { getDatePresetLabel, getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import {
   DateRangeFilterPopover,
@@ -652,6 +653,18 @@ export default function MyOrdersPage() {
   const handleViewOrder = (order: any) => {
     setOrderToView(order);
     setViewDialogOpen(true);
+  };
+
+  const handlePrintOrderReceipt = (order: Order) => {
+    try {
+      generateAndOpenOrderReceiptFromOrder(order);
+    } catch (e) {
+      toast({
+        title: 'Could not open receipt',
+        description: e instanceof Error ? e.message : 'Failed to generate order receipt',
+        variant: 'destructive',
+      });
+    }
   };
 
   // ========== EDIT ORDER FUNCTIONS ==========
@@ -4208,8 +4221,19 @@ export default function MyOrdersPage() {
       {/* View Order Dialog */}
       <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
+          <DialogHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
             <DialogTitle>Order Details</DialogTitle>
+            {orderToView && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={() => handlePrintOrderReceipt(orderToView)}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                Print
+              </Button>
+            )}
           </DialogHeader>
           {orderToView && (
             <div className="space-y-6 py-4">
