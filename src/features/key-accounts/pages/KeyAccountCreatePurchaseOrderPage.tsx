@@ -78,6 +78,8 @@ import {
   Check,
   ChevronsUpDown,
   UserRound,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import type {
@@ -116,6 +118,7 @@ import {
   type BrandPaymentAllocationDraft,
   type BrandPaymentSplitRow,
 } from '@/features/key-accounts/components/KeyAccountBrandPaymentSplit';
+import { KeyAccountPoCreateStepper } from '@/features/key-accounts/components/KeyAccountPoCreateStepper';
 
 type OrderOwnerOption = {
   id: string;
@@ -244,6 +247,7 @@ export function KeyAccountPurchaseOrderPage() {
   const [shopDialogOpen, setShopDialogOpen] = useState(false);
   const [addressDialogOpen, setAddressDialogOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [currentStep, setCurrentStep] = useState(0);
 
   // Selection states
   const [selectedClientId, setSelectedClientId] = useState<string>('');
@@ -827,6 +831,7 @@ export function KeyAccountPurchaseOrderPage() {
       };
     });
     setItems(hydratedItems);
+    setCurrentStep(3);
 
     window.setTimeout(() => {
       suppressCascadeRef.current = false;
@@ -1476,6 +1481,7 @@ export function KeyAccountPurchaseOrderPage() {
     setEditPaymentProofs([]);
     setSourceMode('single');
     setActiveWarehouseTabId('');
+    setCurrentStep(0);
   }
 
   // Clients load inline in the picker; only block the page on warehouses/payment settings.
@@ -1496,6 +1502,107 @@ export function KeyAccountPurchaseOrderPage() {
   const requiresPaymentProof =
     !isConsignment && (!isEditMode || !editHasPayments);
 
+  const clientStepComplete = Boolean(
+    (!isSalesAdmin || selectedOwnerId) &&
+      selectedClientId &&
+      selectedShopId &&
+      selectedAddressId
+  );
+  const warehouseItemsStepComplete = Boolean(
+    warehouses.length > 0 &&
+      (sourceMode === 'multi' || selectedWarehouseLocationId) &&
+      items.length > 0 &&
+      (sourceMode !== 'multi' || items.every((item) => Boolean(item.warehouseLocationId)))
+  );
+  const paymentStepComplete = Boolean(
+    (!requiresPaymentProof || paymentProofFile) &&
+      !(
+        !isConsignment &&
+        paymentMode === 'split' &&
+        cartBrandSplitRows.length > 1 &&
+        (!!createPoSplitAllocations.error ||
+          createPoSplitAllocations.allocations.length === 0 ||
+          parsedSplitFirstAmount <= 0)
+      )
+  );
+  const reviewStepComplete = Boolean(orderDate && expectedDeliveryDate);
+  const completedSteps = [
+    clientStepComplete,
+    warehouseItemsStepComplete,
+    paymentStepComplete,
+    reviewStepComplete,
+  ];
+
+  const submitDisabled =
+    submitting ||
+    !clientStepComplete ||
+    !warehouseItemsStepComplete ||
+    !paymentStepComplete ||
+    !reviewStepComplete;
+
+  function stepBlockReason(step: number): string | null {
+    if (step === 0) {
+      if (isSalesAdmin && !selectedOwnerId) return 'Select who this order is created on behalf of.';
+      if (!selectedClientId) return 'Select a client to continue.';
+      if (!selectedShopId) return 'Select a shop to continue.';
+      if (!selectedAddressId) return 'Select a delivery address to continue.';
+      return null;
+    }
+    if (step === 1) {
+      if (warehouses.length === 0) return 'No warehouses are linked to your company.';
+      if (sourceMode === 'single' && !selectedWarehouseLocationId) {
+        return 'Select a source warehouse to continue.';
+      }
+      if (items.length === 0) return 'Add at least one item to continue.';
+      if (sourceMode === 'multi' && items.some((item) => !item.warehouseLocationId)) {
+        return 'Every item needs a warehouse in multiple-warehouse mode.';
+      }
+      return null;
+    }
+    if (step === 2) {
+      if (requiresPaymentProof && !paymentProofFile) return 'Upload payment proof to continue.';
+      if (
+        !isConsignment &&
+        paymentMode === 'split' &&
+        cartBrandSplitRows.length > 1 &&
+        (!!createPoSplitAllocations.error ||
+          createPoSplitAllocations.allocations.length === 0 ||
+          parsedSplitFirstAmount <= 0)
+      ) {
+        return createPoSplitAllocations.error || 'Complete the split payment allocation to continue.';
+      }
+      return null;
+    }
+    if (step === 3) {
+      if (!expectedDeliveryDate) return 'Set an expected delivery date before creating the order.';
+      return null;
+    }
+    return null;
+  }
+
+  function goToStep(step: number) {
+    if (step === currentStep) return;
+    if (step > currentStep) {
+      for (let i = currentStep; i < step; i += 1) {
+        const reason = stepBlockReason(i);
+        if (reason) {
+          toast({ variant: 'destructive', title: 'Complete this step', description: reason });
+          return;
+        }
+      }
+    }
+    setCurrentStep(step);
+  }
+
+  function goNext() {
+    const reason = stepBlockReason(currentStep);
+    if (reason) {
+      toast({ variant: 'destructive', title: 'Complete this step', description: reason });
+      return;
+    }
+    setCurrentStep((step) => Math.min(step + 1, 3));
+  }
+
   return (
     <div className="p-6 space-y-6">
       <div>
@@ -1511,9 +1618,15 @@ export function KeyAccountPurchaseOrderPage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column - Client & Delivery Info */}
-        <div className="lg:col-span-2 space-y-6">
+      <KeyAccountPoCreateStepper
+        currentStep={currentStep}
+        completedSteps={completedSteps}
+        onStepClick={goToStep}
+      />
+
+      <div className="space-y-6">
+        {currentStep === 0 && (
+        <div className="space-y-6 max-w-5xl mx-auto w-full">
           {isSalesAdmin && (
             <Card>
               <CardHeader>
@@ -1741,7 +1854,11 @@ export function KeyAccountPurchaseOrderPage() {
               )}
             </CardContent>
           </Card>
+        </div>
+        )}
 
+        {currentStep === 1 && (
+          <div className="mx-auto max-w-5xl w-full space-y-6">
           {/* Warehouse Selection */}
           <Card>
             <CardHeader>
@@ -1813,7 +1930,7 @@ export function KeyAccountPurchaseOrderPage() {
 
               {sourceMode === 'multi' && warehouses.length > 0 && (
                 <p className="text-xs text-muted-foreground italic">
-                  Use the warehouse tabs under Order Items to add products from each location.
+                  Use the warehouse tabs below to add products from each location.
                 </p>
               )}
 
@@ -1824,8 +1941,6 @@ export function KeyAccountPurchaseOrderPage() {
               )}
             </CardContent>
           </Card>
-
-          {/* Warehouse stock modal (dashboard-style) */}
           <Dialog open={stockModalOpen} onOpenChange={setStockModalOpen}>
             <DialogContent className="max-w-[95vw] w-[1100px] max-h-[90vh] overflow-hidden flex flex-col">
               <DialogHeader>
@@ -2003,11 +2118,20 @@ export function KeyAccountPurchaseOrderPage() {
 
           {/* Order Items */}
           <Card>
-            <CardHeader>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0">
               <CardTitle className="flex items-center gap-2 text-lg">
                 <Package className="h-5 w-5" />
                 Order Items
               </CardTitle>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setStockModalOpen(true)}
+                disabled={!stockViewLocationId || visibleVariants.length === 0}
+              >
+                View stock
+              </Button>
             </CardHeader>
             <CardContent className="space-y-4">
               {sourceMode === 'multi' && warehouses.length > 0 && (
@@ -2168,7 +2292,12 @@ export function KeyAccountPurchaseOrderPage() {
               )}
             </CardContent>
           </Card>
+          </div>
+        )}
 
+        {currentStep === 2 && (
+          <div className="mx-auto max-w-6xl w-full grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-lg">
@@ -2514,10 +2643,204 @@ export function KeyAccountPurchaseOrderPage() {
               ) : null}
             </CardContent>
           </Card>
-        </div>
+          </div>
 
-        {/* Right Column - Order Summary */}
-        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Order total</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span>Subtotal</span>
+                  <span>₱{subtotal.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-sm items-center">
+                  <span>Tax ({taxRate}%)</span>
+                  <div className="flex items-center gap-2">
+                    <span>₱{taxAmount.toFixed(2)}</span>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={taxRate}
+                      onChange={(e) => setTaxRate(parseFloat(e.target.value) || 0)}
+                      className="w-16 h-6 text-xs"
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-between text-sm items-center">
+                  <span>Discount</span>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={discount}
+                    onChange={(e) => setDiscount(parseFloat(e.target.value) || 0)}
+                    className="w-24 h-6 text-xs"
+                  />
+                </div>
+                <div className="flex justify-between font-bold text-lg pt-2 border-t">
+                  <span>Total</span>
+                  <span>₱{total.toFixed(2)}</span>
+                </div>
+              </div>
+              <div className="space-y-2 pt-2">
+                <Label>Notes</Label>
+                <Textarea
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Add any special instructions..."
+                  rows={3}
+                />
+              </div>
+            </CardContent>
+          </Card>
+          </div>
+        )}
+
+        {currentStep === 3 && (
+        <div className="mx-auto max-w-6xl w-full grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Client & delivery</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm">
+                {isSalesAdmin && selectedOwner ? (
+                  <div>
+                    <p className="text-muted-foreground text-xs">Order owner</p>
+                    <p className="font-medium">
+                      {selectedOwner.full_name || selectedOwner.email} (
+                      {getKeyAccountRoleLabel(selectedOwner.role)})
+                    </p>
+                  </div>
+                ) : null}
+                {selectedClient ? (
+                  <div className={isSalesAdmin && selectedOwner ? 'pt-2 border-t' : undefined}>
+                    <p className="font-medium">{selectedClient.client_name}</p>
+                    <p className="text-muted-foreground">{selectedClient.client_code}</p>
+                  </div>
+                ) : (
+                  <p className="text-muted-foreground">No client selected.</p>
+                )}
+                {selectedShop ? (
+                  <div className="pt-2 border-t">
+                    <div className="flex items-center gap-2">
+                      <Store className="h-4 w-4" />
+                      <span className="font-medium">{selectedShop.shop_name}</span>
+                    </div>
+                    <p className="text-muted-foreground ml-6">
+                      {selectedShop.city}, {selectedShop.province}
+                    </p>
+                  </div>
+                ) : null}
+                {selectedAddress ? (
+                  <div className="pt-2 border-t">
+                    <div className="flex items-center gap-2">
+                      <MapPin className="h-4 w-4" />
+                      <span className="font-medium">{selectedAddress.address_label}</span>
+                      {selectedAddress.is_default && (
+                        <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded">Default</span>
+                      )}
+                    </div>
+                    <p className="text-muted-foreground ml-6">{selectedAddress.full_address}</p>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Warehouse & items</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-sm">
+                  <span className="text-muted-foreground">Source: </span>
+                  <span className="font-medium">
+                    {sourceMode === 'single'
+                      ? warehouseLabel(selectedWarehouseLocationId)
+                      : 'Multiple warehouses (per line item)'}
+                  </span>
+                </p>
+                {items.length > 0 ? (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Item</TableHead>
+                        {sourceMode === 'multi' && <TableHead>Warehouse</TableHead>}
+                        <TableHead className="text-right">Qty</TableHead>
+                        <TableHead className="text-right">Amount</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {items.map((item) => (
+                        <TableRow key={item.id}>
+                          <TableCell>
+                            <div className="font-medium">{item.variantName}</div>
+                            <div className="text-xs text-muted-foreground">{item.brandName}</div>
+                          </TableCell>
+                          {sourceMode === 'multi' && (
+                            <TableCell className="text-sm text-muted-foreground">
+                              {warehouseLabel(item.warehouseLocationId)}
+                            </TableCell>
+                          )}
+                          <TableCell className="text-right">{item.quantity}</TableCell>
+                          <TableCell className="text-right">₱{item.totalPrice.toFixed(2)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No items added.</p>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Payment</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-1 text-sm">
+                <p>
+                  <span className="text-muted-foreground">Order type: </span>
+                  {isConsignment ? 'Consignment (payment deferred)' : 'Standard'}
+                </p>
+                {!isConsignment ? (
+                  <p>
+                    <span className="text-muted-foreground">Payment mode: </span>
+                    {paymentMode === 'full' ? 'Full payment' : 'Split payment'}
+                  </p>
+                ) : null}
+                <p>
+                  <span className="text-muted-foreground">Payment terms: </span>
+                  {resolvedPaymentTerms || '—'}
+                </p>
+                {isConsignment ? (
+                  <p className="text-muted-foreground">
+                    No payment proof required at create. Record payment later on the PO.
+                  </p>
+                ) : (
+                  <>
+                    <p>
+                      <span className="text-muted-foreground">Method: </span>
+                      {paymentMethodLabel}
+                    </p>
+                    <p>
+                      <span className="text-muted-foreground">First payment: </span>
+                      ₱{firstPaymentPreview.toFixed(2)}
+                    </p>
+                    <p>
+                      <span className="text-muted-foreground">Payment proof: </span>
+                      {paymentProofFile?.name || (editHasPayments ? 'Existing proof on file' : '—')}
+                    </p>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="space-y-6">
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">Order Summary</CardTitle>
@@ -2593,24 +2916,7 @@ export function KeyAccountPurchaseOrderPage() {
               {/* Submit Button */}
               <Button
                 onClick={() => setConfirmOpen(true)}
-                disabled={
-                  submitting ||
-                  (isSalesAdmin && !selectedOwnerId) ||
-                  !selectedClientId ||
-                  !selectedShopId ||
-                  !selectedAddressId ||
-                  (sourceMode === 'single' && !selectedWarehouseLocationId) ||
-                  (sourceMode === 'multi' && items.some((i) => !i.warehouseLocationId)) ||
-                  items.length === 0 ||
-                  (requiresPaymentProof && !paymentProofFile) ||
-                  (!isConsignment &&
-                    paymentMode === 'split' &&
-                    cartBrandSplitRows.length > 1 &&
-                    (!!createPoSplitAllocations.error ||
-                      createPoSplitAllocations.allocations.length === 0 ||
-                      parsedSplitFirstAmount <= 0)) ||
-                  !expectedDeliveryDate
-                }
+                disabled={submitDisabled}
                 className="w-full"
                 size="lg"
               >
@@ -2625,43 +2931,27 @@ export function KeyAccountPurchaseOrderPage() {
               </Button>
             </CardContent>
           </Card>
+          </div>
+        </div>
+        )}
 
-          {/* Selected Info Summary */}
-          {(selectedClient || selectedShop || selectedAddress) && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Selected Delivery</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3 text-sm">
-                {selectedClient && (
-                  <div>
-                    <p className="font-medium">{selectedClient.client_name}</p>
-                    <p className="text-muted-foreground">{selectedClient.client_code}</p>
-                  </div>
-                )}
-                {selectedShop && (
-                  <div className="pt-2 border-t">
-                    <div className="flex items-center gap-2">
-                      <Store className="h-4 w-4" />
-                      <span className="font-medium">{selectedShop.shop_name}</span>
-                    </div>
-                    <p className="text-muted-foreground ml-6">{selectedShop.city}, {selectedShop.province}</p>
-                  </div>
-                )}
-                {selectedAddress && (
-                  <div className="pt-2 border-t">
-                    <div className="flex items-center gap-2">
-                      <MapPin className="h-4 w-4" />
-                      <span className="font-medium">{selectedAddress.address_label}</span>
-                      {selectedAddress.is_default && (
-                        <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded">Default</span>
-                      )}
-                    </div>
-                    <p className="text-muted-foreground ml-6">{selectedAddress.full_address}</p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+        <div className="flex items-center justify-between gap-3 pt-2 max-w-5xl mx-auto w-full">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={currentStep === 0}
+            onClick={() => setCurrentStep((step) => Math.max(step - 1, 0))}
+          >
+            <ChevronLeft className="h-4 w-4 mr-1" />
+            Back
+          </Button>
+          {currentStep < 3 ? (
+            <Button type="button" onClick={goNext}>
+              Next
+              <ChevronRight className="h-4 w-4 ml-1" />
+            </Button>
+          ) : (
+            <span />
           )}
         </div>
       </div>

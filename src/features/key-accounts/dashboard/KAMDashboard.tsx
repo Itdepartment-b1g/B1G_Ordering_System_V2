@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/features/auth';
-import { supabase } from '@/lib/supabase';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -31,40 +30,9 @@ import {
   Plus,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import {
-  KeyAccountWorkflowStatusBadge,
-  isKeyAccountPendingWorkflow,
-} from '@/features/key-accounts/keyAccountWorkflowStatus';
-
-interface ClientWithLastOrder {
-  id: string;
-  client_name: string;
-  client_code: string;
-  lastOrderDate: string | null;
-  daysSinceLastOrder: number | null;
-  totalOrders: number;
-  totalRevenue: number;
-}
-
-interface KAMOrder {
-  id: string;
-  client_name: string;
-  shop_name: string;
-  total_amount: number;
-  status: string;
-  workflow_status?: string | null;
-  order_date: string;
-  dr_number?: string;
-}
-
-function isDeliveredRevenue(o: { status?: string | null; workflow_status?: string | null }) {
-  return o.status === 'fulfilled' && o.workflow_status === 'delivered';
-}
-
-function firstRelation<T>(value: T | T[] | null | undefined): T | null {
-  if (Array.isArray(value)) return value[0] ?? null;
-  return value ?? null;
-}
+import { KeyAccountWorkflowStatusBadge } from '@/features/key-accounts/keyAccountWorkflowStatus';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import { fetchKADashboardOverview } from '@/store/slices/key-accounts/dashboard';
 
 function formatOrderDate(value: string | null) {
   if (!value) return 'No orders yet';
@@ -87,169 +55,45 @@ export function KAMDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const dispatch = useAppDispatch();
   const [activeTab, setActiveTab] = useState('overview');
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
-  const [clients, setClients] = useState<ClientWithLastOrder[]>([]);
-  const [orders, setOrders] = useState<KAMOrder[]>([]);
-  const [revenueData, setRevenueData] = useState<{ month: string; revenue: number }[]>([]);
   const [alertPage, setAlertPage] = useState(1);
   const [recentOrdersPage, setRecentOrdersPage] = useState(1);
   const [clientPage, setClientPage] = useState(1);
   const [ordersPage, setOrdersPage] = useState(1);
-  const [stats, setStats] = useState({
-    totalClients: 0,
-    totalOrders: 0,
-    totalRevenue: 0,
-    pendingOrders: 0,
-    inactiveClients: 0,
-  });
-  const [loading, setLoading] = useState(true);
+
+  const overview = useAppSelector((state) => state.kaDashboard.overview);
+  const overviewStatus = useAppSelector((state) => state.kaDashboard.overviewStatus);
+  const overviewError = useAppSelector((state) => state.kaDashboard.overviewError);
+
+  const clients = overview?.clients || [];
+  const orders = overview?.orders || [];
+  const revenueData = overview?.kamMonthly || [];
+  const stats = {
+    totalClients: overview?.stats.totalClients || 0,
+    totalOrders: overview?.stats.totalOrders || 0,
+    totalRevenue: overview?.stats.totalRevenue || 0,
+    pendingOrders: overview?.stats.pendingOrders || 0,
+    inactiveClients: overview?.stats.inactiveClients || 0,
+  };
+  const loading = overviewStatus === 'idle' || (overviewStatus === 'loading' && !overview);
 
   useEffect(() => {
-    if (user?.id) void fetchKAMData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, selectedYear]);
+    void dispatch(fetchKADashboardOverview(selectedYear));
+  }, [dispatch, selectedYear]);
 
-  const fetchKAMData = async () => {
-    if (!user?.id) return;
-    setLoading(true);
-    try {
-      const { data: clientAssignments, error: clientError } = await supabase
-        .from('kam_client_assignments')
-        .select('client_id, client:key_account_clients(*)')
-        .eq('kam_id', user.id);
+  useEffect(() => {
+    if (overviewStatus !== 'failed' || !overviewError) return;
+    toast({ variant: 'destructive', title: 'Error', description: overviewError });
+  }, [overviewStatus, overviewError, toast]);
 
-      if (clientError) throw clientError;
-
-      const clientsWithOrders: ClientWithLastOrder[] = [];
-      for (const assignment of clientAssignments || []) {
-        const clientData = firstRelation(assignment.client as { id: string; client_name: string; client_code: string } | { id: string; client_name: string; client_code: string }[]);
-        if (!clientData) continue;
-
-        const { data: lastOrder, error: lastOrderError } = await supabase
-          .from('purchase_orders')
-          .select('order_date, total_amount')
-          .eq('key_account_client_id', clientData.id)
-          .eq('kam_id', user.id)
-          .order('order_date', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        if (lastOrderError) throw lastOrderError;
-
-        const { data: clientOrders, error: clientOrdersError } = await supabase
-          .from('purchase_orders')
-          .select('total_amount, status, workflow_status')
-          .eq('key_account_client_id', clientData.id)
-          .eq('kam_id', user.id)
-          .gte('order_date', `${selectedYear}-01-01`)
-          .lte('order_date', `${selectedYear}-12-31`);
-
-        if (clientOrdersError) throw clientOrdersError;
-
-        const totalOrders = clientOrders?.length || 0;
-        const totalRevenue =
-          clientOrders
-            ?.filter((o) => isDeliveredRevenue(o))
-            .reduce((sum, o) => sum + (o.total_amount || 0), 0) || 0;
-
-        const lastOrderDate = lastOrder?.order_date ?? null;
-        const daysSinceLastOrder = lastOrderDate
-          ? Math.floor((Date.now() - new Date(lastOrderDate).getTime()) / (1000 * 60 * 60 * 24))
-          : null;
-
-        clientsWithOrders.push({
-          id: clientData.id,
-          client_name: clientData.client_name,
-          client_code: clientData.client_code,
-          lastOrderDate,
-          daysSinceLastOrder,
-          totalOrders,
-          totalRevenue,
-        });
-      }
-
-      setClients(clientsWithOrders);
-
-      const { data: ordersData, error: ordersError } = await supabase
-        .from('purchase_orders')
-        .select(`
-          id,
-          total_amount,
-          status,
-          workflow_status,
-          order_date,
-          dr_number,
-          client:key_account_clients(client_name),
-          shop:key_account_shops(shop_name)
-        `)
-        .eq('kam_id', user.id)
-        .eq('company_account_type', 'Key Accounts')
-        .gte('order_date', `${selectedYear}-01-01`)
-        .lte('order_date', `${selectedYear}-12-31`)
-        .order('order_date', { ascending: false });
-
-      if (ordersError) throw ordersError;
-
-      const formattedOrders: KAMOrder[] =
-        ordersData?.map((o) => {
-          const client = firstRelation(o.client as { client_name: string } | { client_name: string }[]);
-          const shop = firstRelation(o.shop as { shop_name: string } | { shop_name: string }[]);
-          return {
-            id: o.id,
-            client_name: client?.client_name || 'Unknown',
-            shop_name: shop?.shop_name || '—',
-            total_amount: o.total_amount,
-            status: o.status,
-            workflow_status: o.workflow_status,
-            order_date: o.order_date,
-            dr_number: o.dr_number ?? undefined,
-          };
-        }) || [];
-
-      setOrders(formattedOrders);
-
-      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      const revenueByMonth: Record<string, number> = {};
-      monthNames.forEach((m) => {
-        revenueByMonth[m] = 0;
-      });
-
-      ordersData?.forEach((o) => {
-        if (!isDeliveredRevenue(o)) return;
-        const month = monthNames[new Date(o.order_date).getMonth()];
-        revenueByMonth[month] += o.total_amount || 0;
-      });
-
-      setRevenueData(monthNames.map((month) => ({ month, revenue: revenueByMonth[month] })));
-
-      const inactiveThreshold = 30;
-      const inactiveClients = clientsWithOrders.filter(
-        (c) => c.daysSinceLastOrder === null || c.daysSinceLastOrder > inactiveThreshold
-      ).length;
-      const totalRevenue = clientsWithOrders.reduce((sum, c) => sum + c.totalRevenue, 0);
-      const pendingCount = formattedOrders.filter((o) =>
-        isKeyAccountPendingWorkflow(o.workflow_status)
-      ).length;
-
-      setStats({
-        totalClients: clientsWithOrders.length,
-        totalOrders: formattedOrders.length,
-        totalRevenue,
-        pendingOrders: pendingCount,
-        inactiveClients,
-      });
-      setAlertPage(1);
-      setRecentOrdersPage(1);
-      setClientPage(1);
-      setOrdersPage(1);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Failed to load dashboard';
-      toast({ variant: 'destructive', title: 'Error', description: message });
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    setAlertPage(1);
+    setRecentOrdersPage(1);
+    setClientPage(1);
+    setOrdersPage(1);
+  }, [overview]);
 
   const getDaysBadge = (days: number | null) => {
     if (days === null) return <Badge variant="outline">Never ordered</Badge>;

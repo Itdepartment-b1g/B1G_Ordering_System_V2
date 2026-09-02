@@ -1,7 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/features/auth';
-import { supabase } from '@/lib/supabase';
-import { fetchAllPaginated } from '@/lib/supabasePaginate';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -36,108 +34,17 @@ import { KeyAccountDashboardRevenueCard } from './KeyAccountDashboardRevenueCard
 import { KeyAccountDashboardRevenueOverview } from './KeyAccountDashboardRevenueOverview';
 import {
   EMPTY_KEY_ACCOUNT_DASHBOARD_REVENUE,
-  fetchKeyAccountDashboardPayments,
   formatKeyAccountDashboardCurrency,
-  isKeyAccountDashboardSalesOrder,
-  loadKeyAccountDashboardRevenue,
-  splitKeyAccountPoPaymentRevenue,
-  type KeyAccountDashboardOrder,
-  type KeyAccountDashboardPaymentRow,
-  type KeyAccountDashboardRevenueResult,
 } from './keyAccountDashboardRevenue';
-import { isKeyAccountConsignmentOrder } from '../key-accounts-analytics/keyAccountAnalyticsShared';
-
-interface KAMWithStats {
-  id: string;
-  full_name: string;
-  email: string;
-  clientCount: number;
-  orderCount: number;
-  deliveredOrderCount: number;
-  totalRevenue: number;
-}
-
-interface ClientWithLastOrder {
-  id: string;
-  client_name: string;
-  client_code: string;
-  kam_name: string;
-  lastOrderDate: string | null;
-  daysSinceLastOrder: number | null;
-  totalOrders: number;
-  paidRevenue: number;
-  remainingBalance: number;
-  consignmentRevenue: number;
-  settlementDiscountRevenue: number;
-}
-
-interface DirectorOrder {
-  id: string;
-  client_name: string;
-  shop_name: string;
-  kam_name: string;
-  total_amount: number;
-  status: string;
-  workflow_status?: string | null;
-  order_date: string;
-  dr_number?: string;
-}
-
-function isDeliveredRevenue(o: { status?: string | null; workflow_status?: string | null }) {
-  return o.status === 'fulfilled' && o.workflow_status === 'delivered';
-}
-
-function firstRelation<T>(value: T | T[] | null | undefined): T | null {
-  if (Array.isArray(value)) return value[0] ?? null;
-  return value ?? null;
-}
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import {
+  fetchKADashboardOverview,
+  fetchKADashboardTabs,
+} from '@/store/slices/key-accounts/dashboard';
 
 function formatOrderDate(value: string | null) {
   if (!value) return 'No orders yet';
   return new Date(value).toLocaleDateString();
-}
-
-function sumPaymentsByOrderId(payments: KeyAccountDashboardPaymentRow[]) {
-  const paidByOrderId = new Map<string, number>();
-  const discountByOrderId = new Map<string, number>();
-  for (const payment of payments) {
-    const id = payment.purchase_order_id;
-    paidByOrderId.set(id, (paidByOrderId.get(id) || 0) + (Number(payment.amount) || 0));
-    discountByOrderId.set(
-      id,
-      (discountByOrderId.get(id) || 0) + (Number(payment.settlement_discount) || 0)
-    );
-  }
-  return { paidByOrderId, discountByOrderId };
-}
-
-/** Paid / remaining / consignment for a client's sales-eligible POs (same rules as Revenue Overview). */
-function computeClientPaymentTotals(
-  orders: KeyAccountDashboardOrder[],
-  paidByOrderId: Map<string, number>,
-  discountByOrderId: Map<string, number>
-) {
-  let paidRevenue = 0;
-  let remainingBalance = 0;
-  let consignmentRevenue = 0;
-  let settlementDiscountRevenue = 0;
-
-  for (const order of orders) {
-    if (!isKeyAccountDashboardSalesOrder(order)) continue;
-    const isConsignment = isKeyAccountConsignmentOrder(order);
-    const split = splitKeyAccountPoPaymentRevenue(
-      Number(order.total_amount) || 0,
-      paidByOrderId.get(order.id) || 0,
-      isConsignment,
-      discountByOrderId.get(order.id) || 0
-    );
-    paidRevenue += split.paidRevenue;
-    remainingBalance += split.partialRevenue + split.unpaidRevenue;
-    consignmentRevenue += split.consignmentRevenue;
-    settlementDiscountRevenue += split.settlementDiscountRevenue;
-  }
-
-  return { paidRevenue, remainingBalance, consignmentRevenue, settlementDiscountRevenue };
 }
 
 const PAGE_SIZE = 10;
@@ -154,32 +61,24 @@ function paginateRows<T>(rows: T[], page: number) {
 export function SalesDirectorDashboard() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const dispatch = useAppDispatch();
   const [activeTab, setActiveTab] = useState('overview');
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'this_year',
   });
-  const [kamStats, setKamStats] = useState<KAMWithStats[]>([]);
-  const [clients, setClients] = useState<ClientWithLastOrder[]>([]);
-  const [orders, setOrders] = useState<DirectorOrder[]>([]);
-  const [revenueMetrics, setRevenueMetrics] = useState<KeyAccountDashboardRevenueResult>(
-    EMPTY_KEY_ACCOUNT_DASHBOARD_REVENUE
-  );
   const [alertPage, setAlertPage] = useState(1);
   const [recentOrdersPage, setRecentOrdersPage] = useState(1);
   const [clientPage, setClientPage] = useState(1);
   const [kamPage, setKamPage] = useState(1);
   const [ordersPage, setOrdersPage] = useState(1);
-  const [stats, setStats] = useState({
-    totalKAMs: 0,
-    totalClients: 0,
-    totalOrders: 0,
-    pendingOrders: 0,
-    inactiveClients: 0
-  });
-  const [initialLoading, setInitialLoading] = useState(true);
-  const [revenueLoading, setRevenueLoading] = useState(false);
-  const [tabsLoading, setTabsLoading] = useState(false);
+
+  const overview = useAppSelector((state) => state.kaDashboard.overview);
+  const overviewStatus = useAppSelector((state) => state.kaDashboard.overviewStatus);
+  const overviewError = useAppSelector((state) => state.kaDashboard.overviewError);
+  const tabs = useAppSelector((state) => state.kaDashboard.tabs);
+  const tabsStatus = useAppSelector((state) => state.kaDashboard.tabsStatus);
+  const tabsError = useAppSelector((state) => state.kaDashboard.tabsError);
 
   const dateRange = useMemo(
     () =>
@@ -201,336 +100,51 @@ export function SalesDirectorDashboard() {
     [dateRangeFilter]
   );
 
-  type ScopedOrder = KeyAccountDashboardOrder & {
-    client?: { client_name: string | null } | { client_name: string | null }[] | null;
-    shop?: { shop_name: string | null } | { shop_name: string | null }[] | null;
-    kam?: { full_name: string | null } | { full_name: string | null }[] | null;
-    dr_number?: string | null;
+  const revenueMetrics = overview?.revenue || EMPTY_KEY_ACCOUNT_DASHBOARD_REVENUE;
+  const kamStats = tabs?.team || [];
+  const clients = tabs?.clients || [];
+  const orders = tabs?.orders || [];
+  const stats = {
+    totalKAMs: overview?.stats.totalKAMs || 0,
+    totalClients: overview?.stats.totalClients || 0,
+    totalOrders: overview?.stats.totalOrders || 0,
+    pendingOrders: overview?.stats.pendingOrders || 0,
+    inactiveClients: tabs?.inactiveClients ?? overview?.stats.inactiveClients ?? 0,
   };
+  const initialLoading = overviewStatus === 'idle' || (overviewStatus === 'loading' && !overview);
+  const revenueLoading = overviewStatus === 'loading';
+  const tabsLoading = tabsStatus === 'loading';
 
-  const loadKamScope = async () => {
-    const { data: kamAssignments, error: kamError } = await supabase
-      .from('kam_director_assignments')
-      .select('kam_id, kam:profiles!kam_director_assignments_kam_id_fkey(id, full_name, email)')
-      .eq('director_id', user?.id);
+  useEffect(() => {
+    void dispatch(fetchKADashboardOverview(selectedYear));
+  }, [dispatch, selectedYear]);
 
-    if (kamError) throw kamError;
-
-    const kamIds = kamAssignments?.map((a: any) => a.kam_id) || [];
-    const orderScopeKamIds = Array.from(
-      new Set([...kamIds, ...(user?.id ? [user.id] : [])])
+  useEffect(() => {
+    void dispatch(
+      fetchKADashboardTabs({
+        dateStart: dateRange.start ? formatDateForInput(dateRange.start) : undefined,
+        dateEnd: dateRange.end ? formatDateForInput(dateRange.end) : undefined,
+      })
     );
-
-    return { kamAssignments: kamAssignments || [], kamIds, orderScopeKamIds };
-  };
-
-  const fetchScopedOrders = async (
-    orderScopeKamIds: string[],
-    dateStart: string | null,
-    dateEnd: string | null
-  ) => {
-    if (orderScopeKamIds.length === 0) return [] as ScopedOrder[];
-    return fetchAllPaginated<ScopedOrder>(async (from, to) => {
-      let query = supabase
-        .from('purchase_orders')
-        .select(`
-          id,
-          po_number,
-          total_amount,
-          subtotal,
-          status,
-          workflow_status,
-          po_order_kind,
-          source_rebate_id,
-          warehouse_location_id,
-          order_date,
-          dr_number,
-          key_account_client_id,
-          key_account_payment_status,
-          client:key_account_clients(client_name),
-          shop:key_account_shops(shop_name),
-          kam:profiles!purchase_orders_kam_id_fkey(full_name)
-        `)
-        .eq('company_id', user?.company_id)
-        .in('kam_id', orderScopeKamIds)
-        .eq('company_account_type', 'Key Accounts');
-      if (dateStart) query = query.gte('order_date', dateStart);
-      if (dateEnd) query = query.lte('order_date', dateEnd);
-      const { data, error } = await query
-        .order('order_date', { ascending: false })
-        .order('id', { ascending: true })
-        .range(from, to);
-      return { data: (data as ScopedOrder[] | null) ?? null, error };
-    });
-  };
-
-  /** Top cards + revenue chart — driven only by year picker. */
-  const fetchRevenueData = async () => {
-    setRevenueLoading(true);
-    try {
-      const { kamAssignments, orderScopeKamIds } = await loadKamScope();
-      const revenueOrders = await fetchScopedOrders(
-        orderScopeKamIds,
-        `${selectedYear}-01-01`,
-        `${selectedYear}-12-31`
-      );
-      const revenueResult = await loadKeyAccountDashboardRevenue(
-        supabase,
-        revenueOrders,
-        selectedYear
-      );
-      setRevenueMetrics(revenueResult);
-
-      const yearClientIds = new Set(
-        revenueOrders
-          .map((o) => o.key_account_client_id)
-          .filter((id): id is string => Boolean(id))
-      );
-
-      setStats((prev) => ({
-        ...prev,
-        totalKAMs: kamAssignments.length,
-        totalClients: yearClientIds.size,
-        totalOrders: revenueOrders.length,
-        pendingOrders: revenueResult.pendingOrderCount,
-      }));
-    } catch (error: any) {
-      toast({ variant: 'destructive', title: 'Error', description: error.message });
-    } finally {
-      setRevenueLoading(false);
-      setInitialLoading(false);
-    }
-  };
-
-  /** Overview / Client Monitoring / My KAMs / Orders — driven only by date filter. */
-  const fetchTabData = async () => {
-    setTabsLoading(true);
-    try {
-      const { kamAssignments, kamIds, orderScopeKamIds } = await loadKamScope();
-      const tabDateStart = dateRange.start ? formatDateForInput(dateRange.start) : null;
-      const tabDateEnd = dateRange.end ? formatDateForInput(dateRange.end) : null;
-
-      const analyticsOrders = await fetchScopedOrders(
-        orderScopeKamIds,
-        tabDateStart,
-        tabDateEnd
-      );
-
-      const kamsWithStats: KAMWithStats[] = [];
-      for (const assignment of kamAssignments) {
-        const kamData = assignment.kam as any;
-        if (!kamData?.id) continue;
-
-        const { count: clientCount } = await supabase
-          .from('kam_client_assignments')
-          .select('*', { count: 'exact', head: true })
-          .eq('kam_id', kamData.id);
-
-        let kamOrdersQuery = supabase
-          .from('purchase_orders')
-          .select('total_amount, status, workflow_status')
-          .eq('kam_id', kamData.id);
-        if (tabDateStart) kamOrdersQuery = kamOrdersQuery.gte('order_date', tabDateStart);
-        if (tabDateEnd) kamOrdersQuery = kamOrdersQuery.lte('order_date', tabDateEnd);
-
-        const { data: kamOrderRows } = await kamOrdersQuery;
-
-        const deliveredOrders =
-          kamOrderRows?.filter((o: any) => isDeliveredRevenue(o)) || [];
-        const revenue = deliveredOrders.reduce(
-          (sum: number, o: any) => sum + (o.total_amount || 0),
-          0
-        );
-
-        kamsWithStats.push({
-          id: kamData.id,
-          full_name: kamData.full_name,
-          email: kamData.email,
-          clientCount: clientCount || 0,
-          orderCount: kamOrderRows?.length || 0,
-          deliveredOrderCount: deliveredOrders.length,
-          totalRevenue: revenue,
-        });
-      }
-
-      setKamStats(kamsWithStats);
-
-      const tabPayments = await fetchKeyAccountDashboardPayments(
-        supabase,
-        analyticsOrders.filter(isKeyAccountDashboardSalesOrder).map((o) => o.id)
-      );
-      const { paidByOrderId, discountByOrderId } = sumPaymentsByOrderId(tabPayments);
-
-      const formattedOrders: DirectorOrder[] = analyticsOrders.map((o: any) => ({
-        id: o.id,
-        client_name: Array.isArray(o.client)
-          ? o.client?.[0]?.client_name
-          : o.client?.client_name || 'Unknown',
-        shop_name: Array.isArray(o.shop) ? o.shop?.[0]?.shop_name : o.shop?.shop_name || 'Unknown',
-        kam_name: Array.isArray(o.kam) ? o.kam?.[0]?.full_name : o.kam?.full_name || 'Unknown',
-        total_amount: o.total_amount,
-        status: o.status,
-        workflow_status: o.workflow_status,
-        order_date: o.order_date,
-        dr_number: o.dr_number,
-      }));
-
-      setOrders(formattedOrders);
-
-      const clientById = new Map<string, ClientWithLastOrder>();
-
-      if (kamIds.length > 0) {
-        const { data: clientAssignments, error: clientError } = await supabase
-          .from('kam_client_assignments')
-          .select(
-            'client_id, kam_id, kam:profiles!kam_client_assignments_kam_id_fkey(full_name), client:key_account_clients(*)'
-          )
-          .in('kam_id', kamIds);
-
-        if (clientError) throw clientError;
-
-        for (const assignment of clientAssignments || []) {
-          const clientData = firstRelation(assignment.client as any);
-          if (!clientData || clientById.has(clientData.id)) continue;
-
-          const kam = firstRelation(assignment.kam as any);
-          const kamName = kam?.full_name || 'Unknown';
-
-          const { data: lastOrder, error: lastOrderError } = await supabase
-            .from('purchase_orders')
-            .select('order_date, total_amount')
-            .eq('key_account_client_id', clientData.id)
-            .order('order_date', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-
-          if (lastOrderError) throw lastOrderError;
-
-          const scopedOrders = analyticsOrders.filter(
-            (o) => o.key_account_client_id === clientData.id
-          );
-          const paymentTotals = computeClientPaymentTotals(
-            scopedOrders,
-            paidByOrderId,
-            discountByOrderId
-          );
-
-          const lastOrderDate = lastOrder?.order_date ?? null;
-          const daysSinceLastOrder = lastOrderDate
-            ? Math.floor(
-                (Date.now() - new Date(lastOrderDate).getTime()) / (1000 * 60 * 60 * 24)
-              )
-            : null;
-
-          clientById.set(clientData.id, {
-            id: clientData.id,
-            client_name: clientData.client_name,
-            client_code: clientData.client_code,
-            kam_name: kamName,
-            lastOrderDate,
-            daysSinceLastOrder,
-            totalOrders: scopedOrders.length,
-            ...paymentTotals,
-          });
-        }
-      }
-
-      const missingClientIds = Array.from(
-        new Set(
-          analyticsOrders
-            .map((o) => o.key_account_client_id)
-            .filter((id): id is string => !!id && !clientById.has(id))
-        )
-      );
-
-      if (missingClientIds.length > 0) {
-        const { data: extraClients, error: extraClientsError } = await supabase
-          .from('key_account_clients')
-          .select('id, client_name, client_code')
-          .in('id', missingClientIds);
-
-        if (extraClientsError) throw extraClientsError;
-
-        for (const client of extraClients || []) {
-          const scopedOrders = analyticsOrders
-            .filter((o) => o.key_account_client_id === client.id)
-            .sort(
-              (a, b) =>
-                new Date(b.order_date).getTime() - new Date(a.order_date).getTime()
-            );
-          const latest = scopedOrders[0];
-          const kamRel = latest ? firstRelation((latest as any).kam) : null;
-          const kamName = kamRel?.full_name || 'You';
-
-          const { data: lastOrder, error: lastOrderError } = await supabase
-            .from('purchase_orders')
-            .select('order_date')
-            .eq('key_account_client_id', client.id)
-            .order('order_date', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-
-          if (lastOrderError) throw lastOrderError;
-
-          const lastOrderDate = lastOrder?.order_date ?? latest?.order_date ?? null;
-          const daysSinceLastOrder = lastOrderDate
-            ? Math.floor(
-                (Date.now() - new Date(lastOrderDate).getTime()) / (1000 * 60 * 60 * 24)
-              )
-            : null;
-
-          const paymentTotals = computeClientPaymentTotals(
-            scopedOrders,
-            paidByOrderId,
-            discountByOrderId
-          );
-
-          clientById.set(client.id, {
-            id: client.id,
-            client_name: client.client_name,
-            client_code: client.client_code,
-            kam_name: kamName,
-            lastOrderDate,
-            daysSinceLastOrder,
-            totalOrders: scopedOrders.length,
-            ...paymentTotals,
-          });
-        }
-      }
-
-      const clientsWithOrders = Array.from(clientById.values());
-      setClients(clientsWithOrders);
-
-      const inactiveThreshold = 30;
-      const inactiveClients = clientsWithOrders.filter(
-        (c) => c.daysSinceLastOrder === null || c.daysSinceLastOrder > inactiveThreshold
-      ).length;
-      setStats((prev) => ({ ...prev, inactiveClients }));
-
-      setAlertPage(1);
-      setRecentOrdersPage(1);
-      setClientPage(1);
-      setKamPage(1);
-      setOrdersPage(1);
-    } catch (error: any) {
-      toast({ variant: 'destructive', title: 'Error', description: error.message });
-    } finally {
-      setTabsLoading(false);
-    }
-  };
+  }, [dispatch, dateRange.start, dateRange.end]);
 
   useEffect(() => {
-    void fetchRevenueData();
-  }, [selectedYear, user?.id, user?.company_id]);
+    if (overviewStatus !== 'failed' || !overviewError) return;
+    toast({ variant: 'destructive', title: 'Error', description: overviewError });
+  }, [overviewStatus, overviewError, toast]);
 
   useEffect(() => {
-    void fetchTabData();
-  }, [
-    dateRange.start?.getTime(),
-    dateRange.end?.getTime(),
-    user?.id,
-    user?.company_id,
-  ]);
+    if (tabsStatus !== 'failed' || !tabsError) return;
+    toast({ variant: 'destructive', title: 'Error', description: tabsError });
+  }, [tabsStatus, tabsError, toast]);
+
+  useEffect(() => {
+    setAlertPage(1);
+    setRecentOrdersPage(1);
+    setClientPage(1);
+    setKamPage(1);
+    setOrdersPage(1);
+  }, [tabs]);
 
   const getDaysBadge = (days: number | null) => {
     if (days === null) return <Badge variant="outline">Never ordered</Badge>;

@@ -1,9 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/features/auth';
-import { supabase } from '@/lib/supabase';
-import { fetchAllPaginated } from '@/lib/supabasePaginate';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
@@ -25,172 +22,34 @@ import {
   getDateRangeFromPreset,
 } from '@/lib/dateRangePresets';
 import { getKeyAccountRoleLabel } from '@/features/key-accounts/keyAccountRoles';
-import { KeyAccountTeamManagement } from '../components/KeyAccountTeamManagement';
-import { ClientHierarchyManager } from '../components/ClientHierarchyManager';
-import { ClientAssignmentManager } from '../components/ClientAssignmentManager';
 import { KeyAccountDashboardRevenueCard } from './KeyAccountDashboardRevenueCard';
 import { KeyAccountDashboardRevenueOverview } from './KeyAccountDashboardRevenueOverview';
 import {
   EMPTY_KEY_ACCOUNT_DASHBOARD_REVENUE,
-  isKeyAccountDashboardSalesOrder,
-  loadKeyAccountDashboardRevenue,
-  type KeyAccountDashboardOrder,
-  type KeyAccountDashboardRevenueResult,
+  formatKeyAccountDashboardCurrency,
 } from './keyAccountDashboardRevenue';
-
-interface AdminOrderRow extends KeyAccountDashboardOrder {
-  client?: { client_name: string | null } | { client_name: string | null }[] | null;
-}
-
-interface AdminItemRow {
-  purchase_order_id: string;
-  quantity: number | null;
-  unit_price: number | null;
-  total_price: number | null;
-  variants?: {
-    name: string | null;
-    brands?: { name: string | null } | { name: string | null }[] | null;
-  } | {
-    name: string | null;
-    brands?: { name: string | null } | { name: string | null }[] | null;
-  }[] | null;
-}
-
-interface PurchaseBreakdownRow {
-  name: string;
-  quantity: number;
-  revenue: number;
-  orderCount: number;
-}
-
-interface PurchaseBreakdownAccumulator extends PurchaseBreakdownRow {
-  orderIds: Set<string>;
-}
-
-interface BrandPurchaseBreakdown extends PurchaseBreakdownRow {
-  clientCount: number;
-  variants: PurchaseBreakdownRow[];
-  clients: PurchaseBreakdownRow[];
-}
-
-function firstRelation<T>(value: T | T[] | null | undefined): T | null {
-  if (Array.isArray(value)) return value[0] ?? null;
-  return value ?? null;
-}
-
-function formatCurrency(value: number) {
-  return `₱${Math.round(value).toLocaleString()}`;
-}
-
-function addBreakdownValue(map: Map<string, PurchaseBreakdownAccumulator>, name: string, quantity: number, revenue: number, orderId: string) {
-  const existing = map.get(name) || {
-    name,
-    quantity: 0,
-    revenue: 0,
-    orderCount: 0,
-    orderIds: new Set<string>(),
-  };
-
-  existing.quantity += quantity;
-  existing.revenue += revenue;
-  existing.orderIds.add(orderId);
-  existing.orderCount = existing.orderIds.size;
-  map.set(name, existing);
-}
-
-function toSortedBreakdownRows(map: Map<string, PurchaseBreakdownAccumulator>) {
-  return Array.from(map.values())
-    .map((row) => ({
-      name: row.name,
-      quantity: row.quantity,
-      revenue: row.revenue,
-      orderCount: row.orderIds.size,
-    }))
-    .sort((a, b) => b.quantity - a.quantity || b.revenue - a.revenue);
-}
-
-function buildBrandBreakdown(orders: AdminOrderRow[], items: AdminItemRow[]): BrandPurchaseBreakdown[] {
-  // Same eligibility as Revenue Overview — booked sales POs, not delivered-only.
-  const salesOrderById = new Map(
-    orders.filter(isKeyAccountDashboardSalesOrder).map((order) => [order.id, order])
-  );
-  const brandMap = new Map<string, {
-    name: string;
-    quantity: number;
-    revenue: number;
-    orderIds: Set<string>;
-    clientIds: Set<string>;
-    variants: Map<string, PurchaseBreakdownAccumulator>;
-    clients: Map<string, PurchaseBreakdownAccumulator>;
-  }>();
-
-  items.forEach((item) => {
-    const order = salesOrderById.get(item.purchase_order_id);
-    if (!order) return;
-
-    const variant = firstRelation(item.variants);
-    const brandName = firstRelation(variant?.brands)?.name || 'Unknown Brand';
-    const variantName = variant?.name || 'Unknown Variant';
-    const client = firstRelation(order.client);
-    const clientName = client?.client_name || 'Unassigned Client';
-    const clientKey = order.key_account_client_id || clientName;
-    const quantity = Number(item.quantity || 0);
-    const revenue = Number(item.total_price ?? quantity * Number(item.unit_price || 0));
-
-    const brand = brandMap.get(brandName) || {
-      name: brandName,
-      quantity: 0,
-      revenue: 0,
-      orderIds: new Set<string>(),
-      clientIds: new Set<string>(),
-      variants: new Map<string, PurchaseBreakdownAccumulator>(),
-      clients: new Map<string, PurchaseBreakdownAccumulator>(),
-    };
-
-    brand.quantity += quantity;
-    brand.revenue += revenue;
-    brand.orderIds.add(item.purchase_order_id);
-    brand.clientIds.add(clientKey);
-    addBreakdownValue(brand.variants, variantName, quantity, revenue, item.purchase_order_id);
-    addBreakdownValue(brand.clients, clientName, quantity, revenue, item.purchase_order_id);
-    brandMap.set(brandName, brand);
-  });
-
-  return Array.from(brandMap.values())
-    .map((brand) => ({
-      name: brand.name,
-      quantity: brand.quantity,
-      revenue: brand.revenue,
-      orderCount: brand.orderIds.size,
-      clientCount: brand.clientIds.size,
-      variants: toSortedBreakdownRows(brand.variants),
-      clients: toSortedBreakdownRows(brand.clients),
-    }))
-    .sort((a, b) => b.quantity - a.quantity || b.revenue - a.revenue)
-    .slice(0, 10);
-}
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import {
+  fetchKADashboardOverview,
+  fetchKADashboardPurchaseBreakdown,
+} from '@/store/slices/key-accounts/dashboard';
 
 export function SalesAdminDashboard() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState('overview');
+  const dispatch = useAppDispatch();
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
-  const [stats, setStats] = useState({
-    totalClients: 0,
-    totalOrders: 0,
-    pendingOrders: 0,
-    consignmentOrders: 0,
-  });
-  const [revenueMetrics, setRevenueMetrics] = useState<KeyAccountDashboardRevenueResult>(
-    EMPTY_KEY_ACCOUNT_DASHBOARD_REVENUE
-  );
-  const [brandBreakdown, setBrandBreakdown] = useState<BrandPurchaseBreakdown[]>([]);
   const [selectedBrandName, setSelectedBrandName] = useState<string | null>(null);
   const [breakdownDateRangeFilter, setBreakdownDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'this_year',
   });
-  const [loading, setLoading] = useState(true);
-  const [breakdownLoading, setBreakdownLoading] = useState(true);
+
+  const overview = useAppSelector((state) => state.kaDashboard.overview);
+  const overviewStatus = useAppSelector((state) => state.kaDashboard.overviewStatus);
+  const overviewError = useAppSelector((state) => state.kaDashboard.overviewError);
+  const brandBreakdown = useAppSelector((state) => state.kaDashboard.brands);
+  const breakdownStatus = useAppSelector((state) => state.kaDashboard.breakdownStatus);
+  const breakdownError = useAppSelector((state) => state.kaDashboard.breakdownError);
 
   const breakdownDateRange = useMemo(
     () =>
@@ -220,145 +79,41 @@ export function SalesAdminDashboard() {
   const maxBrandQuantity = brandBreakdown[0]?.quantity || 1;
   const maxVariantQuantity = selectedBrand?.variants[0]?.quantity || 1;
   const maxClientQuantity = selectedBrand?.clients[0]?.quantity || 1;
+  const stats = overview?.stats;
+  const revenueMetrics = overview?.revenue || EMPTY_KEY_ACCOUNT_DASHBOARD_REVENUE;
+  const loading = overviewStatus === 'loading' || overviewStatus === 'idle';
+  const breakdownLoading = breakdownStatus === 'loading' || breakdownStatus === 'idle';
 
   useEffect(() => {
-    fetchAdminData();
-  }, [selectedYear]);
+    void dispatch(fetchKADashboardOverview(selectedYear));
+  }, [dispatch, selectedYear]);
 
   useEffect(() => {
-    fetchBreakdownData();
-  }, [breakdownDateRange.start, breakdownDateRange.end, user?.company_id]);
+    void dispatch(
+      fetchKADashboardPurchaseBreakdown({
+        dateStart: breakdownDateRange.start ? formatDateForInput(breakdownDateRange.start) : undefined,
+        dateEnd: breakdownDateRange.end ? formatDateForInput(breakdownDateRange.end) : undefined,
+      })
+    );
+  }, [dispatch, breakdownDateRange.start, breakdownDateRange.end]);
 
-  const fetchBreakdownData = async () => {
-    if (!user?.company_id) return;
+  useEffect(() => {
+    if (overviewStatus !== 'failed' || !overviewError) return;
+    toast({ variant: 'destructive', title: 'Error', description: overviewError });
+  }, [overviewStatus, overviewError, toast]);
 
-    setBreakdownLoading(true);
-    try {
-      let ordersQuery = supabase
-        .from('purchase_orders')
-        .select(`
-          id,
-          status,
-          workflow_status,
-          po_order_kind,
-          source_rebate_id,
-          total_amount,
-          order_date,
-          key_account_client_id,
-          client:key_account_clients(client_name)
-        `)
-        .eq('company_id', user.company_id)
-        .eq('company_account_type', 'Key Accounts');
+  useEffect(() => {
+    if (breakdownStatus !== 'failed' || !breakdownError) return;
+    toast({ variant: 'destructive', title: 'Error', description: breakdownError });
+  }, [breakdownStatus, breakdownError, toast]);
 
-      if (breakdownDateRange.start) {
-        ordersQuery = ordersQuery.gte('order_date', formatDateForInput(breakdownDateRange.start));
-      }
-      if (breakdownDateRange.end) {
-        ordersQuery = ordersQuery.lte('order_date', formatDateForInput(breakdownDateRange.end));
-      }
-
-      const { data: orders, error: ordersError } = await ordersQuery;
-      if (ordersError) throw ordersError;
-
-      const orderRows = (orders || []) as AdminOrderRow[];
-      const salesOrderIds = orderRows
-        .filter(isKeyAccountDashboardSalesOrder)
-        .map((order) => order.id);
-
-      let salesItems: AdminItemRow[] = [];
-      if (salesOrderIds.length > 0) {
-        const chunkSize = 100;
-        for (let i = 0; i < salesOrderIds.length; i += chunkSize) {
-          const chunk = salesOrderIds.slice(i, i + chunkSize);
-          const itemRows = await fetchAllPaginated<AdminItemRow>(async (from, to) => {
-            const { data, error } = await supabase
-              .from('purchase_order_items')
-              .select(`
-                purchase_order_id,
-                quantity,
-                unit_price,
-                total_price,
-                variants:variant_id (
-                  name,
-                  brands:brand_id (name)
-                )
-              `)
-              .in('purchase_order_id', chunk)
-              .range(from, to);
-            return { data: (data as AdminItemRow[] | null) ?? null, error };
-          });
-          salesItems.push(...itemRows);
-        }
-      }
-
-      const nextBrandBreakdown = buildBrandBreakdown(orderRows, salesItems);
-      setBrandBreakdown(nextBrandBreakdown);
-      setSelectedBrandName((current) => (
-        current && nextBrandBreakdown.some((brand) => brand.name === current)
-          ? current
-          : nextBrandBreakdown[0]?.name ?? null
-      ));
-    } catch (error: any) {
-      toast({ variant: 'destructive', title: 'Error', description: error.message });
-    } finally {
-      setBreakdownLoading(false);
-    }
-  };
-
-  const fetchAdminData = async () => {
-    setLoading(true);
-    try {
-      // Get clients count
-      const { count: clientCount } = await supabase
-        .from('key_account_clients')
-        .select('*', { count: 'exact', head: true })
-        .eq('company_id', user?.company_id)
-        .eq('status', 'active');
-
-      // Get orders and revenue (paged — PostgREST caps at 1000 rows per request)
-      const orderRows = await fetchAllPaginated<AdminOrderRow>(async (from, to) => {
-        const { data, error } = await supabase
-          .from('purchase_orders')
-          .select(`
-            id,
-            po_number,
-            total_amount,
-            subtotal,
-            status,
-            workflow_status,
-            po_order_kind,
-            source_rebate_id,
-            warehouse_location_id,
-            order_date,
-            key_account_client_id,
-            key_account_payment_status,
-            client:key_account_clients(client_name)
-          `)
-          .eq('company_id', user?.company_id)
-          .eq('company_account_type', 'Key Accounts')
-          .gte('order_date', `${selectedYear}-01-01`)
-          .lte('order_date', `${selectedYear}-12-31`)
-          .order('order_date', { ascending: true })
-          .order('id', { ascending: true })
-          .range(from, to);
-        return { data: (data as AdminOrderRow[] | null) ?? null, error };
-      });
-
-      const revenueResult = await loadKeyAccountDashboardRevenue(supabase, orderRows, selectedYear);
-      setRevenueMetrics(revenueResult);
-
-      setStats({
-        totalClients: clientCount || 0,
-        totalOrders: orderRows.length,
-        pendingOrders: revenueResult.pendingOrderCount,
-        consignmentOrders: revenueResult.consignmentOrderCount,
-      });
-    } catch (error: any) {
-      toast({ variant: 'destructive', title: 'Error', description: error.message });
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    setSelectedBrandName((current) =>
+      current && brandBreakdown.some((brand) => brand.name === current)
+        ? current
+        : brandBreakdown[0]?.name ?? null
+    );
+  }, [brandBreakdown]);
 
   if (loading) {
     return (
@@ -370,7 +125,6 @@ export function SalesAdminDashboard() {
 
   return (
     <div className="p-6 space-y-6">
-      {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold">Key Account Management</h1>
@@ -387,14 +141,15 @@ export function SalesAdminDashboard() {
             <SelectValue placeholder="Select year" />
           </SelectTrigger>
           <SelectContent>
-            {[2024, 2025, 2026].map(y => (
-              <SelectItem key={y} value={y.toString()}>{y}</SelectItem>
+            {[2024, 2025, 2026].map((y) => (
+              <SelectItem key={y} value={y.toString()}>
+                {y}
+              </SelectItem>
             ))}
           </SelectContent>
         </Select>
       </div>
 
-      {/* Stats Cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
         <Card>
           <CardHeader className="pb-2">
@@ -404,7 +159,7 @@ export function SalesAdminDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.totalClients}</div>
+            <div className="text-2xl font-bold">{stats?.totalClients || 0}</div>
           </CardContent>
         </Card>
         <Card>
@@ -415,7 +170,7 @@ export function SalesAdminDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.totalOrders}</div>
+            <div className="text-2xl font-bold">{stats?.totalOrders || 0}</div>
           </CardContent>
         </Card>
         <Card>
@@ -426,10 +181,9 @@ export function SalesAdminDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-sky-600">{stats.consignmentOrders}</div>
+            <div className="text-2xl font-bold text-sky-600">{stats?.consignmentOrders || 0}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              Float value{' '}
-              {formatCurrency(revenueMetrics.summary.consignmentRevenue)}
+              Float value {formatKeyAccountDashboardCurrency(revenueMetrics.summary.consignmentRevenue)}
             </p>
           </CardContent>
         </Card>
@@ -442,10 +196,10 @@ export function SalesAdminDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-amber-600">{stats.pendingOrders}</div>
+            <div className="text-2xl font-bold text-amber-600">{stats?.pendingOrders || 0}</div>
             <p className="text-xs text-muted-foreground mt-1">
               Unpaid + partial + consignment ·{' '}
-              {formatCurrency(
+              {formatKeyAccountDashboardCurrency(
                 revenueMetrics.summary.unpaidRevenue +
                   revenueMetrics.summary.partialRevenue +
                   revenueMetrics.summary.consignmentRevenue
@@ -463,7 +217,6 @@ export function SalesAdminDashboard() {
         payments={revenueMetrics.payments}
       />
 
-      {/* Product Purchase Breakdown */}
       <div className="space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
@@ -482,162 +235,160 @@ export function SalesAdminDashboard() {
         </div>
 
         <div className="grid gap-4 xl:grid-cols-3">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <BarChart3 className="h-5 w-5" />
-              Top 10 Buying Brands
-            </CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Top 10 brands by units ordered on sales POs ({breakdownDateRangeLabel}).
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {breakdownLoading ? (
-              <div className="flex justify-center py-8">
-                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
-              </div>
-            ) : brandBreakdown.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No brand purchases in this range yet.</p>
-            ) : (
-              brandBreakdown.map((brand, index) => {
-                const isSelected = selectedBrand?.name === brand.name;
-                const width = `${Math.max(4, (brand.quantity / maxBrandQuantity) * 100)}%`;
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <BarChart3 className="h-5 w-5" />
+                Top 10 Buying Brands
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Top 10 brands by units ordered on sales POs ({breakdownDateRangeLabel}).
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {breakdownLoading ? (
+                <div className="flex justify-center py-8">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
+                </div>
+              ) : brandBreakdown.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No brand purchases in this range yet.</p>
+              ) : (
+                brandBreakdown.map((brand, index) => {
+                  const isSelected = selectedBrand?.name === brand.name;
+                  const width = `${Math.max(4, (brand.quantity / maxBrandQuantity) * 100)}%`;
 
-                return (
-                  <button
-                    key={brand.name}
-                    type="button"
-                    onClick={() => setSelectedBrandName(brand.name)}
-                    className={`w-full rounded-lg border p-3 text-left transition hover:border-primary/60 hover:bg-muted/50 ${
-                      isSelected ? 'border-primary bg-primary/5' : 'border-border'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="font-medium truncate">
-                          {index + 1}. {brand.name}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {brand.clientCount} client{brand.clientCount === 1 ? '' : 's'}
-                        </p>
+                  return (
+                    <button
+                      key={brand.name}
+                      type="button"
+                      onClick={() => setSelectedBrandName(brand.name)}
+                      className={`w-full rounded-lg border p-3 text-left transition hover:border-primary/60 hover:bg-muted/50 ${
+                        isSelected ? 'border-primary bg-primary/5' : 'border-border'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="font-medium truncate">
+                            {index + 1}. {brand.name}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {brand.clientCount} client{brand.clientCount === 1 ? '' : 's'}
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="font-semibold">{brand.quantity.toLocaleString()}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {brand.orderCount} PO{brand.orderCount === 1 ? '' : 's'}
+                          </p>
+                        </div>
                       </div>
-                      <div className="text-right shrink-0">
-                        <p className="font-semibold">{brand.quantity.toLocaleString()}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {brand.orderCount} PO{brand.orderCount === 1 ? '' : 's'}
-                        </p>
+                      <div className="mt-3 h-2 rounded-full bg-muted">
+                        <div className="h-2 rounded-full bg-primary" style={{ width }} />
                       </div>
-                    </div>
-                    <div className="mt-3 h-2 rounded-full bg-muted">
-                      <div className="h-2 rounded-full bg-primary" style={{ width }} />
-                    </div>
-                  </button>
-                );
-              })
-            )}
-          </CardContent>
-        </Card>
+                    </button>
+                  );
+                })
+              )}
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <ShoppingCart className="h-5 w-5" />
-              Top Variants
-            </CardTitle>
-            <p className="text-sm text-muted-foreground">
-              {selectedBrand
-                ? `Top 10 variants for ${selectedBrand.name} by units sold (${breakdownDateRangeLabel}).`
-                : 'Select a brand to view variants.'}
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {breakdownLoading ? (
-              <div className="flex justify-center py-8">
-                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
-              </div>
-            ) : !selectedBrand || selectedBrand.variants.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No variants to show.</p>
-            ) : (
-              selectedBrand.variants.slice(0, 10).map((variant, index) => {
-                const width = `${Math.max(4, (variant.quantity / maxVariantQuantity) * 100)}%`;
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ShoppingCart className="h-5 w-5" />
+                Top Variants
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                {selectedBrand
+                  ? `Top 10 variants for ${selectedBrand.name} by units sold (${breakdownDateRangeLabel}).`
+                  : 'Select a brand to view variants.'}
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {breakdownLoading ? (
+                <div className="flex justify-center py-8">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
+                </div>
+              ) : !selectedBrand || selectedBrand.variants.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No variants to show.</p>
+              ) : (
+                selectedBrand.variants.slice(0, 10).map((variant, index) => {
+                  const width = `${Math.max(4, (variant.quantity / maxVariantQuantity) * 100)}%`;
 
-                return (
-                  <div key={variant.name} className="rounded-lg border p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="font-medium truncate">
-                          {index + 1}. {variant.name}
-                        </p>
+                  return (
+                    <div key={variant.name} className="rounded-lg border p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="font-medium truncate">
+                            {index + 1}. {variant.name}
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="font-semibold">{variant.quantity.toLocaleString()}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {variant.orderCount} PO{variant.orderCount === 1 ? '' : 's'}
+                          </p>
+                        </div>
                       </div>
-                      <div className="text-right shrink-0">
-                        <p className="font-semibold">{variant.quantity.toLocaleString()}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {variant.orderCount} PO{variant.orderCount === 1 ? '' : 's'}
-                        </p>
+                      <div className="mt-3 h-2 rounded-full bg-muted">
+                        <div className="h-2 rounded-full bg-blue-500" style={{ width }} />
                       </div>
                     </div>
-                    <div className="mt-3 h-2 rounded-full bg-muted">
-                      <div className="h-2 rounded-full bg-blue-500" style={{ width }} />
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </CardContent>
-        </Card>
+                  );
+                })
+              )}
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Building2 className="h-5 w-5" />
-              Top Buying Clients
-            </CardTitle>
-            <p className="text-sm text-muted-foreground">
-              {selectedBrand
-                ? `Top 10 clients for ${selectedBrand.name} by units bought (${breakdownDateRangeLabel}).`
-                : 'Select a brand to view clients.'}
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {breakdownLoading ? (
-              <div className="flex justify-center py-8">
-                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
-              </div>
-            ) : !selectedBrand || selectedBrand.clients.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No clients to show.</p>
-            ) : (
-              selectedBrand.clients.slice(0, 10).map((client, index) => {
-                const width = `${Math.max(4, (client.quantity / maxClientQuantity) * 100)}%`;
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Building2 className="h-5 w-5" />
+                Top Buying Clients
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                {selectedBrand
+                  ? `Top 10 clients for ${selectedBrand.name} by units bought (${breakdownDateRangeLabel}).`
+                  : 'Select a brand to view clients.'}
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {breakdownLoading ? (
+                <div className="flex justify-center py-8">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
+                </div>
+              ) : !selectedBrand || selectedBrand.clients.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No clients to show.</p>
+              ) : (
+                selectedBrand.clients.slice(0, 10).map((client, index) => {
+                  const width = `${Math.max(4, (client.quantity / maxClientQuantity) * 100)}%`;
 
-                return (
-                  <div key={client.name} className="rounded-lg border p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="font-medium truncate">
-                          {index + 1}. {client.name}
-                        </p>
+                  return (
+                    <div key={client.name} className="rounded-lg border p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="font-medium truncate">
+                            {index + 1}. {client.name}
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="font-semibold">{client.quantity.toLocaleString()}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {client.orderCount} PO{client.orderCount === 1 ? '' : 's'}
+                          </p>
+                        </div>
                       </div>
-                      <div className="text-right shrink-0">
-                        <p className="font-semibold">{client.quantity.toLocaleString()}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {client.orderCount} PO{client.orderCount === 1 ? '' : 's'}
-                        </p>
+                      <div className="mt-3 h-2 rounded-full bg-muted">
+                        <div className="h-2 rounded-full bg-emerald-500" style={{ width }} />
                       </div>
                     </div>
-                    <div className="mt-3 h-2 rounded-full bg-muted">
-                      <div className="h-2 rounded-full bg-emerald-500" style={{ width }} />
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </CardContent>
-        </Card>
+                  );
+                })
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
-
-      {/* Main Tabs */}
     </div>
   );
 }
