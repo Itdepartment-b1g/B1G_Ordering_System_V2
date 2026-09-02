@@ -32,6 +32,7 @@ import ManagerTeamRemittancesPage from "@/features/manager/ManagerTeamRemittance
 import ManagerRequestsPage from "@/features/manager/ManagerRequestsPage";
 import ManagerClientsPage from "@/features/manager/ManagerClientsPage";
 import ManagerDashboardPage from "@/features/manager/ManagerDashboardPage";
+import AgentInventoryPage from "@/features/accounting/pages/AgentInventoryPage";
 import { FinancePage } from "@/features/finance";
 import PaymentSettingsPage from "@/features/finance/PaymentSettingsPage";
 import SystemAdminPage from "@/features/system-admin/SystemAdminPage";
@@ -279,6 +280,14 @@ const App = () => (
                       element={
                         <ProtectedRoute allowedRoles={['accounting']}>
                           <ProductAnalyticsPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/agent-inventory"
+                      element={
+                        <ProtectedRoute allowedRoles={['accounting']}>
+                          <AgentInventoryPage />
                         </ProtectedRoute>
                       }
                     />
