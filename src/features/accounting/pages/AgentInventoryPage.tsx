@@ -6,15 +6,17 @@ import {
   useAccountingAgentInventory,
   type AccountingAgentSummary,
 } from '@/features/accounting/hooks/useAccountingAgentInventory';
+import { exportAgentInventoryExcel } from '@/features/accounting/utils/exportAgentInventoryExcel';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Box, Check, ChevronsUpDown, Package, Search, Users } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
+import { Box, Check, ChevronsUpDown, FileDown, Layers, Loader2, Package, Search, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-type SalesRole = 'team_leader' | 'mobile_sales';
+type RoleFilter = 'all' | 'team_leader' | 'mobile_sales';
 type AgentStatusFilter = 'all' | 'active' | 'inactive';
 type AvailabilityFilter = 'all' | 'available' | 'not_available';
 
@@ -150,24 +152,44 @@ function applyBrandFilter(
   });
 }
 
-function roleStats(people: AccountingAgentSummary[], role: SalesRole) {
-  const subset = people.filter((person) => person.agentRole === role);
+function roleStats(people: AccountingAgentSummary[], role: RoleFilter) {
+  const subset =
+    role === 'all' ? people : people.filter((person) => person.agentRole === role);
   return {
     count: subset.length,
     units: subset.reduce((sum, person) => sum + person.totalStock, 0),
   };
 }
 
+function matchesTeamFilter(person: AccountingAgentSummary, teamId: string, role: RoleFilter) {
+  if (teamId === 'all') return true;
+
+  if (role === 'mobile_sales') {
+    return getPersonTeamId(person) === teamId;
+  }
+
+  if (teamId === UNASSIGNED_TEAM_ID) {
+    return person.agentRole === 'mobile_sales' && getPersonTeamId(person) === UNASSIGNED_TEAM_ID;
+  }
+
+  return (
+    (person.agentRole === 'team_leader' && person.agentId === teamId) ||
+    (person.agentRole === 'mobile_sales' && getPersonTeamId(person) === teamId)
+  );
+}
+
 export default function AgentInventoryPage() {
   const { data, isLoading } = useAccountingAgentInventory();
+  const { toast } = useToast();
   const people = data?.people ?? [];
   const catalogBrands = data?.brands ?? [];
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedRole, setSelectedRole] = useState<SalesRole | null>(null);
+  const [selectedRole, setSelectedRole] = useState<RoleFilter>('all');
   const [statusFilter, setStatusFilter] = useState<AgentStatusFilter>('all');
   const [teamFilter, setTeamFilter] = useState('all');
   const [brandFilter, setBrandFilter] = useState('all');
+  const [exporting, setExporting] = useState(false);
 
   const teamOptions = useMemo(() => {
     const teams = new Map<string, string>();
@@ -218,9 +240,10 @@ export default function AgentInventoryPage() {
     }
 
     const heldBrandIds = new Set<string>();
-    const source = selectedRole
-      ? people.filter((person) => person.agentRole === selectedRole)
-      : people;
+    const source =
+      selectedRole === 'all'
+        ? people
+        : people.filter((person) => person.agentRole === selectedRole);
     for (const person of source) {
       for (const item of person.inventory) {
         brands.set(item.brandId, item.brandName);
@@ -238,16 +261,17 @@ export default function AgentInventoryPage() {
   }, [catalogBrands, people, selectedRole]);
 
   const filteredPeople = useMemo(() => {
-    if (!selectedRole) return [];
-
-    let next = people.filter((person) => person.agentRole === selectedRole);
+    let next =
+      selectedRole === 'all'
+        ? people
+        : people.filter((person) => person.agentRole === selectedRole);
 
     if (statusFilter !== 'all') {
       next = next.filter((person) => person.status === statusFilter);
     }
 
-    if (selectedRole === 'mobile_sales' && teamFilter !== 'all') {
-      next = next.filter((person) => getPersonTeamId(person) === teamFilter);
+    if (selectedRole !== 'team_leader' && teamFilter !== 'all') {
+      next = next.filter((person) => matchesTeamFilter(person, teamFilter, selectedRole));
     }
 
     next = applyBrandFilter(next, brandFilter);
@@ -272,9 +296,55 @@ export default function AgentInventoryPage() {
 
   const teamLeaderStats = useMemo(() => roleStats(people, 'team_leader'), [people]);
   const mobileSalesStats = useMemo(() => roleStats(people, 'mobile_sales'), [people]);
+  const allStats = useMemo(() => roleStats(people, 'all'), [people]);
+
+  const handleExportExcel = async () => {
+    setExporting(true);
+    try {
+      const teamLabel =
+        teamFilter === 'all'
+          ? 'All teams'
+          : teamOptions.find((team) => team.id === teamFilter)?.name || 'All teams';
+      const brandLabel =
+        brandFilter === 'all'
+          ? 'All brands'
+          : brandFilterOptions.find((brand) => brand.id === brandFilter)?.label || 'All brands';
+
+      await exportAgentInventoryExcel(filteredPeople, {
+        role: selectedRole,
+        roleLabel:
+          selectedRole === 'all'
+            ? 'All'
+            : selectedRole === 'mobile_sales'
+              ? 'Mobile Sales'
+              : 'Team Leader',
+        statusLabel:
+          statusFilter === 'active' ? 'Active' : statusFilter === 'inactive' ? 'Inactive' : 'All',
+        teamLabel,
+        brandLabel,
+        searchLabel: searchQuery.trim() || '—',
+      });
+      toast({ title: 'Export complete', description: 'Agent inventory exported to Excel.' });
+    } catch {
+      toast({
+        title: 'Export failed',
+        description: 'Could not export agent inventory to Excel.',
+        variant: 'destructive',
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const selectRole = (role: RoleFilter) => {
+    setSelectedRole(role);
+    setStatusFilter('all');
+    setTeamFilter('all');
+    setBrandFilter('all');
+  };
 
   const roleCards: Array<{
-    role: SalesRole;
+    role: RoleFilter;
     label: string;
     caption: string;
     stats: ReturnType<typeof roleStats>;
@@ -282,6 +352,15 @@ export default function AgentInventoryPage() {
     iconTint: string;
     Icon: typeof Users;
   }> = [
+    {
+      role: 'all',
+      label: 'All',
+      caption: 'Leaders and agents in this company',
+      stats: allStats,
+      tint: 'from-emerald-500/[0.08]',
+      iconTint: 'text-emerald-500/10',
+      Icon: Layers,
+    },
     {
       role: 'team_leader',
       label: 'Team Leader',
@@ -304,11 +383,22 @@ export default function AgentInventoryPage() {
 
   return (
     <div className="space-y-4 p-4 md:p-6">
-      <div>
-        <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Agent Inventory</h1>
-        <p className="text-sm md:text-base text-muted-foreground">
-          Field stock held by team leaders and mobile sales — view only
-        </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Agent Inventory</h1>
+          <p className="text-sm md:text-base text-muted-foreground">
+            Field stock held by team leaders and mobile sales — view only
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          className="h-10 gap-2 shrink-0"
+          onClick={() => void handleExportExcel()}
+          disabled={exporting || filteredPeople.length === 0}
+        >
+          {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
+          Export Excel
+        </Button>
       </div>
 
       <div className="flex flex-col lg:flex-row gap-2">
@@ -316,14 +406,14 @@ export default function AgentInventoryPage() {
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder={
-              selectedRole === 'mobile_sales' ? 'Search agent or team...' : 'Search person...'
+              selectedRole === 'team_leader' ? 'Search person...' : 'Search agent or team...'
             }
             className="pl-8 bg-background h-10"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
-        {selectedRole === 'mobile_sales' && (
+        {selectedRole !== 'team_leader' && (
           <SearchableFilter
             options={teamFilterOptions}
             value={teamFilter}
@@ -340,22 +430,28 @@ export default function AgentInventoryPage() {
           placeholder="All brands"
           searchPlaceholder="Search brand..."
           scopeLabels={
-            selectedRole === 'mobile_sales'
+            selectedRole === 'all'
               ? {
                   all: 'All',
-                  available: 'Held by Mobile Sales',
-                  not_available: 'Not held by Mobile Sales',
+                  available: 'Held',
+                  not_available: 'Not held',
                 }
-              : {
-                  all: 'All',
-                  available: 'Held by TL',
-                  not_available: 'Not held by TL',
-                }
+              : selectedRole === 'mobile_sales'
+                ? {
+                    all: 'All',
+                    available: 'Held by Mobile Sales',
+                    not_available: 'Not held by Mobile Sales',
+                  }
+                : {
+                    all: 'All',
+                    available: 'Held by TL',
+                    not_available: 'Not held by TL',
+                  }
           }
         />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {roleCards.map(({ role, label, caption, stats, tint, iconTint, Icon }) => {
           const selected = selectedRole === role;
           return (
@@ -363,19 +459,11 @@ export default function AgentInventoryPage() {
               key={role}
               role="button"
               tabIndex={0}
-              onClick={() => {
-                setSelectedRole(role);
-                setStatusFilter('all');
-                setTeamFilter('all');
-                setBrandFilter('all');
-              }}
+              onClick={() => selectRole(role)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
                   event.preventDefault();
-                  setSelectedRole(role);
-                  setStatusFilter('all');
-                  setTeamFilter('all');
-                  setBrandFilter('all');
+                  selectRole(role);
                 }
               }}
               className={cn(
@@ -410,8 +498,7 @@ export default function AgentInventoryPage() {
         })}
       </div>
 
-      {selectedRole && (
-        <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2">
           {(
             [
               { value: 'all', label: 'All' },
@@ -437,13 +524,12 @@ export default function AgentInventoryPage() {
             );
           })}
         </div>
-      )}
 
       {isLoading ? (
         <div className="flex justify-center py-16">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
         </div>
-      ) : selectedRole ? (
+      ) : (
         <div className="overflow-hidden rounded-md border">
           <AgentInventoryList
             people={filteredPeople}
@@ -451,10 +537,6 @@ export default function AgentInventoryPage() {
             selectedRole={selectedRole}
           />
         </div>
-      ) : (
-        <p className="py-10 text-center text-sm text-muted-foreground">
-          Select Team Leader or Mobile Sales to view inventory.
-        </p>
       )}
     </div>
   );

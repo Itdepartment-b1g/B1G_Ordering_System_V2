@@ -19,7 +19,12 @@ import {
   type AccountingAgentSummary,
   type AccountingInventoryItem,
 } from '@/features/accounting/hooks/useAccountingAgentInventory';
-import { Box, Check, ChevronRight, ChevronsUpDown, Eye, Package } from 'lucide-react';
+import {
+  exportAgentInventoryExcel,
+  exportMetaForPerson,
+} from '@/features/accounting/utils/exportAgentInventoryExcel';
+import { useToast } from '@/hooks/use-toast';
+import { Box, Check, ChevronRight, ChevronsUpDown, Eye, FileDown, Loader2, Package } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 function formatPeso(value: number) {
@@ -149,7 +154,7 @@ function SearchablePicker({
 interface AgentInventoryListProps {
   people: AccountingAgentSummary[];
   isFiltered: boolean;
-  selectedRole: 'team_leader' | 'mobile_sales';
+  selectedRole: 'all' | 'team_leader' | 'mobile_sales';
 }
 
 export default function AgentInventoryList({
@@ -158,11 +163,13 @@ export default function AgentInventoryList({
   selectedRole,
 }: AgentInventoryListProps) {
   const [selectedPerson, setSelectedPerson] = useState<AccountingAgentSummary | null>(null);
+  const [exportingId, setExportingId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [filterKind, setFilterKind] = useState<FilterKind>('all');
   const [filterValue, setFilterValue] = useState<string | null>(null);
   const [brandVariantId, setBrandVariantId] = useState('all');
+  const { toast } = useToast();
 
   const sortedPeople = useMemo(
     () => [...people].sort((a, b) => a.agentName.localeCompare(b.agentName)),
@@ -272,6 +279,26 @@ export default function AgentInventoryList({
     setSelectedPerson(person);
   };
 
+  const exportPerson = async (person: AccountingAgentSummary) => {
+    if (exportingId) return;
+    setExportingId(person.agentId);
+    try {
+      await exportAgentInventoryExcel([person], exportMetaForPerson(person, selectedRole));
+      toast({
+        title: 'Export complete',
+        description: `${person.agentName} exported to Excel.`,
+      });
+    } catch {
+      toast({
+        title: 'Export failed',
+        description: `Could not export ${person.agentName} to Excel.`,
+        variant: 'destructive',
+      });
+    } finally {
+      setExportingId(null);
+    }
+  };
+
   return (
     <>
       {sortedPeople.length === 0 ? (
@@ -281,7 +308,9 @@ export default function AgentInventoryList({
               ? 'No people match the current filters.'
               : selectedRole === 'team_leader'
                 ? 'No team leaders found.'
-                : 'No mobile sales found.'}
+                : selectedRole === 'mobile_sales'
+                  ? 'No mobile sales found.'
+                  : 'No people found.'}
           </p>
         </div>
       ) : (
@@ -291,13 +320,20 @@ export default function AgentInventoryList({
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
                   <TableHead className="bg-muted/60">Name</TableHead>
-                  <TableHead className="bg-muted/60">
-                    {selectedRole === 'mobile_sales' ? 'Team' : 'Role'}
-                  </TableHead>
+                  {selectedRole === 'all' ? (
+                    <>
+                      <TableHead className="bg-muted/60">Role</TableHead>
+                      <TableHead className="bg-muted/60">Team</TableHead>
+                    </>
+                  ) : (
+                    <TableHead className="bg-muted/60">
+                      {selectedRole === 'mobile_sales' ? 'Team' : 'Role'}
+                    </TableHead>
+                  )}
                   <TableHead className="bg-muted/60 text-right">SKUs</TableHead>
                   <TableHead className="bg-muted/60 text-right">Units</TableHead>
                   {/* <TableHead className="bg-muted/60 text-right">Allocated</TableHead> */}
-                  <TableHead className="bg-muted/60 w-[48px]" />
+                  <TableHead className="bg-muted/60 w-[88px]" />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -313,11 +349,24 @@ export default function AgentInventoryList({
                         <AgentStatusLabel status={person.status} />
                       </div>
                     </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {selectedRole === 'mobile_sales'
-                        ? person.leaderName || 'Unassigned'
-                        : 'Team Leader'}
-                    </TableCell>
+                    {selectedRole === 'all' ? (
+                      <>
+                        <TableCell className="text-muted-foreground">
+                          {person.agentRole === 'mobile_sales' ? 'Mobile Sales' : 'Team Leader'}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {person.agentRole === 'mobile_sales'
+                            ? person.leaderName || 'Unassigned'
+                            : '—'}
+                        </TableCell>
+                      </>
+                    ) : (
+                      <TableCell className="text-muted-foreground">
+                        {selectedRole === 'mobile_sales'
+                          ? person.leaderName || 'Unassigned'
+                          : 'Team Leader'}
+                      </TableCell>
+                    )}
                     <TableCell className="text-right tabular-nums">{person.variantCount}</TableCell>
                     <TableCell className="text-right tabular-nums font-medium">
                       {person.totalStock.toLocaleString()}
@@ -326,7 +375,36 @@ export default function AgentInventoryList({
                       {formatPeso(person.totalValue)}
                     </TableCell> */}
                     <TableCell className="text-right">
-                      <Eye className="inline h-4 w-4 text-muted-foreground" aria-hidden />
+                      <div
+                        className="flex items-center justify-end gap-0.5"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground"
+                          aria-label={`Export ${person.agentName}`}
+                          disabled={exportingId === person.agentId}
+                          onClick={() => void exportPerson(person)}
+                        >
+                          {exportingId === person.agentId ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <FileDown className="h-4 w-4" />
+                          )}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground"
+                          aria-label={`View ${person.agentName}`}
+                          onClick={() => openPerson(person)}
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -349,18 +427,38 @@ export default function AgentInventoryList({
       <Dialog open={!!selectedPerson} onOpenChange={(open) => !open && setSelectedPerson(null)}>
         <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 pr-8">
-              <span>{selectedPerson?.agentName}</span>
-              {selectedPerson ? <AgentStatusLabel status={selectedPerson.status} /> : null}
-            </DialogTitle>
-            <p className="text-sm text-muted-foreground">
-              {selectedRole === 'mobile_sales'
-                ? selectedPerson?.leaderName
-                  ? `Mobile Sales · ${selectedPerson.leaderName}`
-                  : 'Mobile Sales · Unassigned'
-                : 'Team Leader'}
-              {' — view only'}
-            </p>
+            <div className="flex items-start justify-between gap-3 pr-8">
+              <div className="min-w-0 space-y-1">
+                <DialogTitle className="flex items-center gap-2">
+                  <span>{selectedPerson?.agentName}</span>
+                  {selectedPerson ? <AgentStatusLabel status={selectedPerson.status} /> : null}
+                </DialogTitle>
+                <p className="text-sm text-muted-foreground">
+                  {selectedPerson?.agentRole === 'mobile_sales'
+                    ? selectedPerson.leaderName
+                      ? `Mobile Sales · ${selectedPerson.leaderName}`
+                      : 'Mobile Sales · Unassigned'
+                    : 'Team Leader'}
+                  {' — view only'}
+                </p>
+              </div>
+              {selectedPerson ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-9 shrink-0 gap-2"
+                  disabled={exportingId === selectedPerson.agentId}
+                  onClick={() => void exportPerson(selectedPerson)}
+                >
+                  {exportingId === selectedPerson.agentId ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileDown className="h-4 w-4" />
+                  )}
+                  Export Excel
+                </Button>
+              ) : null}
+            </div>
           </DialogHeader>
 
           {selectedPerson && (
