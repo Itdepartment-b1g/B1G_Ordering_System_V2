@@ -1,6 +1,9 @@
 import ExcelJS from 'exceljs';
 
-import type { AccountingAgentSummary } from '@/features/accounting/hooks/useAccountingAgentInventory';
+import {
+  getPersonTeamId,
+  type AccountingAgentSummary,
+} from '@/features/accounting/hooks/useAccountingAgentInventory';
 import {
   EXCEL_EXPORT_HEADER_FILL,
   downloadExcelWorkbook,
@@ -227,6 +230,41 @@ function brandBreakdown(people: AccountingAgentSummary[]) {
   return Array.from(byBrand.values()).sort((a, b) => a.brandName.localeCompare(b.brandName));
 }
 
+function teamLeaderBrandBreakdown(people: AccountingAgentSummary[]) {
+  const byKey = new Map<
+    string,
+    { brandName: string; leaderName: string; units: number }
+  >();
+
+  for (const person of people) {
+    const leaderName =
+      person.agentRole === 'team_leader'
+        ? person.agentName
+        : person.leaderName || 'Unassigned';
+    const leaderId = getPersonTeamId(person);
+
+    for (const item of person.inventory) {
+      const key = `${item.brandId}::${leaderId}`;
+      const existing = byKey.get(key);
+      if (existing) {
+        existing.units += item.qty;
+      } else {
+        byKey.set(key, {
+          brandName: item.brandName,
+          leaderName,
+          units: item.qty,
+        });
+      }
+    }
+  }
+
+  return Array.from(byKey.values()).sort((a, b) => {
+    const brand = a.brandName.localeCompare(b.brandName);
+    if (brand !== 0) return brand;
+    return a.leaderName.localeCompare(b.leaderName);
+  });
+}
+
 function variantBreakdown(people: AccountingAgentSummary[]) {
   const byVariant = new Map<
     string,
@@ -268,6 +306,50 @@ function variantBreakdown(people: AccountingAgentSummary[]) {
 }
 
 type BrandSummary = ReturnType<typeof brandBreakdown>[number];
+type TeamLeaderBrandSummary = ReturnType<typeof teamLeaderBrandBreakdown>[number];
+
+const BRAND_TABLE_COL_COUNT = 2;
+const TEAM_TABLE_COL_COUNT = 3;
+const TABLE_GAP_COLS = 2;
+
+function mergeTitle(
+  worksheet: ExcelJS.Worksheet,
+  rowIndex: number,
+  startCol: number,
+  colCount: number,
+  title: string
+) {
+  worksheet.mergeCells(rowIndex, startCol, rowIndex, startCol + colCount - 1);
+  const cell = worksheet.getRow(rowIndex).getCell(startCol);
+  cell.value = title;
+  cell.font = { bold: true, size: 12 };
+  cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: EXCEL_EXPORT_HEADER_FILL } };
+  cell.alignment = { vertical: 'middle', horizontal: 'left' };
+}
+
+function writeSummaryTable(
+  worksheet: ExcelJS.Worksheet,
+  startRow: number,
+  startCol: number,
+  title: string,
+  headers: string[],
+  rows: Array<Array<string | number>>,
+  totalValues: Array<string | number>
+) {
+  mergeTitle(worksheet, startRow, startCol, headers.length, title);
+
+  const headerRow = worksheet.getRow(startRow + 1);
+  fillRowAt(headerRow, startCol, headers);
+  styleHeaderRange(headerRow, startCol, headers.length);
+
+  let rowIndex = startRow + 2;
+  for (const values of rows) {
+    fillRowAt(worksheet.getRow(rowIndex++), startCol, values);
+  }
+
+  fillRowAt(worksheet.getRow(rowIndex), startCol, totalValues);
+  applyRowEmphasisRange(worksheet.getRow(rowIndex), startCol, headers.length, 'total');
+}
 
 function writePeopleSheet(
   workbook: ExcelJS.Workbook,
@@ -277,38 +359,53 @@ function writePeopleSheet(
   peopleWidths: number[],
   peopleRows: ExportRow[],
   brands: BrandSummary[],
+  teamLeaderBrands: TeamLeaderBrandSummary[],
   totalUnits: number
 ) {
-  const lastCol = Math.max(2, headers.length);
+  const teamStartCol = headers.length + TABLE_GAP_COLS;
+  const brandStartCol = teamStartCol + TEAM_TABLE_COL_COUNT + TABLE_GAP_COLS - 1;
+  const lastCol = brandStartCol + BRAND_TABLE_COL_COUNT - 1;
+
   const worksheet = workbook.addWorksheet('People');
   peopleWidths.forEach((width, index) => {
     worksheet.getColumn(index + 1).width = index === 1 ? Math.max(width, 14) : width;
   });
+  worksheet.getColumn(teamStartCol).width = 22;
+  worksheet.getColumn(teamStartCol + 1).width = 24;
+  worksheet.getColumn(teamStartCol + 2).width = 16;
+  worksheet.getColumn(brandStartCol).width = 28;
+  worksheet.getColumn(brandStartCol + 1).width = 14;
 
-  let rowIndex = writeMeta(worksheet, 'Agent Inventory — People', lastCol, meta, extra);
+  const startRow = writeMeta(worksheet, 'Agent Inventory — People', lastCol, meta, extra);
 
-  const brandHeader = worksheet.getRow(rowIndex++);
-  fillRowAt(brandHeader, 1, ['Brand', 'Total units']);
-  styleHeaderRange(brandHeader, 1, 2);
-
-  for (const brand of brands) {
-    const row = worksheet.getRow(rowIndex++);
-    fillRowAt(row, 1, [brand.brandName, brand.units]);
-  }
-
-  const totalRow = worksheet.getRow(rowIndex++);
-  fillRowAt(totalRow, 1, ['TOTAL', totalUnits]);
-  applyRowEmphasisRange(totalRow, 1, 2, 'total');
-  rowIndex += 1;
-
-  const peopleHeader = worksheet.getRow(rowIndex++);
+  mergeTitle(worksheet, startRow, 1, headers.length, 'Inventory');
+  const peopleHeader = worksheet.getRow(startRow + 1);
   fillRowAt(peopleHeader, 1, headers);
   styleHeaderRange(peopleHeader, 1, headers.length);
 
-  for (const item of peopleRows) {
-    const row = worksheet.getRow(rowIndex++);
-    fillRowAt(row, 1, item.values);
-  }
+  peopleRows.forEach((item, index) => {
+    fillRowAt(worksheet.getRow(startRow + 2 + index), 1, item.values);
+  });
+
+  writeSummaryTable(
+    worksheet,
+    startRow,
+    teamStartCol,
+    'By Team Leader',
+    ['Brand', 'Team Leader', 'Total Quantity'],
+    teamLeaderBrands.map((item) => [item.brandName, item.leaderName, item.units]),
+    ['TOTAL', '—', totalUnits]
+  );
+
+  writeSummaryTable(
+    worksheet,
+    startRow,
+    brandStartCol,
+    'By Brand',
+    ['Brand', 'Total units'],
+    brands.map((brand) => [brand.brandName, brand.units]),
+    ['TOTAL', totalUnits]
+  );
 }
 
 function writeBrandBreakdownSheet(
@@ -358,6 +455,7 @@ export async function exportAgentInventoryExcel(
   const totalUnits = people.reduce((sum, person) => sum + person.totalStock, 0);
   const peopleRows = peopleStockRows(people, meta.role, isAll);
   const brands = brandBreakdown(people);
+  const teamLeaderBrands = teamLeaderBrandBreakdown(people);
   const variants = variantBreakdown(people);
 
   writePeopleSheet(
@@ -382,6 +480,7 @@ export async function exportAgentInventoryExcel(
     isAll ? [28, 12, 16, 24, 22, 28, 12, 12] : [28, 12, 24, 22, 28, 12, 12],
     peopleRows,
     brands,
+    teamLeaderBrands,
     totalUnits
   );
 
