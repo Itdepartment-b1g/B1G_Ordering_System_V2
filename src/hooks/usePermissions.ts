@@ -2,6 +2,7 @@ import { useAuth } from '@/features/auth';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useWarehouseLocationMembership } from '@/features/inventory/useWarehouseLocationMembership';
+import { canViewCompanyAgentInventory } from '@/lib/roleUtils';
 
 /**
  * Hook to check user permissions
@@ -149,6 +150,10 @@ export function usePermissions() {
     // Finance role only — warehouse is handled in the block above.
     if (route === '/finance/payment-settings') {
       return user?.role === 'finance';
+    }
+
+    if (route === '/agent-inventory') {
+      return canViewCompanyAgentInventory(user?.role);
     }
 
     if (route === '/product-analytics') {

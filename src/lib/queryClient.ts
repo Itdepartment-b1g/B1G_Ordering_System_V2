@@ -1,5 +1,6 @@
 import { QueryClient } from '@tanstack/react-query';
 import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister';
+import { COMPANY_AGENT_INVENTORY_QUERY_KEY } from '@/features/agent-inventory/hooks/useCompanyAgentInventory';
 import { SUPER_ADMIN_ALLOCATION_HISTORY_QUERY_KEY } from '@/features/sales-agents/components/super-admin-allocation-history/hooks/useSuperAdminAllocationHistory';
 
 export const queryClient = new QueryClient({
@@ -51,6 +52,7 @@ const NON_PERSISTED_QUERY_KEYS = new Set([
     'internal-stock-requests',
     // Old client-side executive aggregations; dashboard now uses /api/executive + Redux.
     'executive',
+    COMPANY_AGENT_INVENTORY_QUERY_KEY,
 ]);
 
 export const queryPersistOptions = {

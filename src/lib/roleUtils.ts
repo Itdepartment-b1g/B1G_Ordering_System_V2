@@ -20,6 +20,13 @@ export function isFinanceRole(role?: UserRole | string): boolean {
   return role === 'finance' || role === 'accounting';
 }
 
+/** Company-wide field stock roster (team leaders + mobile sales). */
+export const COMPANY_AGENT_INVENTORY_ROLES = ['accounting', 'finance'] as const;
+
+export function canViewCompanyAgentInventory(role?: UserRole | string): boolean {
+  return (COMPANY_AGENT_INVENTORY_ROLES as readonly string[]).includes(role ?? '');
+}
+
 /** Submit physical counts (warehouse and executive). */
 export function canPerformPhysicalCount(role?: UserRole | string): boolean {
   return role === 'warehouse' || role === 'executive';
