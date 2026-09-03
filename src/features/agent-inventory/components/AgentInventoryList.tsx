@@ -18,11 +18,11 @@ import {
   type AccountingAgentStatus,
   type AccountingAgentSummary,
   type AccountingInventoryItem,
-} from '@/features/accounting/hooks/useAccountingAgentInventory';
+} from '@/features/agent-inventory/hooks/useCompanyAgentInventory';
 import {
   exportAgentInventoryExcel,
   exportMetaForPerson,
-} from '@/features/accounting/utils/exportAgentInventoryExcel';
+} from '@/features/agent-inventory/utils/exportAgentInventoryExcel';
 import { useToast } from '@/hooks/use-toast';
 import { Box, Check, ChevronRight, ChevronsUpDown, Eye, FileDown, Loader2, Package } from 'lucide-react';
 import { cn } from '@/lib/utils';

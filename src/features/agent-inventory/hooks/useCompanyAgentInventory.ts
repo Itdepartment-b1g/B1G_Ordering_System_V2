@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
+import { canViewCompanyAgentInventory } from '@/lib/roleUtils';
 
-export const ACCOUNTING_AGENT_INVENTORY_QUERY_KEY = 'accounting-agent-inventory';
+export const COMPANY_AGENT_INVENTORY_QUERY_KEY = 'company-agent-inventory';
 
 const SALES_ROLES = ['team_leader', 'mobile_sales'] as const;
 
@@ -64,7 +65,7 @@ export interface AccountingBrandOption {
   name: string;
 }
 
-export async function fetchAccountingAgentInventory(
+export async function fetchCompanyAgentInventory(
   companyId: string
 ): Promise<{ people: AccountingAgentSummary[]; brands: AccountingBrandOption[] }> {
   const [teamsRes, profilesRes, inventoryRes, brandsRes] = await Promise.all([
@@ -181,14 +182,14 @@ export function getPersonTeamId(person: AccountingAgentSummary): string {
   return UNASSIGNED_TEAM_ID;
 }
 
-export function useAccountingAgentInventory() {
+export function useCompanyAgentInventory() {
   const { user } = useAuth();
   const companyId = user?.company_id;
 
   return useQuery({
-    queryKey: [ACCOUNTING_AGENT_INVENTORY_QUERY_KEY, companyId, 'all-profiles-brands'],
-    queryFn: () => fetchAccountingAgentInventory(companyId!),
-    enabled: !!companyId && user?.role === 'accounting',
+    queryKey: [COMPANY_AGENT_INVENTORY_QUERY_KEY, companyId, 'all-profiles-brands'],
+    queryFn: () => fetchCompanyAgentInventory(companyId!),
+    enabled: !!companyId && (canViewCompanyAgentInventory(user?.role) || user?.role === 'super_admin'),
     staleTime: 1000 * 60 * 2,
   });
 }

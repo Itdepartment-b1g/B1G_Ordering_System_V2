@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react';
-import AgentInventoryList from '@/features/accounting/component/AgentInventoryList';
+import AgentInventoryList from '@/features/agent-inventory/components/AgentInventoryList';
 import {
   UNASSIGNED_TEAM_ID,
   getPersonTeamId,
-  useAccountingAgentInventory,
+  useCompanyAgentInventory,
   type AccountingAgentSummary,
-} from '@/features/accounting/hooks/useAccountingAgentInventory';
-import { exportAgentInventoryExcel } from '@/features/accounting/utils/exportAgentInventoryExcel';
+} from '@/features/agent-inventory/hooks/useCompanyAgentInventory';
+import { exportAgentInventoryExcel } from '@/features/agent-inventory/utils/exportAgentInventoryExcel';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
@@ -179,7 +179,7 @@ function matchesTeamFilter(person: AccountingAgentSummary, teamId: string, role:
 }
 
 export default function AgentInventoryPage() {
-  const { data, isLoading } = useAccountingAgentInventory();
+  const { data, isLoading } = useCompanyAgentInventory();
   const { toast } = useToast();
   const people = data?.people ?? [];
   const catalogBrands = data?.brands ?? [];

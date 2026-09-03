@@ -3,7 +3,7 @@ import ExcelJS from 'exceljs';
 import {
   getPersonTeamId,
   type AccountingAgentSummary,
-} from '@/features/accounting/hooks/useAccountingAgentInventory';
+} from '@/features/agent-inventory/hooks/useCompanyAgentInventory';
 import {
   EXCEL_EXPORT_HEADER_FILL,
   downloadExcelWorkbook,
