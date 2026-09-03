@@ -19,7 +19,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useOrders, type Order } from './OrderContext';
 import { generateAndOpenOrderReceiptFromOrder } from './generateOrderReceiptPdf';
 import { useAuth } from '@/features/auth';
-import { canApproveFinance } from '@/lib/roleUtils';
+import { canApproveFinance, isFinanceRole } from '@/lib/roleUtils';
 import { supabase } from '@/lib/supabase';
 import {
   buildOrdersListExportFilename,
@@ -87,12 +87,24 @@ function getStatusVariant(order: Order) {
   return 'destructive';
 }
 
+function formatApprovedAt(approvedAt?: string) {
+  if (!approvedAt) return '—';
+  return new Date(approvedAt).toLocaleString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 type OrderTableProps = {
   orderList: Order[];
   onViewOrder: (order: Order) => void;
+  showApprovedAt?: boolean;
 };
 
-function OrderTable({ orderList, onViewOrder }: OrderTableProps) {
+function OrderTable({ orderList, onViewOrder, showApprovedAt = false }: OrderTableProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const [sortState, setSortState] =
     useState<TableSortCycleState<ClientOrderListSortKey>>(createInitialTableSortCycle);
@@ -187,6 +199,12 @@ function OrderTable({ orderList, onViewOrder }: OrderTableProps) {
                     <div className="text-xs text-muted-foreground">Items</div>
                     <div>{order.items.reduce((sum, item) => sum + (item.quantity || 0), 0)}</div>
                   </div>
+                  {showApprovedAt && (
+                    <div className="col-span-2">
+                      <div className="text-xs text-muted-foreground">Approved at</div>
+                      <div>{formatApprovedAt(order.approvedAt)}</div>
+                    </div>
+                  )}
                   <div className="col-span-2 flex justify-between border-t pt-2 font-medium">
                     <span>Amount</span>
                     <span>₱{order.total.toLocaleString()}</span>
@@ -229,6 +247,14 @@ function OrderTable({ orderList, onViewOrder }: OrderTableProps) {
                     sortDirection={getTableSortDisplayDirection(sortState, 'date')}
                     onSort={handleSort}
                   />
+                  {showApprovedAt && (
+                    <SortableTableHead
+                      label="Approved at"
+                      sortKey="approvedAt"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'approvedAt')}
+                      onSort={handleSort}
+                    />
+                  )}
                   <SortableTableHead
                     label="Items"
                     sortKey="items"
@@ -259,6 +285,11 @@ function OrderTable({ orderList, onViewOrder }: OrderTableProps) {
                     <TableCell>{order.clientName}</TableCell>
                     <TableCell>{order.agentName}</TableCell>
                     <TableCell>{new Date(order.date).toLocaleDateString()}</TableCell>
+                    {showApprovedAt && (
+                      <TableCell className="whitespace-nowrap text-muted-foreground">
+                        {formatApprovedAt(order.approvedAt)}
+                      </TableCell>
+                    )}
                     <TableCell className="text-right">{order.items.reduce((sum, item) => sum + (item.quantity || 0), 0)}</TableCell>
                     <TableCell className="text-right font-semibold">
                       ₱{order.total.toLocaleString()}
@@ -413,6 +444,7 @@ export default function OrdersPage() {
   const canApproveAsFinance = canApproveFinance(user?.role);
   /** Finance role only — order approve/reject in the order list (not super_admin) */
   const isFinance = user?.role === 'finance';
+  const canSeeApprovedAt = isFinanceRole(user?.role);
   const isSuperAdmin = user?.role === 'super_admin';
   const isLeader = user?.role === 'team_leader';
   const canPrintOrderReceipt = isSuperAdmin || isLeader;
@@ -2046,16 +2078,16 @@ export default function OrdersPage() {
               </TabsTrigger>
             </TabsList>
             <TabsContent value="pending" className="mt-4">
-              <OrderTable orderList={filterOrders('pending')} onViewOrder={handleViewOrder} />
+              <OrderTable orderList={filterOrders('pending')} onViewOrder={handleViewOrder} showApprovedAt={canSeeApprovedAt} />
             </TabsContent>
             <TabsContent value="approved" className="mt-4">
-              <OrderTable orderList={filterOrders('approved')} onViewOrder={handleViewOrder} />
+              <OrderTable orderList={filterOrders('approved')} onViewOrder={handleViewOrder} showApprovedAt={canSeeApprovedAt} />
             </TabsContent>
             <TabsContent value="rejected" className="mt-4">
-              <OrderTable orderList={filterOrders('rejected')} onViewOrder={handleViewOrder} />
+              <OrderTable orderList={filterOrders('rejected')} onViewOrder={handleViewOrder} showApprovedAt={canSeeApprovedAt} />
             </TabsContent>
             <TabsContent value="all" className="mt-4">
-              <OrderTable orderList={filterOrders()} onViewOrder={handleViewOrder} />
+              <OrderTable orderList={filterOrders()} onViewOrder={handleViewOrder} showApprovedAt={canSeeApprovedAt} />
             </TabsContent>
           </Tabs>
         </CardContent>
