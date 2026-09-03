@@ -12,7 +12,6 @@ import {
 import {
   Building2,
   FileDown,
-  Layers,
   Loader2,
   MapPin,
   Package,
@@ -26,13 +25,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/features/auth';
-import { supabase } from '@/lib/supabase';
-import { fetchAllPaginated } from '@/lib/supabasePaginate';
 import { useToast } from '@/hooks/use-toast';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import {
+  fetchKAAnalyticsDataset,
+  fetchKAProductPaidByBrand,
+} from '@/store/slices/key-accounts/analytics';
 import KeyAccountKamAnalyticsTab from './KeyAccountKamAnalyticsTab';
 import KeyAccountClientAnalyticsTab from './KeyAccountClientAnalyticsTab';
 import KeyAccountCityAnalyticsTab from './KeyAccountCityAnalyticsTab';
-import KeyAccountComboAnalyticsTab from './KeyAccountComboAnalyticsTab';
 import KeyAccountFsnAnalyticsTab from './KeyAccountFsnAnalyticsTab';
 import { exportKeyAccountProductAnalyticsExcel } from './exportKeyAccountProductAnalyticsExcel';
 import {
@@ -40,11 +41,7 @@ import {
   KeyAccountProductPoBreakdownDialog,
 } from './KeyAccountProductPoBreakdownDialog';
 import { KeyAccountBrandVariantsDialog } from './KeyAccountBrandVariantsDialog';
-import {
-  fetchKeyAccountDashboardPaidByOrderId,
-  fetchKeyAccountDashboardPayments,
-  type KeyAccountDashboardPaymentRow,
-} from '../dashboard/keyAccountDashboardRevenue';
+import { type KeyAccountDashboardPaymentRow } from '../dashboard/keyAccountDashboardRevenue';
 import {
   DateRangeFilterPopover,
   type DateRangeFilterValue,
@@ -55,7 +52,6 @@ import {
   getDateRangeFromPreset,
   isDateInRange,
 } from '@/lib/dateRangePresets';
-import { isRebateDerivedPurchaseOrder } from '../rebates/keyAccountRebateShared';
 import {
   buildKeyAccountBrandAnalyticsRows,
   buildKeyAccountProductAnalyticsRows,
@@ -65,7 +61,6 @@ import {
   firstRelation,
   isKeyAccountAnalyticsEligibleOrder,
   isKeyAccountCommercialProductAnalyticsOrder,
-  isKeyAccountPartialDeliveredOrder,
   normalizeRebateReplacements,
   rebateResolutionHasReplacement,
   type KeyAccountBrandAnalyticsRow,
@@ -164,21 +159,60 @@ function formatCurrency(value: number) {
   return `₱${Math.round(value).toLocaleString()}`;
 }
 
+function formatMoney(value: number) {
+  return `₱${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 export default function KeyAccountAnalyticsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [loading, setLoading] = useState(true);
-  const [orders, setOrders] = useState<KeyAccountOrder[]>([]);
-  const [items, setItems] = useState<PurchaseOrderItemRow[]>([]);
-  const [transferReservations, setTransferReservations] = useState<WarehouseTransferReservationRow[]>([]);
-  const [transferLocationStatuses, setTransferLocationStatuses] = useState<
-    WarehouseTransferLocationStatusRow[]
-  >([]);
-  const [people, setPeople] = useState<KeyAccountPerson[]>([]);
-  const [clients, setClients] = useState<KeyAccountClient[]>([]);
-  const [rebates, setRebates] = useState<KeyAccountRebateAnalyticsRecord[]>([]);
-  const [paidByOrderId, setPaidByOrderId] = useState<Map<string, number>>(new Map());
-  const [paymentRows, setPaymentRows] = useState<KeyAccountDashboardPaymentRow[]>([]);
+  const dispatch = useAppDispatch();
+  const dataset = useAppSelector((state) => state.kaAnalytics.dataset);
+  const datasetStatus = useAppSelector((state) => state.kaAnalytics.datasetStatus);
+  const datasetError = useAppSelector((state) => state.kaAnalytics.datasetError);
+  const paidByBrandResult = useAppSelector((state) => state.kaAnalytics.paidByBrand);
+  const paidByBrandStatus = useAppSelector((state) => state.kaAnalytics.paidByBrandStatus);
+  const paidByBrandError = useAppSelector((state) => state.kaAnalytics.paidByBrandError);
+  const loading = datasetStatus === 'loading' || datasetStatus === 'idle';
+  const orders = useMemo(
+    () => (dataset?.orders || []) as unknown as KeyAccountOrder[],
+    [dataset?.orders]
+  );
+  const items = useMemo(
+    () => (dataset?.items || []) as unknown as PurchaseOrderItemRow[],
+    [dataset?.items]
+  );
+  const transferReservations = useMemo(
+    () => (dataset?.transferReservations || []) as WarehouseTransferReservationRow[],
+    [dataset?.transferReservations]
+  );
+  const transferLocationStatuses = useMemo(
+    () => (dataset?.transferLocationStatuses || []) as WarehouseTransferLocationStatusRow[],
+    [dataset?.transferLocationStatuses]
+  );
+  const people = useMemo(
+    () => (dataset?.people || []) as unknown as KeyAccountPerson[],
+    [dataset?.people]
+  );
+  const clients = useMemo(
+    () => (dataset?.clients || []) as unknown as KeyAccountClient[],
+    [dataset?.clients]
+  );
+  const rebates = useMemo(
+    () => (dataset?.rebates || []) as unknown as KeyAccountRebateAnalyticsRecord[],
+    [dataset?.rebates]
+  );
+  const paymentRows = useMemo(
+    () => (dataset?.payments || []) as KeyAccountDashboardPaymentRow[],
+    [dataset?.payments]
+  );
+  const paidByOrderId = useMemo(() => {
+    const map = new Map<string, number>();
+    Object.entries(dataset?.paidByOrderId || {}).forEach(([id, amount]) => {
+      map.set(id, Number(amount) || 0);
+    });
+    return map;
+  }, [dataset?.paidByOrderId]);
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'this_year',
   });
@@ -191,187 +225,18 @@ export default function KeyAccountAnalyticsPage() {
   const [brandVariantsDialogOpen, setBrandVariantsDialogOpen] = useState(false);
 
   useEffect(() => {
-    void fetchAnalytics();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, user?.company_id]);
-
-  const fetchAnalytics = async () => {
     if (!user?.company_id) return;
-    setLoading(true);
-    try {
-      const [nextOrders, peopleResult, clientsResult] = await Promise.all([
-        fetchAllPaginated<KeyAccountOrder>(async (from, to) => {
-          const { data, error } = await supabase
-            .from('purchase_orders')
-            .select(`
-              id,
-              po_number,
-              order_date,
-              total_amount,
-              status,
-              workflow_status,
-              po_order_kind,
-              source_rebate_id,
-              fulfillment_type,
-              warehouse_location_id,
-              kam_id,
-              key_account_client_id,
-              key_account_shop_id,
-              key_account_payment_status,
-              key_account_payment_mode,
-              client:key_account_clients(client_name),
-              shop:key_account_shops(id, shop_name, city, province, region),
-              address:key_account_delivery_addresses(city, province, region),
-              kam:profiles!purchase_orders_kam_id_fkey(full_name,email,role)
-            `)
-            .eq('company_id', user.company_id)
-            .eq('company_account_type', 'Key Accounts')
-            .order('order_date', { ascending: false })
-            .order('id', { ascending: false })
-            .range(from, to);
-          return { data: (data as KeyAccountOrder[] | null) ?? null, error };
-        }),
-        supabase
-          .from('profiles')
-          .select('id, full_name, email, role')
-          .eq('company_id', user.company_id)
-          .in('role', ['key_account_manager', 'sales_director'])
-          .order('full_name', { ascending: true }),
-        supabase
-          .from('key_account_clients')
-          .select('id, client_name, client_code')
-          .eq('company_id', user.company_id)
-          .order('client_name', { ascending: true }),
-      ]);
+    void dispatch(fetchKAAnalyticsDataset());
+  }, [dispatch, user?.id, user?.company_id]);
 
-      if (peopleResult.error) throw peopleResult.error;
-      if (clientsResult.error) throw clientsResult.error;
-      const productAnalyticsOrderIds = nextOrders
-        .filter(isKeyAccountCommercialProductAnalyticsOrder)
-        .map((order) => order.id);
-      let nextItems: PurchaseOrderItemRow[] = [];
-
-      if (productAnalyticsOrderIds.length > 0) {
-        const { data: itemData, error: itemError } = await supabase
-          .from('purchase_order_items')
-          .select(`
-            id,
-            purchase_order_id,
-            variant_id,
-            warehouse_location_id,
-            quantity,
-            unit_price,
-            total_price,
-            variants:variant_id (
-              name,
-              variant_type,
-              brands:brand_id (name)
-            )
-          `)
-          .in('purchase_order_id', productAnalyticsOrderIds);
-
-        if (itemError) throw itemError;
-        nextItems = (itemData || []) as PurchaseOrderItemRow[];
-      }
-
-      const salesOrderIds = nextOrders.map((order) => order.id);
-      const nextPaymentRows = await fetchKeyAccountDashboardPayments(supabase, salesOrderIds);
-      const nextPaidByOrderId = await fetchKeyAccountDashboardPaidByOrderId(supabase, salesOrderIds);
-
-      const sourcePoIdsForRebates = nextOrders
-        .filter((order) => !isRebateDerivedPurchaseOrder(order))
-        .map((order) => order.id);
-      let nextRebates: KeyAccountRebateAnalyticsRecord[] = [];
-
-      if (sourcePoIdsForRebates.length > 0) {
-        const { data: rebateData, error: rebateError } = await supabase
-          .from('key_account_po_rebates')
-          .select(`
-            id,
-            purchase_order_id,
-            resolution_type,
-            status,
-            credit_amount,
-            disputed_total,
-            fulfillment_purchase_order_id,
-            lines:key_account_po_rebate_lines(
-              purchase_order_item_id,
-              line_total,
-              disputed_quantity
-            ),
-            replacements:key_account_po_rebate_replacements(
-              variant_id,
-              warehouse_location_id,
-              quantity,
-              total_price,
-              variants:variant_id (
-                name,
-                brands:brand_id (name)
-              )
-            )
-          `)
-          .in('purchase_order_id', sourcePoIdsForRebates)
-          .in('status', ['submitted', 'approved', 'executed']);
-
-        if (rebateError) throw rebateError;
-        nextRebates = (rebateData || []) as KeyAccountRebateAnalyticsRecord[];
-      }
-
-      const reservationPoIds = new Set(
-        nextOrders.filter(isKeyAccountPartialDeliveredOrder).map((order) => order.id)
-      );
-      nextRebates.forEach((rebate) => {
-        if (!rebateResolutionHasReplacement(rebate.resolution_type)) return;
-        if (rebate.fulfillment_purchase_order_id) {
-          reservationPoIds.add(rebate.fulfillment_purchase_order_id);
-        }
-      });
-
-      let nextReservations: WarehouseTransferReservationRow[] = [];
-      let nextLocationStatuses: WarehouseTransferLocationStatusRow[] = [];
-
-      if (reservationPoIds.size > 0) {
-        const poIds = Array.from(reservationPoIds);
-        const [reservationsResult, locationStatusResult] = await Promise.all([
-          supabase
-            .from('warehouse_transfer_reservations')
-            .select(
-              'purchase_order_id, warehouse_location_id, variant_id, quantity_reserved, quantity_fulfilled'
-            )
-            .in('purchase_order_id', poIds),
-          supabase
-            .from('warehouse_transfer_location_status')
-            .select('purchase_order_id, warehouse_location_id, status')
-            .in('purchase_order_id', poIds),
-        ]);
-
-        if (reservationsResult.error) throw reservationsResult.error;
-        if (locationStatusResult.error) throw locationStatusResult.error;
-
-        nextReservations = (reservationsResult.data || []) as WarehouseTransferReservationRow[];
-        nextLocationStatuses = (locationStatusResult.data ||
-          []) as WarehouseTransferLocationStatusRow[];
-      }
-
-      setOrders(nextOrders);
-      setItems(nextItems);
-      setTransferReservations(nextReservations);
-      setTransferLocationStatuses(nextLocationStatuses);
-      setRebates(nextRebates);
-      setPaidByOrderId(nextPaidByOrderId);
-      setPaymentRows(nextPaymentRows);
-      setPeople((peopleResult.data || []) as KeyAccountPerson[]);
-      setClients((clientsResult.data || []) as KeyAccountClient[]);
-    } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Error loading Key Account analytics',
-        description: error?.message || 'Failed to load analytics data',
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    if (datasetStatus !== 'failed' || !datasetError) return;
+    toast({
+      variant: 'destructive',
+      title: 'Error loading Key Account analytics',
+      description: datasetError,
+    });
+  }, [datasetStatus, datasetError, toast]);
 
   const orderDateRange = useMemo(
     () =>
@@ -392,6 +257,16 @@ export default function KeyAccountAnalyticsPage() {
       ),
     [dateRangeFilter]
   );
+
+  useEffect(() => {
+    if (!user?.company_id) return;
+    void dispatch(
+      fetchKAProductPaidByBrand({
+        dateStart: orderDateRange.start?.toISOString(),
+        dateEnd: orderDateRange.end?.toISOString(),
+      })
+    );
+  }, [dispatch, user?.company_id, orderDateRange.start, orderDateRange.end]);
 
   const chartDateRange = useMemo(
     () => ({
@@ -559,22 +434,74 @@ export default function KeyAccountAnalyticsPage() {
     [productRows, selectedBrand]
   );
 
-  const paginatedProductRows = useMemo(
-    () => paginateAnalyticsRows(visibleProductRows, productTablePage),
-    [visibleProductRows, productTablePage]
+  const paidBrandRows = useMemo(() => {
+    const rows =
+      selectedBrand === 'all'
+        ? paidByBrandResult.brands
+        : paidByBrandResult.brands.filter((row) => row.brandName === selectedBrand);
+    return [...rows].sort((a, b) => b.paid - a.paid || a.brandName.localeCompare(b.brandName));
+  }, [paidByBrandResult.brands, selectedBrand]);
+
+  const brandRows = useMemo(
+    () =>
+      buildKeyAccountBrandAnalyticsRows(
+        visibleProductRows,
+        (orderId) => allOrdersById.get(orderId)?.key_account_client_id
+      ),
+    [visibleProductRows, allOrdersById]
+  );
+
+  const brandTableRows = useMemo(() => {
+    const demandByName = new Map(
+      brandRows.map((row) => [row.brand.trim().toLowerCase(), row])
+    );
+    const paidByName = new Map(
+      paidBrandRows.map((row) => [row.brandName.trim().toLowerCase(), row])
+    );
+    const keys = new Set([...demandByName.keys(), ...paidByName.keys()]);
+
+    return Array.from(keys)
+      .map((key) => {
+        const demand = demandByName.get(key);
+        const paid = paidByName.get(key);
+        return {
+          key,
+          brand: demand?.brand || paid?.brandName || key,
+          brandRow: demand || null,
+          quantity: demand?.quantity || 0,
+          consignmentQuantity: demand?.consignmentQuantity || 0,
+          consignmentOrders: demand?.consignmentOrders || 0,
+          orderCount: demand?.orderCount || 0,
+          clientCount: demand?.clientCount || 0,
+          billed: paid?.billed || 0,
+          paid: paid?.paid || 0,
+          discount: paid?.discount || 0,
+          remaining: paid?.remaining || 0,
+          status: paid?.status || 'unpaid',
+        };
+      })
+      .sort(
+        (a, b) =>
+          b.remaining - a.remaining || b.quantity - a.quantity || a.brand.localeCompare(b.brand)
+      );
+  }, [brandRows, paidBrandRows]);
+
+  const paginatedBrandTableRows = useMemo(
+    () => paginateAnalyticsRows(brandTableRows, productTablePage),
+    [brandTableRows, productTablePage]
   );
 
   useEffect(() => {
     setProductTablePage(1);
-  }, [visibleProductRows.length, selectedBrand, dateRangeFilter]);
+  }, [brandTableRows.length, selectedBrand, dateRangeFilter]);
 
   const productDateRangeLabel = dateRangeLabel;
 
   const handleExportProductAnalytics = async () => {
-    if (!visibleProductRows.length) {
+    if (!brandTableRows.length) {
       toast({
         title: 'No data to export',
-        description: 'No product data for the selected period.',
+        description: 'No brand data for the selected period.',
         variant: 'destructive',
       });
       return;
@@ -585,17 +512,18 @@ export default function KeyAccountAnalyticsPage() {
     setProductExporting(true);
     try {
       await exportKeyAccountProductAnalyticsExcel(
-        visibleProductRows.map((row) => ({
+        brandTableRows.map((row) => ({
           brand: row.brand,
-          variant: row.variant,
           totalUnits: row.quantity,
           consignmentUnits: row.consignmentQuantity,
           consignmentPoCount: row.consignmentOrders,
           poCount: row.orderCount,
           clientCount: row.clientCount,
-          grossRevenue: row.grossRevenue,
-          rebatedRevenue: row.rebatedRevenue,
-          revenue: row.revenue,
+          billed: row.billed,
+          paidCash: row.paid,
+          paidDiscount: row.discount,
+          paidRemaining: row.remaining,
+          status: row.status,
         })),
         {
           dateRangeLabel: productDateRangeLabel,
@@ -605,7 +533,7 @@ export default function KeyAccountAnalyticsPage() {
       );
       toast({
         title: 'Export successful',
-        description: `Exported ${visibleProductRows.length} product row(s) for ${productDateRangeLabel}.`,
+        description: `Exported ${brandTableRows.length} brand row(s) for ${productDateRangeLabel}.`,
       });
     } catch (error) {
       console.error('Key Account product analytics export failed:', error);
@@ -644,15 +572,6 @@ export default function KeyAccountAnalyticsPage() {
     return [...orders, ...placeholderOrders];
   }, [orders, people]);
 
-  const brandRows = useMemo(
-    () =>
-      buildKeyAccountBrandAnalyticsRows(
-        visibleProductRows,
-        (orderId) => allOrdersById.get(orderId)?.key_account_client_id
-      ),
-    [visibleProductRows, allOrdersById]
-  );
-
   const brandChartData = brandRows.slice(0, 10).map((row) => ({
     key: row.brand,
     name: row.brand,
@@ -666,6 +585,9 @@ export default function KeyAccountAnalyticsPage() {
     variantCount: row.variantCount,
     consignmentOrders: row.consignmentOrders,
     consignmentQuantity: row.consignmentQuantity,
+    paidCash: paidBrandRows.find((item) => item.brandName === row.brand)?.paid ?? 0,
+    paidDiscount: paidBrandRows.find((item) => item.brandName === row.brand)?.discount ?? 0,
+    paidRemaining: paidBrandRows.find((item) => item.brandName === row.brand)?.remaining ?? 0,
   }));
 
   const openBrandVariants = (row: KeyAccountBrandAnalyticsRow) => {
@@ -688,7 +610,7 @@ export default function KeyAccountAnalyticsPage() {
       <div>
         <h1 className="text-3xl font-bold">Key Account Analytics</h1>
         <p className="text-muted-foreground">
-          Overview, product, agent, client, and city analytics from Key Account purchase orders.
+          Product, agent, client, city, and FSN analytics from Key Account purchase orders.
         </p>
       </div>
 
@@ -701,15 +623,8 @@ export default function KeyAccountAnalyticsPage() {
         </Card>
       ) : (
         <>
-          <Tabs defaultValue="overview" className="space-y-4">
-            <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-6">
-              <TabsTrigger
-                value="overview"
-                className="h-auto gap-1.5 whitespace-normal px-2 py-2 text-xs sm:gap-2 sm:px-3 sm:text-sm"
-              >
-                <Layers className="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" />
-                Overview
-              </TabsTrigger>
+          <Tabs defaultValue="products" className="space-y-4">
+            <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-5">
               <TabsTrigger
                 value="products"
                 className="h-auto gap-1.5 whitespace-normal px-2 py-2 text-xs sm:gap-2 sm:px-3 sm:text-sm"
@@ -747,19 +662,6 @@ export default function KeyAccountAnalyticsPage() {
               </TabsTrigger>
             </TabsList>
 
-            <TabsContent value="overview">
-              <KeyAccountComboAnalyticsTab
-                orders={orders}
-                items={items}
-                clients={clients}
-                people={people}
-                formatCurrency={formatCurrency}
-                dateRangeFilter={dateRangeFilter}
-                onDateRangeFilterChange={setDateRangeFilter}
-                paymentRows={paymentRows}
-              />
-            </TabsContent>
-
             <TabsContent value="products" className="space-y-4">
               <Card>
                 <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -793,7 +695,7 @@ export default function KeyAccountAnalyticsPage() {
                       variant="outline"
                       className="h-10 gap-2"
                       onClick={handleExportProductAnalytics}
-                      disabled={productExporting || loading || visibleProductRows.length === 0}
+                      disabled={productExporting || loading || brandTableRows.length === 0}
                     >
                       {productExporting ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -846,6 +748,9 @@ export default function KeyAccountAnalyticsPage() {
                                 consignmentQuantity?: number;
                                 rebatedRevenue?: number;
                                 grossRevenue?: number;
+                                paidCash?: number;
+                                paidDiscount?: number;
+                                paidRemaining?: number;
                               };
                               const net = row.revenue || 0;
                               const rebated = row.rebatedRevenue || 0;
@@ -869,6 +774,11 @@ export default function KeyAccountAnalyticsPage() {
                                         {formatCurrency(net)}
                                       </span>
                                     </div>
+                                    <p className="text-muted-foreground text-xs pt-1">
+                                      Collected: {formatMoney(row.paidCash || 0)} · Discount{' '}
+                                      {formatMoney(row.paidDiscount || 0)} · Remaining{' '}
+                                      {formatMoney(row.paidRemaining || 0)}
+                                    </p>
                                     <p className="text-muted-foreground text-xs pt-1">
                                       Units Ordered: {row.quantity.toLocaleString()} ·{' '}
                                       {row.variantCount || 0} variants
@@ -910,10 +820,10 @@ export default function KeyAccountAnalyticsPage() {
                   </div>
 
                   <div>
-                    <p className="text-sm font-medium mb-2">Product Performance Details</p>
+                    <p className="text-sm font-medium mb-2">Brand Performance</p>
                     <p className="text-xs text-muted-foreground mb-3">
-                      Chart shows brands. Click a brand for variants, or click net PO value in the
-                      table for that variant&apos;s PO breakdown.
+                      One row per brand. Click a brand (or a chart bar) to see variants, then a
+                      variant for PO breakdown.
                     </p>
                     <div className="rounded-md border bg-muted/30 px-3 py-2.5 text-xs text-muted-foreground mb-3 space-y-1">
                       <p>
@@ -922,96 +832,136 @@ export default function KeyAccountAnalyticsPage() {
                       </p>
                       <p>
                         <span className="font-medium text-foreground">Consignment POs</span> — distinct
-                        consignment purchase orders that include this product (float stock; pay later).
+                        consignment purchase orders for this brand (float stock; pay later).
                       </p>
                       <p>
-                        <span className="font-medium text-foreground">POs / Clients</span> — how often
-                        and how widely this product is ordered.
+                        <span className="font-medium text-foreground">POs / Clients</span> — distinct
+                        purchase orders and clients that ordered this brand.
                       </p>
                       <p>
-                        <span className="font-medium text-foreground">Net PO value</span> — gross line
-                        value minus rebated credits (product demand value, not collection status).
+                        <span className="font-medium text-foreground">Paid / Discount / Remaining</span>{' '}
+                        — from brand payment allocations. Standard POs use order date (all cash on
+                        those POs). Consignment cash and discount use payment date; unpaid float stays
+                        on order date. Paid + remaining may not equal billed for consignment across
+                        months.
                       </p>
                     </div>
                   </div>
 
+                  {(paidByBrandResult.unallocatedPaid > 0.011 ||
+                    paidByBrandResult.unallocatedDiscount > 0.011) && (
+                    <p className="text-xs rounded-md border border-amber-300/70 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 px-3 py-2">
+                      Legacy unallocated (lump payment, no brand split): cash{' '}
+                      {formatMoney(paidByBrandResult.unallocatedPaid)}
+                      {paidByBrandResult.unallocatedDiscount > 0.011
+                        ? ` · discount ${formatMoney(paidByBrandResult.unallocatedDiscount)}`
+                        : ''}
+                      . Same as PO details — not assigned to a brand.
+                    </p>
+                  )}
+                  {paidByBrandError ? (
+                    <p className="text-xs text-destructive">{paidByBrandError}</p>
+                  ) : null}
+
                   <div className="rounded-md border overflow-x-auto">
+                    <p className="text-sm font-medium px-3 pt-3">Brand collections</p>
+                    <p className="text-[11px] text-muted-foreground px-3 pb-2">
+                      {paidByBrandStatus === 'loading'
+                        ? 'Loading paid-by-brand…'
+                        : 'Units, POs, and clients rolled up by brand, with allocated collections for this date range. Click a brand for variants.'}
+                    </p>
                     <Table>
                       <TableHeader>
                         <TableRow>
                           <TableHead>Brand</TableHead>
-                          <TableHead>Product</TableHead>
-                          <TableHead className="text-right">Total Units</TableHead>
-                          <TableHead
-                            className="text-right"
-                            title="Units from consignment POs"
-                          >
+                          <TableHead className="text-right" title="Total quantity ordered (includes consignment)">
+                            Total Units
+                          </TableHead>
+                          <TableHead className="text-right" title="Units from consignment POs">
                             Consignment Units
                           </TableHead>
-                          <TableHead
-                            className="text-right"
-                            title="Distinct consignment purchase orders"
-                          >
+                          <TableHead className="text-right" title="Distinct consignment purchase orders">
                             Consignment POs
-                          </TableHead>
-                          <TableHead className="text-right" title="Line PO value before rebate credits">
-                            Gross
-                          </TableHead>
-                          <TableHead
-                            className="text-right"
-                            title="Money/credit rebates on source PO lines"
-                          >
-                            Rebated
-                          </TableHead>
-                          <TableHead className="text-right" title="Gross minus rebated (net PO value)">
-                            Net PO Value
                           </TableHead>
                           <TableHead className="text-right" title="Distinct purchase orders">
                             POs
                           </TableHead>
                           <TableHead className="text-right">Clients</TableHead>
+                          <TableHead className="text-right">Billed</TableHead>
+                          <TableHead className="text-right">Paid</TableHead>
+                          <TableHead className="text-right">Discount</TableHead>
+                          <TableHead className="text-right">Remaining</TableHead>
+                          <TableHead>Status</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {visibleProductRows.length === 0 ? (
+                        {brandTableRows.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={10} className="text-center text-muted-foreground py-6">
-                              No products found.
+                            <TableCell colSpan={11} className="text-center text-muted-foreground py-6">
+                              No brands found.
                             </TableCell>
                           </TableRow>
                         ) : (
-                          paginatedProductRows.map((row) => (
+                          paginatedBrandTableRows.map((row) => (
                             <TableRow key={row.key}>
-                              <TableCell><Badge variant="outline">{row.brand}</Badge></TableCell>
-                              <TableCell className="font-medium">{row.variant}</TableCell>
-                              <TableCell className="text-right font-medium">
+                              <TableCell>
+                                {row.brandRow ? (
+                                  <button
+                                    type="button"
+                                    className="text-left"
+                                    onClick={() => openBrandVariants(row.brandRow!)}
+                                  >
+                                    <Badge variant="outline" className="cursor-pointer">
+                                      {row.brand}
+                                    </Badge>
+                                  </button>
+                                ) : (
+                                  <Badge variant="outline">{row.brand}</Badge>
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums font-medium">
                                 {row.quantity.toLocaleString()}
                               </TableCell>
-                              <TableCell className="text-right text-sky-700 dark:text-sky-400">
+                              <TableCell className="text-right tabular-nums text-sky-700 dark:text-sky-400">
                                 {row.consignmentQuantity > 0
                                   ? row.consignmentQuantity.toLocaleString()
                                   : '—'}
                               </TableCell>
-                              <TableCell className="text-right text-sky-700 dark:text-sky-400">
+                              <TableCell className="text-right tabular-nums text-sky-700 dark:text-sky-400">
                                 {row.consignmentOrders > 0 ? row.consignmentOrders : '—'}
                               </TableCell>
-                              <TableCell className="text-right text-muted-foreground">
-                                {formatCurrency(row.grossRevenue)}
+                              <TableCell className="text-right tabular-nums">
+                                {row.orderCount}
                               </TableCell>
-                              <TableCell className="text-right text-amber-700 dark:text-amber-400">
-                                {row.rebatedRevenue > 0 ? `−${formatCurrency(row.rebatedRevenue)}` : '—'}
+                              <TableCell className="text-right tabular-nums">
+                                {row.clientCount}
                               </TableCell>
-                              <TableCell className="text-right font-semibold">
-                                <button
-                                  type="button"
-                                  className="text-primary hover:underline underline-offset-2"
-                                  onClick={() => openProductPoBreakdown(row)}
+                              <TableCell className="text-right tabular-nums">
+                                {formatMoney(row.billed)}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {formatMoney(row.paid)}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {formatMoney(row.discount)}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums font-medium">
+                                {formatMoney(row.remaining)}
+                              </TableCell>
+                              <TableCell>
+                                <Badge
+                                  variant={row.status === 'paid' ? 'default' : 'secondary'}
+                                  className={
+                                    row.status === 'paid'
+                                      ? 'bg-emerald-600'
+                                      : row.status === 'partial'
+                                        ? 'bg-amber-500'
+                                        : ''
+                                  }
                                 >
-                                  {formatCurrency(row.revenue)}
-                                </button>
+                                  {row.status}
+                                </Badge>
                               </TableCell>
-                              <TableCell className="text-right">{row.orderCount}</TableCell>
-                              <TableCell className="text-right">{row.clientCount}</TableCell>
                             </TableRow>
                           ))
                         )}
@@ -1020,7 +970,7 @@ export default function KeyAccountAnalyticsPage() {
                     <AnalyticsTablePagination
                       page={productTablePage}
                       onPageChange={setProductTablePage}
-                      totalRows={visibleProductRows.length}
+                      totalRows={brandTableRows.length}
                     />
                   </div>
                 </CardContent>
@@ -1031,6 +981,11 @@ export default function KeyAccountAnalyticsPage() {
                 onOpenChange={setBrandVariantsDialogOpen}
                 brandRow={selectedBrandRow}
                 dateRangeLabel={productDateRangeLabel}
+                brandCollections={
+                  selectedBrandRow
+                    ? paidBrandRows.find((row) => row.brandName === selectedBrandRow.brand) || null
+                    : null
+                }
                 onSelectVariant={openProductPoBreakdown}
               />
               <KeyAccountProductPoBreakdownDialog

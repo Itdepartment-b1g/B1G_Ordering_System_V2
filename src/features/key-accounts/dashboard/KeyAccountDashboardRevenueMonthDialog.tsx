@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
-import { fetchAllPaginated } from '@/lib/supabasePaginate';
 import {
   Dialog,
   DialogContent,
@@ -37,6 +35,8 @@ import {
   type KeyAccountDashboardMonthPoRow,
   type KeyAccountDashboardMonthlyPaymentRow,
 } from './keyAccountDashboardRevenue';
+import { useAppDispatch } from '@/store/store';
+import { fetchKAAnalyticsPoPaymentHistory } from '@/store/slices/key-accounts/analytics';
 
 type PaymentHistoryRow = {
   id: string;
@@ -142,6 +142,7 @@ export function KeyAccountDashboardRevenueMonthDialog({
   monthlyRow: KeyAccountDashboardMonthlyPaymentRow | null;
   poRows: KeyAccountDashboardMonthPoRow[];
 }) {
+  const dispatch = useAppDispatch();
   const [search, setSearch] = useState('');
   const [poKindFilter, setPoKindFilter] = useState<PoKindFilter>('all');
   const [poPage, setPoPage] = useState(1);
@@ -200,27 +201,8 @@ export function KeyAccountDashboardRevenueMonthDialog({
     setHistoryPage(1);
     setHistoryLoading(true);
     try {
-      const rows = await fetchAllPaginated<PaymentHistoryRow>(async (from, to) => {
-        const { data, error } = await supabase
-          .from('purchase_order_key_account_payments')
-          .select(
-            `
-            id,
-            amount,
-            settlement_discount,
-            created_at,
-            payment_method,
-            bank_type,
-            recorder:profiles!purchase_order_key_account_payments_recorded_by_fkey(full_name,email)
-          `
-          )
-          .eq('purchase_order_id', row.orderId)
-          .order('created_at', { ascending: true })
-          .order('id', { ascending: true })
-          .range(from, to);
-        return { data: (data as PaymentHistoryRow[] | null) ?? null, error };
-      });
-      setHistoryPayments(rows);
+      const result = await dispatch(fetchKAAnalyticsPoPaymentHistory(row.orderId)).unwrap();
+      setHistoryPayments((result.payments || []) as PaymentHistoryRow[]);
     } catch {
       setHistoryPayments([]);
     } finally {

@@ -5,16 +5,15 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import { fetchKAFsnCatalog, fetchKAFsnSetup } from '@/store/slices/key-accounts/analytics';
 import { WarehouseFsnPanel } from '@/features/inventory/components/WarehouseFsnPanel';
 import { FSN_PERIOD_DAYS_OPTIONS, type FsnPeriodDays } from '@/features/inventory/warehouseFsnAnalysis';
-import type { Brand } from '@/features/inventory/InventoryContext';
 import {
+  brandsFromFsnCatalog,
   computeKeyAccountFsnFromDelivered,
-  fetchHubCatalogBrandsWithStock,
-  fetchLinkedWarehouseLocations,
   type KeyAccountFsnItem,
   type KeyAccountFsnOrder,
-  type LinkedWarehouseLocation,
 } from './keyAccountFsnAnalysis';
 
 type KeyAccountFsnAnalyticsTabProps = {
@@ -24,85 +23,59 @@ type KeyAccountFsnAnalyticsTabProps = {
 
 export default function KeyAccountFsnAnalyticsTab({ orders, items }: KeyAccountFsnAnalyticsTabProps) {
   const { toast } = useToast();
-  const [loadingSetup, setLoadingSetup] = useState(true);
-  const [loadingCatalog, setLoadingCatalog] = useState(false);
-  const [hubCompanyId, setHubCompanyId] = useState<string | null>(null);
-  const [locations, setLocations] = useState<LinkedWarehouseLocation[]>([]);
-  const [catalogBrands, setCatalogBrands] = useState<Brand[]>([]);
+  const dispatch = useAppDispatch();
+  const locations = useAppSelector((state) => state.kaAnalytics.fsnLocations);
+  const fsnSetupStatus = useAppSelector((state) => state.kaAnalytics.fsnSetupStatus);
+  const fsnSetupError = useAppSelector((state) => state.kaAnalytics.fsnSetupError);
+  const fsnCatalog = useAppSelector((state) => state.kaAnalytics.fsnCatalog);
+  const fsnCatalogStatus = useAppSelector((state) => state.kaAnalytics.fsnCatalogStatus);
+  const fsnCatalogError = useAppSelector((state) => state.kaAnalytics.fsnCatalogError);
   const [selectedLocationId, setSelectedLocationId] = useState('');
   const [periodDays, setPeriodDays] = useState<FsnPeriodDays>(90);
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setLoadingSetup(true);
-      try {
-        const { hubCompanyId, locations: locs } = await fetchLinkedWarehouseLocations();
-        if (cancelled) return;
-
-        setLocations(locs);
-        if (locs.length > 0) {
-          const main = locs.find((l) => l.is_main);
-          setSelectedLocationId((main ?? locs[0]).id);
-        } else {
-          setSelectedLocationId('');
-        }
-
-        if (!cancelled) setHubCompanyId(hubCompanyId);
-      } catch (error: unknown) {
-        if (!cancelled) {
-          toast({
-            variant: 'destructive',
-            title: 'Error loading FSN setup',
-            description: error instanceof Error ? error.message : 'Failed to load warehouse data',
-          });
-        }
-      } finally {
-        if (!cancelled) setLoadingSetup(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [toast]);
+    void dispatch(fetchKAFsnSetup());
+  }, [dispatch]);
 
   useEffect(() => {
-    if (!hubCompanyId || !selectedLocationId) {
-      setCatalogBrands([]);
+    if (fsnSetupStatus !== 'failed' || !fsnSetupError) return;
+    toast({
+      variant: 'destructive',
+      title: 'Error loading FSN setup',
+      description: fsnSetupError,
+    });
+  }, [fsnSetupStatus, fsnSetupError, toast]);
+
+  useEffect(() => {
+    if (locations.length === 0) {
+      setSelectedLocationId('');
       return;
     }
-    const loc = locations.find((l) => l.id === selectedLocationId);
-    if (!loc) return;
+    setSelectedLocationId((current) => {
+      if (current && locations.some((loc) => loc.id === current)) return current;
+      const main = locations.find((loc) => loc.is_main);
+      return (main ?? locations[0]).id;
+    });
+  }, [locations]);
 
-    let cancelled = false;
-    setLoadingCatalog(true);
-    (async () => {
-      try {
-        const brands = await fetchHubCatalogBrandsWithStock(
-          hubCompanyId,
-          selectedLocationId,
-          loc.is_main
-        );
-        if (!cancelled) setCatalogBrands(brands);
-      } catch (error: unknown) {
-        if (!cancelled) {
-          toast({
-            variant: 'destructive',
-            title: 'Error loading warehouse stock',
-            description: error instanceof Error ? error.message : 'Failed to load catalog stock',
-          });
-          setCatalogBrands([]);
-        }
-      } finally {
-        if (!cancelled) setLoadingCatalog(false);
-      }
-    })();
+  useEffect(() => {
+    if (!selectedLocationId) return;
+    void dispatch(fetchKAFsnCatalog(selectedLocationId));
+  }, [dispatch, selectedLocationId]);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [hubCompanyId, selectedLocationId, locations, toast]);
+  useEffect(() => {
+    if (fsnCatalogStatus !== 'failed' || !fsnCatalogError) return;
+    toast({
+      variant: 'destructive',
+      title: 'Error loading warehouse stock',
+      description: fsnCatalogError,
+    });
+  }, [fsnCatalogStatus, fsnCatalogError, toast]);
+
+  const catalogBrands = useMemo(() => brandsFromFsnCatalog(fsnCatalog), [fsnCatalog]);
+  const loadingSetup = fsnSetupStatus === 'loading' || fsnSetupStatus === 'idle';
+  const loadingCatalog = fsnCatalogStatus === 'loading';
 
   const locationLabel = useMemo(() => {
     const loc = locations.find((l) => l.id === selectedLocationId);

@@ -1,6 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import {
+  fetchKAAnalyticsPoPaymentHistory,
+  fetchKAAnalyticsRebateSource,
+  fetchKAClientBrandCollections,
+} from '@/store/slices/key-accounts/analytics';
 import {
   Bar,
   BarChart,
@@ -356,6 +361,10 @@ function formatClientLabel(client: ClientOption) {
   return client.client_code ? `${client.client_name} (${client.client_code})` : client.client_name;
 }
 
+function formatMoney(value: number) {
+  return `₱${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 function clientInitials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return '?';
@@ -430,6 +439,16 @@ export default function KeyAccountClientAnalyticsTab({
   paymentRows = EMPTY_PAYMENT_ROWS,
 }: KeyAccountClientAnalyticsTabProps) {
   const { toast } = useToast();
+  const dispatch = useAppDispatch();
+  const clientBrandCollections = useAppSelector(
+    (state) => state.kaAnalytics.clientBrandCollections
+  );
+  const clientBrandCollectionsStatus = useAppSelector(
+    (state) => state.kaAnalytics.clientBrandCollectionsStatus
+  );
+  const clientBrandCollectionsError = useAppSelector(
+    (state) => state.kaAnalytics.clientBrandCollectionsError
+  );
   const [selectedClient, setSelectedClient] = useState('all');
   const [exporting, setExporting] = useState(false);
   const [datePreset, setDatePreset] = useState<DatePreset>('all');
@@ -438,11 +457,11 @@ export default function KeyAccountClientAnalyticsTab({
   const [customEndDate, setCustomEndDate] = useState<Date | undefined>(undefined);
   const [itemsDialogOrder, setItemsDialogOrder] = useState<ClientAnalyticsOrder | null>(null);
   const [dialogPayments, setDialogPayments] = useState<PaymentHistoryRow[]>([]);
-  const [itemsLoading, setItemsLoading] = useState(false);
   const [dialogPaidTotal, setDialogPaidTotal] = useState<number | null>(null);
   const [dialogDiscountTotal, setDialogDiscountTotal] = useState<number | null>(null);
   const [dialogPaymentCount, setDialogPaymentCount] = useState(0);
   const [dialogPaymentLoading, setDialogPaymentLoading] = useState(false);
+  const paymentRequestIdRef = useRef(0);
   const [dialogRebateSource, setDialogRebateSource] = useState<{
     rebate_number: string;
     source_po_number: string;
@@ -452,6 +471,7 @@ export default function KeyAccountClientAnalyticsTab({
   const [clientPickerOpen, setClientPickerOpen] = useState(false);
   const [periodDetailOpen, setPeriodDetailOpen] = useState(false);
   const [selectedPeriodRow, setSelectedPeriodRow] = useState<ClientPaymentPeriodRow | null>(null);
+  const [storyClientId, setStoryClientId] = useState<string | null>(null);
 
   const itemsByOrderId = useMemo(() => {
     const map = new Map<string, ClientAnalyticsItem[]>();
@@ -758,6 +778,8 @@ export default function KeyAccountClientAnalyticsTab({
   };
 
   const openItemsDialog = async (order: ClientAnalyticsOrder) => {
+    const requestId = paymentRequestIdRef.current + 1;
+    paymentRequestIdRef.current = requestId;
     setItemsDialogOrder(order);
     setDialogPayments([]);
     setDialogPaidTotal(null);
@@ -767,68 +789,43 @@ export default function KeyAccountClientAnalyticsTab({
     setDialogPaymentLoading(true);
     void (async () => {
       try {
-        const { data, error } = await supabase
-          .from('purchase_order_key_account_payments')
-          .select(
-            `
-            id,
-            amount,
-            settlement_discount,
-            created_at,
-            payment_method,
-            bank_type,
-            recorder:profiles!purchase_order_key_account_payments_recorded_by_fkey(full_name,email)
-          `
-          )
-          .eq('purchase_order_id', order.id)
-          .order('created_at', { ascending: true });
-        if (error) throw error;
-        const rows = (data || []) as PaymentHistoryRow[];
-        const paid = rows.reduce((sum, r) => sum + Number(r.amount || 0), 0);
-        const discount = rows.reduce(
-          (sum, r) => sum + Number(r.settlement_discount || 0),
-          0
-        );
-        const cashEntries = rows.filter((r) => (Number(r.amount) || 0) > 0).length;
+        const result = await dispatch(fetchKAAnalyticsPoPaymentHistory(order.id)).unwrap();
+        if (paymentRequestIdRef.current !== requestId) return;
+        const rows = (result.payments || []) as PaymentHistoryRow[];
         setDialogPayments(rows);
-        setDialogPaidTotal(paid);
-        setDialogDiscountTotal(discount);
-        setDialogPaymentCount(cashEntries);
+        setDialogPaidTotal(result.paid);
+        setDialogDiscountTotal(result.discount);
+        setDialogPaymentCount(result.cashEntries);
       } catch {
+        if (paymentRequestIdRef.current !== requestId) return;
         setDialogPayments([]);
         setDialogPaidTotal(0);
         setDialogDiscountTotal(0);
         setDialogPaymentCount(0);
       } finally {
-        setDialogPaymentLoading(false);
+        if (paymentRequestIdRef.current === requestId) {
+          setDialogPaymentLoading(false);
+        }
       }
     })();
 
     if (String(order.po_order_kind || '') === 'rebate_fulfillment' && order.source_rebate_id) {
       void (async () => {
         try {
-          const { data, error } = await supabase
-            .from('key_account_po_rebates')
-            .select(
-              'rebate_number, source_po:purchase_orders!key_account_po_rebates_purchase_order_id_fkey(po_number)'
-            )
-            .eq('id', order.source_rebate_id)
-            .maybeSingle();
-          if (error || !data) return;
-          const src = (data as any).source_po;
-          const poNum = Array.isArray(src) ? src?.[0]?.po_number : src?.po_number;
-          if (!poNum) return;
+          const result = await dispatch(
+            fetchKAAnalyticsRebateSource(order.source_rebate_id as string)
+          ).unwrap();
+          if (paymentRequestIdRef.current !== requestId || !result.sourcePoNumber) return;
           setDialogRebateSource({
-            rebate_number: String((data as any).rebate_number || ''),
-            source_po_number: String(poNum || ''),
+            rebate_number: String(result.rebateNumber || ''),
+            source_po_number: String(result.sourcePoNumber || ''),
           });
         } catch {
+          if (paymentRequestIdRef.current !== requestId) return;
           setDialogRebateSource(null);
         }
       })();
     }
-
-    setItemsLoading(false);
   };
 
   const exportPeriodBounds = useMemo(() => {
@@ -918,7 +915,68 @@ export default function KeyAccountClientAnalyticsTab({
   const openPeriodDetail = (row: ClientPaymentPeriodRow) => {
     setSelectedPeriodRow(row);
     setPeriodDetailOpen(true);
+    const clientId = selectedClient === 'all' ? null : selectedClient;
+    setStoryClientId(clientId);
+    if (clientId) {
+      const monthStart = new Date(row.periodStart);
+      void dispatch(
+        fetchKAClientBrandCollections({
+          clientId,
+          dateStart: startOfMonth(monthStart).toISOString(),
+          dateEnd: endOfMonth(monthStart).toISOString(),
+        })
+      );
+    }
   };
+
+  const openClientStory = (clientId: string) => {
+    if (storyClientId === clientId) {
+      setStoryClientId(null);
+      return;
+    }
+    setStoryClientId(clientId);
+    if (!selectedPeriodRow) return;
+    const monthStart = new Date(selectedPeriodRow.periodStart);
+    void dispatch(
+      fetchKAClientBrandCollections({
+        clientId,
+        dateStart: startOfMonth(monthStart).toISOString(),
+        dateEnd: endOfMonth(monthStart).toISOString(),
+      })
+    );
+  };
+
+  const closeClientStory = () => {
+    setStoryClientId(null);
+  };
+
+  const storyClientLabel = useMemo(() => {
+    if (!storyClientId) return null;
+    const match = clientOptions.find((client) => client.id === storyClientId);
+    return match ? formatClientLabel(match) : 'Client';
+  }, [clientOptions, storyClientId]);
+
+  const storyPeriodOrders = useMemo(() => {
+    if (!selectedPeriodRow || !storyClientId) return [];
+    const monthStart = new Date(selectedPeriodRow.periodStart);
+    const period = { from: startOfMonth(monthStart), to: endOfMonth(monthStart) };
+    return productRevenueOrders.filter((order) => {
+      if (order.key_account_client_id !== storyClientId) return false;
+      return computePaymentSummary([order], period).totalRevenue > 0;
+    });
+  }, [productRevenueOrders, selectedPeriodRow, storyClientId]);
+
+  const storyTotals = useMemo(() => {
+    return clientBrandCollections.brands.reduce(
+      (acc, row) => ({
+        billed: acc.billed + row.billed,
+        paid: acc.paid + row.paid,
+        discount: acc.discount + row.discount,
+        remaining: acc.remaining + row.remaining,
+      }),
+      { billed: 0, paid: 0, discount: 0, remaining: 0 }
+    );
+  }, [clientBrandCollections.brands]);
 
   return (
     <div className="space-y-4">
@@ -1338,66 +1396,73 @@ export default function KeyAccountClientAnalyticsTab({
         </CardContent>
       </Card>
 
-      <Dialog open={periodDetailOpen} onOpenChange={setPeriodDetailOpen}>
-        <DialogContent className="max-w-3xl">
+      <Dialog
+        open={periodDetailOpen}
+        onOpenChange={(open) => {
+          setPeriodDetailOpen(open);
+          if (!open) setStoryClientId(null);
+        }}
+      >
+        <DialogContent className="max-w-5xl w-[calc(100vw-2rem)] max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{selectedPeriodRow?.month} — Client revenue breakdown</DialogTitle>
             <DialogDescription>
               {selectedClientLabel}
               {' · '}Paid, remaining balance (partial + unpaid), consignment, and settlement discount
-              for this month.
+              for this month. Click a client to see POs, brands bought, billed, collected, discount,
+              and remaining.
             </DialogDescription>
           </DialogHeader>
           {selectedPeriodRow && (
-            <div className="space-y-3 text-sm">
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                <div>
+            <div className="space-y-4 text-sm">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                <div className="rounded-md border bg-emerald-50/70 dark:bg-emerald-950/30 p-3">
                   <p className="text-muted-foreground text-xs">Paid</p>
-                  <p className="font-semibold text-green-600 dark:text-green-400">
+                  <p className="text-lg font-semibold tabular-nums text-green-600 dark:text-green-400">
                     {formatCurrency(selectedPeriodRow.paidRevenue)}
                   </p>
                 </div>
-                <div>
+                <div className="rounded-md border bg-orange-50/70 dark:bg-orange-950/30 p-3">
                   <p className="text-muted-foreground text-xs">Remaining balance</p>
-                  <p className="font-semibold text-orange-600 dark:text-orange-400">
+                  <p className="text-lg font-semibold tabular-nums text-orange-600 dark:text-orange-400">
                     {formatCurrency(
                       selectedPeriodRow.partialRevenue + selectedPeriodRow.unpaidRevenue
                     )}
                   </p>
                 </div>
-                <div>
+                <div className="rounded-md border bg-sky-50/70 dark:bg-sky-950/30 p-3">
                   <p className="text-muted-foreground text-xs">Consignment</p>
-                  <p className="font-semibold text-sky-600 dark:text-sky-400">
+                  <p className="text-lg font-semibold tabular-nums text-sky-600 dark:text-sky-400">
                     {formatCurrency(selectedPeriodRow.consignmentRevenue)}
                   </p>
                 </div>
-                <div>
+                <div className="rounded-md border bg-slate-50 dark:bg-slate-900/40 p-3">
                   <p className="text-muted-foreground text-xs">Settlement disc.</p>
-                  <p className="font-semibold text-slate-600 dark:text-slate-300">
+                  <p className="text-lg font-semibold tabular-nums text-slate-600 dark:text-slate-300">
                     {formatCurrency(selectedPeriodRow.settlementDiscountRevenue)}
                   </p>
                 </div>
-                <div>
+                <div className="rounded-md border bg-muted/40 p-3">
                   <p className="text-muted-foreground text-xs">Total</p>
-                  <p className="font-semibold">
+                  <p className="text-lg font-semibold tabular-nums">
                     {formatCurrency(selectedPeriodRow.totalRevenue)}
                   </p>
                 </div>
               </div>
-              <div className="border-t pt-3 space-y-1.5 text-xs text-muted-foreground">
-                <div className="flex justify-between">
-                  <span>Paid POs</span>
-                  <span>{selectedPeriodRow.paidOrders}</span>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="rounded-md border p-3">
+                  <p className="text-muted-foreground text-xs">Paid POs</p>
+                  <p className="text-base font-semibold">{selectedPeriodRow.paidOrders}</p>
                 </div>
-                <div className="flex justify-between">
-                  <span>Open POs (partial + unpaid)</span>
-                  <span>
+                <div className="rounded-md border p-3">
+                  <p className="text-muted-foreground text-xs">Open POs</p>
+                  <p className="text-base font-semibold">
                     {selectedPeriodRow.partialOrders + selectedPeriodRow.unpaidOrders}
-                  </span>
+                  </p>
                 </div>
-                <div className="flex justify-between">
-                  <span>Consignment POs</span>
-                  <span>{selectedPeriodRow.consignmentOrders}</span>
+                <div className="rounded-md border p-3">
+                  <p className="text-muted-foreground text-xs">Consignment POs</p>
+                  <p className="text-base font-semibold">{selectedPeriodRow.consignmentOrders}</p>
                 </div>
               </div>
               {selectedClient === 'all' && (
@@ -1426,8 +1491,22 @@ export default function KeyAccountClientAnalyticsTab({
                           </TableRow>
                         ) : (
                           selectedPeriodClientRows.map((row) => (
-                            <TableRow key={row.id}>
-                              <TableCell className="font-medium">{row.label}</TableCell>
+                            <TableRow
+                              key={row.id}
+                              className={cn(
+                                'cursor-pointer hover:bg-muted/50',
+                                storyClientId === row.id && 'bg-muted/60'
+                              )}
+                              onClick={() => openClientStory(row.id)}
+                            >
+                              <TableCell className="font-medium">
+                                <button
+                                  type="button"
+                                  className="text-left text-primary hover:underline underline-offset-2"
+                                >
+                                  {row.label}
+                                </button>
+                              </TableCell>
                               <TableCell className="text-right text-green-600 dark:text-green-400">
                                 {formatCurrency(row.paidRevenue)}
                               </TableCell>
@@ -1445,6 +1524,219 @@ export default function KeyAccountClientAnalyticsTab({
                               </TableCell>
                             </TableRow>
                           ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              )}
+
+              {storyClientId && (
+                <div className="border-t pt-4 space-y-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold">
+                        {storyClientLabel} — {selectedPeriodRow.month}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                      {clientBrandCollectionsStatus === 'loading'
+                        ? 'Loading brand collections…'
+                        : `${storyClientLabel} had ${
+                            clientBrandCollections.poCount || storyPeriodOrders.length
+                          } purchase order${
+                            (clientBrandCollections.poCount || storyPeriodOrders.length) === 1
+                              ? ''
+                              : 's'
+                          } across ${clientBrandCollections.brands.length} brand${
+                            clientBrandCollections.brands.length === 1 ? '' : 's'
+                          } this month. Billed ${formatMoney(storyTotals.billed)}, collected ${formatMoney(
+                            storyTotals.paid
+                          )}, discount ${formatMoney(storyTotals.discount)}, remaining ${formatMoney(
+                            storyTotals.remaining
+                          )}.`}
+                    </p>
+                    {clientBrandCollectionsError ? (
+                      <p className="text-xs text-destructive mt-1">{clientBrandCollectionsError}</p>
+                    ) : null}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 shrink-0 gap-1"
+                      onClick={closeClientStory}
+                    >
+                      <X className="h-4 w-4" />
+                      Close
+                    </Button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+                    <div className="rounded-md border p-3">
+                      <p className="text-muted-foreground text-xs">Purchase orders</p>
+                      <p className="text-lg font-semibold">
+                        {clientBrandCollections.poCount || storyPeriodOrders.length}
+                      </p>
+                    </div>
+                    <div className="rounded-md border p-3">
+                      <p className="text-muted-foreground text-xs">Billed</p>
+                      <p className="text-lg font-semibold tabular-nums">{formatMoney(storyTotals.billed)}</p>
+                    </div>
+                    <div className="rounded-md border bg-emerald-50/70 dark:bg-emerald-950/30 p-3">
+                      <p className="text-muted-foreground text-xs">Collected</p>
+                      <p className="text-lg font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+                        {formatMoney(storyTotals.paid)}
+                      </p>
+                    </div>
+                    <div className="rounded-md border p-3">
+                      <p className="text-muted-foreground text-xs">Discount</p>
+                      <p className="text-lg font-semibold tabular-nums">{formatMoney(storyTotals.discount)}</p>
+                    </div>
+                    <div className="rounded-md border bg-orange-50/70 dark:bg-orange-950/30 p-3">
+                      <p className="text-muted-foreground text-xs">Remaining</p>
+                      <p className="text-lg font-semibold tabular-nums text-orange-600 dark:text-orange-400">
+                        {formatMoney(storyTotals.remaining)}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-md border overflow-x-auto">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 pt-3 pb-2">
+                      Brands bought
+                    </p>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Brand</TableHead>
+                          <TableHead className="text-right">Units</TableHead>
+                          <TableHead className="text-right">POs</TableHead>
+                          <TableHead className="text-right">Billed</TableHead>
+                          <TableHead className="text-right">Collected</TableHead>
+                          <TableHead className="text-right">Discount</TableHead>
+                          <TableHead className="text-right">Remaining</TableHead>
+                          <TableHead>Status</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {clientBrandCollectionsStatus === 'loading' ? (
+                          <TableRow>
+                            <TableCell colSpan={8} className="text-center text-muted-foreground py-6">
+                              <Loader2 className="h-4 w-4 animate-spin inline-block mr-2" />
+                              Loading brands…
+                            </TableCell>
+                          </TableRow>
+                        ) : clientBrandCollections.brands.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={8} className="text-center text-muted-foreground py-6">
+                              No brand collections for this client in this month.
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          clientBrandCollections.brands.map((row) => (
+                            <TableRow key={row.brandId}>
+                              <TableCell>
+                                <Badge variant="outline">{row.brandName}</Badge>
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {row.quantity.toLocaleString()}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">{row.orderCount}</TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {formatMoney(row.billed)}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums text-emerald-700 dark:text-emerald-400">
+                                {formatMoney(row.paid)}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {formatMoney(row.discount)}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums font-medium">
+                                {formatMoney(row.remaining)}
+                              </TableCell>
+                              <TableCell>
+                                <Badge
+                                  variant={row.status === 'paid' ? 'default' : 'secondary'}
+                                  className={
+                                    row.status === 'paid'
+                                      ? 'bg-emerald-600'
+                                      : row.status === 'partial'
+                                        ? 'bg-amber-500'
+                                        : ''
+                                  }
+                                >
+                                  {row.status}
+                                </Badge>
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  <div className="rounded-md border overflow-x-auto">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 pt-3 pb-2">
+                      Purchase orders this month
+                    </p>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>PO #</TableHead>
+                          <TableHead>Order date</TableHead>
+                          <TableHead className="text-right">PO total</TableHead>
+                          <TableHead className="text-right">Remaining</TableHead>
+                          <TableHead></TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {storyPeriodOrders.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={5} className="text-center text-muted-foreground py-6">
+                              No purchase orders in this month for this client.
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          storyPeriodOrders.map((order) => {
+                            const remainingBalance = Math.max(
+                              0,
+                              Math.round(
+                                ((Number(order.total_amount) || 0) -
+                                  (appliedByOrderId.get(order.id) || 0)) *
+                                  100
+                              ) / 100
+                            );
+                            return (
+                              <TableRow key={order.id}>
+                                <TableCell className="font-medium">{order.po_number}</TableCell>
+                                <TableCell>
+                                  {order.order_date
+                                    ? new Date(order.order_date).toLocaleDateString()
+                                    : '—'}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatCurrency(Number(order.total_amount) || 0)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatCurrency(remainingBalance)}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 px-2 text-xs gap-1"
+                                    disabled={dialogPaymentLoading && itemsDialogOrder?.id === order.id}
+                                    onClick={() => void openItemsDialog(order)}
+                                  >
+                                    {dialogPaymentLoading && itemsDialogOrder?.id === order.id ? (
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    ) : null}
+                                    Payments
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })
                         )}
                       </TableBody>
                     </Table>
@@ -1588,9 +1880,9 @@ export default function KeyAccountClientAnalyticsTab({
         open={!!itemsDialogOrder}
         onOpenChange={(open) => {
           if (!open) {
+            paymentRequestIdRef.current += 1;
             setItemsDialogOrder(null);
             setDialogPayments([]);
-            setItemsLoading(false);
             setDialogPaidTotal(null);
             setDialogDiscountTotal(null);
             setDialogPaymentCount(0);
@@ -1642,7 +1934,7 @@ export default function KeyAccountClientAnalyticsTab({
             </DialogDescription>
           </DialogHeader>
 
-          {itemsLoading ? (
+          {dialogPaymentLoading ? (
             <div className="flex items-center justify-center gap-2 py-10 text-muted-foreground">
               <Loader2 className="h-5 w-5 animate-spin" />
               Loading payment history…
