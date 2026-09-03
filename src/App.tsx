@@ -6,6 +6,7 @@ import { queryClient, queryPersistOptions } from "@/lib/queryClient";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider, ProtectedRoute, LoginPage, RoleBasedRedirect } from "@/features/auth";
+import { COMPANY_AGENT_INVENTORY_ROLES } from "@/lib/roleUtils";
 import { DashboardPage, SysAdDashboardPage, SuperAdminDashboardPage } from "@/features/dashboard";
 import ExecutiveDashboardPage from "@/features/dashboard/ExecutiveDashboardPage";
 import { SystemHistoryPage } from "@/features/system-history";
@@ -32,6 +33,7 @@ import ManagerTeamRemittancesPage from "@/features/manager/ManagerTeamRemittance
 import ManagerRequestsPage from "@/features/manager/ManagerRequestsPage";
 import ManagerClientsPage from "@/features/manager/ManagerClientsPage";
 import ManagerDashboardPage from "@/features/manager/ManagerDashboardPage";
+import AgentInventoryPage from "@/features/agent-inventory/pages/AgentInventoryPage";
 import { FinancePage } from "@/features/finance";
 import PaymentSettingsPage from "@/features/finance/PaymentSettingsPage";
 import SystemAdminPage from "@/features/system-admin/SystemAdminPage";
@@ -279,6 +281,14 @@ const App = () => (
                       element={
                         <ProtectedRoute allowedRoles={['accounting']}>
                           <ProductAnalyticsPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/agent-inventory"
+                      element={
+                        <ProtectedRoute allowedRoles={[...COMPANY_AGENT_INVENTORY_ROLES]}>
+                          <AgentInventoryPage />
                         </ProtectedRoute>
                       }
                     />

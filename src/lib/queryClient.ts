@@ -1,5 +1,6 @@
 import { QueryClient } from '@tanstack/react-query';
 import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister';
+import { COMPANY_AGENT_INVENTORY_QUERY_KEY } from '@/features/agent-inventory/hooks/useCompanyAgentInventory';
 import { SUPER_ADMIN_ALLOCATION_HISTORY_QUERY_KEY } from '@/features/sales-agents/components/super-admin-allocation-history/hooks/useSuperAdminAllocationHistory';
 
 export const queryClient = new QueryClient({
@@ -49,6 +50,7 @@ const NON_PERSISTED_QUERY_KEYS = new Set([
     'warehouse-delivery-shortages',
     // Heavy nested payloads (events + proof URLs); must stay live for allocate/request sync.
     'internal-stock-requests',
+    COMPANY_AGENT_INVENTORY_QUERY_KEY,
 ]);
 
 export const queryPersistOptions = {
