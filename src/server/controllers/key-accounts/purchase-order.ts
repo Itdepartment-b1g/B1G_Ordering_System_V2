@@ -28,6 +28,7 @@ import {
   listKAPurchaseOrders,
   recordKAPoListPayment,
   rejectKASettlementDiscount,
+  markKAPoCommissioned,
   setKAPoRfpf,
   updateKAPoWorkflow,
   updateKAPurchaseOrder,
@@ -241,6 +242,11 @@ export async function createKAPurchaseOrderHandler(
         const reason = typeof payload.reason === 'string' ? payload.reason : null;
         if (!requestId) throw new HttpError(400, 'requestId is required');
         return { status: 200, body: await rejectKASettlementDiscount(ctx, requestId, reason) };
+      }
+      case 'mark-commissioned': {
+        const poId = typeof payload.poId === 'string' ? payload.poId : '';
+        if (!poId) throw new HttpError(400, 'poId is required');
+        return { status: 200, body: await markKAPoCommissioned(ctx, poId) };
       }
       default: {
         const createPayload = body as {

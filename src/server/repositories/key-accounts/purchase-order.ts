@@ -863,6 +863,8 @@ const KA_PO_LIST_SELECT = `
   key_account_notification_option,
   key_account_notification_date,
   key_account_notification_sent_at,
+  commissioned_at,
+  commissioned_by,
   director_approved_at,
   director_approved_by,
   admin_approved_at,
@@ -879,6 +881,44 @@ const KA_PO_LIST_SELECT = `
   kam:profiles!purchase_orders_kam_id_fkey(full_name,email),
   created_by_user:profiles!purchase_orders_created_by_fkey(full_name,email)
 `;
+
+async function getAppliedTotalsByPoId(
+  sb: ReturnType<typeof getSupabaseAdmin>,
+  poIds: string[]
+): Promise<Map<string, number>> {
+  const totals = new Map<string, number>();
+  const uniqueIds = [...new Set(poIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return totals;
+
+  const chunkSize = 100;
+  for (let i = 0; i < uniqueIds.length; i += chunkSize) {
+    const chunk = uniqueIds.slice(i, i + chunkSize);
+    const rows = await fetchAllPaginated<{
+      purchase_order_id: string;
+      amount: number | null;
+      settlement_discount?: number | null;
+    }>(async (from, to) => {
+      const { data, error } = await sb
+        .from('purchase_order_key_account_payments')
+        .select('purchase_order_id, amount, settlement_discount')
+        .in('purchase_order_id', chunk)
+        .range(from, to);
+      return {
+        data: (data as Array<{
+          purchase_order_id: string;
+          amount: number | null;
+          settlement_discount?: number | null;
+        }> | null) ?? null,
+        error,
+      };
+    });
+    for (const row of rows) {
+      const applied = Number(row.amount || 0) + Number(row.settlement_discount || 0);
+      totals.set(row.purchase_order_id, (totals.get(row.purchase_order_id) || 0) + applied);
+    }
+  }
+  return totals;
+}
 
 export async function listKAPurchaseOrders(ctx: UserContext) {
   const sb = getSupabaseAdmin();
@@ -920,13 +960,35 @@ export async function listKAPurchaseOrders(ctx: UserContext) {
     }
   }
 
-  const rows = rawRows.map((row) => ({
-    ...row,
-    payment_terms_creator:
-      typeof row.key_account_payment_terms_created_by === 'string'
-        ? creatorById.get(row.key_account_payment_terms_created_by) ?? null
-        : null,
-  }));
+  const appliedByPoId = await getAppliedTotalsByPoId(
+    sb,
+    rawRows
+      .filter((row) => Boolean(row.key_account_payment_mode) && typeof row.id === 'string')
+      .map((row) => row.id as string)
+  );
+
+  const rows = rawRows.map((row) => {
+    const hasPaymentTracking = Boolean(row.key_account_payment_mode);
+    const remainingBalance = hasPaymentTracking
+      ? Math.max(
+          0,
+          Math.round(
+            (Number(row.total_amount || 0) -
+              (typeof row.id === 'string' ? appliedByPoId.get(row.id) || 0 : 0)) *
+              100
+          ) / 100
+        )
+      : null;
+
+    return {
+      ...row,
+      remaining_balance: remainingBalance,
+      payment_terms_creator:
+        typeof row.key_account_payment_terms_created_by === 'string'
+          ? creatorById.get(row.key_account_payment_terms_created_by) ?? null
+          : null,
+    };
+  });
 
   return { rows };
 }
@@ -1575,6 +1637,57 @@ export async function approveKASettlementDiscount(ctx: UserContext, requestId: s
     await applyApprovedDiscountAllocations(requestId, result.payment_id);
   }
   return result;
+}
+
+export async function markKAPoCommissioned(ctx: UserContext, poId: string) {
+  if (ctx.role !== 'sales_admin') {
+    throw new HttpError(403, 'Only sales admin can mark purchase orders as commissioned');
+  }
+  const sb = getSupabaseAdmin();
+  const { data: po, error: poError } = await sb
+    .from('purchase_orders')
+    .select(
+      'id, company_id, company_account_type, key_account_payment_mode, key_account_payment_status, commissioned_at'
+    )
+    .eq('id', poId)
+    .maybeSingle();
+  if (poError) throw poError;
+  if (!po || po.company_id !== ctx.companyId) throw new HttpError(404, 'Purchase order not found');
+  if (po.company_account_type !== 'Key Accounts') {
+    throw new HttpError(400, 'Only Key Account purchase orders can be commissioned');
+  }
+  if (!po.key_account_payment_mode) {
+    throw new HttpError(400, 'This purchase order has no payment tracking');
+  }
+
+  if (po.commissioned_at) {
+    throw new HttpError(400, 'This purchase order is already commissioned');
+  }
+  if (String(po.key_account_payment_status || 'unpaid') !== 'paid') {
+    throw new HttpError(400, 'Purchase order must be fully paid before it can be commissioned');
+  }
+
+  const now = new Date().toISOString();
+  const { data, error } = await sb
+    .from('purchase_orders')
+    .update({
+      commissioned_at: now,
+      commissioned_by: ctx.userId,
+    })
+    .eq('id', poId)
+    .is('commissioned_at', null)
+    .select('id, commissioned_at, commissioned_by')
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) {
+    throw new HttpError(400, 'This purchase order is already commissioned');
+  }
+
+  return {
+    poId: data.id as string,
+    commissioned_at: data.commissioned_at as string,
+    commissioned_by: data.commissioned_by as string,
+  };
 }
 
 export async function rejectKASettlementDiscount(

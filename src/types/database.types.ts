@@ -339,6 +339,9 @@ export interface KeyAccountPurchaseOrder {
   key_account_notification_option?: string | null;
   key_account_notification_date?: string | null;
   key_account_notification_sent_at?: string | null;
+  /** Set when this Key Account PO is marked commissioned (only after fully paid). */
+  commissioned_at?: string | null;
+  commissioned_by?: string | null;
 }
 
 export interface Brand {
@@ -501,6 +504,9 @@ export interface PurchaseOrder {
   key_account_notification_option?: string | null;
   key_account_notification_date?: string | null;
   key_account_notification_sent_at?: string | null;
+  /** Set when this Key Account PO is marked commissioned (only after fully paid). */
+  commissioned_at?: string | null;
+  commissioned_by?: string | null;
   po_order_kind?: PurchaseOrderKind | null;
   source_rebate_id?: string | null;
   /** Warehouse transfer PO: team leader who receives dispatched stock. */
