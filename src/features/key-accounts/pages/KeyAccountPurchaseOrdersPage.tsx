@@ -247,8 +247,8 @@ const PO_TABLE_COLUMNS = [
   { id: 'commissioned', label: 'Commissioned', minWidth: 140 },
   { id: 'dr', label: 'DR', minWidth: 110 },
   { id: 'rfpf', label: 'RFPF', minWidth: 110 },
+  { id: 'balance', label: 'Balance', minWidth: 130 },
   { id: 'total', label: 'Total', minWidth: 120 },
-  { id: 'remaining', label: 'Remaining', minWidth: 130 },
   { id: 'actions', label: 'Actions', minWidth: 150 },
 ] as const;
 
@@ -2140,7 +2140,7 @@ export function KeyAccountPurchaseOrdersPage() {
                           frozenColumn={frozenColumn}
                           onToggle={toggleFrozenColumn}
                           className={
-                            column.id === 'total' || column.id === 'remaining' ? 'text-right' : undefined
+                            column.id === 'balance' || column.id === 'total' ? 'text-right' : undefined
                           }
                         />
                       ))}
@@ -2211,15 +2211,14 @@ export function KeyAccountPurchaseOrdersPage() {
                           </TableCell>
                           <TableCell {...freezeCol('commissioned')}>
                             {po.commissioned_at ? (
-                              <Badge className="bg-emerald-600 text-white">Commissioned</Badge>
+                              <Badge className="bg-green-500 text-white">Commissioned</Badge>
                             ) : (
                               <span className="text-muted-foreground text-sm">—</span>
                             )}
                           </TableCell>
                           <TableCell {...freezeCol('dr', 'font-medium')}>{po.dr_number || '—'}</TableCell>
                           <TableCell {...freezeCol('rfpf', 'font-medium')}>{po.rfpf_number || '—'}</TableCell>
-                          <TableCell {...freezeCol('total', 'text-right font-semibold')}>₱{Number(po.total_amount || 0).toLocaleString()}</TableCell>
-                          <TableCell {...freezeCol('remaining', 'text-right font-semibold tabular-nums')}>
+                          <TableCell {...freezeCol('balance', 'text-right font-semibold tabular-nums')}>
                             {po.key_account_payment_mode && po.remaining_balance != null
                               ? `₱${Number(po.remaining_balance).toLocaleString(undefined, {
                                   minimumFractionDigits: 2,
@@ -2227,6 +2226,7 @@ export function KeyAccountPurchaseOrdersPage() {
                                 })}`
                               : <span className="text-muted-foreground font-normal">—</span>}
                           </TableCell>
+                          <TableCell {...freezeCol('total', 'text-right font-semibold')}>₱{Number(po.total_amount || 0).toLocaleString()}</TableCell>
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-1">
                               {!isReadOnlyAccounting && canOwnerApprove(po) ? (
