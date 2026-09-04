@@ -114,13 +114,13 @@ export function generateKeyAccountPoPaymentReminderHTML(
                 const line = lineAmount(it);
                 const border = index === group.variants.length - 1 ? '' : 'border-bottom: 1px solid #efefef;';
                 return `<tr>
-                                    <td style="padding: 9px 10px; ${border} font-size: 13px; color: #2C2C2C; vertical-align: top;">
+                                    <td style="padding: 9px 10px; ${border} font-size: 13px; color: #111; vertical-align: top;">
                                         ${variant}${type}
                                     </td>
                                     <td align="right" style="padding: 9px 8px; ${border} font-size: 13px; color: #555; white-space: nowrap; vertical-align: top;">
                                         ${qty.toLocaleString()}
                                     </td>
-                                    <td align="right" style="padding: 9px 10px; ${border} font-size: 13px; font-weight: 600; color: #2C2C2C; white-space: nowrap; vertical-align: top;">
+                                    <td align="right" style="padding: 9px 10px; ${border} font-size: 13px; font-weight: 600; color: #111; white-space: nowrap; vertical-align: top;">
                                         ${formatPhp(line)}
                                     </td>
                                 </tr>`;
@@ -130,7 +130,7 @@ export function generateKeyAccountPoPaymentReminderHTML(
             return `
                             <table width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid #e6e6e6; border-collapse: collapse; margin: ${groupIndex === 0 ? '0' : '12px'} 0 0 0;">
                                 <tr>
-                                    <td colspan="3" style="background: #3A3A3A; padding: 10px 12px;">
+                                    <td colspan="3" style="background: #111111; padding: 10px 12px;">
                                         <table width="100%" cellpadding="0" cellspacing="0">
                                             <tr>
                                                 <td style="font-size: 12px; font-weight: 700; color: #ffffff; text-transform: uppercase; letter-spacing: 0.04em;">
@@ -155,7 +155,7 @@ export function generateKeyAccountPoPaymentReminderHTML(
       : `<div style="padding: 12px 0; color: #888; font-size: 13px;">No line items on this PO.</div>`;
 
   const totalsRow = (label: string, value: string, opts?: { emphasize?: boolean; topBorder?: boolean }) => {
-    const color = opts?.emphasize ? '#3A3A3A' : '#2C2C2C';
+    const color = opts?.emphasize ? '#111111' : '#111';
     const weight = opts?.emphasize ? '700' : '600';
     const size = opts?.emphasize ? '16px' : '14px';
     const border = opts?.topBorder ? 'border-top: 1px solid #dcdcdc;' : '';
@@ -169,7 +169,7 @@ export function generateKeyAccountPoPaymentReminderHTML(
     ? `
                             <table cellpadding="0" cellspacing="0" align="center" style="margin: 22px auto 0 auto;">
                                 <tr>
-                                    <td align="center" bgcolor="#3A3A3A" style="border-radius: 8px; background: #3A3A3A;">
+                                    <td align="center" bgcolor="#111111" style="border-radius: 8px; background: #111111;">
                                         <a href="${poViewUrl}" style="display: inline-block; padding: 12px 22px; font-size: 14px; font-weight: 700; color: #ffffff; text-decoration: none;">
                                             View Purchase Order &rarr;
                                         </a>
@@ -187,7 +187,7 @@ export function generateKeyAccountPoPaymentReminderHTML(
             <td align="center">
                 <table width="520" cellpadding="0" cellspacing="0" style="background:#ffffff;border-collapse:collapse;box-shadow:0 8px 24px rgba(0,0,0,0.08);">
                     <tr>
-                        <td align="center" style="padding: 28px 28px 24px 28px; background: #3A3A3A;">
+                        <td align="center" style="padding: 28px 28px 24px 28px; background: #111111;">
                             <div style="font-size: 10px; font-weight: 700; color: #bdbdbd; text-transform: uppercase; letter-spacing: 0.14em; margin: 0 0 6px 0;">
                                 Purchase order
                             </div>
@@ -214,18 +214,18 @@ export function generateKeyAccountPoPaymentReminderHTML(
                                 <tr>
                                     <td valign="top" width="58%" style="padding-right: 12px;">
                                         ${mutedLabel('Client')}
-                                        <div style="font-size: 15px; font-weight: 700; color: #2C2C2C; line-height: 1.35;">${clientName}</div>
+                                        <div style="font-size: 15px; font-weight: 700; color: #111; line-height: 1.35;">${clientName}</div>
                                     </td>
                                     <td valign="top" align="right" width="42%">
                                         ${mutedLabel('Notify on')}
-                                        <div style="font-size: 15px; font-weight: 700; color: #2C2C2C;">${notificationDate}</div>
+                                        <div style="font-size: 15px; font-weight: 700; color: #111;">${notificationDate}</div>
                                     </td>
                                 </tr>
                             </table>
 
                             <div style="margin-bottom: 18px;">
                                 ${mutedLabel('Payment terms')}
-                                <div style="font-size: 14px; font-weight: 600; color: #2C2C2C; line-height: 1.45; white-space: pre-wrap;">${paymentTerms}</div>
+                                <div style="font-size: 14px; font-weight: 600; color: #111; line-height: 1.45; white-space: pre-wrap;">${paymentTerms}</div>
                             </div>
 
                             <div style="margin-bottom: 18px;">
