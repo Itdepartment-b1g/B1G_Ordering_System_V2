@@ -1037,7 +1037,8 @@ export async function listDueKAPoPaymentReminders(asOfDate: string): Promise<KAP
     .select(KA_PO_REMINDER_SELECT)
     .eq('company_account_type', 'Key Accounts')
     .lte('key_account_notification_date', asOfDate)
-    .is('key_account_notification_sent_at', null);
+    .is('key_account_notification_sent_at', null)
+    .neq('key_account_payment_status', 'paid');
 
   if (error) throw error;
   return (data || [])
@@ -1055,6 +1056,24 @@ export async function getKAPoPaymentReminderById(poId: string): Promise<KAPoPaym
     .maybeSingle();
   if (error) throw error;
   return mapKAPoPaymentReminderRow((data as Record<string, unknown> | null) ?? null);
+}
+
+/** Paid + approved discount for a reminder send. No user context — cron uses admin. */
+export async function getKAPoReminderPaymentTotals(poId: string): Promise<{
+  paid: number;
+  discount: number;
+}> {
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb
+    .from('purchase_order_key_account_payments')
+    .select('amount, settlement_discount')
+    .eq('purchase_order_id', poId);
+  if (error) throw error;
+
+  const rows = data || [];
+  const paid = rows.reduce((s, r) => s + Number(r.amount || 0), 0);
+  const discount = rows.reduce((s, r) => s + Number(r.settlement_discount || 0), 0);
+  return { paid, discount };
 }
 
 export async function markKAPoPaymentReminderSent(poId: string): Promise<void> {
