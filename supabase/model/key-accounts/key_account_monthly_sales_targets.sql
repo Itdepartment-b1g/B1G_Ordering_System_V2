@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS public.key_account_monthly_sales_targets (
   created_at timestamp with time zone DEFAULT now() NOT NULL,
   updated_at timestamp with time zone DEFAULT now() NOT NULL,
   CONSTRAINT key_account_monthly_sales_targets_role_check
-    CHECK (assignee_role IN ('sales_director', 'key_account_manager')),
+    CHECK (assignee_role IN ('sales_head', 'sales_director', 'key_account_manager')),
   CONSTRAINT key_account_monthly_sales_targets_revenue_check
     CHECK (target_revenue >= 0),
   CONSTRAINT key_account_monthly_sales_targets_assignee_month_unique

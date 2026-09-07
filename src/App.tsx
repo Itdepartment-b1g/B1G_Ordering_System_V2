@@ -349,7 +349,7 @@ const App = () => (
                     <Route
                       path="/key-accounts/sales-targets"
                       element={
-                        <ProtectedRoute allowedRoles={['sales_head', 'sales_admin']}>
+                        <ProtectedRoute allowedRoles={['sales_head', 'sales_admin', 'sales_director']}>
                           <KeyAccountSalesTargetsPage />
                         </ProtectedRoute>
                       }

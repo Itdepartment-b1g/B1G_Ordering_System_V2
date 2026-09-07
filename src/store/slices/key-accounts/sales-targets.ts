@@ -3,7 +3,7 @@ import { supabase } from '@/lib/supabase';
 
 type QueryStatus = 'idle' | 'loading' | 'succeeded' | 'failed';
 
-export type KASalesTargetAssigneeRole = 'sales_director' | 'key_account_manager';
+export type KASalesTargetAssigneeRole = 'sales_head' | 'sales_director' | 'key_account_manager';
 
 export type KASalesTargetAssignee = {
   id: string;
@@ -18,6 +18,8 @@ export type KASalesTargetRow = {
   assigneeId: string;
   targetMonth: string;
   targetRevenue: number;
+  setById: string | null;
+  setByName: string | null;
 };
 
 export type KASalesTargetActual = {

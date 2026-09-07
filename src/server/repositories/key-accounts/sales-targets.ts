@@ -13,7 +13,7 @@ export type UserContext = {
   role: string;
 };
 
-export type KASalesTargetAssigneeRole = 'sales_director' | 'key_account_manager';
+export type KASalesTargetAssigneeRole = 'sales_head' | 'sales_director' | 'key_account_manager';
 
 export type KASalesTargetAssignee = {
   id: string;
@@ -28,6 +28,8 @@ export type KASalesTargetRow = {
   assigneeId: string;
   targetMonth: string;
   targetRevenue: number;
+  setById: string | null;
+  setByName: string | null;
 };
 
 export type KASalesTargetActual = {
@@ -55,11 +57,12 @@ export type KASalesTargetUpsertPayload = {
 };
 
 const ASSIGNEE_ROLES: KASalesTargetAssigneeRole[] = [
+  'sales_head',
   'sales_director',
   'key_account_manager',
 ];
 
-const WRITE_ROLES = ['sales_head', 'sales_admin'];
+const WRITE_ROLES = ['sales_head', 'sales_admin', 'sales_director'];
 
 type PoRow = {
   id: string;
@@ -102,8 +105,60 @@ function toYearMonth(value: string | null | undefined): string | null {
 
 function assertCanWrite(ctx: UserContext) {
   if (!WRITE_ROLES.includes(ctx.role)) {
-    throw new HttpError(403, 'Only Sales Head or Sales Admin can set sales targets');
+    throw new HttpError(403, 'Only Sales Head, Sales Admin, or Sales Director can set sales targets');
   }
+}
+
+async function assertCanWriteAssignee(ctx: UserContext, assigneeId: string) {
+  assertCanWrite(ctx);
+  if (ctx.role !== 'sales_director') return;
+
+  const assignees = await listScopedAssignees(ctx);
+  const assignee = assignees.find((person) => person.id === assigneeId);
+  const isSelf = assignee?.id === ctx.userId;
+  const isAssignedKam =
+    assignee?.role === 'key_account_manager' && assignee.directorId === ctx.userId;
+  if (!assignee || (!isSelf && !isAssignedKam)) {
+    throw new HttpError(403, 'Sales Directors can only set targets for themselves and their assigned KAMs');
+  }
+}
+
+async function profileNamesById(ids: string[]): Promise<Map<string, string>> {
+  const unique = [...new Set(ids.filter(Boolean))];
+  const names = new Map<string, string>();
+  if (unique.length === 0) return names;
+
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb.from('profiles').select('id, full_name').in('id', unique);
+  if (error) throw error;
+  for (const row of data || []) {
+    if (!row.id) continue;
+    names.set(row.id, row.full_name?.trim() || '—');
+  }
+  return names;
+}
+
+function mapTargetRow(
+  row: {
+    id: string;
+    assignee_id: string;
+    target_month: string;
+    target_revenue: number | string | null;
+    created_by?: string | null;
+    updated_by?: string | null;
+  },
+  fallbackMonth: string,
+  names: Map<string, string>
+): KASalesTargetRow {
+  const setById = row.updated_by || row.created_by || null;
+  return {
+    id: row.id,
+    assigneeId: row.assignee_id,
+    targetMonth: toYearMonth(row.target_month) || fallbackMonth,
+    targetRevenue: Number(row.target_revenue) || 0,
+    setById,
+    setByName: setById ? names.get(setById) || '—' : null,
+  };
 }
 
 function emptyActual(assigneeId: string, month: string): KASalesTargetActual {
@@ -330,6 +385,11 @@ function buildActuals(
         continue;
       }
 
+      if (assignee.role === 'sales_head') {
+        actuals.push(directorOwn.get(`${assignee.id}:${month}`) || emptyActual(assignee.id, month));
+        continue;
+      }
+
       const rolled = emptyActual(assignee.id, month);
       for (const kamId of kamsByDirector.get(assignee.id) || []) {
         const kamActual = kamMonth.get(`${kamId}:${month}`);
@@ -369,21 +429,19 @@ export async function listKASalesTargets(
 
   const { data: targetRows, error: targetError } = await sb
     .from('key_account_monthly_sales_targets')
-    .select('id, assignee_id, target_month, target_revenue')
+    .select('id, assignee_id, target_month, target_revenue, created_by, updated_by')
     .eq('company_id', ctx.companyId)
     .gte('target_month', monthStartDate(startMonth))
     .lte('target_month', monthStartDate(endMonth));
   if (targetError) throw targetError;
 
   const assigneeIds = new Set(assignees.map((a) => a.id));
+  const setterNames = await profileNamesById(
+    (targetRows || []).flatMap((row) => [row.updated_by, row.created_by].filter(Boolean) as string[])
+  );
   const targets: KASalesTargetRow[] = (targetRows || [])
     .filter((row) => assigneeIds.has(row.assignee_id))
-    .map((row) => ({
-      id: row.id,
-      assigneeId: row.assignee_id,
-      targetMonth: toYearMonth(row.target_month) || startMonth,
-      targetRevenue: Number(row.target_revenue) || 0,
-    }));
+    .map((row) => mapTargetRow(row, startMonth, setterNames));
 
   const pos = await fetchCommercialPos(ctx, startMonth, endMonth, [...assigneeIds]);
   const qtyByPo = await qtyByPoId(pos.map((po) => po.id));
@@ -436,8 +494,6 @@ export async function listKASalesTargetPos(
 }
 
 export async function upsertKASalesTarget(ctx: UserContext, input: KASalesTargetUpsertPayload) {
-  assertCanWrite(ctx);
-
   const assigneeId = String(input.assigneeId || '').trim();
   const targetMonth = parseYearMonth(input.targetMonth);
   const targetRevenue = Number(input.targetRevenue);
@@ -446,6 +502,7 @@ export async function upsertKASalesTarget(ctx: UserContext, input: KASalesTarget
   if (!Number.isFinite(targetRevenue) || targetRevenue < 0) {
     throw new HttpError(400, 'targetRevenue must be a number of 0 or more');
   }
+  await assertCanWriteAssignee(ctx, assigneeId);
 
   const sb = getSupabaseAdmin();
   const { data: profile, error: profileError } = await sb
@@ -457,7 +514,7 @@ export async function upsertKASalesTarget(ctx: UserContext, input: KASalesTarget
   if (profileError) throw profileError;
   if (!profile) throw new HttpError(404, 'Assignee not found');
   if (!ASSIGNEE_ROLES.includes(profile.role as KASalesTargetAssigneeRole)) {
-    throw new HttpError(400, 'Targets can only be set for Sales Directors and KAMs');
+    throw new HttpError(400, 'Targets can only be set for Sales Head, Sales Directors, and KAMs');
   }
   if (profile.status && profile.status !== 'active') {
     throw new HttpError(400, 'Cannot set a target for an inactive user');
@@ -488,24 +545,23 @@ export async function upsertKASalesTarget(ctx: UserContext, input: KASalesTarget
         .update(payload)
         .eq('id', existing.id)
         .eq('company_id', ctx.companyId)
-        .select('id, assignee_id, target_month, target_revenue')
+        .select('id, assignee_id, target_month, target_revenue, created_by, updated_by')
         .single()
     : sb
         .from('key_account_monthly_sales_targets')
         .insert({ ...payload, created_by: ctx.userId })
-        .select('id, assignee_id, target_month, target_revenue')
+        .select('id, assignee_id, target_month, target_revenue, created_by, updated_by')
         .single();
 
   const { data, error } = await query;
   if (error) throw error;
 
+  const setterNames = await profileNamesById(
+    [data.updated_by, data.created_by, ctx.userId].filter(Boolean) as string[]
+  );
+
   return {
-    target: {
-      id: data.id,
-      assigneeId: data.assignee_id,
-      targetMonth: toYearMonth(data.target_month) || targetMonth,
-      targetRevenue: Number(data.target_revenue) || 0,
-    } satisfies KASalesTargetRow,
+    target: mapTargetRow(data, targetMonth, setterNames),
   };
 }
 
@@ -514,12 +570,11 @@ export async function deleteKASalesTarget(
   assigneeIdRaw: string,
   targetMonthRaw: string
 ) {
-  assertCanWrite(ctx);
-
   const assigneeId = String(assigneeIdRaw || '').trim();
   const targetMonth = parseYearMonth(targetMonthRaw);
   if (!assigneeId) throw new HttpError(400, 'assigneeId is required');
   if (!targetMonth) throw new HttpError(400, 'targetMonth must be YYYY-MM');
+  await assertCanWriteAssignee(ctx, assigneeId);
 
   const sb = getSupabaseAdmin();
   const { error } = await sb

@@ -1169,7 +1169,7 @@ export interface KeyAccountMonthlySalesTarget {
   id: string;
   company_id: string;
   assignee_id: string;
-  assignee_role: 'sales_director' | 'key_account_manager';
+  assignee_role: 'sales_head' | 'sales_director' | 'key_account_manager';
   target_month: string;
   target_revenue: number;
   created_by?: string | null;

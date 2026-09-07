@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useAuth } from '@/features/auth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -47,9 +48,9 @@ import {
 import { getDatePresetLabel } from '@/lib/dateRangePresets';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
-import { AlertCircle, Crown, Loader2, Pencil, Target, Users, Eye } from 'lucide-react';
+import { AlertCircle, Crown, Loader2, Pencil, Target, UserCog, Users, Eye } from 'lucide-react';
 
-type AssigneeRole = 'sales_director' | 'key_account_manager';
+type AssigneeRole = 'sales_head' | 'sales_director' | 'key_account_manager';
 type RoleFilter = 'all' | AssigneeRole;
 type FilterMode = 'review' | 'plan';
 
@@ -78,10 +79,13 @@ function attainmentPct(target: number | null, actual: number): number | null {
 }
 
 function roleLabel(role: AssigneeRole): string {
-  return role === 'sales_director' ? 'Sales Director' : 'Key Account Manager';
+  if (role === 'sales_head') return 'Sales Head';
+  if (role === 'sales_director') return 'Sales Director';
+  return 'Key Account Manager';
 }
 
 export function KeyAccountSalesTargetsPage() {
+  const { user } = useAuth();
   const { toast } = useToast();
   const [filterMode, setFilterMode] = useState<FilterMode>('review');
   const [reviewFilter, setReviewFilter] = useState<DateRangeFilterValue>({
@@ -165,6 +169,14 @@ export function KeyAccountSalesTargetsPage() {
   const editingHasTarget =
     editingPersonId != null && targetByKey.get(`${editingPersonId}:${draftMonth}`) != null;
 
+  const isDirector = user?.role === 'sales_director';
+  const canWriteAny = user?.role === 'sales_head' || user?.role === 'sales_admin';
+  const canWriteRow = (row: KASalesTargetDisplayRow) => {
+    if (canWriteAny) return true;
+    if (!isDirector || !user?.id) return false;
+    return row.id === user.id || (row.role === 'key_account_manager' && row.directorId === user.id);
+  };
+
   const openEdit = (row: KASalesTargetDisplayRow) => {
     setEditingPersonId(row.id);
     setDraftTarget(row.targetRevenue != null ? String(row.targetRevenue) : '');
@@ -186,6 +198,7 @@ export function KeyAccountSalesTargetsPage() {
 
   const saveEdit = async () => {
     if (!editingPersonId || !draftMonth) return;
+    if (editingDraftRow && !canWriteRow(editingDraftRow)) return;
     const parsed = draftTarget.trim() === '' ? null : Number(draftTarget.replace(/,/g, ''));
     const next = parsed == null || Number.isNaN(parsed) ? null : Math.max(0, parsed);
 
@@ -214,6 +227,7 @@ export function KeyAccountSalesTargetsPage() {
 
   const handleClearTarget = async () => {
     if (!editingPersonId || !draftMonth) return;
+    if (editingDraftRow && !canWriteRow(editingDraftRow)) return;
     try {
       await clearTarget({ assigneeId: editingPersonId, targetMonth: draftMonth });
       toast({ title: 'Target cleared' });
@@ -237,7 +251,9 @@ export function KeyAccountSalesTargetsPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Sales Targets</h1>
           <p className="text-muted-foreground">
-            Each person can have a different sales target every month. Filter by period to view or set.
+            {isDirector
+              ? 'Set a monthly sales target for yourself and for your KAMs.'
+              : 'Each person can have a different sales target every month, including your own. Filter by period to view or set.'}
           </p>
         </div>
       </div>
@@ -338,8 +354,13 @@ export function KeyAccountSalesTargetsPage() {
                   <SelectValue placeholder="Role" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All roles</SelectItem>
-                  <SelectItem value="sales_director">Sales Directors</SelectItem>
+                  <SelectItem value="all">{isDirector ? 'My team' : 'All roles'}</SelectItem>
+                  {!isDirector && (
+                    <SelectItem value="sales_head">Sales Head</SelectItem>
+                  )}
+                  <SelectItem value="sales_director">
+                    {isDirector ? 'Me' : 'Sales Directors'}
+                  </SelectItem>
                   <SelectItem value="key_account_manager">KAMs</SelectItem>
                 </SelectContent>
               </Select>
@@ -361,6 +382,7 @@ export function KeyAccountSalesTargetsPage() {
                 <TableHead>Team</TableHead>
                 <TableHead>Month</TableHead>
                 <TableHead className="text-right">Target revenue</TableHead>
+                <TableHead>Set by</TableHead>
                 <TableHead className="text-right min-w-[140px]">Actual sales</TableHead>
                 <TableHead className="min-w-[140px]">Attainment</TableHead>
                 <TableHead className="w-[100px]" />
@@ -369,7 +391,7 @@ export function KeyAccountSalesTargetsPage() {
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
+                  <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
                     <span className="inline-flex items-center gap-2">
                       <Loader2 className="h-4 w-4 animate-spin" />
                       Loading sales targets…
@@ -378,8 +400,8 @@ export function KeyAccountSalesTargetsPage() {
                 </TableRow>
               ) : displayRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
-                    No directors or KAMs found for this company.
+                  <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
+                    No sales heads, directors, or KAMs found for this company.
                   </TableCell>
                 </TableRow>
               ) : (
@@ -390,7 +412,9 @@ export function KeyAccountSalesTargetsPage() {
                       <TableCell className="font-medium">{row.fullName}</TableCell>
                       <TableCell>
                         <Badge variant="secondary" className="gap-1 font-normal">
-                          {row.role === 'sales_director' ? (
+                          {row.role === 'sales_head' ? (
+                            <UserCog className="h-3 w-3" />
+                          ) : row.role === 'sales_director' ? (
                             <Crown className="h-3 w-3" />
                           ) : (
                             <Users className="h-3 w-3" />
@@ -399,13 +423,18 @@ export function KeyAccountSalesTargetsPage() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-muted-foreground">
-                        {row.role === 'sales_director' ? '—' : row.directorName || 'Unassigned'}
+                        {row.role === 'key_account_manager'
+                          ? row.directorName || 'Unassigned'
+                          : '—'}
                       </TableCell>
                       <TableCell className="tabular-nums text-muted-foreground">
                         {formatTargetMonth(row.month)}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {formatPeso(row.targetRevenue)}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {row.targetRevenue == null ? '—' : row.setByName || '—'}
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="space-y-0.5">
@@ -450,14 +479,16 @@ export function KeyAccountSalesTargetsPage() {
                           >
                             <Eye className="h-4 w-4" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => openEdit(row)}
-                            aria-label={`Edit target for ${row.fullName} · ${formatTargetMonth(row.month)}`}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
+                          {canWriteRow(row) && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => openEdit(row)}
+                              aria-label={`Edit target for ${row.fullName} · ${formatTargetMonth(row.month)}`}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -508,11 +539,16 @@ export function KeyAccountSalesTargetsPage() {
               {editingPerson
                 ? `${editingPerson.fullName} · ${roleLabel(editingPerson.role)}`
                 : 'Assign a monthly revenue target'}
+              {isDirector
+                ? editingPerson?.role === 'key_account_manager'
+                  ? ' Choose the month and amount for this KAM.'
+                  : ' Choose the month and amount for your own target.'
+                : ''}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-2">
-              <Label>Month</Label>
+              <Label>Target month</Label>
               <TargetMonthPicker
                 value={draftMonth}
                 onChange={setDraftMonth}

@@ -19,12 +19,12 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Crown, Loader2, Users } from 'lucide-react';
+import { Crown, Loader2, UserCog, Users } from 'lucide-react';
 
 export type SalesTargetViewPerson = {
   id: string;
   fullName: string;
-  role: 'sales_director' | 'key_account_manager';
+  role: 'sales_head' | 'sales_director' | 'key_account_manager';
   directorName?: string;
 };
 
@@ -64,7 +64,9 @@ function formatPeso(value: number | null | undefined): string {
 }
 
 function roleLabel(role: SalesTargetViewPerson['role']): string {
-  return role === 'sales_director' ? 'Sales Director' : 'Key Account Manager';
+  if (role === 'sales_head') return 'Sales Head';
+  if (role === 'sales_director') return 'Sales Director';
+  return 'Key Account Manager';
 }
 
 /**
@@ -101,7 +103,9 @@ export function SalesTargetActualDetailDialog({
                 <>
                   <span className="text-foreground font-medium">{person.fullName}</span>
                   <Badge variant="secondary" className="gap-1 font-normal">
-                    {person.role === 'sales_director' ? (
+                    {person.role === 'sales_head' ? (
+                      <UserCog className="h-3 w-3" />
+                    ) : person.role === 'sales_director' ? (
                       <Crown className="h-3 w-3" />
                     ) : (
                       <Users className="h-3 w-3" />

@@ -253,6 +253,7 @@ const salesDirectorMenuItems: MenuItem[] = [
       // { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
     ]
   },
+  { title: 'Sales Targets', url: '/key-accounts/sales-targets', icon: Target },
   { title: 'Analytics', url: '/key-accounts/analytics', icon: Brain },
   { title: 'Payment Settings', url: '/key-accounts/payment-settings', icon: CreditCard },
   { title: 'Payment Terms', url: '/key-accounts/payment-terms', icon: FileText },

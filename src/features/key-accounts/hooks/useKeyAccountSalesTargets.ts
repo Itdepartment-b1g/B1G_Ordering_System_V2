@@ -16,6 +16,8 @@ export type KASalesTargetDisplayRow = KASalesTargetAssignee & {
   rowKey: string;
   month: string;
   targetRevenue: number | null;
+  setById: string | null;
+  setByName: string | null;
   actualRevenue: number;
   actualOrders: number;
   actualQty: number;
@@ -80,6 +82,8 @@ export function useKeyAccountSalesTargets(startMonth: string, endMonth: string) 
             rowKey: key,
             month,
             targetRevenue: stored?.targetRevenue ?? null,
+            setById: stored?.setById ?? null,
+            setByName: stored?.setByName ?? null,
             actualRevenue: actual?.actualRevenue ?? 0,
             actualOrders: actual?.actualOrders ?? 0,
             actualQty: actual?.actualQty ?? 0,
