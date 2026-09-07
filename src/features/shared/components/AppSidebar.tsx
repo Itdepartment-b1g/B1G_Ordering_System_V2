@@ -33,6 +33,7 @@ import {
   FileText,
   Link,
   Network,
+  FileUp,
   Plus,
   Package2Icon,
   PackageCheck,
@@ -169,6 +170,7 @@ const salesAdminMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Create Purchase Order', url: '/key-accounts/create-order', icon: Plus },
       { title: 'Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
+      { title: 'Historical Import', url: '/key-accounts/historical-import', icon: FileUp },
       // { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
     ]
   },
@@ -207,6 +209,7 @@ const salesHeadMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Create Purchase Order', url: '/key-accounts/create-order', icon: Plus },
       { title: 'Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
+      { title: 'Historical Import', url: '/key-accounts/historical-import', icon: FileUp },
       // { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
     ]
   },

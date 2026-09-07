@@ -14,7 +14,7 @@ Imported POs must:
 
 Use this for old POs (for example ~1,800 records) imported **month by month** (June first, then next months).
 
-> **Status:** This document is the **import specification**. An in-app importer UI is **not built yet**. Implement against this spec later.
+> **Status:** In-app importer is available at **Historical Import** (Sales Admin / Sales Head). Dry-run first, then import delivered + fully paid POs. Warehouse stock is not deducted.
 
 ---
 
@@ -116,6 +116,7 @@ Optional audit: log a PO history event such as `Imported historical PO (pre-syst
 | `warehouse_location_name` | **lookup → id** | Recommended | → `warehouse_location_id` (+ `warehouse_company_id`) |
 | `payment_terms` | text | Recommended | `key_account_payment_terms` (e.g. `COD`) |
 | `discount` | number | No | `purchase_orders.discount` (default `0`) |
+| `rfpf_number` | text | Recommended | `purchase_orders.rfpf_number` (same value on every line of the PO) |
 | `tax_rate` | number | No | `purchase_orders.tax_rate` (default `0`) |
 | `sku` | **lookup → id** | **Yes** | → `purchase_order_items.variant_id` |
 | `brand_name` | text helper | Recommended | Helps resolve variant if SKU missing/ambiguous |
@@ -166,6 +167,7 @@ Everything else is plain text / date / number — not ids.
 | `warehouse_location_id` | lookup `warehouse_location_name` |
 | `key_account_payment_terms` | Excel `payment_terms` |
 | `discount` | Excel `discount` |
+| `rfpf_number` | Excel `rfpf_number` (optional) |
 | `tax_rate` | Excel `tax_rate` |
 | `po_order_kind` | Excel or `standard` |
 | `notes` | Excel `notes` + legacy ref |
@@ -194,7 +196,8 @@ Everything else is plain text / date / number — not ids.
 | `key_account_payment_status` | Ends as `paid` after payment insert + trigger |
 | `created_by` | Importing user |
 | `custom_pricing_confirmed` | `true` |
-| `dr_number` / `rfpf_number` | `null` |
+| `rfpf_number` | Excel `rfpf_number` (or `null` if blank) |
+| `dr_number` | `null` unless added later |
 | `source_rebate_id` | `null` |
 | `assigned_team_leader_id` | `null` |
 | Approval stamps (`approved_*`, `admin_approved_*`, `director_approved_*`) | Optional; may leave `null` for historical |

@@ -34,6 +34,7 @@ const columns = [
   { key: 'kam_email', header: 'kam_email', width: 26, group: 'recommended', note: 'KAM / owner email in OMS. Recommended.' },
   { key: 'warehouse_location_name', header: 'warehouse_location_name', width: 26, group: 'optional', note: 'Leave blank to use linked main warehouse.' },
   { key: 'discount', header: 'discount', width: 12, group: 'optional', note: 'PO header discount. Default 0. Repeat same value on every line of the PO.' },
+  { key: 'rfpf_number', header: 'rfpf_number', width: 18, group: 'recommended', note: 'PO header RFPF. Repeat the same value on every line of the PO. Leave blank if none.' },
   { key: 'notes', header: 'notes', width: 28, group: 'optional', note: 'Optional. Legacy ref is added automatically.' },
   { key: 'sku', header: 'sku', width: 18, group: 'auto', note: 'LEAVE BLANK. Agent fills from hub brand + variant.' },
   { key: 'client_code', header: 'client_code', width: 14, group: 'auto', note: 'LEAVE BLANK. Agent fills from client_name.' },
@@ -58,6 +59,7 @@ const examples = [
     kam_email: 'kam@example.com',
     warehouse_location_name: '',
     discount: 0,
+    rfpf_number: 'RFPF-2024-001',
     notes: 'DELETE this sample row',
     sku: '',
     client_code: '',
@@ -80,6 +82,7 @@ const examples = [
     kam_email: 'kam@example.com',
     warehouse_location_name: '',
     discount: 0,
+    rfpf_number: 'RFPF-2024-001',
     notes: 'Same PO, different brand — keep brand_name',
     sku: '',
     client_code: '',
@@ -121,13 +124,13 @@ async function main() {
     ['Your steps', ''],
     ['1', 'Create clients / shops / addresses / products in OMS first (hub warehouse catalog).'],
     ['2', 'Fill sheet PO_Lines. Delete the two sample rows before a real import.'],
-    ['3', 'Repeat external_po_ref, order_date, client, shop, address on every line of the same old PO.'],
+    ['3', 'Repeat external_po_ref, order_date, client, shop, address, and rfpf_number on every line of the same old PO.'],
     ['4', 'Give this file to the agent in Cursor (Agent mode) to match names against the database.'],
     ['5', 'Fix Unmatched rows, then import (dry-run → pilot 5–10 POs → rest).'],
     ['', ''],
     ['Color', 'Meaning'],
     ['Yellow', 'Required — you must fill'],
-    ['Blue', 'Recommended if the client has more than one shop / address'],
+    ['Blue', 'Recommended if the client has more than one shop / address, and for rfpf_number'],
     ['Gray', 'Optional'],
     ['Green', 'Leave blank — agent / importer fills'],
   ];
@@ -231,6 +234,7 @@ async function main() {
     ['kam_email', 'Recommended', 'You', 'Must exist as KAM / owner profile email.'],
     ['warehouse_location_name', 'Optional', 'You', 'Blank = linked main warehouse.'],
     ['discount', 'Optional', 'You', 'Header discount for the whole PO. Default 0.'],
+    ['rfpf_number', 'Recommended', 'You', 'PO header RFPF. Same value on every line of the PO. Blank if the old PO had none.'],
     ['notes', 'Optional', 'You', 'Any remark. Legacy ref is added on import.'],
     ['sku', 'Leave blank', 'Agent', 'Filled from hub brand + variant unique match.'],
     ['client_code', 'Leave blank', 'Agent', 'Filled from client_name unique match.'],
@@ -247,16 +251,24 @@ async function main() {
       cell.border = thin;
       cell.alignment = { wrapText: true, vertical: 'top' };
     });
-    const group =
-      idx <= 8 && !['shop_name', 'address_label', 'line_total'].includes(vals[0])
-        ? idx <= 2 || ['brand_name', 'variant_name', 'quantity', 'unit_price'].includes(vals[0])
+    const name = vals[0];
+    const group = ['sku', 'client_code', 'shop_code', 'payment_amount', 'payment_method', 'payment_date'].includes(
+      name
+    )
+      ? 'auto'
+      : ['shop_name', 'address_label', 'kam_email', 'rfpf_number'].includes(name)
+        ? 'recommended'
+        : [
+            'external_po_ref',
+            'order_date',
+            'client_name',
+            'brand_name',
+            'variant_name',
+            'quantity',
+            'unit_price',
+          ].includes(name)
           ? 'required'
-          : 'optional'
-        : idx >= 14
-          ? 'auto'
-          : ['shop_name', 'address_label', 'kam_email'].includes(vals[0])
-            ? 'recommended'
-            : 'optional';
+          : 'optional';
     row.getCell(2).fill = fillColor(FILL[group]);
   });
 

@@ -25,6 +25,7 @@ export { KeyAccountAnalyticsPage, KeyAccountClientAnalyticsPage } from './key-ac
 export { KeyAccountRebatesPage, KeyAccountCreateRebatePage } from './rebates';
 export { default as KeyAccountPaymentSettingsPage } from './pages/PaymentSettingsPage';
 export { KeyAccountPaymentTermsPage } from './pages/KeyAccountPaymentTermsPage';
+export { KeyAccountHistoricalImportPage } from './pages/KeyAccountHistoricalImportPage';
 
 // Future exports (Phase 3+):
 // - KAMOrderPage: Create purchase orders
