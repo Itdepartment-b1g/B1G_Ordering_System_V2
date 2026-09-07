@@ -1,15 +1,14 @@
 import { requireAuthUser } from '../../auth/requireAuthUser';
-import { HttpError, toErrorResult } from '../../http/errors';
+import { getAuthorizationHeader } from '../../http/headers';
+import { HttpError } from '../../http/errors';
 import { firstString } from '../../http/queryParams';
+import { respond } from '../../http/respond';
 import {
   getKADashboardOverview,
   getKADashboardPurchaseBreakdown,
   getKADashboardTabs,
 } from '../../repositories/key-accounts/dashboard';
-import type { ApiResult } from '../executive/executiveController';
 import { getSupabaseAdmin } from '../../db/supabaseAdmin';
-
-type QueryMap = Record<string, string | string[] | undefined>;
 
 const VIEW_ROLES = ['sales_head', 'sales_admin', 'sales_director', 'key_account_manager'];
 
@@ -40,13 +39,11 @@ async function resolveUserContext(userId: string) {
   };
 }
 
-export async function getKADashboardHandler(
-  authorization?: string,
-  query: QueryMap = {}
-): Promise<ApiResult<unknown>> {
-  try {
-    const user = await requireAuthUser(authorization);
+export async function getKADashboardHandler(req: any, res: any) {
+  return respond(res, async () => {
+    const user = await requireAuthUser(getAuthorizationHeader(req.headers || {}));
     const ctx = await resolveUserContext(user.id);
+    const query = req.query || {};
     const resource = firstString(query.resource) || 'overview';
     const year = parseYear(firstString(query.year));
     const dateStart = firstString(query.dateStart) || null;
@@ -65,7 +62,5 @@ export async function getKADashboardHandler(
       default:
         throw new HttpError(400, 'Unknown resource');
     }
-  } catch (error) {
-    return toErrorResult(error);
-  }
+  });
 }

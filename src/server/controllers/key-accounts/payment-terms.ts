@@ -1,6 +1,8 @@
 import { requireAuthUser } from '../../auth/requireAuthUser';
-import { HttpError, toErrorResult } from '../../http/errors';
+import { getAuthorizationHeader } from '../../http/headers';
+import { HttpError } from '../../http/errors';
 import { firstString } from '../../http/queryParams';
+import { respond } from '../../http/respond';
 import {
   createKAPaymentTermOption,
   deleteKAPaymentTermOption,
@@ -9,10 +11,7 @@ import {
   type KAPaymentTermCreatePayload,
   type KAPaymentTermUpdatePayload,
 } from '../../repositories/key-accounts/payment-terms';
-import type { ApiResult } from '../executive/executiveController';
 import { getSupabaseAdmin } from '../../db/supabaseAdmin';
-
-type QueryMap = Record<string, string | string[] | undefined>;
 
 const VIEW_ROLES = [
   'sales_head',
@@ -43,60 +42,40 @@ async function resolveUserContext(userId: string) {
   };
 }
 
-export async function getKAPaymentTermsHandler(
-  authorization?: string,
-  query: QueryMap = {}
-): Promise<ApiResult<unknown>> {
-  try {
-    const user = await requireAuthUser(authorization);
+export async function getKAPaymentTermsHandler(req: any, res: any) {
+  return respond(res, async () => {
+    const user = await requireAuthUser(getAuthorizationHeader(req.headers || {}));
     const ctx = await resolveUserContext(user.id);
-    const activeOnly = firstString(query.activeOnly) === 'true';
+    const activeOnly = firstString((req.query || {}).activeOnly) === 'true';
     return { status: 200, body: await listKAPaymentTermOptions(ctx, activeOnly) };
-  } catch (error) {
-    return toErrorResult(error);
-  }
+  });
 }
 
-export async function createKAPaymentTermHandler(
-  authorization?: string,
-  body: unknown = {}
-): Promise<ApiResult<unknown>> {
-  try {
-    const user = await requireAuthUser(authorization);
+export async function createKAPaymentTermHandler(req: any, res: any) {
+  return respond(res, async () => {
+    const user = await requireAuthUser(getAuthorizationHeader(req.headers || {}));
     const ctx = await resolveUserContext(user.id);
-    const payload = (body || {}) as KAPaymentTermCreatePayload;
+    const payload = (req.body || {}) as KAPaymentTermCreatePayload;
     return { status: 201, body: await createKAPaymentTermOption(ctx, payload) };
-  } catch (error) {
-    return toErrorResult(error);
-  }
+  });
 }
 
-export async function updateKAPaymentTermHandler(
-  authorization?: string,
-  body: unknown = {}
-): Promise<ApiResult<unknown>> {
-  try {
-    const user = await requireAuthUser(authorization);
+export async function updateKAPaymentTermHandler(req: any, res: any) {
+  return respond(res, async () => {
+    const user = await requireAuthUser(getAuthorizationHeader(req.headers || {}));
     const ctx = await resolveUserContext(user.id);
-    const payload = (body || {}) as KAPaymentTermUpdatePayload;
+    const payload = (req.body || {}) as KAPaymentTermUpdatePayload;
     if (!payload.id) throw new HttpError(400, 'id is required');
     return { status: 200, body: await updateKAPaymentTermOption(ctx, payload) };
-  } catch (error) {
-    return toErrorResult(error);
-  }
+  });
 }
 
-export async function deleteKAPaymentTermHandler(
-  authorization?: string,
-  query: QueryMap = {}
-): Promise<ApiResult<unknown>> {
-  try {
-    const user = await requireAuthUser(authorization);
+export async function deleteKAPaymentTermHandler(req: any, res: any) {
+  return respond(res, async () => {
+    const user = await requireAuthUser(getAuthorizationHeader(req.headers || {}));
     const ctx = await resolveUserContext(user.id);
-    const id = firstString(query.id);
+    const id = firstString((req.query || {}).id);
     if (!id) throw new HttpError(400, 'id is required');
     return { status: 200, body: await deleteKAPaymentTermOption(ctx, id) };
-  } catch (error) {
-    return toErrorResult(error);
-  }
+  });
 }

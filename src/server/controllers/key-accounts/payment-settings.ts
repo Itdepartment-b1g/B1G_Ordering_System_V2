@@ -1,5 +1,7 @@
 import { requireAuthUser } from '../../auth/requireAuthUser';
-import { HttpError, toErrorResult } from '../../http/errors';
+import { getAuthorizationHeader } from '../../http/headers';
+import { HttpError } from '../../http/errors';
+import { respond } from '../../http/respond';
 import {
   createKAPaymentSettings,
   getKAPaymentSettings,
@@ -7,10 +9,7 @@ import {
   type KAPaymentSettingsUpdatePayload,
   type KAPaymentSettingsWritePayload,
 } from '../../repositories/key-accounts/payment-settings';
-import type { ApiResult } from '../executive/executiveController';
 import { getSupabaseAdmin } from '../../db/supabaseAdmin';
-
-type QueryMap = Record<string, string | string[] | undefined>;
 
 const VIEW_ROLES = [
   'sales_head',
@@ -41,44 +40,29 @@ async function resolveUserContext(userId: string) {
   };
 }
 
-export async function getKAPaymentSettingsHandler(
-  authorization?: string,
-  _query: QueryMap = {}
-): Promise<ApiResult<unknown>> {
-  try {
-    const user = await requireAuthUser(authorization);
+export async function getKAPaymentSettingsHandler(req: any, res: any) {
+  return respond(res, async () => {
+    const user = await requireAuthUser(getAuthorizationHeader(req.headers || {}));
     const ctx = await resolveUserContext(user.id);
     return { status: 200, body: await getKAPaymentSettings(ctx) };
-  } catch (error) {
-    return toErrorResult(error);
-  }
+  });
 }
 
-export async function createKAPaymentSettingsHandler(
-  authorization?: string,
-  body: unknown = {}
-): Promise<ApiResult<unknown>> {
-  try {
-    const user = await requireAuthUser(authorization);
+export async function createKAPaymentSettingsHandler(req: any, res: any) {
+  return respond(res, async () => {
+    const user = await requireAuthUser(getAuthorizationHeader(req.headers || {}));
     const ctx = await resolveUserContext(user.id);
-    const payload = (body || {}) as KAPaymentSettingsWritePayload;
+    const payload = (req.body || {}) as KAPaymentSettingsWritePayload;
     return { status: 201, body: await createKAPaymentSettings(ctx, payload) };
-  } catch (error) {
-    return toErrorResult(error);
-  }
+  });
 }
 
-export async function updateKAPaymentSettingsHandler(
-  authorization?: string,
-  body: unknown = {}
-): Promise<ApiResult<unknown>> {
-  try {
-    const user = await requireAuthUser(authorization);
+export async function updateKAPaymentSettingsHandler(req: any, res: any) {
+  return respond(res, async () => {
+    const user = await requireAuthUser(getAuthorizationHeader(req.headers || {}));
     const ctx = await resolveUserContext(user.id);
-    const payload = (body || {}) as KAPaymentSettingsUpdatePayload;
+    const payload = (req.body || {}) as KAPaymentSettingsUpdatePayload;
     if (!payload.id) throw new HttpError(400, 'id is required');
     return { status: 200, body: await updateKAPaymentSettings(ctx, payload) };
-  } catch (error) {
-    return toErrorResult(error);
-  }
+  });
 }

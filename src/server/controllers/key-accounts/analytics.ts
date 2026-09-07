@@ -1,6 +1,8 @@
 import { requireAuthUser } from '../../auth/requireAuthUser';
-import { HttpError, toErrorResult } from '../../http/errors';
+import { getAuthorizationHeader } from '../../http/headers';
+import { HttpError } from '../../http/errors';
 import { firstString } from '../../http/queryParams';
+import { respond } from '../../http/respond';
 import {
   getKAAnalyticsDataset,
   getKAAnalyticsPoPaymentHistory,
@@ -9,10 +11,7 @@ import {
   getKAFsnSetup,
   getKAProductPaidByBrand,
 } from '../../repositories/key-accounts/analytics';
-import type { ApiResult } from '../executive/executiveController';
 import { getSupabaseAdmin } from '../../db/supabaseAdmin';
-
-type QueryMap = Record<string, string | string[] | undefined>;
 
 const VIEW_ROLES = [
   'sales_head',
@@ -49,16 +48,12 @@ async function resolveUserContext(userId: string, accessToken?: string) {
   };
 }
 
-export async function getKAAnalyticsHandler(
-  authorization?: string,
-  query: QueryMap = {}
-): Promise<ApiResult<unknown>> {
-  try {
+export async function getKAAnalyticsHandler(req: any, res: any) {
+  return respond(res, async () => {
+    const authorization = getAuthorizationHeader(req.headers || {});
     const user = await requireAuthUser(authorization);
-    const ctx = await resolveUserContext(
-      user.id,
-      accessTokenFromAuthorization(authorization)
-    );
+    const ctx = await resolveUserContext(user.id, accessTokenFromAuthorization(authorization));
+    const query = req.query || {};
     const resource = firstString(query.resource) || 'product-paid-by-brand';
     const dateStart = firstString(query.dateStart) || null;
     const dateEnd = firstString(query.dateEnd) || null;
@@ -95,7 +90,5 @@ export async function getKAAnalyticsHandler(
       default:
         throw new HttpError(400, 'Unknown resource');
     }
-  } catch (error) {
-    return toErrorResult(error);
-  }
+  });
 }

@@ -1,10 +1,9 @@
 import { requireAuthUser } from '../../auth/requireAuthUser';
-import { HttpError, toErrorResult } from '../../http/errors';
+import { getAuthorizationHeader } from '../../http/headers';
+import { HttpError } from '../../http/errors';
+import { respond } from '../../http/respond';
 import { listKAUsers } from '../../repositories/key-accounts/user-management';
-import type { ApiResult } from '../executive/executiveController';
 import { getSupabaseAdmin } from '../../db/supabaseAdmin';
-
-type QueryMap = Record<string, string | string[] | undefined>;
 
 async function resolveCompanyId(userId: string): Promise<string> {
   const sb = getSupabaseAdmin();
@@ -25,15 +24,10 @@ async function resolveCompanyId(userId: string): Promise<string> {
   return data.company_id;
 }
 
-export async function getKAUsers(
-  authorization?: string,
-  _query: QueryMap = {}
-): Promise<ApiResult<unknown>> {
-  try {
-    const user = await requireAuthUser(authorization);
+export async function getKAUsers(req: any, res: any) {
+  return respond(res, async () => {
+    const user = await requireAuthUser(getAuthorizationHeader(req.headers || {}));
     const companyId = await resolveCompanyId(user.id);
     return { status: 200, body: await listKAUsers(user.id, companyId) };
-  } catch (error) {
-    return toErrorResult(error);
-  }
+  });
 }

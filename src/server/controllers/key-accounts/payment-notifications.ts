@@ -1,4 +1,5 @@
 import { HttpError, toErrorResult } from '../../http/errors';
+import { respond } from '../../http/respond';
 import type { ApiResult } from '../executive/executiveController';
 import {
   getKAPoPaymentReminderById,
@@ -127,6 +128,24 @@ export async function maybeSendKAPoPaymentReminderNow(params: {
   } catch (error) {
     console.error('⚠️ Immediate KA payment reminder failed (non-blocking):', error);
   }
+}
+
+function requestHostParts(req: any): { host?: string; proto?: string } {
+  const headers = req?.headers || {};
+  const host = String(headers['x-forwarded-host'] || headers.host || '').trim();
+  const proto = String(headers['x-forwarded-proto'] || 'https').trim();
+  return { host: host || undefined, proto: proto || undefined };
+}
+
+export async function getKAPaymentNotificationsHandler(req: any, res: any) {
+  return respond(res, async () => {
+    assertCronAuthorized({
+      headers: req?.headers || {},
+      query: req?.query || {},
+    });
+    const { host, proto } = requestHostParts(req);
+    return sendDueKAPoPaymentRemindersHandler({ host, proto });
+  });
 }
 
 export function assertCronAuthorized(req: {
