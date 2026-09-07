@@ -1,6 +1,9 @@
 import { requireAuthUser } from '../../auth/requireAuthUser';
-import { HttpError, toErrorResult } from '../../http/errors';
+import { getAuthorizationHeader } from '../../http/headers';
+import { HttpError } from '../../http/errors';
 import { firstString } from '../../http/queryParams';
+import { respond } from '../../http/respond';
+import { maybeSendKAPoPaymentReminderNow } from './payment-notifications';
 import {
   approveKASettlementDiscount,
   createKAPurchaseOrder,
@@ -28,6 +31,7 @@ import {
   listKAPurchaseOrders,
   recordKAPoListPayment,
   rejectKASettlementDiscount,
+  markKAPoCommissioned,
   setKAPoRfpf,
   updateKAPoWorkflow,
   updateKAPurchaseOrder,
@@ -36,10 +40,7 @@ import {
   type KAPoListPaymentInput,
   type KAPoPaymentInput,
 } from '../../repositories/key-accounts/purchase-order';
-import type { ApiResult } from '../executive/executiveController';
 import { getSupabaseAdmin } from '../../db/supabaseAdmin';
-
-type QueryMap = Record<string, string | string[] | undefined>;
 
 const WRITE_ROLES = ['sales_head', 'sales_admin', 'sales_director', 'key_account_manager'];
 const LIST_ROLES = [...WRITE_ROLES, 'key_account_accounting'];
@@ -77,11 +78,24 @@ async function resolveUserContext(
   };
 }
 
-export async function getKAPurchaseOrder(
-  authorization?: string,
-  query: QueryMap = {}
-): Promise<ApiResult<unknown>> {
-  try {
+function requestHostParts(req: any): { host?: string; proto?: string } {
+  const headers = req?.headers || {};
+  const host = String(headers['x-forwarded-host'] || headers.host || '').trim();
+  const proto = String(headers['x-forwarded-proto'] || 'http').trim();
+  return { host: host || undefined, proto: proto || undefined };
+}
+
+function poIdFromWriteResult(body: unknown): string | null {
+  if (!body || typeof body !== 'object') return null;
+  const po = (body as { po?: { id?: unknown } }).po;
+  const id = po?.id;
+  return typeof id === 'string' && id ? id : null;
+}
+
+export async function getKAPurchaseOrder(req: any, res: any) {
+  return respond(res, async () => {
+    const authorization = getAuthorizationHeader(req.headers || {});
+    const query = req.query || {};
     const user = await requireAuthUser(authorization);
     const resource = firstString(query.resource) || '';
     const listResources = new Set([
@@ -203,44 +217,52 @@ export async function getKAPurchaseOrder(
       default:
         throw new HttpError(400, 'Unknown resource');
     }
-  } catch (error) {
-    return toErrorResult(error);
-  }
+  });
 }
 
-export async function createKAPurchaseOrderHandler(
-  authorization?: string,
-  body: unknown = {}
-): Promise<ApiResult<unknown>> {
-  try {
+export async function createKAPurchaseOrderHandler(req: any, res: any) {
+  return respond(res, async () => {
+    const authorization = getAuthorizationHeader(req.headers || {});
+    const body = req.body || {};
     const user = await requireAuthUser(authorization);
     const ctx = await resolveUserContext(user.id, accessTokenFromAuthorization(authorization));
     const payload = (body || {}) as Record<string, unknown>;
     const action = typeof payload.action === 'string' ? payload.action : '';
 
+    let result: { status: number; body: unknown };
     switch (action) {
       case 'set-rfpf': {
         const poId = typeof payload.poId === 'string' ? payload.poId : '';
         const rfpfNumber = typeof payload.rfpfNumber === 'string' ? payload.rfpfNumber : '';
         const reason = typeof payload.reason === 'string' ? payload.reason : null;
         if (!poId) throw new HttpError(400, 'poId is required');
-        return { status: 200, body: await setKAPoRfpf(ctx, poId, rfpfNumber, reason) };
+        result = { status: 200, body: await setKAPoRfpf(ctx, poId, rfpfNumber, reason) };
+        break;
       }
       case 'record-payment': {
         const payment = payload as unknown as KAPoListPaymentInput;
         if (!payment.poId) throw new HttpError(400, 'poId is required');
-        return { status: 200, body: await recordKAPoListPayment(ctx, payment) };
+        result = { status: 200, body: await recordKAPoListPayment(ctx, payment) };
+        break;
       }
       case 'approve-discount': {
         const requestId = typeof payload.requestId === 'string' ? payload.requestId : '';
         if (!requestId) throw new HttpError(400, 'requestId is required');
-        return { status: 200, body: await approveKASettlementDiscount(ctx, requestId) };
+        result = { status: 200, body: await approveKASettlementDiscount(ctx, requestId) };
+        break;
       }
       case 'reject-discount': {
         const requestId = typeof payload.requestId === 'string' ? payload.requestId : '';
         const reason = typeof payload.reason === 'string' ? payload.reason : null;
         if (!requestId) throw new HttpError(400, 'requestId is required');
-        return { status: 200, body: await rejectKASettlementDiscount(ctx, requestId, reason) };
+        result = { status: 200, body: await rejectKASettlementDiscount(ctx, requestId, reason) };
+        break;
+      }
+      case 'mark-commissioned': {
+        const poId = typeof payload.poId === 'string' ? payload.poId : '';
+        if (!poId) throw new HttpError(400, 'poId is required');
+        result = { status: 200, body: await markKAPoCommissioned(ctx, poId) };
+        break;
       }
       default: {
         const createPayload = body as {
@@ -248,38 +270,54 @@ export async function createKAPurchaseOrderHandler(
           items: KAPoItemInput[];
           payment?: KAPoPaymentInput | null;
         };
-        return { status: 201, body: await createKAPurchaseOrder(ctx, createPayload) };
+        result = { status: 201, body: await createKAPurchaseOrder(ctx, createPayload) };
+        break;
       }
     }
-  } catch (error) {
-    return toErrorResult(error);
-  }
+
+    const poId = poIdFromWriteResult(result.body);
+    if (poId) {
+      const { host, proto } = requestHostParts(req);
+      await maybeSendKAPoPaymentReminderNow({ poId, host, proto });
+    }
+
+    return result;
+  });
 }
 
-export async function updateKAPurchaseOrderHandler(
-  authorization?: string,
-  query: QueryMap = {},
-  body: unknown = {}
-): Promise<ApiResult<unknown>> {
-  try {
+export async function updateKAPurchaseOrderHandler(req: any, res: any) {
+  return respond(res, async () => {
+    const authorization = getAuthorizationHeader(req.headers || {});
+    const query = req.query || {};
+    const body = req.body || {};
     const user = await requireAuthUser(authorization);
     const ctx = await resolveUserContext(user.id, accessTokenFromAuthorization(authorization));
     const poId = firstString(query.poId);
     if (!poId) throw new HttpError(400, 'poId is required');
 
     const action = firstString(query.action);
+    let result: { status: number; body: unknown };
     if (action === 'workflow') {
       const patch = (body || {}) as Record<string, unknown>;
-      return { status: 200, body: await updateKAPoWorkflow(ctx, poId, patch) };
+      result = { status: 200, body: await updateKAPoWorkflow(ctx, poId, patch) };
+    } else {
+      const payload = (body || {}) as {
+        header: KAPoHeaderInput;
+        items: KAPoItemInput[];
+        payment?: KAPoPaymentInput | null;
+      };
+      result = { status: 200, body: await updateKAPurchaseOrder(ctx, poId, payload) };
     }
 
-    const payload = (body || {}) as {
-      header: KAPoHeaderInput;
-      items: KAPoItemInput[];
-      payment?: KAPoPaymentInput | null;
-    };
-    return { status: 200, body: await updateKAPurchaseOrder(ctx, poId, payload) };
-  } catch (error) {
-    return toErrorResult(error);
-  }
+    if (!query.action) {
+      const fromBody = poIdFromWriteResult(result.body);
+      const reminderPoId = fromBody || poId;
+      if (reminderPoId) {
+        const { host, proto } = requestHostParts(req);
+        await maybeSendKAPoPaymentReminderNow({ poId: reminderPoId, host, proto });
+      }
+    }
+
+    return result;
+  });
 }

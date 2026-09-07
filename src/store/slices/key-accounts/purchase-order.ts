@@ -498,6 +498,23 @@ export const rejectKASettlementDiscount = createAsyncThunk(
     })
 );
 
+export const previewKAPoBrandBalances = createAsyncThunk(
+  'kaPurchaseOrder/previewPoBrandBalances',
+  (poId: string) =>
+    kaRequest<KAPoBrandBalancesResult>('purchase-order', {
+      params: { resource: 'po-brand-balances', poId },
+    })
+);
+
+export const markKAPoCommissioned = createAsyncThunk(
+  'kaPurchaseOrder/markCommissioned',
+  (poId: string) =>
+    kaRequest<{ poId: string; commissioned_at: string; commissioned_by: string }>('purchase-order', {
+      method: 'POST',
+      body: { action: 'mark-commissioned', poId },
+    })
+);
+
 const kaPurchaseOrderSlice = createSlice({
   name: 'kaPurchaseOrder',
   initialState,
@@ -736,6 +753,12 @@ const kaPurchaseOrderSlice = createSlice({
         state.brandBalances = [];
         state.unallocatedPaid = 0;
         state.unallocatedDiscount = 0;
+      })
+      .addCase(markKAPoCommissioned.fulfilled, (state, action) => {
+        const { poId, commissioned_at, commissioned_by } = action.payload;
+        state.listRows = state.listRows.map((row) =>
+          row.id === poId ? { ...row, commissioned_at, commissioned_by } : row
+        );
       });
   },
 });

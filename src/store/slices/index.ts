@@ -5,6 +5,7 @@ import { kaClientHierarchyReducer } from "./key-accounts/client-hierarchy";
 import { kaPaymentSettingsReducer } from "./key-accounts/payment-settings";
 import { kaPaymentTermsReducer } from "./key-accounts/payment-terms";
 import { kaPurchaseOrderReducer } from "./key-accounts/purchase-order";
+import { kaSalesTargetsReducer } from "./key-accounts/sales-targets";
 import { kaUserManagementReducer } from "./key-accounts/user-management";
 
 export const rootReducer = {
@@ -14,6 +15,7 @@ export const rootReducer = {
   kaPurchaseOrder: kaPurchaseOrderReducer,
   kaPaymentSettings: kaPaymentSettingsReducer,
   kaPaymentTerms: kaPaymentTermsReducer,
+  kaSalesTargets: kaSalesTargetsReducer,
   kaAnalytics: kaAnalyticsReducer,
   kaDashboard: kaDashboardReducer,
 };

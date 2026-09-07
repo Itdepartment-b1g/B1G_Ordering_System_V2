@@ -20,12 +20,15 @@ import {
   patchKAPoWorkflow,
   recordKAPoListPayment,
   rejectKASettlementDiscount,
+  markKAPoCommissioned,
+  previewKAPoBrandBalances,
   setKAPoRfpf,
   type KAPoBrandBalance,
 } from '@/store/slices/key-accounts/purchase-order';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
+import { cn } from '@/lib/utils';
 import {
   DateRangeFilterPopover,
   type DateRangeFilterValue,
@@ -79,6 +82,8 @@ import {
   ChevronDown,
   History,
   MoreVertical,
+  BadgeCheck,
+  Pin,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -184,6 +189,9 @@ type Row = {
   key_account_notification_option?: string | null;
   key_account_notification_date?: string | null;
   key_account_notification_sent_at?: string | null;
+  commissioned_at?: string | null;
+  commissioned_by?: string | null;
+  remaining_balance?: number | null;
   client?: {
     client_name: string;
     client_code?: string;
@@ -226,6 +234,130 @@ type TabKey = 'pending' | 'rebates' | 'warehouse' | 'done' | 'my' | 'all';
 
 const PO_PER_PAGE = 10;
 const MAX_RFPF_EDITS = 2;
+const PO_TABLE_FREEZE_STORAGE_KEY = 'ka-po-list-freeze-column';
+
+const PO_TABLE_COLUMNS = [
+  { id: 'po', label: 'PO', minWidth: 200 },
+  { id: 'created', label: 'Created', minWidth: 170 },
+  { id: 'owner', label: 'Order owner', minWidth: 160 },
+  { id: 'client', label: 'Client', minWidth: 150 },
+  { id: 'shop', label: 'Shop', minWidth: 140 },
+  { id: 'status', label: 'Status', minWidth: 130 },
+  { id: 'payment', label: 'Payment status', minWidth: 140 },
+  { id: 'commissioned', label: 'Commissioned', minWidth: 140 },
+  { id: 'dr', label: 'DR', minWidth: 110 },
+  { id: 'rfpf', label: 'RFPF', minWidth: 110 },
+  { id: 'balance', label: 'Balance', minWidth: 130 },
+  { id: 'total', label: 'Total', minWidth: 120 },
+  { id: 'actions', label: 'Actions', minWidth: 150 },
+] as const;
+
+type PoTableColumnId = (typeof PO_TABLE_COLUMNS)[number]['id'];
+type FreezeColumnId = 'none' | Exclude<PoTableColumnId, 'actions'>;
+
+const FREEZEABLE_COLUMNS = PO_TABLE_COLUMNS.filter(
+  (column): column is (typeof PO_TABLE_COLUMNS)[number] & { id: Exclude<PoTableColumnId, 'actions'> } =>
+    column.id !== 'actions'
+);
+
+function readStoredFreezeColumn(): FreezeColumnId {
+  try {
+    const stored = localStorage.getItem(PO_TABLE_FREEZE_STORAGE_KEY);
+    if (stored === 'none') return 'none';
+    if (FREEZEABLE_COLUMNS.some((column) => column.id === stored)) {
+      return stored as FreezeColumnId;
+    }
+  } catch {
+    /* ignore */
+  }
+  return 'po';
+}
+
+function getPoTableFreezeProps(
+  columnId: PoTableColumnId,
+  frozenThrough: FreezeColumnId,
+  options?: { header?: boolean; className?: string }
+) {
+  const extraClassName = options?.className;
+  if (frozenThrough === 'none') {
+    return { className: extraClassName };
+  }
+
+  const freezeIndex = PO_TABLE_COLUMNS.findIndex((column) => column.id === frozenThrough);
+  const columnIndex = PO_TABLE_COLUMNS.findIndex((column) => column.id === columnId);
+  if (freezeIndex < 0 || columnIndex < 0 || columnIndex > freezeIndex) {
+    return { className: extraClassName };
+  }
+
+  const left = PO_TABLE_COLUMNS.slice(0, columnIndex).reduce((sum, column) => sum + column.minWidth, 0);
+  const isLastFrozen = columnIndex === freezeIndex;
+
+  return {
+    className: cn(
+      'sticky bg-background group-hover:bg-muted',
+      options?.header ? 'z-20 bg-background' : 'z-10',
+      isLastFrozen && 'border-r border-border',
+      extraClassName
+    ),
+    style: {
+      left,
+      minWidth: PO_TABLE_COLUMNS[columnIndex].minWidth,
+    } as const,
+  };
+}
+
+function freezeHeaderTitle(columnId: Exclude<PoTableColumnId, 'actions'>, frozenColumn: FreezeColumnId) {
+  if (frozenColumn === columnId) return 'Unfreeze';
+  const label = FREEZEABLE_COLUMNS.find((column) => column.id === columnId)?.label || columnId;
+  return columnId === 'po' ? 'Freeze PO' : `Freeze through ${label}`;
+}
+
+function PoFreezeTableHead({
+  columnId,
+  frozenColumn,
+  onToggle,
+  className,
+}: {
+  columnId: Exclude<PoTableColumnId, 'actions'>;
+  frozenColumn: FreezeColumnId;
+  onToggle: (columnId: Exclude<PoTableColumnId, 'actions'>) => void;
+  className?: string;
+}) {
+  const label = FREEZEABLE_COLUMNS.find((column) => column.id === columnId)?.label || columnId;
+  const isFrozenEnd = frozenColumn === columnId;
+
+  return (
+    <TableHead
+      {...getPoTableFreezeProps(columnId, frozenColumn, {
+        header: true,
+        className: cn(
+          'group/head cursor-pointer select-none hover:text-foreground',
+          className
+        ),
+      })}
+      title={freezeHeaderTitle(columnId, frozenColumn)}
+      aria-pressed={isFrozenEnd}
+      onClick={() => onToggle(columnId)}
+    >
+      <span
+        className={cn(
+          'inline-flex items-center gap-1.5',
+          className?.includes('text-right') && 'w-full justify-end'
+        )}
+      >
+        {label}
+        <Pin
+          className={cn(
+            'h-3 w-3 shrink-0 transition-opacity',
+            isFrozenEnd
+              ? 'text-foreground fill-current opacity-100'
+              : 'text-muted-foreground opacity-0 group-hover/head:opacity-70'
+          )}
+        />
+      </span>
+    </TableHead>
+  );
+}
 
 interface RfpfRevision {
   id: string;
@@ -455,6 +587,12 @@ function isKeyAccountPaymentNotComplete(po: {
   return po.key_account_payment_status !== 'paid';
 }
 
+function isKeyAccountPoFullyPaid(po: {
+  key_account_payment_status?: string | null;
+}): boolean {
+  return String(po.key_account_payment_status || 'unpaid') === 'paid';
+}
+
 export function KeyAccountPurchaseOrdersPage() {
   const { user } = useAuth();
   const dispatch = useAppDispatch();
@@ -498,6 +636,12 @@ export function KeyAccountPurchaseOrdersPage() {
   const [active, setActive] = useState<Row | null>(null);
   const [historyOrder, setHistoryOrder] = useState<Row | null>(null);
   const [outstandingDialogOpen, setOutstandingDialogOpen] = useState(false);
+  const [commissionPreviewPo, setCommissionPreviewPo] = useState<Row | null>(null);
+  const [commissionPreviewBrands, setCommissionPreviewBrands] = useState<KAPoBrandBalance[]>([]);
+  const [commissionPreviewLoading, setCommissionPreviewLoading] = useState(false);
+  const [commissionConfirmPo, setCommissionConfirmPo] = useState<Row | null>(null);
+  const commissionPreviewReqRef = useRef(0);
+  const [frozenColumn, setFrozenColumn] = useState<FreezeColumnId>(readStoredFreezeColumn);
 
   const [actingId, setActingId] = useState<string | null>(null);
   const [ownerApproveTarget, setOwnerApproveTarget] = useState<Row | null>(null);
@@ -833,6 +977,67 @@ export function KeyAccountPurchaseOrdersPage() {
       isSalesHead ||
       (isDirector && !!po.kam_id && directorKamIds.has(po.kam_id));
     return actorOk;
+  };
+
+  const canActOnCommission = (po: Row) =>
+    isSalesAdmin && !!po.key_account_payment_mode;
+
+  const loadCommissionPreview = async (poId: string) => {
+    const req = ++commissionPreviewReqRef.current;
+    setCommissionPreviewLoading(true);
+    setCommissionPreviewBrands([]);
+    try {
+      const result = await dispatch(previewKAPoBrandBalances(poId)).unwrap();
+      if (req !== commissionPreviewReqRef.current) return;
+      setCommissionPreviewBrands(result.brands || []);
+    } catch (e: any) {
+      if (req !== commissionPreviewReqRef.current) return;
+      toast({
+        variant: 'destructive',
+        title: 'Error loading brand balances',
+        description: e?.message || 'Failed to load brand payment preview',
+      });
+      setCommissionPreviewBrands([]);
+    } finally {
+      if (req === commissionPreviewReqRef.current) setCommissionPreviewLoading(false);
+    }
+  };
+
+  const openCommissionDialog = (po: Row) => {
+    if (po.commissioned_at) return;
+    if (isKeyAccountPoFullyPaid(po)) {
+      setCommissionConfirmPo(po);
+      return;
+    }
+    setCommissionPreviewPo(po);
+    void loadCommissionPreview(po.id);
+  };
+
+  const confirmMarkCommissioned = async (po: Row | null) => {
+    if (!po) return;
+    setActingId(po.id);
+    try {
+      const result = await dispatch(markKAPoCommissioned(po.id)).unwrap();
+      toast({ title: `${po.po_number} marked as commissioned` });
+      setCommissionConfirmPo(null);
+      setActive((prev) =>
+        prev?.id === po.id
+          ? {
+              ...prev,
+              commissioned_at: result.commissioned_at,
+              commissioned_by: result.commissioned_by,
+            }
+          : prev
+      );
+    } catch (e: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Could not mark as commissioned',
+        description: e?.message || 'Failed to mark this purchase order as commissioned',
+      });
+    } finally {
+      setActingId(null);
+    }
   };
 
   const loadPayments = async (poId: string) => {
@@ -1703,6 +1908,21 @@ export function KeyAccountPurchaseOrdersPage() {
     }
   };
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(PO_TABLE_FREEZE_STORAGE_KEY, frozenColumn);
+    } catch {
+      /* ignore */
+    }
+  }, [frozenColumn]);
+
+  const freezeCol = (columnId: PoTableColumnId, className?: string, header = false) =>
+    getPoTableFreezeProps(columnId, frozenColumn, { className, header });
+
+  const toggleFrozenColumn = (columnId: Exclude<PoTableColumnId, 'actions'>) => {
+    setFrozenColumn((current) => (current === columnId ? 'none' : columnId));
+  };
+
   if (loading) {
     return (
       <div className="p-8 flex items-center justify-center">
@@ -1909,34 +2129,35 @@ export function KeyAccountPurchaseOrdersPage() {
           <TabsContent key={tab.value} value={tab.value}>
             <Card>
               <CardContent className="pt-6">
-                <div className="w-full overflow-x-auto">
+                <div className="w-full">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>PO</TableHead>
-                      <TableHead>Created</TableHead>
-                      <TableHead>Order owner</TableHead>
-                      <TableHead>Client</TableHead>
-                      <TableHead>Shop</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Payment status</TableHead>
-                      <TableHead>DR</TableHead>
-                      <TableHead>RFPF</TableHead>
-                      <TableHead className="text-right">Total</TableHead>
+                      {FREEZEABLE_COLUMNS.map((column) => (
+                        <PoFreezeTableHead
+                          key={column.id}
+                          columnId={column.id}
+                          frozenColumn={frozenColumn}
+                          onToggle={toggleFrozenColumn}
+                          className={
+                            column.id === 'balance' || column.id === 'total' ? 'text-right' : undefined
+                          }
+                        />
+                      ))}
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {tabRows.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={11} className="text-center text-muted-foreground py-8">
+                        <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
                           No purchase orders found.
                         </TableCell>
                       </TableRow>
                     ) : (
                       paginatedRows.map((po: Row) => (
-                        <TableRow key={po.id}>
-                        <TableCell className="font-mono font-medium">
+                        <TableRow key={po.id} className="group">
+                        <TableCell {...freezeCol('po', 'font-mono font-medium')}>
                           <div className="flex items-center gap-2">
                             <span>{po.po_number}</span>
                             {String(po.po_order_kind || '') === 'rebate_fulfillment' ? (
@@ -1962,24 +2183,24 @@ export function KeyAccountPurchaseOrdersPage() {
                             ) : null}
                           </div>
                         </TableCell>
-                          <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                          <TableCell {...freezeCol('created', 'whitespace-nowrap text-sm text-muted-foreground')}>
                             {po.created_at
                               ? format(new Date(po.created_at), 'MMM d, yyyy h:mm a')
                               : '—'}
                           </TableCell>
-                          <TableCell className="min-w-[10rem]">
+                          <TableCell {...freezeCol('owner', 'min-w-[10rem]')}>
                             <div className="text-sm font-medium text-foreground">
                               {po.kam?.full_name?.trim() || po.kam?.email?.trim() || '—'}
                             </div>
                           </TableCell>
-                          <TableCell>{po.client?.client_name || '—'}</TableCell>
-                          <TableCell>{po.shop?.shop_name || '—'}</TableCell>
-                          <TableCell>
+                          <TableCell {...freezeCol('client')}>{po.client?.client_name || '—'}</TableCell>
+                          <TableCell {...freezeCol('shop')}>{po.shop?.shop_name || '—'}</TableCell>
+                          <TableCell {...freezeCol('status')}>
                             <Badge className={keyAccountWorkflowBadgeClass(po.workflow_status)}>
                               {keyAccountWorkflowLabel(po.workflow_status)}
                             </Badge>
                           </TableCell>
-                          <TableCell>
+                          <TableCell {...freezeCol('payment')}>
                             {po.key_account_payment_mode ? (
                               <Badge className={paymentStatusBadgeClass(po.key_account_payment_status || 'unpaid')}>
                                 {String(po.key_account_payment_status || 'unpaid').replace(/_/g, ' ')}
@@ -1988,9 +2209,24 @@ export function KeyAccountPurchaseOrdersPage() {
                               <span className="text-muted-foreground text-sm">—</span>
                             )}
                           </TableCell>
-                          <TableCell className="font-medium">{po.dr_number || '—'}</TableCell>
-                          <TableCell className="font-medium">{po.rfpf_number || '—'}</TableCell>
-                          <TableCell className="text-right font-semibold">₱{Number(po.total_amount || 0).toLocaleString()}</TableCell>
+                          <TableCell {...freezeCol('commissioned')}>
+                            {po.commissioned_at ? (
+                              <Badge className="bg-green-500 text-white">Commissioned</Badge>
+                            ) : (
+                              <span className="text-muted-foreground text-sm">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell {...freezeCol('dr', 'font-medium')}>{po.dr_number || '—'}</TableCell>
+                          <TableCell {...freezeCol('rfpf', 'font-medium')}>{po.rfpf_number || '—'}</TableCell>
+                          <TableCell {...freezeCol('balance', 'text-right font-semibold tabular-nums')}>
+                            {po.key_account_payment_mode && po.remaining_balance != null
+                              ? `₱${Number(po.remaining_balance).toLocaleString(undefined, {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })}`
+                              : <span className="text-muted-foreground font-normal">—</span>}
+                          </TableCell>
+                          <TableCell {...freezeCol('total', 'text-right font-semibold')}>₱{Number(po.total_amount || 0).toLocaleString()}</TableCell>
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-1">
                               {!isReadOnlyAccounting && canOwnerApprove(po) ? (
@@ -2101,6 +2337,15 @@ export function KeyAccountPurchaseOrdersPage() {
                                     >
                                       <FileText className="mr-2 h-4 w-4" />
                                       COF
+                                    </DropdownMenuItem>
+                                  )}
+                                  {canActOnCommission(po) && (
+                                    <DropdownMenuItem
+                                      disabled={!!po.commissioned_at}
+                                      onSelect={() => openCommissionDialog(po)}
+                                    >
+                                      <BadgeCheck className="mr-2 h-4 w-4" />
+                                      {po.commissioned_at ? 'Commissioned' : 'Mark as commissioned'}
                                     </DropdownMenuItem>
                                   )}
                                   <DropdownMenuItem onSelect={() => setHistoryOrder(po)}>
@@ -2237,6 +2482,12 @@ export function KeyAccountPurchaseOrdersPage() {
                     <Badge className={keyAccountWorkflowBadgeClass(active.workflow_status)}>
                       {keyAccountWorkflowLabel(active.workflow_status)}
                     </Badge>
+                    {active.commissioned_at ? (
+                      <Badge className="bg-emerald-600 text-white">
+                        <BadgeCheck className="mr-1 h-3.5 w-3.5" />
+                        Commissioned
+                      </Badge>
+                    ) : null}
                     {active.dr_number ? (
                       <Badge variant="secondary">DR: {active.dr_number}</Badge>
                     ) : active.workflow_status === 'partial_delivered' ? (
@@ -2394,9 +2645,21 @@ export function KeyAccountPurchaseOrdersPage() {
                         <Badge className={paymentStatusBadgeClass(active.key_account_payment_status || 'unpaid')}>
                           {String(active.key_account_payment_status || 'unpaid')}
                         </Badge>
+                        {active.commissioned_at ? (
+                          <Badge className="bg-emerald-600 text-white">Commissioned</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-muted-foreground">
+                            Not commissioned
+                          </Badge>
+                        )}
                       </div>
                     </CardHeader>
                     <CardContent className="space-y-4">
+                      {active.commissioned_at ? (
+                        <div className="rounded-md border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-sm text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-100">
+                          Marked commissioned {formatDateTimeManila(active.commissioned_at)} 
+                        </div>
+                      ) : null}
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
                         <div>
                           <Label className="text-xs text-muted-foreground">Terms</Label>
@@ -3250,6 +3513,17 @@ export function KeyAccountPurchaseOrdersPage() {
                 </Button>
               </>
             )}
+            {active && canActOnCommission(active) && !active.commissioned_at ? (
+              <Button
+                className="w-full sm:w-auto"
+                variant="secondary"
+                disabled={actingId === active.id}
+                onClick={() => openCommissionDialog(active)}
+              >
+                <BadgeCheck className="h-4 w-4 mr-2" />
+                Mark as commissioned
+              </Button>
+            ) : null}
             <Button className="w-full sm:w-auto" variant="outline" onClick={() => setViewOpen(false)}>
               Close
             </Button>
@@ -3692,6 +3966,133 @@ export function KeyAccountPurchaseOrdersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog
+        open={!!commissionPreviewPo}
+        onOpenChange={(open) => {
+          if (!open) {
+            commissionPreviewReqRef.current += 1;
+            setCommissionPreviewPo(null);
+            setCommissionPreviewBrands([]);
+            setCommissionPreviewLoading(false);
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Cannot mark as commissioned</DialogTitle>
+            <DialogDescription>
+              {commissionPreviewPo?.po_number || 'This PO'} is not fully paid.
+            </DialogDescription>
+          </DialogHeader>
+          {commissionPreviewLoading ? (
+            <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading brands…
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {(() => {
+                const unpaidBrands = commissionPreviewBrands.filter((row) => row.status !== 'paid');
+                const paidBrands = commissionPreviewBrands.filter((row) => row.status === 'paid');
+                return (
+                  <>
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Not paid
+                      </p>
+                      {unpaidBrands.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No unpaid brands.</p>
+                      ) : (
+                        <ul className="space-y-1.5">
+                          {unpaidBrands.map((row) => (
+                            <li
+                              key={row.brandId}
+                              className="flex items-center justify-between gap-3 rounded-md border px-3 py-2"
+                            >
+                              <span className="text-sm font-medium truncate">{row.brandName}</span>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className="text-xs tabular-nums text-muted-foreground">
+                                  ₱{row.remaining.toFixed(2)} left
+                                </span>
+                                <Badge className={brandBalanceStatusClass(row.status)}>{row.status}</Badge>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Already paid
+                      </p>
+                      {paidBrands.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No paid brands yet.</p>
+                      ) : (
+                        <ul className="space-y-1.5">
+                          {paidBrands.map((row) => (
+                            <li
+                              key={row.brandId}
+                              className="flex items-center justify-between gap-3 rounded-md border px-3 py-2"
+                            >
+                              <span className="text-sm font-medium truncate">{row.brandName}</span>
+                              <Badge className={brandBalanceStatusClass(row.status)}>{row.status}</Badge>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setCommissionPreviewPo(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog
+        open={!!commissionConfirmPo}
+        onOpenChange={(open) => {
+          if (!open && actingId !== commissionConfirmPo?.id) setCommissionConfirmPo(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Mark as commissioned?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {commissionConfirmPo?.po_number || 'This PO'} is fully paid
+              {commissionConfirmPo?.client?.client_name
+                ? ` (${commissionConfirmPo.client.client_name})`
+                : ''}
+              . Mark it as commissioned?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={actingId === commissionConfirmPo?.id}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={actingId === commissionConfirmPo?.id}
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmMarkCommissioned(commissionConfirmPo);
+              }}
+            >
+              {actingId === commissionConfirmPo?.id ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Marking…
+                </>
+              ) : (
+                'Mark as commissioned'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <KeyAccountOutstandingPaymentsDialog
         open={outstandingDialogOpen}

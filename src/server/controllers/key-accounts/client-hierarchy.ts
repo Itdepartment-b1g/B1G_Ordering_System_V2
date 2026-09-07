@@ -1,6 +1,8 @@
 import { requireAuthUser } from '../../auth/requireAuthUser';
-import { HttpError, toErrorResult } from '../../http/errors';
+import { getAuthorizationHeader } from '../../http/headers';
+import { HttpError } from '../../http/errors';
 import { firstString } from '../../http/queryParams';
+import { respond } from '../../http/respond';
 import {
   createKAAddress,
   createKAClient,
@@ -15,10 +17,7 @@ import {
   type KAClientWritePayload,
   type KAShopWritePayload,
 } from '../../repositories/key-accounts/client-hierarchy';
-import type { ApiResult } from '../executive/executiveController';
 import { getSupabaseAdmin } from '../../db/supabaseAdmin';
-
-type QueryMap = Record<string, string | string[] | undefined>;
 
 const ALLOWED_ROLES = ['sales_head', 'sales_admin', 'sales_director', 'key_account_manager'];
 
@@ -43,13 +42,11 @@ async function resolveUserContext(userId: string) {
   };
 }
 
-export async function getKAClientHierarchy(
-  authorization?: string,
-  query: QueryMap = {}
-): Promise<ApiResult<unknown>> {
-  try {
-    const user = await requireAuthUser(authorization);
+export async function getKAClientHierarchy(req: any, res: any) {
+  return respond(res, async () => {
+    const user = await requireAuthUser(getAuthorizationHeader(req.headers || {}));
     const ctx = await resolveUserContext(user.id);
+    const query = req.query || {};
 
     const clientId = firstString(query.clientId);
     const shopId = firstString(query.shopId);
@@ -63,20 +60,15 @@ export async function getKAClientHierarchy(
     }
 
     return { status: 200, body: await listKAClients(ctx) };
-  } catch (error) {
-    return toErrorResult(error);
-  }
+  });
 }
 
-export async function createKAClientHierarchy(
-  authorization?: string,
-  query: QueryMap = {},
-  body: unknown = {}
-): Promise<ApiResult<unknown>> {
-  try {
-    const user = await requireAuthUser(authorization);
+export async function createKAClientHierarchy(req: any, res: any) {
+  return respond(res, async () => {
+    const user = await requireAuthUser(getAuthorizationHeader(req.headers || {}));
     const ctx = await resolveUserContext(user.id);
-    const payload = (body || {}) as Record<string, unknown>;
+    const query = req.query || {};
+    const payload = (req.body || {}) as Record<string, unknown>;
 
     const clientId = firstString(query.clientId);
     const shopId = firstString(query.shopId);
@@ -90,20 +82,15 @@ export async function createKAClientHierarchy(
     }
 
     return { status: 201, body: await createKAClient(ctx, payload as KAClientWritePayload) };
-  } catch (error) {
-    return toErrorResult(error);
-  }
+  });
 }
 
-export async function updateKAClientHierarchy(
-  authorization?: string,
-  query: QueryMap = {},
-  body: unknown = {}
-): Promise<ApiResult<unknown>> {
-  try {
-    const user = await requireAuthUser(authorization);
+export async function updateKAClientHierarchy(req: any, res: any) {
+  return respond(res, async () => {
+    const user = await requireAuthUser(getAuthorizationHeader(req.headers || {}));
     const ctx = await resolveUserContext(user.id);
-    const payload = (body || {}) as Record<string, unknown>;
+    const query = req.query || {};
+    const payload = (req.body || {}) as Record<string, unknown>;
 
     const clientId = firstString(query.clientId);
     const shopId = firstString(query.shopId);
@@ -122,7 +109,5 @@ export async function updateKAClientHierarchy(
     }
 
     throw new HttpError(400, 'clientId, shopId, or addressId is required');
-  } catch (error) {
-    return toErrorResult(error);
-  }
+  });
 }

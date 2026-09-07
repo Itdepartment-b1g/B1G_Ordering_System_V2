@@ -1,31 +1,9 @@
-import { createRouteHandler } from '../../src/server/http/routeHandler';
-import {
-  assertCronAuthorized,
-  sendDueKAPoPaymentRemindersHandler,
-} from '../../src/server/controllers/key-accounts/payment-notifications';
-import { toErrorResult } from '../../src/server/http/errors';
+import { Router } from '../../src/server/http/routeHandler';
+import { getKAPaymentNotificationsHandler } from '../../src/server/controllers/key-accounts/payment-notifications';
 
-function requestHostParts(req: any): { host?: string; proto?: string } {
-  const headers = req?.headers || {};
-  const host = String(headers['x-forwarded-host'] || headers.host || '').trim();
-  const proto = String(headers['x-forwarded-proto'] || 'https').trim();
-  return { host: host || undefined, proto: proto || undefined };
-}
+const router = Router();
 
-export async function GET(req: any, res: any) {
-  try {
-    assertCronAuthorized({
-      headers: req?.headers || {},
-      query: req?.query || {},
-    });
-  } catch (error) {
-    const result = toErrorResult(error);
-    return res.status(result.status).json(result.body);
-  }
+/** GET /api/key-account/payment-notifications - thin route -> controller */
+router.get('/api/key-account/payment-notifications', getKAPaymentNotificationsHandler);
 
-  const { host, proto } = requestHostParts(req);
-  const result = await sendDueKAPoPaymentRemindersHandler({ host, proto });
-  return res.status(result.status).json(result.body);
-}
-
-export default createRouteHandler({ GET });
+export default router;

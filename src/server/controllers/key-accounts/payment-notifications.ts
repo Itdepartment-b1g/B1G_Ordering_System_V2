@@ -1,7 +1,9 @@
 import { HttpError, toErrorResult } from '../../http/errors';
+import { respond } from '../../http/respond';
 import type { ApiResult } from '../executive/executiveController';
 import {
   getKAPoPaymentReminderById,
+  getKAPoReminderPaymentTotals,
   listDueKAPoPaymentReminders,
   markKAPoPaymentReminderSent,
   type KAPoPaymentReminderDueRow,
@@ -28,6 +30,11 @@ async function sendOneReminder(
   const kamEmail = row.kam?.email?.trim() || '';
   if (!kamEmail) return 'skipped';
 
+  const { paid, discount } = await getKAPoReminderPaymentTotals(row.id);
+  const poTotal = Number(row.total_amount) || 0;
+  const remaining = Math.max(0, Math.round((poTotal - paid - discount) * 100) / 100);
+  if (remaining <= 0.001) return 'skipped';
+
   const poNumber = String(row.po_number || row.id);
   const poViewUrl = `${baseUrl}/key-accounts/purchase-orders?search=${encodeURIComponent(poNumber)}&tab=all`;
 
@@ -40,6 +47,9 @@ async function sendOneReminder(
     notificationDate: row.key_account_notification_date || null,
     poViewUrl,
     totalAmount: row.total_amount ?? null,
+    paidAmount: paid,
+    discountAmount: discount,
+    remainingAmount: remaining,
     items: row.items || [],
   });
 
@@ -118,6 +128,24 @@ export async function maybeSendKAPoPaymentReminderNow(params: {
   } catch (error) {
     console.error('⚠️ Immediate KA payment reminder failed (non-blocking):', error);
   }
+}
+
+function requestHostParts(req: any): { host?: string; proto?: string } {
+  const headers = req?.headers || {};
+  const host = String(headers['x-forwarded-host'] || headers.host || '').trim();
+  const proto = String(headers['x-forwarded-proto'] || 'https').trim();
+  return { host: host || undefined, proto: proto || undefined };
+}
+
+export async function getKAPaymentNotificationsHandler(req: any, res: any) {
+  return respond(res, async () => {
+    assertCronAuthorized({
+      headers: req?.headers || {},
+      query: req?.query || {},
+    });
+    const { host, proto } = requestHostParts(req);
+    return sendDueKAPoPaymentRemindersHandler({ host, proto });
+  });
 }
 
 export function assertCronAuthorized(req: {

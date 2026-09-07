@@ -6,7 +6,38 @@ export type DatePreset =
   | 'last_6_months'
   | 'this_year'
   | 'last_year'
+  | 'next_month'
+  | 'next_2_months'
+  | 'next_3_months'
   | 'custom';
+
+export type DateRangePresetOption = {
+  key: Exclude<DatePreset, 'custom'>;
+  label: string;
+  /** Stretch across both columns in the quick-filter grid */
+  fullWidth?: boolean;
+};
+
+/** Default analytics / list filters (historical + all time). */
+export const DEFAULT_DATE_RANGE_PRESETS: DateRangePresetOption[] = [
+  { key: 'this_month', label: 'This Month' },
+  { key: 'last_month', label: 'Last Month' },
+  { key: 'last_3_months', label: 'Last 3 Months' },
+  { key: 'last_6_months', label: 'Last 6 Months' },
+  { key: 'this_year', label: 'This Year' },
+  { key: 'last_year', label: 'Last Year' },
+  { key: 'all', label: 'All Time', fullWidth: true },
+];
+
+/** Full calendar month bounds for monthIndex offset from "now" (0 = this month). */
+function calendarMonthBounds(monthOffset: number): { start: Date; end: Date } {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth() + monthOffset + 1, 0);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
 
 export function getDateRangeFromPreset(
   preset: DatePreset,
@@ -21,20 +52,22 @@ export function getDateRangeFromPreset(
     case 'this_month':
       // Full calendar month (1st → last day), matching dashboard month bars and
       // custom ranges like Aug 1–Aug 31. Do not end at "today" (month-to-date).
-      start.setDate(1);
-      start.setHours(0, 0, 0, 0);
-      end.setMonth(now.getMonth() + 1, 0);
-      end.setHours(23, 59, 59, 999);
-      return { start, end };
+      return calendarMonthBounds(0);
 
     case 'last_month':
-      start.setMonth(now.getMonth() - 1);
-      start.setDate(1);
-      start.setHours(0, 0, 0, 0);
-      end.setMonth(now.getMonth());
-      end.setDate(0);
-      end.setHours(23, 59, 59, 999);
-      return { start, end };
+      return calendarMonthBounds(-1);
+
+    case 'next_month':
+      // Single month: one month ahead (Sep → Oct)
+      return calendarMonthBounds(1);
+
+    case 'next_2_months':
+      // Single month: two months ahead (Sep → Nov)
+      return calendarMonthBounds(2);
+
+    case 'next_3_months':
+      // Single month: three months ahead (Sep → Dec)
+      return calendarMonthBounds(3);
 
     case 'last_3_months':
       start.setMonth(now.getMonth() - 3);
@@ -102,6 +135,9 @@ export function getDatePresetLabel(
     last_6_months: 'Last 6 Months',
     this_year: 'This Year',
     last_year: 'Last Year',
+    next_month: 'Next Month',
+    next_2_months: 'In 2 Months',
+    next_3_months: 'In 3 Months',
   };
   return labels[preset as Exclude<DatePreset, 'custom'>] ?? 'All Time';
 }
