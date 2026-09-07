@@ -43,6 +43,7 @@ import {
   Layers,
   ClipboardCheck,
   Book,
+  Target,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -172,6 +173,7 @@ const salesAdminMenuItems: MenuItem[] = [
       // { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
     ]
   },
+  { title: 'Sales Targets', url: '/key-accounts/sales-targets', icon: Target },
   { title: 'Analytics', url: '/key-accounts/analytics', icon: Brain },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
@@ -210,6 +212,7 @@ const salesHeadMenuItems: MenuItem[] = [
       // { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
     ]
   },
+  { title: 'Sales Targets', url: '/key-accounts/sales-targets', icon: Target },
   { title: 'Analytics', url: '/key-accounts/analytics', icon: Brain },
   { title: 'Payment Settings', url: '/key-accounts/payment-settings', icon: CreditCard },
   { title: 'Payment Terms', url: '/key-accounts/payment-terms', icon: FileText },

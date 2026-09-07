@@ -39,7 +39,7 @@ import PaymentSettingsPage from "@/features/finance/PaymentSettingsPage";
 import SystemAdminPage from "@/features/system-admin/SystemAdminPage";
 import ManagementPortal from "@/features/system-admin/ManagementPortal";
 import { WarRoomPage } from "@/features/war-room";
-import { KeyAccountsDashboardWrapper, ClientHierarchyPage, ClientAssignmentPage, KeyAccountTeamPage, KeyAccountUserManagementPage, KeyAccountPurchaseOrderPage, KeyAccountPurchaseOrdersPage, KeyAccountAnalyticsPage, KeyAccountClientAnalyticsPage, KeyAccountRebatesPage, KeyAccountCreateRebatePage, KeyAccountPaymentSettingsPage, KeyAccountPaymentTermsPage } from "@/features/key-accounts";
+import { KeyAccountsDashboardWrapper, ClientHierarchyPage, ClientAssignmentPage, KeyAccountTeamPage, KeyAccountSalesTargetsPage, KeyAccountUserManagementPage, KeyAccountPurchaseOrderPage, KeyAccountPurchaseOrdersPage, KeyAccountAnalyticsPage, KeyAccountClientAnalyticsPage, KeyAccountRebatesPage, KeyAccountCreateRebatePage, KeyAccountPaymentSettingsPage, KeyAccountPaymentTermsPage } from "@/features/key-accounts";
 import NotFound from "@/features/shared/NotFound";
 import { AgentRemittanceReminder } from "@/features/shared/components/AgentRemittanceReminder";
 import { SupportWidget } from "@/components/SupportWidget";
@@ -345,6 +345,14 @@ const App = () => (
                           <KeyAccountTeamPage />
                         </ProtectedRoute>
                       } 
+                    />
+                    <Route
+                      path="/key-accounts/sales-targets"
+                      element={
+                        <ProtectedRoute allowedRoles={['sales_head', 'sales_admin']}>
+                          <KeyAccountSalesTargetsPage />
+                        </ProtectedRoute>
+                      }
                     />
                     <Route
                       path="/key-accounts/analytics"

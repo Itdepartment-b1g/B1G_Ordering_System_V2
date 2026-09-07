@@ -18,6 +18,7 @@ export { KeyAccountsDashboardWrapper } from './pages/KeyAccountsDashboardWrapper
 export { ClientHierarchyPage } from './pages/ClientHierarchyPage';
 export { ClientAssignmentPage } from './pages/ClientAssignmentPage';
 export { KeyAccountTeamPage } from './pages/KeyAccountTeamPage';
+export { KeyAccountSalesTargetsPage } from './pages/KeyAccountSalesTargetsPage';
 export { KeyAccountUserManagementPage } from './pages/KeyAccountUserManagementPage';
 export { KeyAccountPurchaseOrderPage } from './pages/KeyAccountCreatePurchaseOrderPage';
 export { KeyAccountPurchaseOrdersPage } from './pages/KeyAccountPurchaseOrdersPage';
