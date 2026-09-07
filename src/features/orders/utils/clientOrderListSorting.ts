@@ -4,6 +4,7 @@ export type ClientOrderListSortKey =
   | 'agentName'
   | 'date'
   | 'createdAt'
+  | 'approvedAt'
   | 'items'
   | 'total'
   | 'status';
@@ -19,6 +20,7 @@ export type ClientOrderListSortable = {
   agentName: string;
   date: string;
   createdAt?: string;
+  approvedAt?: string;
   items: { quantity?: number }[];
   total: number;
   status: 'pending' | 'approved' | 'rejected';
@@ -82,6 +84,12 @@ export function sortClientOrderList<T extends ClientOrderListSortable>(
       case 'createdAt':
         result = getCreatedAtTime(a) - getCreatedAtTime(b);
         break;
+      case 'approvedAt': {
+        const aTime = a.approvedAt ? new Date(a.approvedAt).getTime() : 0;
+        const bTime = b.approvedAt ? new Date(b.approvedAt).getTime() : 0;
+        result = aTime - bTime;
+        break;
+      }
       case 'items':
         result = getItemCount(a) - getItemCount(b);
         break;
