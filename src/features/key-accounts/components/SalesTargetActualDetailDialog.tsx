@@ -19,7 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Crown, Users } from 'lucide-react';
+import { Crown, Loader2, Users } from 'lucide-react';
 
 export type SalesTargetViewPerson = {
   id: string;
@@ -38,7 +38,7 @@ export type SalesTargetViewStats = {
   attainmentPct: number | null;
 };
 
-export type SalesTargetMockPo = {
+export type SalesTargetPo = {
   id: string;
   poNumber: string;
   poDate: string;
@@ -53,7 +53,9 @@ type SalesTargetActualDetailDialogProps = {
   onOpenChange: (open: boolean) => void;
   person: SalesTargetViewPerson | null;
   stats: SalesTargetViewStats | null;
-  purchaseOrders: SalesTargetMockPo[];
+  purchaseOrders: SalesTargetPo[];
+  loading?: boolean;
+  error?: string | null;
 };
 
 function formatPeso(value: number | null | undefined): string {
@@ -66,8 +68,7 @@ function roleLabel(role: SalesTargetViewPerson['role']): string {
 }
 
 /**
- * UI-only drill-down: stat cards + PO table for a person/month.
- * Mock data until repository is wired.
+ * Drill-down: stat cards + PO table for a person/month.
  */
 export function SalesTargetActualDetailDialog({
   open,
@@ -75,6 +76,8 @@ export function SalesTargetActualDetailDialog({
   person,
   stats,
   purchaseOrders,
+  loading = false,
+  error = null,
 }: SalesTargetActualDetailDialogProps) {
   const navigate = useNavigate();
   const totalSum = purchaseOrders.reduce((s, po) => s + po.total, 0);
@@ -185,7 +188,14 @@ export function SalesTargetActualDetailDialog({
             <h3 className="text-sm font-semibold">Purchase orders</h3>
             <p className="text-xs text-muted-foreground">Click a row to open on Purchase Orders</p>
           </div>
-          {purchaseOrders.length === 0 ? (
+          {loading ? (
+            <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground border rounded-md">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading purchase orders…
+            </div>
+          ) : error ? (
+            <p className="text-sm text-destructive py-6 text-center border rounded-md">{error}</p>
+          ) : purchaseOrders.length === 0 ? (
             <p className="text-sm text-muted-foreground py-6 text-center border rounded-md">
               No POs for this month.
             </p>
@@ -251,9 +261,6 @@ export function SalesTargetActualDetailDialog({
               </Table>
             </div>
           )}
-          <p className="text-xs text-muted-foreground">
-            UI preview — mock PO numbers; live POs will open when numbers match.
-          </p>
         </div>
 
         <div className="flex justify-end">
@@ -264,50 +271,4 @@ export function SalesTargetActualDetailDialog({
       </DialogContent>
     </Dialog>
   );
-}
-
-/** Deterministic mock POs for a person/month (UI only). */
-export function getMockPosForPersonMonth(
-  personId: string,
-  month: string,
-  actualOrders: number,
-  actualRevenue: number
-): SalesTargetMockPo[] {
-  if (actualOrders <= 0 && actualRevenue <= 0) return [];
-
-  const count = Math.min(Math.max(actualOrders, 1), 5);
-  const clients = [
-    { client: 'SM Retail Inc.', shop: 'SM Megamall' },
-    { client: 'SM Retail Inc.', shop: 'SM North EDSA' },
-    { client: 'Robinsons Retail', shop: 'Robinsons Galleria' },
-    { client: 'Puregold Price Club', shop: 'Puregold Makati' },
-    { client: 'Landmark Corp.', shop: 'Landmark Trinoma' },
-  ];
-
-  const [y, m] = month.split('-').map(Number);
-  const pos: SalesTargetMockPo[] = [];
-  let remaining = actualRevenue;
-
-  for (let i = 0; i < count; i++) {
-    const isLast = i === count - 1;
-    const total = isLast
-      ? Math.max(remaining, 0)
-      : Math.round((actualRevenue / count) * (0.7 + ((personId.charCodeAt(0) + i) % 5) * 0.08));
-    remaining -= total;
-    const balance = Math.round(total * (i % 3 === 0 ? 0 : i % 3 === 1 ? 0.35 : 0.15));
-    const day = Math.min(28, 3 + i * 5);
-    const shop = clients[(personId.charCodeAt(1) + i) % clients.length];
-
-    pos.push({
-      id: `${personId}-${month}-po-${i}`,
-      poNumber: `KA-PO-${y}${String(m).padStart(2, '0')}-${String(100 + i + personId.charCodeAt(0)).slice(-3)}`,
-      poDate: `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
-      clientName: shop.client,
-      shopName: shop.shop,
-      balance,
-      total: Math.max(total, 0),
-    });
-  }
-
-  return pos.sort((a, b) => b.poDate.localeCompare(a.poDate));
 }

@@ -1165,6 +1165,19 @@ export interface KeyAccountPaymentTermOption {
   updated_at: string;
 }
 
+export interface KeyAccountMonthlySalesTarget {
+  id: string;
+  company_id: string;
+  assignee_id: string;
+  assignee_role: 'sales_director' | 'key_account_manager';
+  target_month: string;
+  target_revenue: number;
+  created_by?: string | null;
+  updated_by?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // ============================================================================
 // DASHBOARD STATS TYPES
 // ============================================================================
