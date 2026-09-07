@@ -421,6 +421,7 @@ const financeMenuItems: MenuItem[] = [
       { title: 'Physical Count', url: '/inventory/physical-count', icon: ClipboardCheck },
     ]
   },
+  { title: 'Agent Inventory', url: '/agent-inventory', icon: Package },
   { title: 'Analytics', url:'/analytics', icon: Brain },
   { title: 'System History', url: '/system-history', icon: History },
   { title: 'Profile', url: '/profile', icon: UserCircle },
@@ -441,7 +442,7 @@ const accountingMenuItems: MenuItem[] = [
       { title: 'Physical Count', url: '/inventory/physical-count', icon: ClipboardCheck },
     ]
   },
-
+  { title: 'Agent Inventory', url: '/agent-inventory', icon: Package },
   { title: 'Analytics', url: '/analytics', icon: Brain },
   { title: 'System History', url: '/system-history', icon: History },
   { title: 'Profile', url: '/profile', icon: UserCircle },
