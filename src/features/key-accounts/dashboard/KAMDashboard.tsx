@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/features/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -27,12 +28,39 @@ import {
   CheckCircle,
   Calendar,
   Eye,
+  Loader2,
   Plus,
+  Target,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { KeyAccountWorkflowStatusBadge } from '@/features/key-accounts/keyAccountWorkflowStatus';
+import { SalesTargetActualDetailDialog } from '@/features/key-accounts/components/SalesTargetActualDetailDialog';
+import { useKeyAccountSalesTargets } from '@/features/key-accounts/hooks/useKeyAccountSalesTargets';
 import { useAppDispatch, useAppSelector } from '@/store/store';
 import { fetchKADashboardOverview } from '@/store/slices/key-accounts/dashboard';
+
+function currentMonthValue(d = new Date()): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function formatTargetMonth(month: string): string {
+  const [y, m] = month.split('-').map(Number);
+  if (!y || !m) return month;
+  return new Date(y, m - 1, 1).toLocaleDateString('en-PH', {
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+function formatPeso(value: number | null | undefined): string {
+  if (value == null) return '—';
+  return `₱${Math.round(value).toLocaleString('en-PH')}`;
+}
+
+function attainmentPct(target: number | null, actual: number): number | null {
+  if (target == null || target <= 0) return null;
+  return Math.round((actual / target) * 100);
+}
 
 function formatOrderDate(value: string | null) {
   if (!value) return 'No orders yet';
@@ -62,6 +90,25 @@ export function KAMDashboard() {
   const [recentOrdersPage, setRecentOrdersPage] = useState(1);
   const [clientPage, setClientPage] = useState(1);
   const [ordersPage, setOrdersPage] = useState(1);
+  const [targetDetailOpen, setTargetDetailOpen] = useState(false);
+
+  const thisMonth = useMemo(() => currentMonthValue(), []);
+  const {
+    assignees,
+    purchaseOrders,
+    detailKey,
+    loading: targetLoading,
+    detailLoading,
+    error: targetError,
+    detailError,
+    buildRows,
+    loadPurchaseOrders,
+  } = useKeyAccountSalesTargets(thisMonth, thisMonth);
+
+  const thisMonthRow = useMemo(() => {
+    const people = user?.id ? assignees.filter((person) => person.id === user.id) : assignees;
+    return buildRows(people, [thisMonth])[0] ?? null;
+  }, [assignees, buildRows, thisMonth, user?.id]);
 
   const overview = useAppSelector((state) => state.kaDashboard.overview);
   const overviewStatus = useAppSelector((state) => state.kaDashboard.overviewStatus);
@@ -87,6 +134,11 @@ export function KAMDashboard() {
     if (overviewStatus !== 'failed' || !overviewError) return;
     toast({ variant: 'destructive', title: 'Error', description: overviewError });
   }, [overviewStatus, overviewError, toast]);
+
+  useEffect(() => {
+    if (!targetError) return;
+    toast({ variant: 'destructive', title: 'Could not load sales target', description: targetError });
+  }, [targetError, toast]);
 
   useEffect(() => {
     setAlertPage(1);
@@ -131,6 +183,23 @@ export function KAMDashboard() {
         </div>
       </div>
     );
+  };
+
+  const monthPct = thisMonthRow ? attainmentPct(thisMonthRow.targetRevenue, thisMonthRow.actualRevenue) : null;
+  const viewPosKey = thisMonthRow ? `${thisMonthRow.id}:${thisMonthRow.month}` : user?.id ? `${user.id}:${thisMonth}` : null;
+  const viewPurchaseOrders = viewPosKey && detailKey === viewPosKey ? purchaseOrders : [];
+
+  const openTargetDetail = () => {
+    const assigneeId = thisMonthRow?.id ?? user?.id;
+    if (!assigneeId) return;
+    setTargetDetailOpen(true);
+    void loadPurchaseOrders({ assigneeId, month: thisMonth }).catch((err) => {
+      toast({
+        title: 'Could not load purchase orders',
+        description: err instanceof Error ? err.message : 'Please try again.',
+        variant: 'destructive',
+      });
+    });
   };
 
   const alertClients = clients.filter((c) => c.daysSinceLastOrder === null || c.daysSinceLastOrder > 30);
@@ -226,6 +295,87 @@ export function KAMDashboard() {
           </CardContent>
         </Card>
       </div>
+
+      <Card
+        className="cursor-pointer transition-colors hover:bg-muted/40"
+        role="button"
+        tabIndex={0}
+        onClick={openTargetDetail}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            openTargetDetail();
+          }
+        }}
+        aria-label="View this month’s sales target detail"
+      >
+        <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+              <Target className="h-4 w-4" />
+              This month’s target
+            </CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">{formatTargetMonth(thisMonth)}</p>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            onClick={(e) => {
+              e.stopPropagation();
+              openTargetDetail();
+            }}
+            aria-label="View booked purchase orders"
+          >
+            <Eye className="h-4 w-4" />
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {targetLoading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading target…
+            </div>
+          ) : thisMonthRow?.targetRevenue == null ? (
+            <div className="space-y-1">
+              <p className="text-base font-medium">No target set for this month</p>
+              <p className="text-sm text-muted-foreground">
+                Actual {formatPeso(thisMonthRow?.actualRevenue ?? 0)}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-end justify-between gap-4">
+                <div>
+                  <p className="text-xs text-muted-foreground">Target</p>
+                  <p className="text-2xl font-bold tabular-nums">{formatPeso(thisMonthRow.targetRevenue)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Actual</p>
+                  <p className="text-2xl font-bold tabular-nums">{formatPeso(thisMonthRow.actualRevenue)}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-muted-foreground">Attainment</p>
+                  <p
+                    className={`text-2xl font-bold tabular-nums ${
+                      monthPct != null && monthPct >= 100
+                        ? 'text-emerald-600'
+                        : monthPct != null && monthPct >= 70
+                          ? 'text-amber-600'
+                          : ''
+                    }`}
+                  >
+                    {monthPct == null ? '—' : `${monthPct}%`}
+                  </p>
+                </div>
+              </div>
+              {monthPct != null && <Progress value={Math.min(monthPct, 100)} className="h-2" />}
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground mt-3">Booked PO revenue this month</p>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -490,6 +640,39 @@ export function KAMDashboard() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <SalesTargetActualDetailDialog
+        open={targetDetailOpen}
+        onOpenChange={setTargetDetailOpen}
+        person={
+          thisMonthRow
+            ? {
+                id: thisMonthRow.id,
+                fullName: thisMonthRow.fullName,
+                role: thisMonthRow.role,
+                directorName: thisMonthRow.directorName ?? undefined,
+              }
+            : user
+              ? {
+                  id: user.id,
+                  fullName: user.full_name,
+                  role: 'key_account_manager',
+                }
+              : null
+        }
+        stats={{
+          month: thisMonth,
+          monthLabel: formatTargetMonth(thisMonth),
+          targetRevenue: thisMonthRow?.targetRevenue ?? null,
+          actualRevenue: thisMonthRow?.actualRevenue ?? 0,
+          actualOrders: thisMonthRow?.actualOrders ?? 0,
+          actualQty: thisMonthRow?.actualQty ?? 0,
+          attainmentPct: monthPct,
+        }}
+        purchaseOrders={viewPurchaseOrders}
+        loading={detailLoading}
+        error={detailError}
+      />
     </div>
   );
 }
