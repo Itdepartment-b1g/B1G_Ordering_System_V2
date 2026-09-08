@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { fillDownHistoricalPoRows } from '@/lib/kaHistoricalPoFillDown';
 
 export type KAHistoricalExcelRow = {
   excel_row: number;
@@ -102,12 +103,10 @@ export async function parseHistoricalPoExcel(file: File): Promise<KAHistoricalEx
   for (let i = headerRowIndex + 1; i < matrix.length; i++) {
     const raw = matrix[i] || [];
     const row: KAHistoricalExcelRow = { excel_row: i + 1 };
-    let any = false;
     headers.forEach((field, col) => {
       if (!field) return;
       const value = raw[col];
       if (value == null || value === '') return;
-      any = true;
       if (field === 'order_date') row.order_date = excelDate(value);
       else if (field === 'kam_email') row.kam_email = cellEmail(value);
       else if (field === 'quantity' || field === 'unit_price' || field === 'line_total' || field === 'discount') {
@@ -116,9 +115,10 @@ export async function parseHistoricalPoExcel(file: File): Promise<KAHistoricalEx
         (row as Record<string, unknown>)[field] = String(value).trim();
       }
     });
-    if (any && String(row.external_po_ref || '').trim()) rows.push(row);
+    rows.push(row);
   }
 
-  if (!rows.length) throw new Error('No purchase order lines found. Fill PO_Lines and keep the header row.');
-  return rows;
+  const filled = fillDownHistoricalPoRows(rows);
+  if (!filled.length) throw new Error('No purchase order lines found. Fill PO_Lines and keep the header row.');
+  return filled;
 }

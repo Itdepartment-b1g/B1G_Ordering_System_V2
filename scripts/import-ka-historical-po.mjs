@@ -223,6 +223,8 @@ async function importOne(ref, lines) {
         workflow_status: 'delivered',
         created_by: kamId,
         key_account_payment_status: 'paid',
+        commissioned_at: paymentCreatedAt(orderDate),
+        commissioned_by: kamId,
       })
       .eq('id', poId);
     if (updErr) throw updErr;
@@ -232,7 +234,7 @@ async function importOne(ref, lines) {
     await sb.rpc('log_purchase_order_event', {
       p_purchase_order_id: poId,
       p_event_type: 'created',
-      p_note: `Imported historical PO (pre-system). Legacy: ${ref}`,
+      p_note: `Imported historical PO (pre-system). Legacy: ${ref}. Marked paid, delivered, and commissioned.`,
       p_created_by: kamId,
     });
 

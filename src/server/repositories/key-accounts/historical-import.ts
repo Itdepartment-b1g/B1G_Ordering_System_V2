@@ -1,4 +1,5 @@
 import { fetchAllPaginated } from '../../../lib/supabasePaginate';
+import { fillDownHistoricalPoRows } from '../../../lib/kaHistoricalPoFillDown';
 import { HttpError } from '../../http/errors';
 import { getSupabaseAdmin, getSupabaseUser } from '../../db/supabaseAdmin';
 import { insertPaymentAllocations } from './payment-allocations';
@@ -31,6 +32,8 @@ export type KAHistoricalLineInput = {
 
 export type KAHistoricalPoPreviewItem = {
   excel_row?: number;
+  excel_brand: string;
+  excel_variant: string;
   brand: string;
   variant: string;
   sku: string | null;
@@ -465,8 +468,9 @@ export async function dryRunKAHistoricalImport(
   }
   if (rows.length > 20000) throw new HttpError(400, 'Too many rows (max 20,000)');
 
+  const filledRows = fillDownHistoricalPoRows(rows);
   const catalog = await loadCatalog(ctx.companyId);
-  const grouped = groupRows(rows);
+  const grouped = groupRows(filledRows);
   const purchase_orders: KAHistoricalPoPreview[] = [];
   let blocking = 0;
 
@@ -521,6 +525,8 @@ export async function dryRunKAHistoricalImport(
       total_amount: total,
       items: resolved.map((r) => ({
         excel_row: r.excel_row,
+        excel_brand: String(r.source.brand_name || ''),
+        excel_variant: String(r.source.variant_name || ''),
         brand: r.brand?.name || String(r.source.brand_name || ''),
         variant: r.variant?.name || String(r.source.variant_name || ''),
         sku: r.variant?.sku || null,
@@ -537,7 +543,7 @@ export async function dryRunKAHistoricalImport(
     dry_run: true,
     inserted: 0,
     po_count: purchase_orders.length,
-    line_count: rows.length,
+    line_count: filledRows.length,
     ready_to_import: blocking === 0,
     blocking_pos: blocking,
     purchase_orders,
@@ -697,6 +703,8 @@ async function importOne(
         status: 'fulfilled',
         workflow_status: 'delivered',
         key_account_payment_status: 'paid',
+        commissioned_at: paymentCreatedAt(orderDate),
+        commissioned_by: ctx.userId,
       })
       .eq('id', poId);
     if (updErr) throw updErr;
@@ -704,7 +712,7 @@ async function importOne(
     await sb.rpc('log_purchase_order_event', {
       p_purchase_order_id: poId,
       p_event_type: 'created',
-      p_note: `Imported historical PO (pre-system). Legacy: ${ref}`,
+      p_note: `Imported historical PO (pre-system). Legacy: ${ref}. Marked paid, delivered, and commissioned.`,
       p_created_by: ctx.userId,
     });
 
@@ -743,7 +751,8 @@ export async function importKAHistoricalPos(
     throw new HttpError(400, 'No rows to import');
   }
 
-  const grouped = groupRows(rows);
+  const filledRows = fillDownHistoricalPoRows(rows);
+  const grouped = groupRows(filledRows);
   if (grouped.size > HISTORICAL_IMPORT_PO_CHUNK) {
     throw new HttpError(
       400,

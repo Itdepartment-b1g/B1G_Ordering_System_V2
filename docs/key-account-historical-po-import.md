@@ -9,12 +9,13 @@ Imported POs must:
 - Get an **auto-generated** system `po_number` via `generate_po_number()` (same as normal PO create)
 - Appear as **delivered / fulfilled** (no warehouse queue work)
 - Include a **payment ledger row** so analytics treat them as **fully paid**
+- Appear as **commissioned** (`commissioned_at` + `commissioned_by`) so they do not sit in the ready-to-commission list
 - Skip payment proof photos (`proof_storage_path = null`)
 - **Not** deduct warehouse stock or run reserve / fulfill / dispatch RPCs
 
 Use this for old POs (for example ~1,800 records) imported **month by month** (June first, then next months).
 
-> **Status:** In-app importer is available at **Historical Import** (Sales Admin / Sales Head). Dry-run first, then import delivered + fully paid POs. Warehouse stock is not deducted.
+> **Status:** In-app importer is available at **Historical Import** (Sales Admin / Sales Head). Dry-run first, then import delivered + fully paid + commissioned POs. Warehouse stock is not deducted.
 
 ---
 
@@ -88,6 +89,7 @@ Per `external_po_ref` group:
 5. Insert **one** `purchase_order_key_account_payments` row (full amount, no proof)
 6. Rely on payment-status trigger to set `key_account_payment_status = paid`
 7. Do **not** call warehouse reserve / fulfill / dispatch; do **not** create open `warehouse_transfer_location_status` pending rows that put work in queue
+8. Set `commissioned_at` (same date as payment / `order_date`) and `commissioned_by` (importer) so the PO is already commissioned
 
 Optional audit: log a PO history event such as `Imported historical PO (pre-system)` and put `Legacy: {external_po_ref}` in `notes`.
 
@@ -98,7 +100,10 @@ Optional audit: log a PO history event such as `Imported historical PO (pre-syst
 ### Layout
 
 - **One row per line item**
-- Same `external_po_ref` on every line of one old PO
+- First line of a PO: fill `external_po_ref`, dates, client/shop/address, `kam_email`, `rfpf_number`
+- Extra lines of the same PO may leave those cells **blank** (fill-down). A new `external_po_ref` starts the next PO
+- `brand_name` may be blank while the brand is unchanged; write it again when the brand changes
+- Repeating every header cell on every line still works
 - System `po_number` is **not** in Excel (auto-generated)
 - No UUID columns (`id`, `company_id`, `purchase_order_id`, `variant_id`, etc.)
 
@@ -106,7 +111,7 @@ Optional audit: log a PO history event such as `Imported historical PO (pre-syst
 
 | Excel column | Type | Required | Maps to |
 |--------------|------|----------|---------|
-| `external_po_ref` | text (grouping) | **Yes** | Groups lines; store in `notes` as `Legacy: …` (not system `po_number`) |
+| `external_po_ref` | text (grouping) | **Yes (first line)** | Groups lines; store in `notes` as `Legacy: …` (not system `po_number`) |
 | `order_date` | date `YYYY-MM-DD` | **Yes** | `purchase_orders.order_date` |
 | `expected_delivery_date` | date | No | `purchase_orders.expected_delivery_date` (default = `order_date`) |
 | `client_code` | **lookup → id** | **Yes** | → `key_account_client_id` |
@@ -116,10 +121,10 @@ Optional audit: log a PO history event such as `Imported historical PO (pre-syst
 | `warehouse_location_name` | **lookup → id** | Recommended | → `warehouse_location_id` (+ `warehouse_company_id`) |
 | `payment_terms` | text | Recommended | `key_account_payment_terms` (e.g. `COD`) |
 | `discount` | number | No | `purchase_orders.discount` (default `0`) |
-| `rfpf_number` | text | Recommended | `purchase_orders.rfpf_number` (same value on every line of the PO) |
+| `rfpf_number` | text | Recommended | `purchase_orders.rfpf_number` (first line of the PO; later lines may be blank) |
 | `tax_rate` | number | No | `purchase_orders.tax_rate` (default `0`) |
 | `sku` | **lookup → id** | **Yes** | → `purchase_order_items.variant_id` |
-| `brand_name` | text helper | Recommended | Helps resolve variant if SKU missing/ambiguous |
+| `brand_name` | text helper | Recommended | Hub brand. Fill when the brand starts or changes; later variants may leave it blank |
 | `variant_name` | text helper | Recommended | Helps resolve variant |
 | `quantity` | number | **Yes** | `purchase_order_items.quantity` |
 | `unit_price` | number | **Yes** | `purchase_order_items.unit_price` |
@@ -194,6 +199,8 @@ Everything else is plain text / date / number — not ids.
 | `workflow_status` | `delivered` |
 | `key_account_payment_mode` | `full` |
 | `key_account_payment_status` | Ends as `paid` after payment insert + trigger |
+| `commissioned_at` | Same timestamp as historical payment (`order_date`) |
+| `commissioned_by` | Importing user |
 | `created_by` | Importing user |
 | `custom_pricing_confirmed` | `true` |
 | `rfpf_number` | Excel `rfpf_number` (or `null` if blank) |
@@ -277,7 +284,7 @@ Normal create skips first payment for `po_order_kind = consignment`. For this hi
 ### Phase 2 — Prepare Excel
 
 3. Build one row per line item with the columns above.
-4. Same `external_po_ref` for all lines of one old PO.
+4. First line of a PO has `external_po_ref` (and RFPF). Extra lines may leave those blank until a new ref starts the next PO.
 5. Set `payment_amount` = PO total on each line of that PO (importer inserts **one** payment).
 6. Spot-check: line sums − discount + tax = `payment_amount`.
 
@@ -300,19 +307,22 @@ Normal create skips first payment for `po_order_kind = consignment`. For this hi
 
 ## Sample Excel (2 lines → 1 PO + 1 payment)
 
+Header fields only need to appear on the first line. Repeating them on every line still works.
+
 ```text
-external_po_ref,order_date,expected_delivery_date,client_code,shop_code,address_label,kam_email,warehouse_location_name,payment_terms,discount,tax_rate,sku,brand_name,variant_name,quantity,unit_price,line_total,payment_amount,payment_method,payment_date,bank_type,po_order_kind,notes
-LEGACY-JUN-001,2025-06-10,2025-06-12,KA-0001,SH-0001-01,Main Receiving,kam@b1g.com,Main Warehouse,COD,0,0,SKU-001,BrandA,VariantA,10,100,1000,1500,CASH,2025-06-12,,standard,Legacy: LEGACY-JUN-001
-LEGACY-JUN-001,2025-06-10,2025-06-12,KA-0001,SH-0001-01,Main Receiving,kam@b1g.com,Main Warehouse,COD,0,0,SKU-002,BrandA,VariantB,5,100,500,1500,CASH,2025-06-12,,standard,Legacy: LEGACY-JUN-001
+external_po_ref,order_date,client_name,shop_name,address_label,brand_name,variant_name,quantity,unit_price,line_total,kam_email,discount,rfpf_number,notes
+LEGACY-JUN-001,2025-06-10,ABC Trading Inc.,Main Branch,Main Receiving,BrandA,VariantA,10,100,1000,kam@b1g.com,0,RFPF-JUN-001,First line of the PO
+,,,,,,VariantB,5,100,500,,,Same PO and brand — leave ref / brand / RFPF blank
 ```
 
 Expected result for `LEGACY-JUN-001`:
 
 1. New `po_number` like `PO-YYYYMMDD-####` from `generate_po_number()`
-2. Header: Key Accounts, warehouse_transfer, `fulfilled` / `delivered`
+2. Header: Key Accounts, warehouse_transfer, `fulfilled` / `delivered`, commissioned
 3. Two item rows (SKU-001 qty 10, SKU-002 qty 5)
 4. One payment amount `1500`, no proof → `key_account_payment_status = paid`
-5. No warehouse stock deduction / no open warehouse to-do
+5. `commissioned_at` / `commissioned_by` set (same stamp as **Mark as commissioned**)
+6. No warehouse stock deduction / no open warehouse to-do
 
 ---
 
@@ -325,6 +335,7 @@ After pilot or month import, confirm:
 - [ ] Client / shop / address / KAM / items look correct
 - [ ] Line quantities and prices match Excel
 - [ ] `key_account_payment_status = paid`
+- [ ] `commissioned_at` and `commissioned_by` are set (Commissioned badge on the PO list)
 - [ ] Payment history shows cash amount; no proof required
 - [ ] Payment date falls in the intended analytics month
 - [ ] Key Account analytics / dashboard paid revenue includes these POs for that month
