@@ -159,6 +159,7 @@ export function CreatePurchaseOrderDialog({
 
     // Stock State: map of `${variantId}::${locationId}` to stock quantity
     const [itemStockMap, setItemStockMap] = useState<Record<string, number>>({});
+    const [stockRefreshTick, setStockRefreshTick] = useState(0);
 
     useEffect(() => {
         if (!open) {
@@ -287,6 +288,13 @@ export function CreatePurchaseOrderDialog({
     // Clear All Confirmation State
     const [clearAllOpen, setClearAllOpen] = useState(false);
 
+    // Keep hub stock current while a Team Leader is building the request.
+    useEffect(() => {
+        if (!open || !isTeamLeaderMode || fulfillmentMode !== 'warehouse_transfer') return;
+        const id = window.setInterval(() => setStockRefreshTick((n) => n + 1), 15000);
+        return () => window.clearInterval(id);
+    }, [open, isTeamLeaderMode, fulfillmentMode]);
+
     // Fetch stock data for items when they change or warehouse selection changes
     useEffect(() => {
         if (!open || fulfillmentMode !== 'warehouse_transfer' || !linkedWarehouseCompanyId) {
@@ -306,6 +314,32 @@ export function CreatePurchaseOrderDialog({
 
         let cancelled = false;
         (async () => {
+            if (isTeamLeaderMode) {
+                const { data, error } = await supabase.rpc('get_linked_warehouse_available_stock', {
+                    p_warehouse_company_id: linkedWarehouseCompanyId,
+                    p_variant_ids: variantIds,
+                });
+                if (cancelled) return;
+                if (error) {
+                    console.warn('[CreatePO] linked warehouse stock failed', error);
+                    setItemStockMap({});
+                    return;
+                }
+                const stockMap: Record<string, number> = {};
+                for (const row of (data || []) as Array<{
+                    variant_id?: string;
+                    location_id?: string;
+                    available?: number | null;
+                }>) {
+                    const variantId = String(row.variant_id || '');
+                    const locationId = String(row.location_id || '');
+                    if (!variantId || !locationId) continue;
+                    stockMap[`${variantId}::${locationId}`] = Math.max(0, Number(row.available || 0));
+                }
+                setItemStockMap(stockMap);
+                return;
+            }
+
             // Fetch stock from both main_inventory and warehouse_location_inventory
             const [
                 { data: mainInvData, error: mainInvError },
@@ -404,7 +438,7 @@ export function CreatePurchaseOrderDialog({
         return () => {
             cancelled = true;
         };
-    }, [open, items, availableVariants, selectedWarehouseLocationId, activeWarehouseTabId, fulfillmentMode, linkedWarehouseCompanyId, warehouseLocations, mainWarehouseLocationId]);
+    }, [open, items, availableVariants, selectedWarehouseLocationId, activeWarehouseTabId, fulfillmentMode, linkedWarehouseCompanyId, warehouseLocations, mainWarehouseLocationId, isTeamLeaderMode, stockRefreshTick]);
 
     // Helper to get stock for an item
     const getItemStock = (variantId: string, warehouseLocationId?: string) => {
@@ -1517,6 +1551,7 @@ export function CreatePurchaseOrderDialog({
                                     <Label htmlFor="leader-name-confirm">Team leader name</Label>
                                     <Input
                                         id="leader-name-confirm"
+                                        className="text-black"
                                         value={leaderNameConfirmInput}
                                         onChange={(e) => setLeaderNameConfirmInput(e.target.value)}
                                         placeholder={selectedTeamLeaderName || 'Enter team leader name'}

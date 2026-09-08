@@ -279,6 +279,8 @@ export default function PurchaseOrdersPage() {
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [tlRejectReason, setTlRejectReason] = useState('');
+  const [tlRejectNameInput, setTlRejectNameInput] = useState('');
+  const [tlRejectConfirmOpen, setTlRejectConfirmOpen] = useState(false);
   const [orderToApprove, setOrderToApprove] = useState<any>(null);
   const [tlApproveNameInput, setTlApproveNameInput] = useState('');
   const [tlApproveConfirmOpen, setTlApproveConfirmOpen] = useState(false);
@@ -681,6 +683,14 @@ export default function PurchaseOrdersPage() {
       return { badgeKey: 'pending', label: 'Waiting for Main' };
     }
 
+    if (status === 'pending' && isTransfer) {
+      return { badgeKey: 'pending', label: 'Warehouse pending' };
+    }
+
+    if (status === 'approved_for_fulfillment' && isTransfer) {
+      return { badgeKey: 'approved_for_fulfillment', label: 'Warehouse awaiting fulfillment' };
+    }
+
     return {
       badgeKey: status || 'pending',
       label: status.replace(/_/g, ' ') || '—',
@@ -1059,8 +1069,8 @@ export default function PurchaseOrdersPage() {
     const cancelledBy = getPoCancelledByName(order);
 
     return (
-      <div className="flex flex-col items-start gap-1 min-w-0">
-        <Badge variant="default" className={getStatusBadgeClassForOrder(order)}>
+      <div className="flex flex-col items-start gap-1">
+        <Badge variant="default" className={`${getStatusBadgeClassForOrder(order)} whitespace-nowrap`}>
           {getStatusDisplayTextForOrder(order)}
         </Badge>
         {/* {cancelReason ? (
@@ -1773,6 +1783,8 @@ export default function PurchaseOrdersPage() {
   const handleOpenRejectDialog = (order: any) => {
     setOrderToReject(order);
     setTlRejectReason('');
+    setTlRejectNameInput('');
+    setTlRejectConfirmOpen(false);
     setRejectDialogOpen(true);
   };
 
@@ -2040,6 +2052,20 @@ export default function PurchaseOrdersPage() {
       });
       return;
     }
+    if (orderToReject.status === 'draft') {
+      const expectedName = String(orderToReject.assigned_team_leader?.full_name || '').trim();
+      if (
+        !expectedName ||
+        tlRejectNameInput.trim().toLowerCase() !== expectedName.toLowerCase()
+      ) {
+        toast({
+          title: 'Name does not match',
+          description: 'Type the receiving team leader\'s name exactly to cancel.',
+          variant: 'destructive',
+        });
+        return;
+      }
+    }
     setRejectingOrderId(orderToReject.id);
     const result =
       orderToReject.status === 'draft'
@@ -2047,9 +2073,11 @@ export default function PurchaseOrdersPage() {
         : await rejectPurchaseOrder(orderToReject.id);
     setRejectingOrderId(null);
     if (result.success) {
+      setTlRejectConfirmOpen(false);
       setRejectDialogOpen(false);
       setOrderToReject(null);
       setTlRejectReason('');
+      setTlRejectNameInput('');
     } else {
       toast({ title: 'Error', description: result.error || 'Failed to reject purchase order', variant: 'destructive' });
     }
@@ -2560,7 +2588,7 @@ export default function PurchaseOrdersPage() {
                       <TableCell className="text-right font-semibold">
                         ₱{order.total_amount.toLocaleString()}
                       </TableCell>
-                      <TableCell>{renderPoListStatus(order)}</TableCell>
+                      <TableCell className="whitespace-nowrap">{renderPoListStatus(order)}</TableCell>
                       <TableCell className="text-right">
                         {renderPoRowActions(order)}
                       </TableCell>
@@ -2915,6 +2943,7 @@ export default function PurchaseOrdersPage() {
                   <Label htmlFor="tl-approve-name-confirm">Team leader name</Label>
                   <Input
                     id="tl-approve-name-confirm"
+                    className="text-black"
                     value={tlApproveNameInput}
                     onChange={(e) => setTlApproveNameInput(e.target.value)}
                     placeholder={
@@ -2960,7 +2989,10 @@ export default function PurchaseOrdersPage() {
         open={rejectDialogOpen}
         onOpenChange={(open) => {
           setRejectDialogOpen(open);
-          if (!open) setTlRejectReason('');
+          if (!open && !tlRejectConfirmOpen) {
+            setTlRejectReason('');
+            setTlRejectNameInput('');
+          }
         }}
       >
         <AlertDialogContent>
@@ -2986,6 +3018,7 @@ export default function PurchaseOrdersPage() {
                     <Label htmlFor="tl-cancel-reason">Reason</Label>
                     <Textarea
                       id="tl-cancel-reason"
+                      className="text-black"
                       value={tlRejectReason}
                       onChange={(e) => setTlRejectReason(e.target.value)}
                       placeholder="Type the reason for cancelling this PO"
@@ -3005,8 +3038,11 @@ export default function PurchaseOrdersPage() {
                 (orderToReject?.status === 'draft' && !tlRejectReason.trim())
               }
               onClick={(e) => {
-                if (orderToReject?.status === 'draft' && !tlRejectReason.trim()) {
+                if (orderToReject?.status === 'draft') {
                   e.preventDefault();
+                  if (!tlRejectReason.trim()) return;
+                  setTlRejectNameInput('');
+                  setTlRejectConfirmOpen(true);
                   return;
                 }
                 void handleRejectOrder();
@@ -3024,6 +3060,71 @@ export default function PurchaseOrdersPage() {
                     ? 'Cancel'
                     : 'Reject'}
                 </>
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={tlRejectConfirmOpen}
+        onOpenChange={(open) => {
+          setTlRejectConfirmOpen(open);
+          if (!open) setTlRejectNameInput('');
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm receiving team leader</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-4 pt-2">
+                <p>
+                  This cancellation is for{' '}
+                  <span className="font-semibold text-foreground">
+                    {orderToReject?.assigned_team_leader?.full_name || 'the assigned team leader'}
+                  </span>
+                  . Type their full name to cancel the right PO.
+                </p>
+                <div className="space-y-2">
+                  <Label htmlFor="tl-cancel-name-confirm">Team leader name</Label>
+                  <Input
+                    id="tl-cancel-name-confirm"
+                    className="text-black"
+                    value={tlRejectNameInput}
+                    onChange={(e) => setTlRejectNameInput(e.target.value)}
+                    placeholder={
+                      orderToReject?.assigned_team_leader?.full_name || 'Enter team leader name'
+                    }
+                    autoComplete="off"
+                  />
+                </div>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={Boolean(rejectingOrderId)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={
+                Boolean(rejectingOrderId) ||
+                !String(orderToReject?.assigned_team_leader?.full_name || '').trim() ||
+                tlRejectNameInput.trim().toLowerCase() !==
+                  String(orderToReject?.assigned_team_leader?.full_name || '')
+                    .trim()
+                    .toLowerCase()
+              }
+              onClick={(e) => {
+                e.preventDefault();
+                void handleRejectOrder();
+              }}
+            >
+              {rejectingOrderId ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Cancelling…
+                </>
+              ) : (
+                'Submit'
               )}
             </AlertDialogAction>
           </AlertDialogFooter>
