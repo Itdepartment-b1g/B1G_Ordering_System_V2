@@ -67,6 +67,7 @@ const leaderMenuItems: MenuItem[] = [
     { title: 'Pending Requests', url: '/inventory/pending-requests', description: 'Approve or reject inventory requests from your agents.' },
     { title: 'Team Remittances', url: '/inventory/team-remittances', description: 'Review stock and cash remittances submitted by your team.' },
     { title: 'Cash Deposits', url: '/inventory/cash-deposits', description: 'Record and review cash/cheque deposits for your team.' },
+    { title: 'Purchase Orders', url: '/purchase-orders', description: 'Request warehouse transfer POs. Super Admin approves before the hub fulfills.' },
     { title: 'PO Receiving', url: '/inventory/po-receive', description: 'Receive warehouse transfer POs assigned to you and report delivery shortages.' },
     { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', description: 'Return your allocated stock to the linked warehouse for inspection (good/damaged + batch).' },
     { title: 'How to use?', url: '/leader-manual', description: 'Open the team leader manual and usage guides.' },

@@ -128,7 +128,9 @@ function eventSummary(
         : `Received ${qty.toLocaleString()} unit(s) · complete${fromPart}`;
     }
     case 'rejected':
-      return 'Purchase order was rejected';
+      return event.note?.trim()
+        ? `Purchase order was cancelled by ${event.byName?.trim() || 'Super Admin'}`
+        : 'Purchase order was rejected';
     case 'cancelled':
       return `Cancelled DR · ${qty.toLocaleString()} unit(s)`;
     case 'shortage_opened': {

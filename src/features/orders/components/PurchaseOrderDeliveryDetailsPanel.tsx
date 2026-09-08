@@ -816,7 +816,7 @@ export function PurchaseOrderDeliveryDetailsPanel({
                           Receive
                         </Button>
                       ) : null}
-                      {canCancel ? (
+                      {/* {canCancel ? (
                         <Button
                           variant="destructive"
                           size="sm"
@@ -826,7 +826,7 @@ export function PurchaseOrderDeliveryDetailsPanel({
                           <XCircle className="h-4 w-4 mr-1" />
                           Cancel DR
                         </Button>
-                      ) : null}
+                      ) : null} */}
                     </div>
                     <p className="text-[11px] text-muted-foreground">
                       Proof images use signed URLs; if they fail to load later, links may have expired and

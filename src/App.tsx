@@ -4,7 +4,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { queryClient, queryPersistOptions } from "@/lib/queryClient";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Navigate, Routes, Route } from "react-router-dom";
 import { AuthProvider, ProtectedRoute, LoginPage, RoleBasedRedirect } from "@/features/auth";
 import { COMPANY_AGENT_INVENTORY_ROLES } from "@/lib/roleUtils";
 import { DashboardPage, SysAdDashboardPage, SuperAdminDashboardPage } from "@/features/dashboard";
@@ -239,6 +239,7 @@ const App = () => (
                     <Route path="/inventory/admin-requests" element={<ProtectedRoute><AdminRequestsPage /></ProtectedRoute>} />
                     <Route path="/inventory/tl-stock-requests" element={<ProtectedRoute allowedRoles={['team_leader']}><TLStockRequestPage /></ProtectedRoute>} />
                     <Route path="/inventory/po-receive" element={<ProtectedRoute allowedRoles={['team_leader']}><LeaderPoReceivePage /></ProtectedRoute>} />
+                    <Route path="/inventory/po-request" element={<Navigate to="/purchase-orders" replace />} />
                     <Route path="/inventory/admin-tl-requests" element={<ProtectedRoute allowedRoles={['admin', 'super_admin']}><AdminTLRequestsPage /></ProtectedRoute>} />
                     <Route path="/inventory/leaders" element={<ProtectedRoute><LeaderInventoryPage /></ProtectedRoute>} />
                     <Route path="/leader-inventory" element={<ProtectedRoute><LeaderInventoryPage /></ProtectedRoute>} />

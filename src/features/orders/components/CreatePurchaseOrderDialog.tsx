@@ -1,5 +1,5 @@
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -31,7 +31,8 @@ import { Package, FileText } from 'lucide-react';
 import { PoTeamLeaderSelect, type TeamLeaderOption } from './PoTeamLeaderSelect';
 
 // Types
-import type { Supplier } from '../types';
+import type { PurchaseOrder, Supplier } from '../types';
+import type { PurchaseOrderWritePayload } from '../hooks';
 
 interface BrandVariant {
     id: string;
@@ -63,19 +64,12 @@ interface CreatePurchaseOrderDialogProps {
     user: any;
     /** When set, user can choose internal transfer from this hub company catalog. */
     linkedWarehouseCompanyId: string | null;
-    onCreateOrder: (orderData: {
-        supplier_id: string | null;
-        fulfillment_type: 'supplier' | 'warehouse_transfer';
-        warehouse_company_id?: string | null;
-        warehouse_location_id?: string | null;
-        order_date: string;
-        expected_delivery_date: string;
-        items: Array<{ variant_id: string; quantity: number; unit_price: number; warehouse_location_id?: string | null }>;
-        tax_rate: number;
-        discount: number;
-        notes: string;
-        assigned_team_leader_id?: string | null;
-    }) => Promise<{ success: boolean; error?: string }>;
+    onCreateOrder: (orderData: PurchaseOrderWritePayload) => Promise<{ success: boolean; error?: string }>;
+    onUpdateOrder?: (poId: string, orderData: PurchaseOrderWritePayload) => Promise<{ success: boolean; error?: string }>;
+    /** When set, the dialog edits this draft instead of creating a new PO. */
+    editOrder?: PurchaseOrder | null;
+    /** Team leader requests a hub transfer assigned to themselves. */
+    mode?: 'admin' | 'team_leader';
 }
 
 export function CreatePurchaseOrderDialog({
@@ -85,11 +79,17 @@ export function CreatePurchaseOrderDialog({
     user,
     linkedWarehouseCompanyId,
     onCreateOrder,
+    onUpdateOrder,
+    editOrder = null,
+    mode = 'admin',
 }: CreatePurchaseOrderDialogProps) {
     const { toast } = useToast();
+    const isTeamLeaderMode = mode === 'team_leader';
+    const isEditing = Boolean(editOrder);
+    const hydratedEditIdRef = useRef<string | null>(null);
 
     const [fulfillmentMode, setFulfillmentMode] = useState<'supplier' | 'warehouse_transfer'>(
-        linkedWarehouseCompanyId ? 'warehouse_transfer' : 'supplier'
+        linkedWarehouseCompanyId || isTeamLeaderMode ? 'warehouse_transfer' : 'supplier'
     );
     const catalogCompanyId =
         fulfillmentMode === 'warehouse_transfer' && linkedWarehouseCompanyId
@@ -136,7 +136,7 @@ export function CreatePurchaseOrderDialog({
             if (error) throw error;
             return (data ?? []) as TeamLeaderOption[];
         },
-        enabled: open && fulfillmentMode === 'warehouse_transfer' && !!user?.company_id,
+        enabled: open && fulfillmentMode === 'warehouse_transfer' && !!user?.company_id && !isTeamLeaderMode,
         staleTime: 60_000,
     });
 
@@ -155,17 +155,93 @@ export function CreatePurchaseOrderDialog({
 
     // Items State
     const [items, setItems] = useState<NewPOItem[]>([]);
+    const [editReady, setEditReady] = useState(false);
 
     // Stock State: map of `${variantId}::${locationId}` to stock quantity
     const [itemStockMap, setItemStockMap] = useState<Record<string, number>>({});
 
     useEffect(() => {
         if (!open) {
-            setSelectedTeamLeaderId('');
+            setSelectedTeamLeaderId(isTeamLeaderMode && user?.id ? user.id : '');
             setLeaderConfirmOpen(false);
             setLeaderNameConfirmInput('');
+            hydratedEditIdRef.current = null;
+            setEditReady(false);
+            if (isTeamLeaderMode) {
+                setFulfillmentMode('warehouse_transfer');
+            }
+        } else if (isTeamLeaderMode && user?.id) {
+            setSelectedTeamLeaderId(user.id);
+            setFulfillmentMode('warehouse_transfer');
         }
-    }, [open]);
+    }, [open, isTeamLeaderMode, user?.id]);
+
+    useEffect(() => {
+        if (!open || !editOrder) {
+            if (open && !editOrder) setEditReady(true);
+            return;
+        }
+        if (hydratedEditIdRef.current === editOrder.id) return;
+        hydratedEditIdRef.current = editOrder.id;
+
+        const toDateInput = (value?: string | null) => (value ? String(value).slice(0, 10) : '');
+        const locIds = Array.from(
+            new Set(
+                (editOrder.items || [])
+                    .map((item) => String(item.warehouse_location_id || editOrder.warehouse_location_id || ''))
+                    .filter(Boolean)
+            )
+        );
+        const isMulti = locIds.length > 1;
+        const firstLoc = locIds[0] || String(editOrder.warehouse_location_id || '');
+
+        setFulfillmentMode(
+            editOrder.fulfillment_type === 'warehouse_transfer' ? 'warehouse_transfer' : 'supplier'
+        );
+        setOrderDate(toDateInput(editOrder.order_date) || new Date().toISOString().split('T')[0]);
+        setExpectedDelivery(toDateInput(editOrder.expected_delivery_date));
+        setTaxRate(Number(editOrder.tax_rate || 0));
+        setDiscount(Number(editOrder.discount || 0));
+        setNotes(editOrder.notes || '');
+        setSelectedSupplierId(editOrder.supplier_id || '');
+        setSourceMode(isMulti ? 'multi' : 'single');
+        setSelectedWarehouseLocationId(firstLoc);
+        setActiveWarehouseTabId(firstLoc);
+        setSelectedSourceValue(firstLoc ? `wh:${firstLoc}` : '');
+        setSelectedTeamLeaderId(
+            editOrder.assigned_team_leader_id || (isTeamLeaderMode ? user?.id : '') || ''
+        );
+        setItems(
+            (editOrder.items || []).map((item) => ({
+                id: item.id || crypto.randomUUID(),
+                brandId: '',
+                brandName: item.brand_name,
+                variantId: item.variant_id,
+                variantName: item.variant_name,
+                variantType: item.variant_type,
+                quantity: item.quantity,
+                unitPrice: item.unit_price,
+                warehouseLocationId: item.warehouse_location_id || editOrder.warehouse_location_id || undefined,
+            }))
+        );
+        setEditReady(true);
+    }, [open, editOrder, isTeamLeaderMode, user?.id]);
+
+    useEffect(() => {
+        if (!open || !editOrder || availableVariants.length === 0) return;
+        setItems((prev) =>
+            prev.map((item) => {
+                const match = availableVariants.find((variant) => variant.id === item.variantId);
+                if (!match) return item;
+                return {
+                    ...item,
+                    brandId: match.brand_id,
+                    brandName: match.brand_name,
+                    variantType: match.variant_type || item.variantType,
+                };
+            })
+        );
+    }, [open, editOrder, availableVariants]);
 
     useEffect(() => {
         if (fulfillmentMode !== 'warehouse_transfer') {
@@ -189,6 +265,7 @@ export function CreatePurchaseOrderDialog({
     useEffect(() => {
         if (!open) return;
         if (fulfillmentMode !== 'warehouse_transfer') return;
+        if (isEditing && !editReady) return;
         setItems(prev =>
             prev.map(i => {
                 if (sourceMode === 'single') {
@@ -201,7 +278,7 @@ export function CreatePurchaseOrderDialog({
                 return i;
             })
         );
-    }, [open, fulfillmentMode, sourceMode, selectedWarehouseLocationId]);
+    }, [open, fulfillmentMode, sourceMode, selectedWarehouseLocationId, isEditing, editReady]);
 
     // Add Existing Dialog State
     const [addExistingOpen, setAddExistingOpen] = useState(false);
@@ -345,10 +422,10 @@ export function CreatePurchaseOrderDialog({
     const readOnlyCatalogEdits = fulfillmentMode === 'warehouse_transfer' && user?.role !== 'warehouse';
 
     useEffect(() => {
-        if (open && !linkedWarehouseCompanyId) {
+        if (open && !linkedWarehouseCompanyId && !isEditing) {
             setFulfillmentMode('supplier');
         }
-    }, [open, linkedWarehouseCompanyId]);
+    }, [open, linkedWarehouseCompanyId, isEditing]);
 
     useEffect(() => {
         if (!open || !linkedWarehouseCompanyId) {
@@ -662,7 +739,7 @@ export function CreatePurchaseOrderDialog({
                 return false;
             }
         }
-        if (fulfillmentMode === 'warehouse_transfer' && !selectedTeamLeaderId) {
+        if (fulfillmentMode === 'warehouse_transfer' && !selectedTeamLeaderId && !isTeamLeaderMode) {
             toast({ title: 'Error', description: 'Please select a receiving team leader', variant: 'destructive' });
             return false;
         }
@@ -680,7 +757,7 @@ export function CreatePurchaseOrderDialog({
     const handleCreateClick = () => {
         if (!validateForm()) return;
 
-        if (fulfillmentMode === 'warehouse_transfer') {
+        if (fulfillmentMode === 'warehouse_transfer' && !isTeamLeaderMode && !isEditing) {
             setLeaderConfirmOpen(true);
             return;
         }
@@ -737,6 +814,9 @@ export function CreatePurchaseOrderDialog({
 
                 // 1. Create Brand if new
                 if (finalBrandId === 'new' || !finalBrandId) {
+                    if (isTeamLeaderMode) {
+                        throw new Error('Select an existing product from the warehouse catalog');
+                    }
                     // Check if brand name provided
                     if (!item.brandName.trim()) throw new Error("Brand name required for new item");
 
@@ -763,6 +843,9 @@ export function CreatePurchaseOrderDialog({
 
                 // 2. Create Variant if new
                 if (finalVariantId === 'new' || !finalVariantId) {
+                    if (isTeamLeaderMode) {
+                        throw new Error('Select an existing product from the warehouse catalog');
+                    }
                     if (!item.variantName.trim()) throw new Error("Item name required");
 
                     // Check existence
@@ -817,8 +900,8 @@ export function CreatePurchaseOrderDialog({
                 return;
             }
 
-            // 3. Create Order
-            const { success, error } = await onCreateOrder({
+            // 3. Create or update order
+            const payload: PurchaseOrderWritePayload = {
                 fulfillment_type: fulfillmentMode,
                 warehouse_company_id: fulfillmentMode === 'warehouse_transfer' ? linkedWarehouseCompanyId : null,
                 warehouse_location_id:
@@ -833,8 +916,16 @@ export function CreatePurchaseOrderDialog({
                 discount: discount,
                 notes: notes,
                 assigned_team_leader_id:
-                    fulfillmentMode === 'warehouse_transfer' ? selectedTeamLeaderId : null,
-            });
+                    fulfillmentMode === 'warehouse_transfer'
+                        ? (isTeamLeaderMode ? user?.id : selectedTeamLeaderId)
+                        : null,
+            };
+
+            const { success, error } = isEditing
+                ? await (onUpdateOrder
+                    ? onUpdateOrder(editOrder!.id, payload)
+                    : Promise.resolve({ success: false, error: 'Update is not available' }))
+                : await onCreateOrder(payload);
 
             if (!success) throw new Error(error);
 
@@ -856,19 +947,33 @@ export function CreatePurchaseOrderDialog({
             <Dialog open={open} onOpenChange={onOpenChange}>
                 <DialogContent className="max-w-[95vw] h-[95vh] flex flex-col p-0 gap-0">
                     <DialogHeader className="px-6 py-4 border-b">
-                        <DialogTitle>Create Purchase Order</DialogTitle>
+                        <DialogTitle>
+                            {isEditing
+                                ? `Edit ${editOrder?.po_number || 'Purchase Order'}`
+                                : isTeamLeaderMode
+                                    ? 'Request Purchase Order'
+                                    : 'Create Purchase Order'}
+                        </DialogTitle>
                     </DialogHeader>
 
                     <div className="flex-1 overflow-hidden flex flex-col md:flex-row">
                         {/* Left Panel: Settings */}
                         <div className="w-full md:w-80 border-r bg-muted/10 p-4 overflow-y-auto space-y-4">
-                            {linkedWarehouseCompanyId && (
+                            {isTeamLeaderMode && (
+                                <p className="text-xs text-muted-foreground rounded-md border bg-background p-3">
+                                    {isEditing
+                                        ? 'You can edit this request until Super Admin approves it. After approval it goes to the warehouse hub.'
+                                        : 'Super Admin reviews this request first. After approval it goes to the warehouse hub.'}
+                                </p>
+                            )}
+                            {linkedWarehouseCompanyId && !isTeamLeaderMode && (
                                 <div className="space-y-2">
                                     <Label>Fulfillment</Label>
                                     <RadioGroup
                                         value={fulfillmentMode}
                                         onValueChange={(v) => setFulfillmentMode(v as 'supplier' | 'warehouse_transfer')}
                                         className="space-y-2"
+                                        disabled={isEditing}
                                     >
                                         <div className="flex items-center space-x-2 rounded-md border bg-background p-2">
                                             <RadioGroupItem value="supplier" id="po-supplier" />
@@ -981,7 +1086,7 @@ export function CreatePurchaseOrderDialog({
                                 </div>
                             )}
 
-                            {fulfillmentMode === 'warehouse_transfer' && (
+                            {fulfillmentMode === 'warehouse_transfer' && !isTeamLeaderMode && !isEditing && (
                                 <PoTeamLeaderSelect
                                     companyId={user?.company_id}
                                     value={selectedTeamLeaderId}
@@ -1333,9 +1438,13 @@ export function CreatePurchaseOrderDialog({
 
                             <div className="p-4 border-t bg-muted/20 flex justify-end gap-2">
                                 <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-                                <Button onClick={handleCreateClick} disabled={isSubmitting || catalogLoading || !catalogCompanyId}>
+                                <Button onClick={handleCreateClick} disabled={isSubmitting || catalogLoading || !catalogCompanyId || (isEditing && !editReady)}>
                                     {isSubmitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
-                                    Create Purchase Order
+                                    {isEditing
+                                        ? 'Save changes'
+                                        : isTeamLeaderMode
+                                            ? 'Submit for Approval'
+                                            : 'Create Purchase Order'}
                                 </Button>
                             </div>
                         </div>

@@ -310,6 +310,7 @@ const leaderMenuItems: MenuItem[] = [
       { title: 'Pending Requests', url: '/inventory/pending-requests', icon: Send },
       { title: 'Team Remittances', url: '/inventory/team-remittances', icon: ArrowLeft },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: DollarSign },
+      { title: 'Purchase Orders', url: '/purchase-orders', icon: ClipboardList },
       { title: 'PO Receiving', url: '/inventory/po-receive', icon: PackageCheck },
       { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
     ]

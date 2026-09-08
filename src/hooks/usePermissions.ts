@@ -54,6 +54,10 @@ export function usePermissions() {
       return user?.role === 'team_leader' && hasWarehouseHubLink === true;
     }
 
+    if (route === '/purchase-orders' && user?.role === 'team_leader') {
+      return hasWarehouseHubLink === true;
+    }
+
     if (route === '/leader-manual') {
       return user?.role === 'team_leader' && hasWarehouseHubLink === true;
     }

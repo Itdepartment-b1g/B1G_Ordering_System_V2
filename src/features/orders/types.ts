@@ -82,6 +82,10 @@ export interface PurchaseOrder {
     total_amount: number;
     status: 'draft' | 'submitted' | 'pending' | 'approved' | 'approved_for_fulfillment' | 'partially_fulfilled' | 'fulfilled' | 'rejected' | 'cancelled' | 'delivered';
     notes: string;
+    /** Super Admin cancel reason for a Team Leader draft transfer PO. */
+    cancellation_reason?: string | null;
+    cancelled_by?: string | null;
+    cancelled_by_user?: { full_name?: string | null; email?: string | null } | null;
     created_by: string;
     approved_by?: string;
     approved_at?: string;

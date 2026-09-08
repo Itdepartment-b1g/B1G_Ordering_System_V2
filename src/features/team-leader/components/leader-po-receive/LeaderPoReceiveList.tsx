@@ -364,12 +364,17 @@ function PoRowActionsMenu({
 type LeaderPoReceiveListProps = {
   orders: TlReceiveListItem[];
   onReceive: (order: TlReceiveListItem) => void;
+  initialSearch?: string;
 };
 
-export function LeaderPoReceiveList({ orders, onReceive }: LeaderPoReceiveListProps) {
+export function LeaderPoReceiveList({
+  orders,
+  onReceive,
+  initialSearch = '',
+}: LeaderPoReceiveListProps) {
   const [viewMode, setViewMode] = useState<ListViewMode>('rows');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(initialSearch);
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);

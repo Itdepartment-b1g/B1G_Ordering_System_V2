@@ -37,6 +37,14 @@ export function getNotificationHref(
             if (notification.notification_type === 'inventory_allocated') {
                 return role === 'team_leader' ? '/my-inventory' : '/purchase-orders';
             }
+            if (
+                role === 'team_leader' &&
+                (notification.notification_type === 'stock_request_created' ||
+                    notification.notification_type === 'stock_request_approved' ||
+                    notification.notification_type === 'stock_request_rejected')
+            ) {
+                return '/purchase-orders';
+            }
             return role === 'team_leader' ? '/inventory/po-receive' : '/purchase-orders';
         case 'allocation':
         case 'agent_inventory':

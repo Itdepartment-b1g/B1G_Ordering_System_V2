@@ -4,6 +4,7 @@ export type PurchaseOrderSortKey =
   | 'poNumber'
   | 'type'
   | 'from'
+  | 'createdBy'
   | 'seller'
   | 'orderDate'
   | 'expectedDeliveryDate'
@@ -47,6 +48,15 @@ export function getPoFromLabel(order: PurchaseOrder): PoFromLabel {
   };
 }
 
+/** Super Admin Created by column: who submitted the PO. */
+export function getPoCreatedByName(order: PurchaseOrder): string {
+  const name = order.created_by_user?.full_name?.trim();
+  if (name) return name;
+  const email = order.created_by_user?.email?.trim();
+  if (email) return email;
+  return '—';
+}
+
 function getTypeLabel(order: PurchaseOrder): string {
   return order.fulfillment_type === 'warehouse_transfer' ? 'Internal' : 'Supplier';
 }
@@ -79,6 +89,9 @@ export function sortPurchaseOrders(
         break;
       case 'from':
         result = getFromSortLabel(a).localeCompare(getFromSortLabel(b));
+        break;
+      case 'createdBy':
+        result = getPoCreatedByName(a).localeCompare(getPoCreatedByName(b));
         break;
       case 'seller':
         result = getSellerLabel(a).localeCompare(getSellerLabel(b));

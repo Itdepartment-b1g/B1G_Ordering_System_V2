@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Loader2, PackageCheck, Clock, CheckCircle2, AlertTriangle, Package, BookOpen } from 'lucide-react';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -68,6 +68,10 @@ export default function LeaderPoReceivePage() {
   const { user } = useAuth();
   const { toast } = useToast();
   const { hasWarehouseHubLink, hasWarehouseHubLinkLoading } = usePermissions();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialSearch = searchParams.get('search') ?? '';
+  const shouldAutoOpenReceive = searchParams.get('open') === 'receive';
+  const autoOpenedReceiveRef = useRef(false);
   const { orders, loading, error, refresh } = useLeaderAssignedPoReceives(
     user?.id,
     user?.company_id,
@@ -106,6 +110,38 @@ export default function LeaderPoReceivePage() {
     });
     setReceiveOpen(true);
   };
+
+  useEffect(() => {
+    if (!shouldAutoOpenReceive || autoOpenedReceiveRef.current || loading) return;
+
+    const query = initialSearch.trim().toLowerCase();
+    const match = orders.find((order) => {
+      if (!order.pendingReceive) return false;
+      if (!query) return order.status === 'pending_receive';
+      return order.po_number.toLowerCase() === query;
+    }) ?? orders.find((order) => {
+      if (!order.pendingReceive || !query) return false;
+      return order.po_number.toLowerCase().includes(query);
+    });
+
+    autoOpenedReceiveRef.current = true;
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('open');
+    setSearchParams(nextParams, { replace: true });
+
+    if (!match) {
+      if (query) {
+        toast({
+          title: 'Nothing to receive',
+          description: `No dispatched delivery is waiting for receive on ${initialSearch.trim()}.`,
+          variant: 'destructive',
+        });
+      }
+      return;
+    }
+
+    handleOpenReceive(match);
+  }, [shouldAutoOpenReceive, loading, orders, initialSearch, searchParams, setSearchParams, toast, user?.company_id]);
 
   if (!user || user.role !== 'team_leader') {
     return (
@@ -221,7 +257,12 @@ export default function LeaderPoReceivePage() {
           Loading assigned purchase orders...
         </div>
       ) : (
-        <LeaderPoReceiveList orders={orders} onReceive={handleOpenReceive} />
+        <LeaderPoReceiveList
+          key={initialSearch || 'all'}
+          orders={orders}
+          onReceive={handleOpenReceive}
+          initialSearch={initialSearch}
+        />
       )}
 
       {receiveTarget ? (

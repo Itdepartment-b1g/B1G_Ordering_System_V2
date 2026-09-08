@@ -2,6 +2,7 @@ import type { PurchaseOrder } from '../types';
 
 export type PurchaseOrderStatusFilter =
   | 'all'
+  | 'draft'
   | 'pending'
   | 'approved'
   | 'approved_for_fulfillment'
@@ -13,6 +14,7 @@ export type PurchaseOrderStatusFilter =
 
 export const PO_STATUS_FILTER_LABELS: Record<PurchaseOrderStatusFilter, string> = {
   all: 'All statuses',
+  draft: 'Awaiting approval',
   pending: 'Pending',
   approved: 'Approved',
   approved_for_fulfillment: 'Approved for fulfillment',
@@ -25,6 +27,7 @@ export const PO_STATUS_FILTER_LABELS: Record<PurchaseOrderStatusFilter, string> 
 
 export const PO_STATUS_FILTER_OPTIONS: PurchaseOrderStatusFilter[] = [
   'all',
+  'draft',
   'pending',
   'approved',
   'approved_for_fulfillment',

@@ -180,7 +180,10 @@ function eventSummary(
   }
 
   if (event.type === 'rejected') {
-    return 'Purchase order was rejected';
+    const byName = event.byName?.trim();
+    return event.note?.trim()
+      ? `Purchase order was cancelled by ${byName || 'Super Admin'}`
+      : 'Purchase order was rejected';
   }
 
   if (event.type === 'cancelled') {
@@ -793,7 +796,7 @@ export function PurchaseOrderHistoryTimeline({
                       <XCircle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-red-700" />
                       <div className="min-w-0 space-y-0.5">
                         <p className="font-semibold uppercase tracking-wide text-red-800 text-[10px]">
-                          Reason
+                          Cancelled by {event.byName?.trim() || 'Super Admin'}
                         </p>
                         <p className="whitespace-pre-wrap leading-snug">{event.note}</p>
                       </div>

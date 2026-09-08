@@ -2,9 +2,10 @@ import { useState, useEffect, useRef, ReactNode } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
-import { sendNotification } from '@/features/shared/lib/notification.helpers';
+import { sendNotification, sendNotificationToCompanyRoles } from '@/features/shared/lib/notification.helpers';
 import type { PurchaseOrder, PurchaseOrderItem, Supplier } from './types';
 import { PurchaseOrderContext } from './hooks';
+import type { PurchaseOrderWritePayload } from './hooks';
 
 const WAREHOUSE_PLACEHOLDER_SUPPLIER: Supplier = {
   id: '',
@@ -78,6 +79,9 @@ function formatPurchaseOrder(order: any, items: any[]): PurchaseOrder {
   const rawAssignedTeamLeader = Array.isArray(order.assigned_team_leader)
     ? order.assigned_team_leader[0]
     : order.assigned_team_leader;
+  const rawCancelledByUser = Array.isArray(order.cancelled_by_user)
+    ? order.cancelled_by_user[0]
+    : order.cancelled_by_user;
 
   return {
     ...order,
@@ -95,6 +99,7 @@ function formatPurchaseOrder(order: any, items: any[]): PurchaseOrder {
     kam: rawKam ?? null,
     created_by_user: rawCreatedByUser ?? null,
     assigned_team_leader: rawAssignedTeamLeader ?? null,
+    cancelled_by_user: rawCancelledByUser ?? null,
   };
 }
 
@@ -124,7 +129,7 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
       let poQuery = supabase
         .from('purchase_orders')
         .select(`
-          id, created_at, supplier_id, fulfillment_type, warehouse_company_id, warehouse_location_id, subtotal, tax_rate, tax_amount, discount, total_amount, status, company_id, po_number, order_date, expected_delivery_date, notes, created_by, approved_by, approved_at, updated_at,
+          id, created_at, supplier_id, fulfillment_type, warehouse_company_id, warehouse_location_id, subtotal, tax_rate, tax_amount, discount, total_amount, status, company_id, po_number, order_date, expected_delivery_date, notes, cancellation_reason, created_by, approved_by, approved_at, updated_at,
           company_account_type, workflow_status, rfpf_number, dr_number, po_order_kind, source_rebate_id,
           kam_id, assigned_team_leader_id,
           key_account_client_id, key_account_shop_id, key_account_address_id,
@@ -162,6 +167,8 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
         // and RLS already restricts sub-warehouses to their slice.
         // Filtering here would hide valid multi-location POs (header location can be NULL).
         void isMain;
+      } else if (user?.role === 'team_leader' && user.id) {
+        poQuery = poQuery.eq('created_by', user.id);
       }
 
       const { data: orders, error: ordersError } = await poQuery.order('created_at', { ascending: false });
@@ -302,6 +309,15 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
         if (orderData.fulfillment_type === 'supplier' && !orderData.supplier_id) {
           return { success: false, error: 'Supplier is required' };
         }
+        const isTeamLeaderCreator = user.role === 'team_leader';
+        if (isTeamLeaderCreator) {
+          if (!linkedWarehouseCompanyId && !orderData.warehouse_company_id) {
+            return { success: false, error: 'Warehouse hub is not configured for this company' };
+          }
+          if (orderData.fulfillment_type !== 'warehouse_transfer') {
+            return { success: false, error: 'Team leaders can only request warehouse transfer purchase orders' };
+          }
+        }
         if (orderData.fulfillment_type === 'warehouse_transfer' && !orderData.warehouse_company_id) {
           return { success: false, error: 'Warehouse hub is not configured for this company' };
         }
@@ -311,7 +327,11 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
           if (!hasHeaderLocation && !hasItemLocations) {
             return { success: false, error: 'Warehouse location is required for internal transfers' };
           }
-          if (!orderData.assigned_team_leader_id) {
+          if (isTeamLeaderCreator) {
+            if (orderData.assigned_team_leader_id && orderData.assigned_team_leader_id !== user.id) {
+              return { success: false, error: 'Team leaders can only create purchase orders assigned to themselves' };
+            }
+          } else if (!orderData.assigned_team_leader_id) {
             return { success: false, error: 'Receiving team leader is required for internal transfers' };
           }
         }
@@ -376,12 +396,12 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
             tax_amount,
             discount: orderData.discount,
             total_amount,
-            status: 'pending',
+            status: isTeamLeaderCreator ? 'draft' : 'pending',
             notes: orderData.notes,
             created_by: user.id,
             assigned_team_leader_id:
               orderData.fulfillment_type === 'warehouse_transfer'
-                ? orderData.assigned_team_leader_id
+                ? (isTeamLeaderCreator ? user.id : orderData.assigned_team_leader_id)
                 : null,
           })
           .select()
@@ -432,43 +452,60 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
         const hubLinked =
           orderData.fulfillment_type === 'warehouse_transfer' &&
           !!(orderData.warehouse_company_id || linkedWarehouseCompanyId);
-        const assignedTlId =
-          hubLinked && orderData.assigned_team_leader_id
+        const assignedTlId = isTeamLeaderCreator
+          ? null
+          : hubLinked && orderData.assigned_team_leader_id
             ? orderData.assigned_team_leader_id
             : null;
 
-        let assignedTlName: string | null = null;
-        if (assignedTlId) {
-          const { data: tlProfile } = await supabase
-            .from('profiles')
-            .select('full_name')
-            .eq('id', assignedTlId)
-            .maybeSingle();
-          assignedTlName = String(tlProfile?.full_name || '').trim() || null;
-
-          if (user.company_id) {
-            void sendNotification({
-              userId: assignedTlId,
-              companyId: user.company_id,
-              type: 'purchase_order_approved',
-              title: 'Purchase Order Assigned',
-              message: `${poNumber} was assigned to you for receiving. Open PO Receiving when the warehouse dispatches stock.`,
-              referenceType: 'purchase_order',
-              referenceId: newPO.id,
-            });
-          }
-        }
-
-        if (assignedTlId) {
+        if (isTeamLeaderCreator && user.company_id) {
+          void sendNotificationToCompanyRoles({
+            companyId: user.company_id,
+            roles: ['super_admin'],
+            type: 'stock_request_created',
+            title: 'Team Leader PO request',
+            message: `${poNumber} from ${user.full_name || 'a team leader'} is waiting for your approval.`,
+            referenceType: 'purchase_order',
+            referenceId: newPO.id,
+          });
           toast({
-            title: 'PO assigned to Team Leader',
-            description: `${poNumber} is assigned to ${assignedTlName || 'the selected team leader'} for receiving after warehouse fulfills.`,
+            title: 'Purchase order submitted',
+            description: `${poNumber} is waiting for Super Admin approval before it goes to the warehouse.`,
           });
         } else {
-          toast({
-            title: 'Success',
-            description: `Purchase Order ${poNumber} created successfully`,
-          });
+          let assignedTlName: string | null = null;
+          if (assignedTlId) {
+            const { data: tlProfile } = await supabase
+              .from('profiles')
+              .select('full_name')
+              .eq('id', assignedTlId)
+              .maybeSingle();
+            assignedTlName = String(tlProfile?.full_name || '').trim() || null;
+
+            if (user.company_id) {
+              void sendNotification({
+                userId: assignedTlId,
+                companyId: user.company_id,
+                type: 'purchase_order_approved',
+                title: 'Purchase Order Assigned',
+                message: `${poNumber} was assigned to you for receiving. Open PO Receiving when the warehouse dispatches stock.`,
+                referenceType: 'purchase_order',
+                referenceId: newPO.id,
+              });
+            }
+          }
+
+          if (assignedTlId) {
+            toast({
+              title: 'PO assigned to Team Leader',
+              description: `${poNumber} is assigned to ${assignedTlName || 'the selected team leader'} for receiving after warehouse fulfills.`,
+            });
+          } else {
+            toast({
+              title: 'Success',
+              description: `Purchase Order ${poNumber} created successfully`,
+            });
+          }
         }
 
         scheduleBackgroundRefresh();
@@ -482,6 +519,127 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
     }
 
     return { success: false, error: 'Failed to generate a unique PO Number after multiple attempts. Please try again.' };
+  };
+
+  const updatePurchaseOrder = async (poId: string, orderData: PurchaseOrderWritePayload) => {
+    try {
+      if (!user) {
+        return { success: false, error: 'User not authenticated' };
+      }
+      if (!user.company_id) {
+        return { success: false, error: 'User company information not found' };
+      }
+
+      const existing = purchaseOrders.find((order) => order.id === poId);
+      if (!existing) {
+        return { success: false, error: 'Purchase order not found' };
+      }
+      if (existing.created_by !== user.id) {
+        return { success: false, error: 'Only the creator can edit this purchase order' };
+      }
+      if (existing.status !== 'draft') {
+        return { success: false, error: 'This purchase order can only be edited before Super Admin approval' };
+      }
+      if (existing.fulfillment_type !== 'warehouse_transfer') {
+        return { success: false, error: 'Only warehouse transfer drafts can be edited' };
+      }
+      if (orderData.fulfillment_type !== 'warehouse_transfer') {
+        return { success: false, error: 'Team leader purchase orders must stay as warehouse transfers' };
+      }
+      if (!orderData.warehouse_company_id && !linkedWarehouseCompanyId) {
+        return { success: false, error: 'Warehouse hub is not configured for this company' };
+      }
+
+      const hasHeaderLocation = !!orderData.warehouse_location_id;
+      const hasItemLocations = (orderData.items || []).every((it) => !!it.warehouse_location_id);
+      if (!hasHeaderLocation && !hasItemLocations) {
+        return { success: false, error: 'Warehouse location is required for internal transfers' };
+      }
+      if ((orderData.items || []).length === 0) {
+        return { success: false, error: 'Please add at least one item' };
+      }
+
+      const subtotal = orderData.items.reduce(
+        (sum, item) => sum + item.quantity * item.unit_price,
+        0
+      );
+      const tax_amount = (subtotal * orderData.tax_rate) / 100;
+      const total_amount = subtotal + tax_amount - orderData.discount;
+      const warehouseCompanyId =
+        orderData.warehouse_company_id || linkedWarehouseCompanyId || existing.warehouse_company_id;
+
+      const { data: updated, error: poError } = await supabase
+        .from('purchase_orders')
+        .update({
+          warehouse_company_id: warehouseCompanyId,
+          warehouse_location_id: orderData.warehouse_location_id ?? null,
+          order_date: orderData.order_date,
+          expected_delivery_date: orderData.expected_delivery_date,
+          subtotal,
+          tax_rate: orderData.tax_rate,
+          tax_amount,
+          discount: orderData.discount,
+          total_amount,
+          notes: orderData.notes,
+        })
+        .eq('id', poId)
+        .eq('created_by', user.id)
+        .eq('status', 'draft')
+        .select('id, po_number')
+        .maybeSingle();
+
+      if (poError) throw poError;
+      if (!updated) {
+        return { success: false, error: 'Purchase order could not be updated. Super Admin may have already approved it.' };
+      }
+
+      const { error: deleteError } = await supabase
+        .from('purchase_order_items')
+        .delete()
+        .eq('purchase_order_id', poId)
+        .eq('company_id', user.company_id);
+
+      if (deleteError) throw deleteError;
+
+      const itemsToInsert = orderData.items.map((item) => ({
+        company_id: user.company_id,
+        purchase_order_id: poId,
+        variant_id: item.variant_id,
+        warehouse_location_id: item.warehouse_location_id ?? orderData.warehouse_location_id ?? null,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        total_price: item.quantity * item.unit_price,
+      }));
+
+      const { error: itemsError } = await supabase
+        .from('purchase_order_items')
+        .insert(itemsToInsert);
+
+      if (itemsError) throw itemsError;
+
+      const { logPurchaseOrderEvent } = await import('./purchaseOrderEventsApi');
+      void logPurchaseOrderEvent({
+        purchaseOrderId: poId,
+        eventType: 'updated',
+        note: 'Draft purchase order was edited before Super Admin approval.',
+        lines: orderData.items.map((item) => ({
+          variant_id: item.variant_id,
+          quantity: item.quantity,
+        })),
+        createdBy: user.id,
+      });
+
+      toast({
+        title: 'Purchase order updated',
+        description: `${updated.po_number} was saved. Super Admin still needs to approve it.`,
+      });
+
+      scheduleBackgroundRefresh();
+      return { success: true };
+    } catch (error: any) {
+      console.error('Error updating purchase order:', error);
+      return { success: false, error: error.message };
+    }
   };
 
   // Approve a purchase order
@@ -651,6 +809,126 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const submitTeamLeaderPurchaseOrder = async (poId: string) => {
+    try {
+      if (!user) {
+        return { success: false, error: 'User not authenticated' };
+      }
+
+      const { data, error } = await supabase.rpc('submit_team_leader_transfer_po', {
+        p_po_id: poId,
+      });
+      if (error) throw error;
+      if (!data?.success) {
+        return { success: false, error: data?.error || 'Failed to approve purchase order' };
+      }
+
+      const { data: poRow } = await supabase
+        .from('purchase_orders')
+        .select('po_number, company_id, created_by, assigned_team_leader_id')
+        .eq('id', poId)
+        .maybeSingle();
+
+      const poNumber = String(data.po_number || poRow?.po_number || 'PO');
+      const notifyCompanyId = (poRow?.company_id as string | null) || user.company_id;
+      const createdBy = poRow?.created_by ? String(poRow.created_by) : null;
+
+      const { logPurchaseOrderEvent } = await import('./purchaseOrderEventsApi');
+      void logPurchaseOrderEvent({
+        purchaseOrderId: poId,
+        eventType: 'admin_submitted',
+        note: 'Super Admin approved this Team Leader PO and sent it to the warehouse.',
+        createdBy: user.id,
+      });
+
+      if (notifyCompanyId && createdBy && createdBy !== user.id) {
+        void sendNotification({
+          userId: createdBy,
+          companyId: notifyCompanyId,
+          type: 'stock_request_approved',
+          title: 'Purchase Order Approved',
+          message: `${poNumber} was approved and sent to the warehouse.`,
+          referenceType: 'purchase_order',
+          referenceId: poId,
+        });
+      }
+
+      toast({
+        title: 'Purchase Order Approved',
+        description: `${poNumber} was sent to the warehouse for fulfillment.`,
+      });
+      scheduleBackgroundRefresh();
+      return { success: true };
+    } catch (error: any) {
+      console.error('Error submitting team leader purchase order:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to approve purchase order',
+        variant: 'destructive',
+      });
+      return { success: false, error: error.message };
+    }
+  };
+
+  const rejectTeamLeaderPurchaseOrder = async (poId: string, reason?: string) => {
+    try {
+      if (!user) {
+        return { success: false, error: 'User not authenticated' };
+      }
+
+      const trimmedReason = reason?.trim() || '';
+      if (!trimmedReason) {
+        return { success: false, error: 'Please enter a reason' };
+      }
+
+      const { data, error } = await supabase.rpc('reject_team_leader_transfer_po', {
+        p_po_id: poId,
+        p_reason: trimmedReason,
+      });
+      if (error) throw error;
+      if (!data?.success) {
+        return { success: false, error: data?.error || 'Failed to cancel purchase order' };
+      }
+
+      const { data: poRow } = await supabase
+        .from('purchase_orders')
+        .select('po_number, company_id, created_by')
+        .eq('id', poId)
+        .maybeSingle();
+
+      const poNumber = String(data.po_number || poRow?.po_number || 'PO');
+      const notifyCompanyId = (poRow?.company_id as string | null) || user.company_id;
+      const createdBy = poRow?.created_by ? String(poRow.created_by) : null;
+
+      const { logPurchaseOrderEvent } = await import('./purchaseOrderEventsApi');
+      void logPurchaseOrderEvent({
+        purchaseOrderId: poId,
+        eventType: 'rejected',
+        note: trimmedReason,
+        createdBy: user.id,
+      });
+
+      if (notifyCompanyId && createdBy && createdBy !== user.id) {
+        void sendNotification({
+          userId: createdBy,
+          companyId: notifyCompanyId,
+          type: 'stock_request_rejected',
+          title: 'Purchase Order Cancelled',
+          message: `${poNumber} was cancelled by Super Admin. Reason: ${trimmedReason}`,
+          referenceType: 'purchase_order',
+          referenceId: poId,
+        });
+      }
+
+      toast({ title: 'Purchase Order Cancelled', description: `${poNumber} was cancelled.` });
+      scheduleBackgroundRefresh();
+      return { success: true };
+    } catch (error: any) {
+      console.error('Error cancelling team leader purchase order:', error);
+      return { success: false, error: error.message };
+    }
+  };
+
   // Resolve linked warehouse hub for client companies (any non-warehouse role).
   // Used for warehouse_transfer PO creation and History visibility.
   useEffect(() => {
@@ -737,8 +1015,11 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
         fetchPurchaseOrders,
         fetchSuppliers,
         createPurchaseOrder,
+        updatePurchaseOrder,
         approvePurchaseOrder,
         rejectPurchaseOrder,
+        submitTeamLeaderPurchaseOrder,
+        rejectTeamLeaderPurchaseOrder,
       }}
     >
       {children}

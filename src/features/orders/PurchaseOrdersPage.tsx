@@ -36,7 +36,7 @@ import {
   type PackageProofPhotoItem,
 } from '@/features/shared/components/MultiProofPhotoField';
 import { uploadPackageProofPhotos } from '@/features/orders/utils/uploadPackageProofPhotos';
-import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2, ChevronLeft, ChevronRight, FileText, Receipt, MapPin, Store, Filter, XCircle, History, AlertTriangle, MoreVertical } from 'lucide-react';
+import { Plus, Search, Eye, X, Trash2, Check, Package, PackageCheck, Pencil, Loader2, ChevronLeft, ChevronRight, FileText, Receipt, MapPin, Store, Filter, XCircle, History, AlertTriangle, MoreVertical } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -49,6 +49,7 @@ import { useToast } from '@/hooks/use-toast';
 import { usePurchaseOrders } from './hooks';
 import { CreatePurchaseOrderDialog } from './components/CreatePurchaseOrderDialog';
 import { useAuth } from '@/features/auth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { supabase } from '@/lib/supabase';
 import { useWarehouseLocationMembership } from '@/features/inventory/useWarehouseLocationMembership';
 import { generateAndOpenCofPdf } from './cof/generateCofPdf';
@@ -82,6 +83,7 @@ import {
   DEFAULT_PO_SORT_DIRECTION,
   DEFAULT_PO_SORT_KEY,
   getPoFromLabel,
+  getPoCreatedByName,
   sortPurchaseOrders,
   type PurchaseOrderSortKey,
 } from './utils/purchaseOrderSorting';
@@ -91,6 +93,11 @@ import {
   purchaseOrderMatchesStatusFilter,
   type PurchaseOrderStatusFilter,
 } from './utils/purchaseOrderFilters';
+import {
+  getPoCancellationReason,
+  getPoCancelledByName,
+  getPoNotesWithoutCancellation,
+} from './utils/poCancellationReason';
 import { KeyAccountPoWarehouseProgress } from '@/features/key-accounts/components/KeyAccountPoWarehouseProgress';
 import { keyAccountWorkflowStatusAfterLocationDispatch } from '@/features/key-accounts/keyAccountDispatchWorkflow';
 import { notifyKeyAccountPoCreatorOfFulfillment } from '@/lib/keyAccountEmail.helpers';
@@ -250,8 +257,11 @@ export default function PurchaseOrdersPage() {
     linkedWarehouseCompanyId,
     loading,
     createPurchaseOrder,
+    updatePurchaseOrder,
     approvePurchaseOrder,
     rejectPurchaseOrder,
+    submitTeamLeaderPurchaseOrder,
+    rejectTeamLeaderPurchaseOrder,
     fetchPurchaseOrders,
   } = usePurchaseOrders();
   const [searchParams] = useSearchParams();
@@ -265,9 +275,13 @@ export default function PurchaseOrdersPage() {
     useState<TableSortCycleState<PurchaseOrderSortKey>>(createInitialTableSortCycle);
   // Form states
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [orderToEdit, setOrderToEdit] = useState<any>(null);
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+  const [tlRejectReason, setTlRejectReason] = useState('');
   const [orderToApprove, setOrderToApprove] = useState<any>(null);
+  const [tlApproveNameInput, setTlApproveNameInput] = useState('');
+  const [tlApproveConfirmOpen, setTlApproveConfirmOpen] = useState(false);
   const [orderToReject, setOrderToReject] = useState<any>(null);
   const [approvingOrderId, setApprovingOrderId] = useState<string | null>(null);
   const [rejectingOrderId, setRejectingOrderId] = useState<string | null>(null);
@@ -364,6 +378,9 @@ export default function PurchaseOrdersPage() {
   }, []);
 
   const isWarehouse = user?.role === 'warehouse';
+  const isTeamLeader = user?.role === 'team_leader';
+  const showCreatedByColumn = !isWarehouse && !isTeamLeader;
+  const { hasWarehouseHubLink, hasWarehouseHubLinkLoading } = usePermissions();
   const { membership } = useWarehouseLocationMembership({ userId: user?.id, isWarehouse });
   /** History is for warehouse-transfer flow; hide for companies with no warehouse link. */
   const canShowPurchaseOrderHistory = isWarehouse || !!linkedWarehouseCompanyId;
@@ -585,6 +602,8 @@ export default function PurchaseOrdersPage() {
         return 'bg-amber-500 text-white hover:bg-amber-600';
       case 'pending':
         return 'bg-gray-500 text-white hover:bg-gray-600';
+      case 'draft':
+        return 'bg-amber-500 text-white hover:bg-amber-600';
       case 'rejected':
       case 'cancelled':
         return 'bg-red-600 text-white hover:bg-red-700';
@@ -604,6 +623,8 @@ export default function PurchaseOrdersPage() {
     workflow_status?: string | null;
     fulfillment_type?: string | null;
     company_account_type?: string | null;
+    cancellation_reason?: string | null;
+    notes?: string | null;
   }) => {
     const status = String(order.status || '');
     const workflow = String(order.workflow_status || '');
@@ -611,6 +632,14 @@ export default function PurchaseOrdersPage() {
     const isKeyAccount = isKeyAccountPo(order);
     const hasPendingReceive = !isKeyAccount && !!pendingReceiveByPoId[order.id];
     const shortOpen = !isKeyAccount ? receiveProgressByPoId[order.id]?.shortOpen ?? 0 : 0;
+
+    if (status === 'draft') {
+      return { badgeKey: 'draft', label: 'Waiting for Super Admin' };
+    }
+
+    if (status === 'rejected' && getPoCancellationReason(order)) {
+      return { badgeKey: 'rejected', label: 'Cancelled' };
+    }
 
     if (isTransfer) {
       if (!isKeyAccount) {
@@ -664,6 +693,8 @@ export default function PurchaseOrdersPage() {
     workflow_status?: string | null;
     fulfillment_type?: string | null;
     company_account_type?: string | null;
+    cancellation_reason?: string | null;
+    notes?: string | null;
   }) => getStatusBadgeClass(resolvePoStatusPresentation(order).badgeKey);
 
   const getStatusDisplayTextForOrder = (order: {
@@ -672,6 +703,8 @@ export default function PurchaseOrdersPage() {
     workflow_status?: string | null;
     fulfillment_type?: string | null;
     company_account_type?: string | null;
+    cancellation_reason?: string | null;
+    notes?: string | null;
   }) => resolvePoStatusPresentation(order).label;
 
   const hasOpenShortfall = (order: {
@@ -688,6 +721,20 @@ export default function PurchaseOrdersPage() {
   const getShortageResolveHref = (poNumber: string) =>
     `/inventory/delivery-shortages?source=po&status=open&search=${encodeURIComponent(poNumber)}`;
 
+  const getPoReceiveHref = (poNumber: string) =>
+    `/inventory/po-receive?search=${encodeURIComponent(poNumber)}&open=receive`;
+
+  const canJumpToReceive = (order: {
+    id: string;
+    fulfillment_type?: string;
+    company_account_type?: string | null;
+  }) => {
+    if (!isTeamLeader) return false;
+    if (isKeyAccountPo(order)) return false;
+    if (order.fulfillment_type !== 'warehouse_transfer') return false;
+    return !!pendingReceiveByPoId[order.id];
+  };
+
   const renderPoResolveShortageButton = (order: { po_number: string }) => (
     <Button asChild size="sm" variant="outline" className="h-8">
       <Link to={getShortageResolveHref(order.po_number)}>
@@ -697,11 +744,31 @@ export default function PurchaseOrdersPage() {
     </Button>
   );
 
+  const renderPoReceiveButton = (order: { po_number: string }) => (
+    <Button asChild size="sm" className="h-8">
+      <Link to={getPoReceiveHref(order.po_number)}>
+        <PackageCheck className="mr-1.5 h-3.5 w-3.5" />
+        Receive
+      </Link>
+    </Button>
+  );
+
   /** Single primary next-step for the row; everything else goes in the ⋮ menu. */
-  type PoNextAction = 'resolve_shortage' | 'approve' | 'fulfill' | 'cancel_dr' | null;
+  type PoNextAction =
+    | 'receive'
+    | 'edit'
+    | 'resolve_shortage'
+    | 'approve'
+    | 'submit_tl'
+    | 'fulfill'
+    | 'cancel_dr'
+    | null;
 
   const getPoNextAction = (order: any): PoNextAction => {
+    if (canJumpToReceive(order)) return 'receive';
+    if (canEditOrder(order)) return 'edit';
     if (hasOpenShortfall(order)) return 'resolve_shortage';
+    if (canSubmitTlDraft(order)) return 'submit_tl';
     if (canApproveOrder(order)) return 'approve';
     if (canFulfillOrder(order)) return 'fulfill';
     if (canCancelPendingDr(order)) return 'cancel_dr';
@@ -710,6 +777,20 @@ export default function PurchaseOrdersPage() {
 
   const renderPoNextActionButton = (order: any) => {
     const next = getPoNextAction(order);
+    if (next === 'receive') return renderPoReceiveButton(order);
+    if (next === 'edit') {
+      return (
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8"
+          onClick={() => handleOpenEditOrder(order)}
+        >
+          <Pencil className="h-3.5 w-3.5 mr-1.5" />
+          Edit
+        </Button>
+      );
+    }
     if (next === 'resolve_shortage') return renderPoResolveShortageButton(order);
     if (next === 'approve') {
       return (
@@ -725,6 +806,38 @@ export default function PurchaseOrdersPage() {
           ) : null}
           {order.fulfillment_type === 'warehouse_transfer' ? 'Approve PO' : 'Approve'}
         </Button>
+      );
+    }
+    if (next === 'submit_tl') {
+      return (
+        <>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 text-destructive border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
+            onClick={() => handleOpenRejectDialog(order)}
+            disabled={rejectingOrderId === order.id}
+          >
+            {rejectingOrderId === order.id ? (
+              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+            ) : (
+              <XCircle className="h-3.5 w-3.5 mr-1.5" />
+            )}
+            Cancel
+          </Button>
+          <Button
+            variant="default"
+            size="sm"
+            className="h-8"
+            onClick={() => handleOpenApproveDialog(order)}
+            disabled={approvingOrderId === order.id}
+          >
+            {approvingOrderId === order.id ? (
+              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+            ) : null}
+            Approve
+          </Button>
+        </>
       );
     }
     if (next === 'fulfill') {
@@ -745,37 +858,43 @@ export default function PurchaseOrdersPage() {
         </Button>
       );
     }
-    if (next === 'cancel_dr') {
-      return (
-        <Button
-          variant="destructive"
-          size="sm"
-          className="h-8"
-          onClick={() => openCancelForOrder(order)}
-          disabled={openingCancelPoId === order.id}
-          title="Refuse this DR and return stock to warehouse"
-        >
-          {openingCancelPoId === order.id ? (
-            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-          ) : (
-            <XCircle className="h-4 w-4 mr-1" />
-          )}
-          Cancel DR
-        </Button>
-      );
-    }
+    // if (next === 'cancel_dr') {
+    //   return (
+    //     <Button
+    //       variant="destructive"
+    //       size="sm"
+    //       className="h-8"
+    //       onClick={() => openCancelForOrder(order)}
+    //       disabled={openingCancelPoId === order.id}
+    //       title="Refuse this DR and return stock to warehouse"
+    //     >
+    //       {openingCancelPoId === order.id ? (
+    //         <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+    //       ) : (
+    //         <XCircle className="h-4 w-4 mr-1" />
+    //       )}
+    //       Cancel DR
+    //     </Button>
+    //   );
+    // }
     return null;
   };
 
   const renderPoRowActionsMenu = (order: any) => {
     const next = getPoNextAction(order);
-    const showRejectInMenu = canApproveOrder(order) && next === 'approve';
+    const showRejectInMenu =
+      (canApproveOrder(order) && next === 'approve') ||
+      (canSubmitTlDraft(order) && next !== 'submit_tl');
+    const showReceiveInMenu = canJumpToReceive(order) && next !== 'receive';
+    const showEditInMenu = canEditOrder(order) && next !== 'edit';
     const showResolveInMenu = hasOpenShortfall(order) && next !== 'resolve_shortage';
     const showApproveInMenu = canApproveOrder(order) && next !== 'approve';
     const showFulfillInMenu = canFulfillOrder(order) && next !== 'fulfill';
     const showCancelDrInMenu = canCancelPendingDr(order) && next !== 'cancel_dr';
     const hasWorkflowItems =
       showRejectInMenu ||
+      showReceiveInMenu ||
+      showEditInMenu ||
       showResolveInMenu ||
       showApproveInMenu ||
       showFulfillInMenu ||
@@ -811,6 +930,20 @@ export default function PurchaseOrdersPage() {
             </DropdownMenuItem>
           ) : null}
           {hasWorkflowItems ? <DropdownMenuSeparator /> : null}
+          {showReceiveInMenu ? (
+            <DropdownMenuItem asChild>
+              <Link to={getPoReceiveHref(order.po_number)}>
+                <PackageCheck className="mr-2 h-4 w-4" />
+                Receive
+              </Link>
+            </DropdownMenuItem>
+          ) : null}
+          {showEditInMenu ? (
+            <DropdownMenuItem onClick={() => handleOpenEditOrder(order)}>
+              <Pencil className="mr-2 h-4 w-4" />
+              Edit
+            </DropdownMenuItem>
+          ) : null}
           {showResolveInMenu ? (
             <DropdownMenuItem asChild>
               <Link to={getShortageResolveHref(order.po_number)}>
@@ -844,10 +977,10 @@ export default function PurchaseOrdersPage() {
               disabled={rejectingOrderId === order.id}
             >
               <XCircle className="mr-2 h-4 w-4" />
-              {order.created_by === user?.id ? 'Cancel' : 'Reject'}
+              {order.created_by === user?.id || order.status === 'draft' ? 'Cancel' : 'Reject'}
             </DropdownMenuItem>
           ) : null}
-          {showCancelDrInMenu ? (
+          {/* {showCancelDrInMenu ? (
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
               onClick={() => openCancelForOrder(order)}
@@ -856,7 +989,7 @@ export default function PurchaseOrdersPage() {
               <XCircle className="mr-2 h-4 w-4" />
               Cancel DR
             </DropdownMenuItem>
-          ) : null}
+          ) : null} */}
         </DropdownMenuContent>
       </DropdownMenu>
     );
@@ -888,24 +1021,57 @@ export default function PurchaseOrdersPage() {
     );
   };
 
+  const renderPoCancellationCallout = (order: {
+    status?: string | null;
+    cancellation_reason?: string | null;
+    notes?: string | null;
+    cancelled_by_user?: { full_name?: string | null; email?: string | null } | null;
+  }) => {
+    const reason = getPoCancellationReason(order);
+    if (!reason) return null;
+    const cancelledBy = user?.full_name?.trim() || user?.email?.trim() || 'Unknown';
+    return (
+      <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2">
+        <p className="text-sm font-medium text-red-800">
+          Cancelled by {cancelledBy}
+        </p>
+        <p className="text-sm text-red-950 whitespace-pre-wrap mt-1">{reason}</p>
+      </div>
+    );
+  };
+
   const renderPoListStatus = (order: {
     id: string;
     status?: string | null;
     workflow_status?: string | null;
     fulfillment_type?: string | null;
     company_account_type?: string | null;
+    cancellation_reason?: string | null;
+    notes?: string | null;
+    cancelled_by_user?: { full_name?: string | null; email?: string | null } | null;
   }) => {
     const progress = !isKeyAccountPo(order) ? receiveProgressByPoId[order.id] : undefined;
     const showProgress =
       order.fulfillment_type === 'warehouse_transfer' &&
       !!progress &&
       (progress.dispatched > 0 || progress.shortOpen > 0);
+    const cancelReason = getPoCancellationReason(order);
+    const cancelledBy = getPoCancelledByName(order);
 
     return (
       <div className="flex flex-col items-start gap-1 min-w-0">
         <Badge variant="default" className={getStatusBadgeClassForOrder(order)}>
           {getStatusDisplayTextForOrder(order)}
         </Badge>
+        {/* {cancelReason ? (
+          <div
+            className="text-[11px] text-red-700 dark:text-red-400 leading-tight max-w-[220px]"
+            title={`Cancelled by ${cancelledBy}: ${cancelReason}`}
+          >
+            <p>Cancelled by {cancelledBy}</p>
+            <p className="line-clamp-2">{cancelReason}</p>
+          </div>
+        ) : null} */}
         {showProgress ? (
           <div className="text-[11px] text-muted-foreground leading-tight tabular-nums whitespace-nowrap">
             Recv {progress.received}/{progress.dispatched}
@@ -1469,6 +1635,23 @@ export default function PurchaseOrdersPage() {
     order.status === 'pending' &&
     (order.fulfillment_type !== 'warehouse_transfer' || canFulfillAsMainWarehouse);
 
+  const canSubmitTlDraft = (order: { status: string; fulfillment_type?: string }) =>
+    !isWarehouse &&
+    user?.role === 'super_admin' &&
+    order.fulfillment_type === 'warehouse_transfer' &&
+    order.status === 'draft';
+
+  const canEditOrder = (order: {
+    status?: string;
+    created_by?: string;
+    fulfillment_type?: string;
+  }) =>
+    !isWarehouse &&
+    order.status === 'draft' &&
+    order.fulfillment_type === 'warehouse_transfer' &&
+    !!user?.id &&
+    order.created_by === user.id;
+
   const canFulfillOrder = (order: { id: string; status: string; fulfillment_type?: string; warehouse_location_id?: string; items?: any[] }) => {
     if (!(canFulfillAsSubWarehouse || canFulfillAsMainWarehouse)) return false;
     if (order.fulfillment_type !== 'warehouse_transfer') return false;
@@ -1499,7 +1682,7 @@ export default function PurchaseOrdersPage() {
     fulfillment_type?: string;
     company_account_type?: string | null;
   }) => {
-    if (isWarehouse) return false;
+    if (isWarehouse || isTeamLeader) return false;
     if (isKeyAccountPo(order)) return false;
     if (order.fulfillment_type !== 'warehouse_transfer') return false;
     if (!user?.company_id || String(order.company_id) !== String(user.company_id)) return false;
@@ -1532,15 +1715,35 @@ export default function PurchaseOrdersPage() {
   const handleApproveOrder = async () => {
     if (!orderToApprove) return;
 
+    if (orderToApprove.status === 'draft') {
+      const expectedName = String(orderToApprove.assigned_team_leader?.full_name || '').trim();
+      if (
+        !expectedName ||
+        tlApproveNameInput.trim().toLowerCase() !== expectedName.toLowerCase()
+      ) {
+        toast({
+          title: 'Name does not match',
+          description: 'Type the receiving team leader\'s name exactly to approve.',
+          variant: 'destructive',
+        });
+        return;
+      }
+    }
+
     setApprovingOrderId(orderToApprove.id);
 
-    const result = await approvePurchaseOrder(orderToApprove.id);
+    const result =
+      orderToApprove.status === 'draft'
+        ? await submitTeamLeaderPurchaseOrder(orderToApprove.id)
+        : await approvePurchaseOrder(orderToApprove.id);
 
     setApprovingOrderId(null);
 
     if (result.success) {
+      setTlApproveConfirmOpen(false);
       setApproveDialogOpen(false);
       setOrderToApprove(null);
+      setTlApproveNameInput('');
     } else {
       toast({
         title: 'Error',
@@ -1557,11 +1760,19 @@ export default function PurchaseOrdersPage() {
 
   const handleOpenApproveDialog = (order: any) => {
     setOrderToApprove(order);
+    setTlApproveNameInput('');
+    setTlApproveConfirmOpen(false);
     setApproveDialogOpen(true);
+  };
+
+  const handleOpenEditOrder = (order: any) => {
+    setOrderToEdit(order);
+    setCreateDialogOpen(true);
   };
 
   const handleOpenRejectDialog = (order: any) => {
     setOrderToReject(order);
+    setTlRejectReason('');
     setRejectDialogOpen(true);
   };
 
@@ -1820,12 +2031,25 @@ export default function PurchaseOrdersPage() {
 
   const handleRejectOrder = async () => {
     if (!orderToReject) return;
+    const reason = tlRejectReason.trim();
+    if (orderToReject.status === 'draft' && !reason) {
+      toast({
+        title: 'Reason required',
+        description: 'Type a reason before cancelling this purchase order.',
+        variant: 'destructive',
+      });
+      return;
+    }
     setRejectingOrderId(orderToReject.id);
-    const result = await rejectPurchaseOrder(orderToReject.id);
+    const result =
+      orderToReject.status === 'draft'
+        ? await rejectTeamLeaderPurchaseOrder(orderToReject.id, reason)
+        : await rejectPurchaseOrder(orderToReject.id);
     setRejectingOrderId(null);
     if (result.success) {
       setRejectDialogOpen(false);
       setOrderToReject(null);
+      setTlRejectReason('');
     } else {
       toast({ title: 'Error', description: result.error || 'Failed to reject purchase order', variant: 'destructive' });
     }
@@ -1873,14 +2097,18 @@ export default function PurchaseOrdersPage() {
 
   /** Warehouse: account tab + date range (cards and table share this scope). */
   const scopedOrders = useMemo(() => {
+    if (isTeamLeader) {
+      return purchaseOrders.filter((order) => order.created_by === user?.id);
+    }
     if (!isWarehouse) return purchaseOrders;
     return purchaseOrders.filter((order) => {
+      if (order.status === 'draft' || order.status === 'submitted') return false;
       const acct = String(order.company_account_type || 'Standard Accounts');
       if (poTab === 'key_accounts' && acct !== 'Key Accounts') return false;
       if (poTab === 'standard_accounts' && acct === 'Key Accounts') return false;
       return isDateInRange(new Date(order.order_date), orderDateRange.start, orderDateRange.end);
     });
-  }, [purchaseOrders, isWarehouse, poTab, orderDateRange.end, orderDateRange.start]);
+  }, [purchaseOrders, isTeamLeader, isWarehouse, user?.id, poTab, orderDateRange.end, orderDateRange.start]);
 
   const filteredOrders = useMemo(() => {
     const q = searchQuery.toLowerCase();
@@ -1907,7 +2135,7 @@ export default function PurchaseOrdersPage() {
     [filteredOrders, resolvedSortKey, resolvedSortDirection]
   );
 
-  const summaryOrders = isWarehouse ? scopedOrders : purchaseOrders;
+  const summaryOrders = isWarehouse || isTeamLeader ? scopedOrders : purchaseOrders;
 
   const handleSort = (key: PurchaseOrderSortKey) => {
     setSortState((current) => getNextTableSortCycleState(current, key));
@@ -1926,6 +2154,30 @@ export default function PurchaseOrdersPage() {
     currentPoPage * PO_PER_PAGE
   );
 
+  if (isTeamLeader && hasWarehouseHubLinkLoading) {
+    return (
+      <div className="p-8 flex items-center justify-center text-muted-foreground gap-2">
+        <Loader2 className="h-8 w-8 animate-spin" />
+        Checking warehouse link…
+      </div>
+    );
+  }
+
+  if (isTeamLeader && !hasWarehouseHubLink) {
+    return (
+      <div className="p-8">
+        <Card>
+          <CardHeader>
+            <CardTitle>Warehouse not linked</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Purchase Orders become available after your company is assigned to a warehouse hub.
+            </p>
+          </CardHeader>
+        </Card>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="p-8 flex items-center justify-center">
@@ -1942,7 +2194,9 @@ export default function PurchaseOrdersPage() {
           <p className="text-muted-foreground">
             {user?.role === 'warehouse'
               ? 'Pending internal transfers from your assigned client companies'
-              : 'Create and manage your purchase orders'}
+              : isTeamLeader
+                ? 'POs you requested. Super Admin approves before the warehouse sees them.'
+                : 'Create and manage your purchase orders'}
           </p>
         </div>
         <div className="flex gap-2">
@@ -1958,7 +2212,13 @@ export default function PurchaseOrdersPage() {
             </>
           )}
           {user?.role !== 'warehouse' && (
-            <Button className="w-full md:w-auto" onClick={() => setCreateDialogOpen(true)}>
+            <Button
+              className="w-full md:w-auto"
+              onClick={() => {
+                setOrderToEdit(null);
+                setCreateDialogOpen(true);
+              }}
+            >
               <Plus className="h-4 w-4 mr-2" />
               Create PO
             </Button>
@@ -1967,11 +2227,17 @@ export default function PurchaseOrdersPage() {
         {user?.role !== 'warehouse' && (
           <CreatePurchaseOrderDialog
             open={createDialogOpen}
-            onOpenChange={setCreateDialogOpen}
+            onOpenChange={(open) => {
+              setCreateDialogOpen(open);
+              if (!open) setOrderToEdit(null);
+            }}
             suppliers={suppliers}
             linkedWarehouseCompanyId={linkedWarehouseCompanyId}
             user={user}
+            mode={isTeamLeader ? 'team_leader' : 'admin'}
+            editOrder={orderToEdit}
             onCreateOrder={createPurchaseOrder}
+            onUpdateOrder={updatePurchaseOrder}
           />
         )}
       </div>
@@ -2001,7 +2267,7 @@ export default function PurchaseOrdersPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {summaryOrders.filter((o) => o.status === 'pending').length}
+              {summaryOrders.filter((o) => o.status === 'pending' || o.status === 'draft').length}
             </div>
           </CardContent>
         </Card>
@@ -2052,7 +2318,7 @@ export default function PurchaseOrdersPage() {
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
               <SelectContent>
-                {PO_STATUS_FILTER_OPTIONS.map((key) => (
+                {PO_STATUS_FILTER_OPTIONS.filter((key) => !isWarehouse || key !== 'draft').map((key) => (
                   <SelectItem key={key} value={key}>
                     {PO_STATUS_FILTER_LABELS[key]}
                   </SelectItem>
@@ -2110,6 +2376,12 @@ export default function PurchaseOrdersPage() {
                       <div className="text-xs text-muted-foreground">From</div>
                       <div className="font-medium">{fromLabel.primary}</div>
                       <div className="text-xs text-muted-foreground">{fromLabel.secondary}</div>
+                    </div>
+                  )}
+                  {showCreatedByColumn && (
+                    <div>
+                      <div className="text-xs text-muted-foreground">Created by</div>
+                      <div className="font-medium truncate">{getPoCreatedByName(order)}</div>
                     </div>
                   )}
                   <div>
@@ -2171,6 +2443,14 @@ export default function PurchaseOrdersPage() {
                       onSort={handleSort}
                     />
                   )}
+                  {showCreatedByColumn && (
+                    <SortableTableHead
+                      label="Created by"
+                      sortKey="createdBy"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'createdBy')}
+                      onSort={handleSort}
+                    />
+                  )}
                   <SortableTableHead
                     label="Seller"
                     sortKey="seller"
@@ -2216,7 +2496,7 @@ export default function PurchaseOrdersPage() {
                 {paginatedOrders.length === 0 ? (
                   <TableRow>
                     <TableCell
-                      colSpan={isWarehouse ? 10 : 9}
+                      colSpan={isWarehouse || showCreatedByColumn ? 10 : 9}
                       className="text-center text-sm text-muted-foreground py-6"
                     >
                       No purchase orders found.
@@ -2256,6 +2536,11 @@ export default function PurchaseOrdersPage() {
                             <p className="font-medium">{fromLabel.primary}</p>
                             <p className="text-xs text-muted-foreground">{fromLabel.secondary}</p>
                           </div>
+                        </TableCell>
+                      )}
+                      {showCreatedByColumn && (
+                        <TableCell>
+                          <p className="font-medium">{getPoCreatedByName(order)}</p>
                         </TableCell>
                       )}
                       <TableCell>
@@ -2327,14 +2612,27 @@ export default function PurchaseOrdersPage() {
       </Card>
 
       {/* Approve Order Dialog */}
-      <AlertDialog open={approveDialogOpen} onOpenChange={setApproveDialogOpen}>
+      <AlertDialog
+        open={approveDialogOpen}
+        onOpenChange={(open) => {
+          setApproveDialogOpen(open);
+          if (!open) {
+            setTlApproveConfirmOpen(false);
+            setTlApproveNameInput('');
+          }
+        }}
+      >
         <AlertDialogContent className="w-[calc(100vw-1.5rem)] sm:w-full sm:max-w-2xl h-[85vh] max-h-[85vh] p-0 flex flex-col">
           <div className="p-6 pb-3">
             <AlertDialogHeader>
-              <AlertDialogTitle>Approve Purchase Order</AlertDialogTitle>
+              <AlertDialogTitle>
+                {orderToApprove?.status === 'draft' ? 'Approve Team Leader PO' : 'Approve Purchase Order'}
+              </AlertDialogTitle>
               <AlertDialogDescription>
                 {orderToApprove
-                  ? `Are you sure you want to approve ${orderToApprove.po_number}?`
+                  ? orderToApprove.status === 'draft'
+                    ? `Approve ${orderToApprove.po_number} and send it to the warehouse hub?`
+                    : `Are you sure you want to approve ${orderToApprove.po_number}?`
                   : 'Select a purchase order to approve.'}
               </AlertDialogDescription>
             </AlertDialogHeader>
@@ -2345,11 +2643,67 @@ export default function PurchaseOrdersPage() {
               <div className="space-y-4 pb-4">
                 <div className="border rounded-lg p-4 space-y-3 bg-muted/30">
                 <p className="font-semibold text-sm">
-                  {orderToApprove.fulfillment_type === 'warehouse_transfer'
+                  {orderToApprove.status === 'draft'
+                    ? 'This sends the Team Leader request to the warehouse. Warehouse still has to approve and dispatch.'
+                    : orderToApprove.fulfillment_type === 'warehouse_transfer'
                     ? 'Stock will move from the warehouse sub-warehouse to the requesting company:'
                     : 'This will add the following items to your Main Inventory:'}
                 </p>
-                {orderToApprove.fulfillment_type !== 'warehouse_transfer' ? (
+                {orderToApprove.status === 'draft' ? (
+                  <div className="space-y-3">
+                    {Object.entries(
+                      ((orderToApprove.items || []) as any[]).reduce((acc: Record<string, any[]>, item: any) => {
+                        const brand = String(item.brand_name || 'Unknown');
+                        (acc[brand] ||= []).push(item);
+                        return acc;
+                      }, {})
+                    )
+                      .sort(([a], [b]) => a.localeCompare(b))
+                      .map(([brand, brandItems]) => (
+                        <div key={brand} className="rounded-md border bg-background">
+                          <div className="px-3 py-2 bg-muted/40 flex items-center justify-between">
+                            <span className="font-semibold text-sm">{brand}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {(brandItems as any[]).reduce((sum, x) => sum + Number(x.quantity || 0), 0)} total units
+                            </span>
+                          </div>
+                          <div className="divide-y">
+                            {(brandItems as any[])
+                              .slice()
+                              .sort((a, b) => {
+                                const type = String(a.variant_type || '').localeCompare(String(b.variant_type || ''));
+                                if (type !== 0) return type;
+                                return String(a.variant_name || '').localeCompare(String(b.variant_name || ''));
+                              })
+                              .map((item: any, index: number) => (
+                                <div
+                                  key={item.id || `${item.variant_id || item.variant_name}-${index}`}
+                                  className="flex items-center justify-between text-sm px-3 py-2"
+                                >
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <span className="text-muted-foreground shrink-0">-</span>
+                                    <span className="truncate">{item.variant_name}</span>
+                                    <Badge
+                                      variant="secondary"
+                                      className={
+                                        item.variant_type === 'flavor'
+                                          ? 'bg-blue-100 text-blue-700'
+                                          : item.variant_type === 'battery'
+                                            ? 'bg-green-100 text-green-700'
+                                            : 'bg-purple-100 text-purple-700'
+                                      }
+                                    >
+                                      {String(item.variant_type || '').toUpperCase()}
+                                    </Badge>
+                                  </div>
+                                  <span className="font-semibold shrink-0 ml-2">{item.quantity} units</span>
+                                </div>
+                              ))}
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                ) : orderToApprove.fulfillment_type !== 'warehouse_transfer' ? (
                   <div className="space-y-2">
                     {orderToApprove.items.map((item: any, index: number) => (
                       <div key={index} className="flex items-center justify-between text-sm bg-background p-2 rounded">
@@ -2500,7 +2854,9 @@ export default function PurchaseOrdersPage() {
                 )}
               </div>
               <p className="text-xs text-muted-foreground">
-                {orderToApprove.fulfillment_type === 'warehouse_transfer'
+                {orderToApprove.status === 'draft'
+                  ? 'Warehouse will not see this PO until you approve it.'
+                  : orderToApprove.fulfillment_type === 'warehouse_transfer'
                   ? 'Sub-warehouse inventory must cover these quantities. This cannot be undone.'
                   : "The quantities will be added to existing stock or new items will be created if they don't exist."}
               </p>
@@ -2511,9 +2867,22 @@ export default function PurchaseOrdersPage() {
           <div className="p-6 pt-3 border-t">
             <AlertDialogFooter className="flex-col-reverse sm:flex-row sm:justify-end gap-2">
               <AlertDialogCancel className="w-full sm:w-auto">Cancel</AlertDialogCancel>
-              <AlertDialogAction className="w-full sm:w-auto" onClick={handleApproveOrder}>
+              <AlertDialogAction
+                className="w-full sm:w-auto"
+                onClick={(e) => {
+                  if (orderToApprove?.status === 'draft') {
+                    e.preventDefault();
+                    setTlApproveNameInput('');
+                    setTlApproveConfirmOpen(true);
+                    return;
+                  }
+                  void handleApproveOrder();
+                }}
+              >
                 <Check className="h-4 w-4 mr-2" />
-                {orderToApprove?.fulfillment_type === 'warehouse_transfer'
+                {orderToApprove?.status === 'draft'
+                  ? 'Approve'
+                  : orderToApprove?.fulfillment_type === 'warehouse_transfer'
                   ? 'Approve PO'
                   : 'Approve & Add to Inventory'}
               </AlertDialogAction>
@@ -2522,23 +2891,140 @@ export default function PurchaseOrdersPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Reject Order Dialog */}
-      <AlertDialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
+      <AlertDialog
+        open={tlApproveConfirmOpen}
+        onOpenChange={(open) => {
+          setTlApproveConfirmOpen(open);
+          if (!open) setTlApproveNameInput('');
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>
-              {orderToReject?.created_by === user?.id ? 'Cancel Purchase Order' : 'Reject Purchase Order'}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {orderToReject
-                ? `Are you sure you want to ${orderToReject.created_by === user?.id ? 'cancel' : 'reject'} ${orderToReject.po_number}?`
-                : 'Select a purchase order to reject.'}
+            <AlertDialogTitle>Confirm receiving team leader</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-4 pt-2">
+                <p>
+                  This PO will be assigned to{' '}
+                  <span className="font-semibold text-foreground">
+                    {orderToApprove?.assigned_team_leader?.full_name || 'the assigned team leader'}
+                  </span>{' '}
+                  for receipt after warehouse fulfillment. To avoid assigning the wrong leader,
+                  type their full name below.
+                </p>
+                <div className="space-y-2">
+                  <Label htmlFor="tl-approve-name-confirm">Team leader name</Label>
+                  <Input
+                    id="tl-approve-name-confirm"
+                    value={tlApproveNameInput}
+                    onChange={(e) => setTlApproveNameInput(e.target.value)}
+                    placeholder={
+                      orderToApprove?.assigned_team_leader?.full_name || 'Enter team leader name'
+                    }
+                    autoComplete="off"
+                  />
+                </div>
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Back</AlertDialogCancel>
-            <AlertDialogAction onClick={handleRejectOrder} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              <X className="h-4 w-4 mr-2" /> {orderToReject?.created_by === user?.id ? 'Cancel' : 'Reject'}
+            <AlertDialogCancel disabled={Boolean(approvingOrderId)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={
+                Boolean(approvingOrderId) ||
+                !String(orderToApprove?.assigned_team_leader?.full_name || '').trim() ||
+                tlApproveNameInput.trim().toLowerCase() !==
+                  String(orderToApprove?.assigned_team_leader?.full_name || '')
+                    .trim()
+                    .toLowerCase()
+              }
+              onClick={(e) => {
+                e.preventDefault();
+                void handleApproveOrder();
+              }}
+            >
+              {approvingOrderId ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Submitting…
+                </>
+              ) : (
+                'Submit'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Reject Order Dialog */}
+      <AlertDialog
+        open={rejectDialogOpen}
+        onOpenChange={(open) => {
+          setRejectDialogOpen(open);
+          if (!open) setTlRejectReason('');
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {orderToReject?.status === 'draft'
+                ? 'Cancel Team Leader PO'
+                : orderToReject?.created_by === user?.id
+                  ? 'Cancel Purchase Order'
+                  : 'Reject Purchase Order'}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-4 pt-2">
+                <p>
+                  {orderToReject
+                    ? orderToReject.status === 'draft'
+                      ? `Cancel ${orderToReject.po_number}? Warehouse will not see this request.`
+                      : `Are you sure you want to ${orderToReject.created_by === user?.id ? 'cancel' : 'reject'} ${orderToReject.po_number}?`
+                    : 'Select a purchase order to reject.'}
+                </p>
+                {orderToReject?.status === 'draft' && (
+                  <div className="space-y-2 text-left">
+                    <Label htmlFor="tl-cancel-reason">Reason</Label>
+                    <Textarea
+                      id="tl-cancel-reason"
+                      value={tlRejectReason}
+                      onChange={(e) => setTlRejectReason(e.target.value)}
+                      placeholder="Type the reason for cancelling this PO"
+                      rows={3}
+                    />
+                  </div>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={Boolean(rejectingOrderId)}>Back</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={
+                Boolean(rejectingOrderId) ||
+                (orderToReject?.status === 'draft' && !tlRejectReason.trim())
+              }
+              onClick={(e) => {
+                if (orderToReject?.status === 'draft' && !tlRejectReason.trim()) {
+                  e.preventDefault();
+                  return;
+                }
+                void handleRejectOrder();
+              }}
+            >
+              {rejectingOrderId ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Cancelling…
+                </>
+              ) : (
+                <>
+                  <X className="h-4 w-4 mr-2" />
+                  {orderToReject?.status === 'draft' || orderToReject?.created_by === user?.id
+                    ? 'Cancel'
+                    : 'Reject'}
+                </>
+              )}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -3288,6 +3774,7 @@ export default function PurchaseOrdersPage() {
               {orderToView && (
                 <div className="p-4 space-y-4">
                   {renderPoShortfallCallout(orderToView)}
+                  {renderPoCancellationCallout(orderToView)}
                   {orderToView.key_account_client_id ? (
                     <KeyAccountPOView order={orderToView} />
                   ) : (
@@ -3506,10 +3993,12 @@ export default function PurchaseOrdersPage() {
                     </AccordionItem>
 
                     {/* Notes Section */}
-                    {orderToView.notes && (
+                    {getPoNotesWithoutCancellation(orderToView) && (
                       <div className="border rounded-lg p-4">
                         <Label className="font-semibold text-sm">Notes</Label>
-                        <p className="text-sm text-muted-foreground mt-2">{orderToView.notes}</p>
+                        <p className="text-sm text-muted-foreground mt-2">
+                          {getPoNotesWithoutCancellation(orderToView)}
+                        </p>
                       </div>
                     )}
                   </Accordion>
@@ -3545,6 +4034,7 @@ export default function PurchaseOrdersPage() {
                   </div>
 
                   {renderPoShortfallCallout(orderToView)}
+                  {renderPoCancellationCallout(orderToView)}
 
                   {/* Dates */}
                   <div className="grid grid-cols-2 gap-4">
@@ -3822,10 +4312,12 @@ export default function PurchaseOrdersPage() {
                   </div>
 
                   {/* Notes */}
-                  {orderToView.notes && (
+                  {getPoNotesWithoutCancellation(orderToView) && (
                     <div className="space-y-2">
                       <Label className="font-semibold">Notes</Label>
-                      <p className="text-sm text-muted-foreground bg-muted p-3 rounded-lg">{orderToView.notes}</p>
+                      <p className="text-sm text-muted-foreground bg-muted p-3 rounded-lg">
+                        {getPoNotesWithoutCancellation(orderToView)}
+                      </p>
                     </div>
                   )}
                     </>
