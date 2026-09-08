@@ -22,7 +22,7 @@ export function getPoCancelledByName(order: {
   if (name) return name;
   const email = order.cancelled_by_user?.email?.trim();
   if (email) return email;
-  return 'Super Admin';
+  return 'Unknown';
 }
 
 export function getPoNotesWithoutCancellation(order: {

@@ -61,6 +61,51 @@ function formatPoItem(item: any): PurchaseOrderItem {
   };
 }
 
+async function attachCancelledByUser(orders: PurchaseOrder[]): Promise<PurchaseOrder[]> {
+  const cancelledIds = orders
+    .filter((order) => {
+      const reason = String(order.cancellation_reason || '').trim();
+      const notes = String(order.notes || '');
+      return Boolean(reason) || notes.includes('\n\nRejected: ') || order.status === 'rejected';
+    })
+    .map((order) => order.id);
+
+  if (cancelledIds.length === 0) return orders;
+
+  const { data, error } = await supabase
+    .from('purchase_order_events')
+    .select(`
+      purchase_order_id,
+      created_at,
+      created_by_user:profiles!purchase_order_events_created_by_fkey(full_name, email)
+    `)
+    .in('purchase_order_id', cancelledIds)
+    .eq('event_type', 'rejected')
+    .order('created_at', { ascending: false });
+
+  if (error || !data) return orders;
+
+  const nameByPoId = new Map<string, { full_name: string | null; email: string | null }>();
+  for (const row of data) {
+    const poId = String(row.purchase_order_id || '');
+    if (!poId || nameByPoId.has(poId)) continue;
+    const rawUser = Array.isArray(row.created_by_user) ? row.created_by_user[0] : row.created_by_user;
+    if (!rawUser) continue;
+    nameByPoId.set(poId, {
+      full_name: rawUser.full_name ?? null,
+      email: rawUser.email ?? null,
+    });
+  }
+
+  if (nameByPoId.size === 0) return orders;
+
+  return orders.map((order) => {
+    const canceller = nameByPoId.get(order.id);
+    if (!canceller) return order;
+    return { ...order, cancelled_by_user: canceller };
+  });
+}
+
 function formatPurchaseOrder(order: any, items: any[]): PurchaseOrder {
   const rawSup = Array.isArray(order.suppliers) ? order.suppliers[0] : order.suppliers;
   const rawLoc = Array.isArray(order.warehouse_locations)
@@ -182,11 +227,13 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
         return formatPurchaseOrder(orderFields, items);
       });
 
+      const ordersWithCanceller = await attachCancelledByUser(ordersWithItems);
+
       // Standard Accounts: warehouse cannot read creator profiles via RLS join.
       // Reuse get_po_requestor_info (same source as View "Placed by").
-      let enrichedOrders = ordersWithItems;
+      let enrichedOrders = ordersWithCanceller;
       if (user?.role === 'warehouse') {
-        const standardOrders = ordersWithItems.filter(
+        const standardOrders = ordersWithCanceller.filter(
           (o) => String(o.company_account_type || 'Standard Accounts') !== 'Key Accounts'
         );
         if (standardOrders.length > 0) {
@@ -205,7 +252,7 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
             })
           );
           const placedByMap = new Map(placedByEntries);
-          enrichedOrders = ordersWithItems.map((o) => {
+          enrichedOrders = ordersWithCanceller.map((o) => {
             const profile = placedByMap.get(o.id);
             if (!profile) return o;
             return { ...o, requestor_profile: profile };
@@ -901,7 +948,7 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
       const createdBy = poRow?.created_by ? String(poRow.created_by) : null;
 
       const { logPurchaseOrderEvent } = await import('./purchaseOrderEventsApi');
-      void logPurchaseOrderEvent({
+      await logPurchaseOrderEvent({
         purchaseOrderId: poId,
         eventType: 'rejected',
         note: trimmedReason,

@@ -1029,7 +1029,7 @@ export default function PurchaseOrdersPage() {
   }) => {
     const reason = getPoCancellationReason(order);
     if (!reason) return null;
-    const cancelledBy = user?.full_name?.trim() || user?.email?.trim() || 'Unknown';
+    const cancelledBy = getPoCancelledByName(order);
     return (
       <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2">
         <p className="text-sm font-medium text-red-800">
