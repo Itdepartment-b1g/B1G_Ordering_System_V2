@@ -8,6 +8,7 @@ import { createClient } from '@supabase/supabase-js';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fillDownHistoricalPoRows } from './ka-historical-po-fill-down.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXCEL_PATH = path.join(__dirname, '../docs/KA_Historical_PO_Fill_Template.xlsx');
@@ -57,18 +58,14 @@ async function readExcelRows() {
   sheet.eachRow((row, num) => {
     if (num <= 2) return;
     const obj = { excel_row: num };
-    let any = false;
     headers.forEach((h, i) => {
       if (!h) return;
       const v = cellVal(row.getCell(i));
-      if (v !== '' && v != null) {
-        obj[h] = v;
-        any = true;
-      }
+      if (v !== '' && v != null) obj[h] = v;
     });
-    if (any) rows.push(obj);
+    rows.push(obj);
   });
-  return rows;
+  return fillDownHistoricalPoRows(rows);
 }
 
 function uniqueOr(hits, noneMsg, manyMsg) {
@@ -344,6 +341,7 @@ async function main() {
       warehouse: firstOk?.location?.name || '(linked main)',
       status_if_imported: 'fulfilled',
       workflow_if_imported: 'delivered',
+      commissioned_if_imported: true,
       payment_if_imported: {
         amount: paymentAmount,
         method: 'CASH',

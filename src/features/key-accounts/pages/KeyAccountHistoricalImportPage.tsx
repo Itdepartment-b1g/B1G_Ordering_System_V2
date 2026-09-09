@@ -3,6 +3,14 @@ import { FileDown, FileSpreadsheet, Loader2, Upload } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
@@ -14,6 +22,19 @@ import {
 } from '@/features/key-accounts/utils/parseHistoricalPoExcel';
 
 const IMPORT_PO_CHUNK = 20;
+
+type PreviewItem = {
+  excel_row?: number;
+  excel_brand?: string;
+  excel_variant?: string;
+  brand: string;
+  variant: string;
+  sku: string | null;
+  quantity: number;
+  unit_price: number;
+  line_total: number;
+  lookup_ok: boolean;
+};
 
 type PreviewPo = {
   external_po_ref: string;
@@ -27,8 +48,13 @@ type PreviewPo = {
   warehouse: string;
   line_count: number;
   total_amount: number;
+  items?: PreviewItem[];
   issues: string[];
 };
+
+function peso(value: number) {
+  return `₱${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+}
 
 type DryRunResult = {
   dry_run: true;
@@ -82,6 +108,7 @@ export function KeyAccountHistoricalImportPage() {
   const [importResults, setImportResults] = useState<ImportPoResult[]>([]);
   const [busy, setBusy] = useState<'parse' | 'dry' | 'import' | null>(null);
   const [importProgress, setImportProgress] = useState('');
+  const [linesPo, setLinesPo] = useState<PreviewPo | null>(null);
 
   const readyPos = useMemo(
     () => dryRun?.purchase_orders.filter((po) => po.would_insert) || [],
@@ -96,6 +123,7 @@ export function KeyAccountHistoricalImportPage() {
     setDryRun(null);
     setImportResults([]);
     setImportProgress('');
+    setLinesPo(null);
   };
 
   const onPickFile = async (file: File | null) => {
@@ -194,8 +222,9 @@ export function KeyAccountHistoricalImportPage() {
       <div>
         <h1 className="text-2xl font-semibold">Historical PO import</h1>
         <p className="text-sm text-muted-foreground mt-1 max-w-3xl">
-          Import old Key Account purchase orders as already delivered and fully paid. Fill names (client, shop,
-          brand + variant). The system matches OMS records. Stock is not deducted.
+          Import old Key Account purchase orders as already delivered, fully paid, and commissioned. Fill names (client, shop,
+          brand + variant). The system matches OMS records. Stock is not deducted. You only need the PO header
+          and RFPF on the first line of each PO; leave them blank on extra lines. Write brand_name again only when the brand changes.
         </p>
       </div>
 
@@ -203,7 +232,9 @@ export function KeyAccountHistoricalImportPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base">1. Template</CardTitle>
-            <CardDescription>One row per product line. Same external_po_ref on every line of one PO.</CardDescription>
+            <CardDescription>
+              One row per product. First line of a PO has ref, client, RFPF; extra lines can leave those blank. Same for brand until it changes.
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <Button
@@ -244,7 +275,7 @@ export function KeyAccountHistoricalImportPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base">3. Import ready POs</CardTitle>
-            <CardDescription>Creates delivered POs, one CASH payment, optional RFPF. No warehouse queue.</CardDescription>
+            <CardDescription>Creates delivered, paid, and commissioned POs. One CASH payment, optional RFPF. No warehouse queue.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
@@ -268,7 +299,9 @@ export function KeyAccountHistoricalImportPage() {
               <FileSpreadsheet className="h-5 w-5" />
               Dry-run result
             </CardTitle>
-            <CardDescription>Nothing was written. Fix blocked POs in Excel and dry-run again.</CardDescription>
+            <CardDescription>
+              Nothing was written. Fix blocked POs in Excel and dry-run again. Click Lines to check brands and variants.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             {blockedPos.length > 0 ? (
@@ -315,12 +348,19 @@ export function KeyAccountHistoricalImportPage() {
                       <TableCell>{po.order_date}</TableCell>
                       <TableCell>{po.client}</TableCell>
                       <TableCell>{po.rfpf_number || '—'}</TableCell>
-                      <TableCell>{po.line_count}</TableCell>
-                      <TableCell className="text-right">
-                        ₱{po.total_amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                      </TableCell>
                       <TableCell>
-                        <Badge variant="secondary">paid / delivered</Badge>
+                        <Button
+                          type="button"
+                          variant="link"
+                          className="h-auto p-0 font-medium tabular-nums"
+                          onClick={() => setLinesPo(po)}
+                        >
+                          {po.line_count}
+                        </Button>
+                      </TableCell>
+                      <TableCell className="text-right">{peso(po.total_amount)}</TableCell>
+                      <TableCell>
+                        <Badge variant="secondary">paid / delivered / commissioned</Badge>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -337,6 +377,67 @@ export function KeyAccountHistoricalImportPage() {
           </CardContent>
         </Card>
       ) : null}
+
+      <Dialog open={!!linesPo} onOpenChange={(open) => { if (!open) setLinesPo(null); }}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Lines · {linesPo?.external_po_ref}</DialogTitle>
+            <DialogDescription>
+              {linesPo
+                ? `${linesPo.client} · ${linesPo.order_date} · ${peso(linesPo.total_amount)}`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Excel row</TableHead>
+                  <TableHead>Excel brand</TableHead>
+                  <TableHead>Excel variant</TableHead>
+                  <TableHead>SKU</TableHead>
+                  <TableHead className="text-right">Qty</TableHead>
+                  <TableHead className="text-right">Unit price</TableHead>
+                  <TableHead className="text-right">Line total</TableHead>
+                  <TableHead>Match</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(linesPo?.items || []).map((item, index) => (
+                  <TableRow key={`${item.excel_row || index}-${item.excel_variant || item.variant}`}>
+                    <TableCell className="tabular-nums">{item.excel_row ?? '—'}</TableCell>
+                    <TableCell>{item.excel_brand || item.brand || '—'}</TableCell>
+                    <TableCell>{item.excel_variant || item.variant || '—'}</TableCell>
+                    <TableCell className="font-mono text-sm">{item.sku || '—'}</TableCell>
+                    <TableCell className="text-right tabular-nums">{item.quantity}</TableCell>
+                    <TableCell className="text-right tabular-nums">{peso(item.unit_price)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{peso(item.line_total)}</TableCell>
+                    <TableCell>
+                      {item.lookup_ok ? (
+                        <Badge variant="secondary">Matched</Badge>
+                      ) : (
+                        <Badge variant="destructive">Not matched</Badge>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {!linesPo?.items?.length ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="text-muted-foreground">
+                      No line items on this preview.
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+              </TableBody>
+            </Table>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setLinesPo(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {importResults.length > 0 ? (
         <Card>
