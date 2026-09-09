@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Label } from '@/components/ui/label';
 import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, CreditCard, Camera, RotateCcw, Smartphone, CheckCircle, Split, Pencil, Loader2, FileDown, Filter, Download, ChevronDown, Printer } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { Link } from 'react-router-dom';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -55,6 +56,9 @@ import { sendOrderConfirmationEmail } from '@/lib/email.helpers';
 import { usePaymentSettings } from '@/features/finance/hooks/usePaymentSettings';
 import type { BankAccount } from '@/types/database.types';
 import { PRICING_OPTIONS, type PricingColumn } from '@/types/database.types';
+import { SHOW_CLIENT_RETURN_MOCK } from './client-returns/clientReturnMock';
+import { ReturnClientOrderDialog } from './client-returns/ReturnClientOrderDialog';
+import { ClientOrderReturnTimeline } from './client-returns/ClientOrderReturnTimeline';
 
 interface SelectedItem {
   variantId: string;
@@ -220,6 +224,8 @@ export default function MyOrdersPage() {
 
   // View Dialog States
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
+  const [returnDialogOpen, setReturnDialogOpen] = useState(false);
+  const [orderToReturn, setOrderToReturn] = useState<Order | null>(null);
   const [orderToView, setOrderToView] = useState<any>(null);
 
   // Signature states
@@ -649,6 +655,14 @@ export default function MyOrdersPage() {
   const calculateSubtotal = () => selectedItems.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
   const calculateTax = () => (calculateSubtotal() * taxRate) / 100;
   const calculateTotal = () => calculateSubtotal() + calculateTax() - discount;
+
+  const canShowClientReturn = (order: { status?: string; stage?: string }) =>
+    SHOW_CLIENT_RETURN_MOCK && (order.status === 'approved' || order.stage === 'admin_approved');
+
+  const openClientReturn = (order: Order) => {
+    setOrderToReturn(order);
+    setReturnDialogOpen(true);
+  };
 
   const handleViewOrder = (order: any) => {
     setOrderToView(order);
@@ -2028,7 +2042,16 @@ export default function MyOrdersPage() {
           <h1 className="text-2xl font-bold">My Orders</h1>
           <p className="text-sm text-muted-foreground">Manage your client orders</p>
         </div>
-        <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+        <div className="flex w-full sm:w-auto flex-col sm:flex-row gap-2">
+          {SHOW_CLIENT_RETURN_MOCK && (
+            <Button variant="outline" className="w-full sm:w-auto" asChild>
+              <Link to="/client-order-returns">
+                <RotateCcw className="h-4 w-4 mr-2" />
+                Return history
+              </Link>
+            </Button>
+          )}
+          <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
           <DialogTrigger asChild>
             <Button className="w-full sm:w-auto">
               <Plus className="h-4 w-4 mr-2" />
@@ -2676,6 +2699,7 @@ export default function MyOrdersPage() {
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {/* Stats */}
@@ -2844,6 +2868,14 @@ export default function MyOrdersPage() {
                       >
                         View Details
                       </button>
+                      {canShowClientReturn(order) && (
+                        <button
+                          onClick={() => openClientReturn(order)}
+                          className="flex-1 text-xs text-rose-600 hover:text-rose-700 font-medium transition-colors"
+                        >
+                          Return
+                        </button>
+                      )}
                       {order.stage === 'needs_revision' && (
                         <button
                           onClick={() => handleEditOrder(order)}
@@ -2938,6 +2970,17 @@ export default function MyOrdersPage() {
                       <Button variant="ghost" size="icon" onClick={() => handleViewOrder(order)}>
                         <Eye className="h-4 w-4" />
                       </Button>
+                      {canShowClientReturn(order) && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => openClientReturn(order)}
+                          className="text-rose-600 hover:text-rose-700"
+                          title="Return items"
+                        >
+                          <RotateCcw className="h-4 w-4" />
+                        </Button>
+                      )}
                       {order.stage === 'needs_revision' && (
                         <Button 
                           variant="ghost" 
@@ -4224,15 +4267,26 @@ export default function MyOrdersPage() {
           <DialogHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
             <DialogTitle>Order Details</DialogTitle>
             {orderToView && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="shrink-0"
-                onClick={() => handlePrintOrderReceipt(orderToView)}
-              >
-                <Printer className="h-4 w-4 mr-2" />
-                Print
-              </Button>
+              <div className="flex shrink-0 gap-2">
+                {canShowClientReturn(orderToView) && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openClientReturn(orderToView)}
+                  >
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                    Return items
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handlePrintOrderReceipt(orderToView)}
+                >
+                  <Printer className="h-4 w-4 mr-2" />
+                  Print
+                </Button>
+              </div>
             )}
           </DialogHeader>
           {orderToView && (
@@ -4602,6 +4656,12 @@ export default function MyOrdersPage() {
                   <p className="text-sm text-muted-foreground bg-muted p-3 rounded-lg">{orderToView.notes}</p>
                 </div>
               )}
+
+              {SHOW_CLIENT_RETURN_MOCK && (
+                <div className="border-t pt-4">
+                  <ClientOrderReturnTimeline order={orderToView} />
+                </div>
+              )}
             </div>
           )}
         </DialogContent>
@@ -4960,6 +5020,26 @@ export default function MyOrdersPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {SHOW_CLIENT_RETURN_MOCK && (
+        <ReturnClientOrderDialog
+          open={returnDialogOpen}
+          onOpenChange={(open) => {
+            setReturnDialogOpen(open);
+            if (!open) setOrderToReturn(null);
+          }}
+          orderNumber={orderToReturn?.orderNumber || ''}
+          clientName={orderToReturn?.clientName || ''}
+          items={(orderToReturn?.items || []).map((item) => ({
+            id: item.id,
+            brandName: item.brandName,
+            variantName: item.variantName,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            variantType: item.variantType,
+          }))}
+        />
+      )}
     </div>
   );
 }

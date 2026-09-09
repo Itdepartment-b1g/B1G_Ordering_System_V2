@@ -38,6 +38,13 @@ import {
 import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
 import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
 import MainInventoryManual from '@/features/inventory/warehouse-manual/components/MainInventoryManual';
+import {
+  SHOW_CLIENT_RETURN_MOCK,
+  buildMockReturnedStockByVariantId,
+  MOCK_CLIENT_RETURNS,
+  type MockClientReturn,
+} from '@/features/orders/client-returns/clientReturnMock';
+import { ReturnedStockDetailDialog } from '@/features/orders/client-returns/ReturnedStockDetailDialog';
 
 interface ReturnHistoryEntry {
   id: string;
@@ -143,6 +150,13 @@ export default function MainInventoryPage() {
     brandName: string;
     totalReserved: number;
     items: OpenPoReservationDetail[];
+  } | null>(null);
+
+  const [returnedDialog, setReturnedDialog] = useState<{
+    variantName: string;
+    brandName: string;
+    totalReturned: number;
+    returns: MockClientReturn[];
   } | null>(null);
 
   const [batchViewTarget, setBatchViewTarget] = useState<{
@@ -914,6 +928,59 @@ export default function MainInventoryPage() {
     </TableCell>
   );
 
+  const showReturnedColumn = SHOW_CLIENT_RETURN_MOCK && !isWarehouse;
+
+  const mockReturnedStockByVariantId = useMemo(() => {
+    if (!showReturnedColumn) return new Map<string, { qty: number; returns: MockClientReturn[] }>();
+    const variants = brands.flatMap((brand) => brand.allVariants || []);
+    return buildMockReturnedStockByVariantId(variants);
+  }, [brands, showReturnedColumn]);
+
+  const totalReturnedStock = useMemo(
+    () => Array.from(mockReturnedStockByVariantId.values()).reduce((sum, stock) => sum + stock.qty, 0),
+    [mockReturnedStockByVariantId]
+  );
+
+  const openReturnedDialog = (
+    brandName: string,
+    variantName: string,
+    qty: number,
+    returns: MockClientReturn[]
+  ) => {
+    setReturnedDialog({
+      brandName,
+      variantName,
+      totalReturned: qty,
+      returns,
+    });
+  };
+
+  const renderReturnedCell = (brandName: string, variant: Variant) => {
+    if (!showReturnedColumn) return null;
+    const stock = mockReturnedStockByVariantId.get(variant.id);
+    const qty = stock?.qty || 0;
+    const returns = stock?.returns || [];
+    return (
+      <TableCell className="p-1 text-center">
+        <button
+          type="button"
+          className={`w-full min-h-10 rounded-md px-2 py-1.5 text-sm font-medium ${
+            qty > 0
+              ? 'text-rose-700 hover:bg-rose-50 hover:underline'
+              : 'text-muted-foreground hover:bg-muted/60'
+          }`}
+          title={qty > 0 ? `${qty} returned unit${qty === 1 ? '' : 's'} — click to view` : 'Click to view returned items'}
+          onClick={(event) => {
+            event.stopPropagation();
+            openReturnedDialog(brandName, variant.name, qty, returns);
+          }}
+        >
+          {qty > 0 ? qty : '—'}
+        </button>
+      </TableCell>
+    );
+  };
+
   const getOrderStageLabel = (stage: string) => {
     switch (stage) {
       case 'finance_pending':
@@ -1172,11 +1239,19 @@ export default function MainInventoryPage() {
         className={`grid grid-cols-2 ${
           isSubWarehouseUser
             ? showPoReservedColumn
-              ? 'md:grid-cols-5'
-              : 'md:grid-cols-3'
+              ? showReturnedColumn
+                ? 'md:grid-cols-6'
+                : 'md:grid-cols-5'
+              : showReturnedColumn
+                ? 'md:grid-cols-4'
+                : 'md:grid-cols-3'
             : showPoReservedColumn
-              ? 'md:grid-cols-6'
-              : 'md:grid-cols-5'
+              ? showReturnedColumn
+                ? 'md:grid-cols-7'
+                : 'md:grid-cols-6'
+              : showReturnedColumn
+                ? 'md:grid-cols-6'
+                : 'md:grid-cols-5'
         } gap-4`}
       >
         <Card>
@@ -1223,6 +1298,31 @@ export default function MainInventoryPage() {
                 <div>
                   <div className="text-2xl font-bold">{totalAllocatedStock.toLocaleString()}</div>
                   <div className="text-xs text-muted-foreground">Allocated Stock</div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {showReturnedColumn && (
+          <Card
+            className="cursor-pointer hover:bg-rose-50/40 transition-colors"
+            onClick={() =>
+              openReturnedDialog(
+                '',
+                'All variants',
+                totalReturnedStock,
+                MOCK_CLIENT_RETURNS
+              )
+            }
+            title="Click to view returned items"
+          >
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2">
+                <RotateCcw className="h-4 w-4 text-rose-600" />
+                <div>
+                  <div className="text-2xl font-bold">{totalReturnedStock.toLocaleString()}</div>
+                  <div className="text-xs text-muted-foreground">Returned Stock</div>
                 </div>
               </div>
             </CardContent>
@@ -1422,6 +1522,7 @@ export default function MainInventoryPage() {
                             isSubWarehouseUser={isSubWarehouseUser}
                             isWarehouse={isWarehouse}
                             showPoReservedColumn={showPoReservedColumn}
+                            showReturnedColumn={showReturnedColumn}
                             sortState={getVariantSortState('flavor')}
                             onSort={(key) => handleVariantSort('flavor', key)}
                           />
@@ -1445,6 +1546,7 @@ export default function MainInventoryPage() {
                                   </TableCell>
                                   <TableCell className="font-semibold text-center">{flavor.stock}</TableCell>
                                   {!isSubWarehouseUser && renderAllocatedCell(flavor)}
+                                  {showReturnedColumn && renderReturnedCell(brand.name, flavor)}
                                   {showPoReservedColumn && renderPoReservedCell(brand.name, flavor)}
                                   {showPendingAllocations && renderPendingAllocatedCell(brand.name, flavor)}
                                   {(!isSubWarehouseUser || showPoReservedColumn) && renderAvailableCell(flavor, available)}
@@ -1594,6 +1696,7 @@ export default function MainInventoryPage() {
                             isSubWarehouseUser={isSubWarehouseUser}
                             isWarehouse={isWarehouse}
                             showPoReservedColumn={showPoReservedColumn}
+                            showReturnedColumn={showReturnedColumn}
                             sortState={getVariantSortState('battery')}
                             onSort={(key) => handleVariantSort('battery', key)}
                           />
@@ -1617,6 +1720,7 @@ export default function MainInventoryPage() {
                                   </TableCell>
                                   <TableCell className="font-semibold text-center">{battery.stock}</TableCell>
                                   {!isSubWarehouseUser && renderAllocatedCell(battery)}
+                                  {showReturnedColumn && renderReturnedCell(brand.name, battery)}
                                   {showPoReservedColumn && renderPoReservedCell(brand.name, battery)}
                                   {showPendingAllocations && renderPendingAllocatedCell(brand.name, battery)}
                                   {(!isSubWarehouseUser || showPoReservedColumn) && renderAvailableCell(battery, available)}
@@ -1743,6 +1847,7 @@ export default function MainInventoryPage() {
                             isSubWarehouseUser={isSubWarehouseUser}
                             isWarehouse={isWarehouse}
                             showPoReservedColumn={showPoReservedColumn}
+                            showReturnedColumn={showReturnedColumn}
                             sortState={getVariantSortState('posm')}
                             onSort={(key) => handleVariantSort('posm', key)}
                           />
@@ -1766,6 +1871,7 @@ export default function MainInventoryPage() {
                                   </TableCell>
                                   <TableCell className="font-semibold text-center">{posm.stock}</TableCell>
                                   {!isSubWarehouseUser && renderAllocatedCell(posm)}
+                                  {showReturnedColumn && renderReturnedCell(brand.name, posm)}
                                   {showPoReservedColumn && renderPoReservedCell(brand.name, posm)}
                                   {showPendingAllocations && renderPendingAllocatedCell(brand.name, posm)}
                                   {(!isSubWarehouseUser || showPoReservedColumn) && renderAvailableCell(posm, available)}
@@ -1909,6 +2015,7 @@ export default function MainInventoryPage() {
                                 isSubWarehouseUser={isSubWarehouseUser}
                                 isWarehouse={isWarehouse}
                                 showPoReservedColumn={showPoReservedColumn}
+                                showReturnedColumn={showReturnedColumn}
                                 sortState={getVariantSortState(variantType)}
                                 onSort={(key) => handleVariantSort(variantType, key)}
                               />
@@ -1931,6 +2038,7 @@ export default function MainInventoryPage() {
                                       </TableCell>
                                       <TableCell className="font-semibold text-center">{variant.stock}</TableCell>
                                       {!isSubWarehouseUser && renderAllocatedCell(variant)}
+                                      {showReturnedColumn && renderReturnedCell(brand.name, variant)}
                                       {showPoReservedColumn && renderPoReservedCell(brand.name, variant)}
                                       {showPendingAllocations && renderPendingAllocatedCell(brand.name, variant)}
                                       {(!isSubWarehouseUser || showPoReservedColumn) && renderAvailableCell(variant, available)}
@@ -2764,6 +2872,19 @@ export default function MainInventoryPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {showReturnedColumn && (
+        <ReturnedStockDetailDialog
+          open={!!returnedDialog}
+          onOpenChange={(open) => {
+            if (!open) setReturnedDialog(null);
+          }}
+          brandName={returnedDialog?.brandName}
+          variantName={returnedDialog?.variantName || ''}
+          totalReturned={returnedDialog?.totalReturned || 0}
+          returns={returnedDialog?.returns || []}
+        />
+      )}
 
       {/* Signature Viewer Dialog */}
       <Dialog open={!!viewSignatureUrl} onOpenChange={() => setViewSignatureUrl(null)}>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import React from 'react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,12 @@ import { ReturnInventoryDialog } from './components/ReturnInventoryDialog';
 import { ReturnToMainDialog } from './components/ReturnToMainDialog';
 import MyReturnRequestsSection from './components/MyReturnRequestsSection';
 import type { RemittanceOrder, BankOrderNote } from './types';
+import {
+  SHOW_CLIENT_RETURN_MOCK,
+  buildMockReturnedStockByVariantId,
+  type MockClientReturn,
+} from '@/features/orders/client-returns/clientReturnMock';
+import { ReturnedStockDetailDialog } from '@/features/orders/client-returns/ReturnedStockDetailDialog';
 
 const LOW_STOCK_THRESHOLD = 10;
 const isLowStock = (stock: number) => stock <= LOW_STOCK_THRESHOLD;
@@ -71,6 +77,12 @@ export default function MyInventory() {
   const [showOrderDetailsModal, setShowOrderDetailsModal] = useState(false);
   const [returnDialogOpen, setReturnDialogOpen] = useState(false);
   const [returnToMainDialogOpen, setReturnToMainDialogOpen] = useState(false);
+  const [returnedDialog, setReturnedDialog] = useState<{
+    variantName: string;
+    brandName: string;
+    totalReturned: number;
+    returns: MockClientReturn[];
+  } | null>(null);
 
   // Confirmation checkboxes for each section
   const [unsoldConfirmed, setUnsoldConfirmed] = useState(false);
@@ -87,6 +99,42 @@ export default function MyInventory() {
 
   const getTotalStock = (brand: any) => {
     return (brand.allVariants || []).reduce((sum: number, v: any) => sum + v.stock, 0);
+  };
+
+  const mockReturnedStockByVariantId = useMemo(() => {
+    if (!SHOW_CLIENT_RETURN_MOCK) return new Map<string, { qty: number; returns: MockClientReturn[] }>();
+    const variants = (agentBrands || []).flatMap((brand) => brand.allVariants || []);
+    return buildMockReturnedStockByVariantId(variants);
+  }, [agentBrands]);
+
+  const openReturnedDialog = (
+    brandName: string,
+    variantName: string,
+    qty: number,
+    returns: MockClientReturn[]
+  ) => {
+    setReturnedDialog({
+      brandName,
+      variantName,
+      totalReturned: qty,
+      returns,
+    });
+  };
+
+  const getReturnedStock = (variantId: string) =>
+    mockReturnedStockByVariantId.get(variantId) || { qty: 0, returns: [] as MockClientReturn[] };
+
+  const getBrandReturnedStock = (brand: { allVariants?: Array<{ id: string }> }) => {
+    const returnsById = new Map<string, MockClientReturn>();
+    let qty = 0;
+    for (const variant of brand.allVariants || []) {
+      const stock = getReturnedStock(variant.id);
+      qty += stock.qty;
+      for (const row of stock.returns) {
+        returnsById.set(row.id, row);
+      }
+    }
+    return { qty, returns: Array.from(returnsById.values()) };
   };
 
   // Create a deep copy of brands with filtering applied at the variant level
@@ -765,6 +813,22 @@ export default function MyInventory() {
                                   <span className="truncate">{v.name}</span>
                                   <div className="text-right ml-2 flex-shrink-0">
                                     <span className={`font-semibold ${isLowStock(v.stock) ? 'text-amber-600' : ''}`}>{v.stock}</span>
+                                    {SHOW_CLIENT_RETURN_MOCK && (
+                                      <button
+                                        type="button"
+                                        className={`text-xs font-medium ml-2 ${
+                                          getReturnedStock(v.id).qty > 0
+                                            ? 'text-rose-700 hover:underline'
+                                            : 'text-muted-foreground'
+                                        }`}
+                                        onClick={() => {
+                                          const stock = getReturnedStock(v.id);
+                                          openReturnedDialog(brand.name, v.name, stock.qty, stock.returns);
+                                        }}
+                                      >
+                                        ret {getReturnedStock(v.id).qty || '—'}
+                                      </button>
+                                    )}
                                     <span className="text-xs text-muted-foreground ml-1">₱{v.price.toFixed(2)}</span>
                                   </div>
                                 </div>
@@ -798,6 +862,9 @@ export default function MyInventory() {
                   <TableHead>Type</TableHead>
                   <TableHead className="text-right">Variants</TableHead>
                   <TableHead className="text-right">Stock</TableHead>
+                  {SHOW_CLIENT_RETURN_MOCK && (
+                    <TableHead className="text-right">Returned</TableHead>
+                  )}
                   <TableHead className="text-right">Price</TableHead>
                   <TableHead className="text-right">DSP</TableHead>
                   <TableHead className="text-right">RSP</TableHead>
@@ -845,6 +912,26 @@ export default function MyInventory() {
                           {getTotalStock(brand)}
                         </span>
                       </TableCell>
+                      {SHOW_CLIENT_RETURN_MOCK && (
+                        <TableCell className="p-1 text-right">
+                          <button
+                            type="button"
+                            className={`w-full min-h-10 rounded-md px-2 py-1.5 text-sm font-semibold ${
+                              getBrandReturnedStock(brand).qty > 0
+                                ? 'text-rose-700 hover:bg-rose-50 hover:underline'
+                                : 'text-muted-foreground hover:bg-muted/60'
+                            }`}
+                            title="Click to view returned items"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              const stock = getBrandReturnedStock(brand);
+                              openReturnedDialog(brand.name, 'All variants', stock.qty, stock.returns);
+                            }}
+                          >
+                            {getBrandReturnedStock(brand).qty || '—'}
+                          </button>
+                        </TableCell>
+                      )}
                       <TableCell className="text-right text-muted-foreground">-</TableCell>
                       <TableCell className="text-right text-muted-foreground">-</TableCell>
                       <TableCell className="text-right text-muted-foreground">-</TableCell>
@@ -869,7 +956,7 @@ export default function MyInventory() {
                           {/* Type Header */}
                           <TableRow className={colors.headerBg}>
                             <TableCell></TableCell>
-                            <TableCell colSpan={8} className="pl-8 py-2">
+                            <TableCell colSpan={SHOW_CLIENT_RETURN_MOCK ? 9 : 8} className="pl-8 py-2">
                               <span className={`text-xs font-semibold ${colors.header}`}>{typeDisplay}</span>
                             </TableCell>
                           </TableRow>
@@ -890,6 +977,26 @@ export default function MyInventory() {
                               <TableCell className={`text-right font-semibold ${isLowStock(variant.stock) ? 'text-amber-600' : ''}`}>
                                 {variant.stock}
                               </TableCell>
+                              {SHOW_CLIENT_RETURN_MOCK && (
+                                <TableCell className="p-1 text-right">
+                                  <button
+                                    type="button"
+                                    className={`w-full min-h-10 rounded-md px-2 py-1.5 text-sm font-semibold ${
+                                      getReturnedStock(variant.id).qty > 0
+                                        ? 'text-rose-700 hover:bg-rose-50 hover:underline'
+                                        : 'text-muted-foreground hover:bg-muted/60'
+                                    }`}
+                                    title="Click to view returned items"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      const stock = getReturnedStock(variant.id);
+                                      openReturnedDialog(brand.name, variant.name, stock.qty, stock.returns);
+                                    }}
+                                  >
+                                    {getReturnedStock(variant.id).qty || '—'}
+                                  </button>
+                                </TableCell>
+                              )}
                               <TableCell className="text-right font-medium">₱{variant.price.toFixed(2)}</TableCell>
                               <TableCell className="text-right text-muted-foreground text-sm">
                                 {variant.dspPrice ? `₱${variant.dspPrice.toFixed(2)}` : '-'}
@@ -1982,6 +2089,19 @@ export default function MyInventory() {
         open={returnToMainDialogOpen}
         onOpenChange={setReturnToMainDialogOpen}
       />
+
+      {SHOW_CLIENT_RETURN_MOCK && (
+        <ReturnedStockDetailDialog
+          open={!!returnedDialog}
+          onOpenChange={(open) => {
+            if (!open) setReturnedDialog(null);
+          }}
+          brandName={returnedDialog?.brandName}
+          variantName={returnedDialog?.variantName || ''}
+          totalReturned={returnedDialog?.totalReturned || 0}
+          returns={returnedDialog?.returns || []}
+        />
+      )}
     </div>
   );
 }

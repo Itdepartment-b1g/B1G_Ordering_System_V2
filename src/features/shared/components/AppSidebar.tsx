@@ -95,6 +95,7 @@ const adminMenuItems: MenuItem[] = [
       { title: 'TL Stock Requests', url: '/inventory/admin-tl-requests', icon: Users },
       { title: 'Team Remittances', url: '/inventory/admin-team-remittances', icon: Users },
       { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
+      { title: 'Client Order Returns', url: '/client-order-returns', icon: RotateCcw },
     ]
   },
   {
@@ -284,6 +285,7 @@ const agentMenuItems: MenuItem[] = [
   { title: 'Request Inventory', url: '/inventory/mobile-request', icon: Send },
   { title: 'My Clients', url: '/my-clients', icon: ShoppingBag },
   { title: 'My Orders', url: '/my-orders', icon: ShoppingCart },
+  { title: 'Client Order Returns', url: '/client-order-returns', icon: RotateCcw },
   { title: 'My Activity', url: '/system-history', icon: History },
   { title: 'Calendar', url: '/calendar', icon: Calendar },
   { title: 'Profile', url: '/profile', icon: UserCircle },
@@ -313,6 +315,7 @@ const leaderMenuItems: MenuItem[] = [
       { title: 'Purchase Orders', url: '/purchase-orders', icon: ClipboardList },
       { title: 'PO Receiving', url: '/inventory/po-receive', icon: PackageCheck },
       { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
+      { title: 'Client Order Returns', url: '/client-order-returns', icon: RotateCcw },
     ]
   },
   {
@@ -330,6 +333,7 @@ const leaderMenuItems: MenuItem[] = [
   { title:  "My Team's Attendance", url: '/team-attendances', icon: Calendar},
   { title: "My Allocation History", url: '/leader-allocation-history', icon: Package2Icon },
   { title: 'My Orders', url: '/my-orders', icon: ShoppingCart },
+  { title: 'Client Order Returns', url: '/client-order-returns', icon: RotateCcw },
   { title: 'Order Management', url: '/leader-orders', icon: FileText },
   { title: 'Team Activity', url: '/system-history', icon: History },
   { title: 'Calendar', url: '/calendar', icon: Calendar },
@@ -481,6 +485,7 @@ const superAdminMenuItems: MenuItem[] = [
       { title: 'Inventory Requests', url: '/inventory/admin-requests', icon: Send },
       { title: 'Team Remittances', url: '/inventory/admin-team-remittances', icon: Users },
       { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
+      { title: 'Client Order Returns', url: '/client-order-returns', icon: RotateCcw },
     ]
   },
   {

@@ -15,6 +15,7 @@ type InventoryVariantTableHeaderProps = {
   isSubWarehouseUser: boolean;
   isWarehouse: boolean;
   showPoReservedColumn?: boolean;
+  showReturnedColumn?: boolean;
   sortState: TableSortCycleState<MainInventoryVariantSortKey>;
   onSort: (key: MainInventoryVariantSortKey) => void;
 };
@@ -26,6 +27,7 @@ export function InventoryVariantTableHeader({
   isSubWarehouseUser,
   isWarehouse,
   showPoReservedColumn = false,
+  showReturnedColumn = false,
   sortState,
   onSort,
 }: InventoryVariantTableHeaderProps) {
@@ -57,6 +59,7 @@ export function InventoryVariantTableHeader({
             className={th}
           />
         )}
+        {showReturnedColumn && <TableHead className={th}>Returned</TableHead>}
         {showPoReservedColumn && (
           <SortableTableHead
             label="PO Reserved"

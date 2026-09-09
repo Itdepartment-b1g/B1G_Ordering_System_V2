@@ -12,7 +12,7 @@ import ExecutiveDashboardPage from "@/features/dashboard/ExecutiveDashboardPage"
 import { SystemHistoryPage } from "@/features/system-history";
 import { ProfilePage } from "@/features/profile";
 import { SystemSettingsPage } from "@/features/settings";
-import { OrdersPage, PurchaseOrdersPage, MyOrdersPage, OrderProvider, PurchaseOrderProvider } from "@/features/orders";
+import { OrdersPage, PurchaseOrdersPage, MyOrdersPage, ClientOrderReturnsPage, OrderProvider, PurchaseOrderProvider } from "@/features/orders";
 import BrandsPage from "@/features/orders/BrandsPage";
 import VariantTypesPage from "@/features/orders/VariantTypesPage";
 import SuppliersPage from "@/features/orders/SuppliersPage";
@@ -281,6 +281,7 @@ const App = () => (
                     <Route path="/my-clients" element={<ProtectedRoute><MyClientsPage /></ProtectedRoute>} />
                     <Route path="/my-teams" element={<ProtectedRoute allowedRoles={['team_leader']}><MyTeamsPage /></ProtectedRoute>} />
                     <Route path="/my-orders" element={<ProtectedRoute><MyOrdersPage /></ProtectedRoute>} />
+                    <Route path="/client-order-returns" element={<ProtectedRoute><ClientOrderReturnsPage /></ProtectedRoute>} />
                     <Route path="/my-history" element={<ProtectedRoute><AgentHistoryPage /></ProtectedRoute>} />
                     <Route path="/system-history" element={<ProtectedRoute><SystemHistoryPage /></ProtectedRoute>} />
                     <Route path="/analytics" element={<ProtectedRoute><AnalyticsPage /></ProtectedRoute>} />

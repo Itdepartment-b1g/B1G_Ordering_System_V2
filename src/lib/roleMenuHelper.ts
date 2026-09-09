@@ -22,6 +22,7 @@ const adminMenuItems: MenuItem[] = [
     { title: 'Inventory Requests', url: '/inventory/admin-requests', description: 'Approve or reject stock requests escalated to admin.' },
     { title: 'Team Remittances', url: '/inventory/admin-team-remittances', description: 'Review remitted stocks and reconcile team inventory.' },
     { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', description: 'Return stock to your linked warehouse for inspection (good/damaged + batch).' },
+    { title: 'Client Order Returns', url: '/client-order-returns', description: 'History of client returns posted against ORD numbers (CR-…).' },
   ]},
   { title: 'Clients', url: '/clients', description: 'Admin-level management of all customer records.', hasSubmenu: true, submenu: [
     { title: 'Clients Database', url: '/clients', description: 'Search, filter, and manage all active clients.' },
@@ -52,6 +53,7 @@ const agentMenuItems: MenuItem[] = [
   { title: 'Mobile Sales Stock', url: '/inventory/mobile-request', description: 'Request stock specifically for mobile sales inventory.' },
   { title: 'My Clients', url: '/my-clients', description: 'Manage your assigned clients, visit history, and details.' },
   { title: 'My Orders', url: '/my-orders', description: 'Create and track orders you have placed for clients.' },
+  { title: 'Client Order Returns', url: '/client-order-returns', description: 'History of items returned against your client orders.' },
   { title: 'My Activity', url: '/system-history', description: 'See a history of your own actions and changes in the system.' },
   { title: 'Calendar', url: '/calendar', description: 'Plan and track your field tasks, visits, and follow-ups.' },
   { title: 'Profile', url: '/profile', description: 'Manage your user profile and password.' },
@@ -70,6 +72,7 @@ const leaderMenuItems: MenuItem[] = [
     { title: 'Purchase Orders', url: '/purchase-orders', description: 'Request warehouse transfer POs. Super Admin approves before the hub fulfills.' },
     { title: 'PO Receiving', url: '/inventory/po-receive', description: 'Receive warehouse transfer POs assigned to you and report delivery shortages.' },
     { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', description: 'Return your allocated stock to the linked warehouse for inspection (good/damaged + batch).' },
+    { title: 'Client Order Returns', url: '/client-order-returns', description: 'History of client returns posted against ORD numbers (CR-…).' },
     { title: 'How to use?', url: '/leader-manual', description: 'Open the team leader manual and usage guides.' },
   ]},
   { title: 'Tasks', url: '/tasks', description: 'Assign and monitor daily tasks for your team.', hasSubmenu: true, submenu: [
@@ -78,6 +81,7 @@ const leaderMenuItems: MenuItem[] = [
   ]},
   { title: 'My Clients', url: '/my-clients', description: 'View clients associated with you as a leader.' },
   { title: 'My Orders', url: '/my-orders', description: 'View orders you have created or are responsible for.' },
+  { title: 'Client Order Returns', url: '/client-order-returns', description: 'History of items returned against client ORD numbers.' },
   { title: 'Order Management', url: '/leader-orders', description: 'View and monitor orders from all your team members.' },
   { title: 'Team Activity', url: '/system-history', description: 'Audit view of your teams important actions.' },
   { title: 'Calendar', url: '/calendar', description: 'See team tasks and schedules in a shared calendar.' },
@@ -147,6 +151,7 @@ const superAdminMenuItems: MenuItem[] = [
     { title: 'Inventory Requests', url: '/inventory/admin-requests', description: 'Approve or reject high-level stock requests.' },
     { title: 'Team Remittances', url: '/inventory/admin-team-remittances', description: 'Audit remittances from teams for compliance.' },
     { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', description: 'Return stock to your linked warehouse for inspection (good/damaged + batch).' },
+    { title: 'Client Order Returns', url: '/client-order-returns', description: 'History of client returns posted against ORD numbers (CR-…).' },
   ]},
   { title: 'Clients', url: '/clients', description: 'High-level client management and quality control.', hasSubmenu: true, submenu: [
     { title: 'Clients Database', url: '/clients', description: 'View all clients registered under this tenant.' },
