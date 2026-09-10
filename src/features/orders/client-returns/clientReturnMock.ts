@@ -38,7 +38,7 @@ export type MockClientReturn = {
 export const MOCK_CLIENT_RETURNS: MockClientReturn[] = [
   {
     id: 'mock-cr-1',
-    returnNumber: 'CR-MTS-202609-0001',
+    returnNumber: 'CR-MTS-202609-000001',
     orderNumber: 'ORD-2026-MTS-0042',
     clientName: "Juan's Sari-Sari",
     returnedByName: 'Maria Santos',
@@ -65,7 +65,7 @@ export const MOCK_CLIENT_RETURNS: MockClientReturn[] = [
   },
   {
     id: 'mock-cr-2',
-    returnNumber: 'CR-MTS-202609-0002',
+    returnNumber: 'CR-MTS-202609-000002',
     orderNumber: 'ORD-2026-MTS-0042',
     clientName: "Juan's Sari-Sari",
     returnedByName: 'Maria Santos',
@@ -82,7 +82,7 @@ export const MOCK_CLIENT_RETURNS: MockClientReturn[] = [
   },
   {
     id: 'mock-cr-3',
-    returnNumber: 'CR-MTS-202609-0003',
+    returnNumber: 'CR-MTS-202609-000003',
     orderNumber: 'ORD-2026-MTS-0058',
     clientName: 'Pedro Mart',
     returnedByName: 'Maria Santos',
@@ -100,7 +100,7 @@ export const MOCK_CLIENT_RETURNS: MockClientReturn[] = [
   },
   {
     id: 'mock-cr-4',
-    returnNumber: 'CR-MTS-202609-0004',
+    returnNumber: 'CR-MTS-202609-000004',
     orderNumber: 'ORD-2026-MTS-0061',
     clientName: 'Aling Nena Store',
     returnedByName: 'Jose Cruz',
@@ -117,7 +117,7 @@ export const MOCK_CLIENT_RETURNS: MockClientReturn[] = [
   },
   {
     id: 'mock-cr-5',
-    returnNumber: 'CR-MTS-202609-0005',
+    returnNumber: 'CR-MTS-202609-000005',
     orderNumber: 'ORD-2026-MTS-0064',
     clientName: 'Kuya Ben Mart',
     returnedByName: 'Maria Santos',
@@ -133,7 +133,7 @@ export const MOCK_CLIENT_RETURNS: MockClientReturn[] = [
   },
   {
     id: 'mock-cr-6',
-    returnNumber: 'CR-MTS-202609-0006',
+    returnNumber: 'CR-MTS-202609-000006',
     orderNumber: 'ORD-2026-MTS-0070',
     clientName: 'Central Sari-Sari',
     returnedByName: 'Jose Cruz',

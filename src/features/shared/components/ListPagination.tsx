@@ -1,3 +1,4 @@
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -50,6 +51,36 @@ type ListPaginationProps = {
   rowsPerPageLabel?: string;
 };
 
+function PageSizeSelect({
+  pageSize,
+  onPageSizeChange,
+  ariaLabel,
+  triggerClassName,
+}: {
+  pageSize: PageSize;
+  onPageSizeChange: (value: PageSize) => void;
+  ariaLabel: string;
+  triggerClassName: string;
+}) {
+  return (
+    <Select
+      value={String(pageSize)}
+      onValueChange={(value) => onPageSizeChange(Number(value) as PageSize)}
+    >
+      <SelectTrigger className={triggerClassName} aria-label={ariaLabel}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {PAGE_SIZE_OPTIONS.map((size) => (
+          <SelectItem key={size} value={String(size)}>
+            {size}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 export function ListPagination({
   pageSize,
   safePage,
@@ -60,41 +91,69 @@ export function ListPagination({
   rowsPerPageLabel = 'Rows per page',
 }: ListPaginationProps) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <div className="flex items-center gap-2 text-sm">
-        <span className="text-muted-foreground">{rowsPerPageLabel}</span>
-        <Select
-          value={String(pageSize)}
-          onValueChange={(value) => onPageSizeChange(Number(value) as PageSize)}
-        >
-          <SelectTrigger className="w-[90px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {PAGE_SIZE_OPTIONS.map((size) => (
-              <SelectItem key={size} value={String(size)}>
-                {size}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="flex items-center gap-2">
-        <Button variant="outline" size="sm" disabled={safePage <= 0} onClick={onPrevious}>
-          Previous
-        </Button>
-        <span className="text-sm text-muted-foreground">
-          Page {safePage + 1} of {pageCount}
-        </span>
+    <>
+      <div className="flex items-center gap-1 sm:hidden">
         <Button
           variant="outline"
-          size="sm"
+          size="icon"
+          className="h-9 w-9 shrink-0"
+          disabled={safePage <= 0}
+          onClick={onPrevious}
+          aria-label="Previous page"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </Button>
+        <span className="min-w-0 flex-1 text-center text-sm tabular-nums text-muted-foreground">
+          Page {safePage + 1} of {pageCount}
+        </span>
+        <div className="flex items-center gap-1 shrink-0">
+          <span className="text-sm text-muted-foreground">rows</span>
+          <PageSizeSelect
+            pageSize={pageSize}
+            onPageSizeChange={onPageSizeChange}
+            ariaLabel={rowsPerPageLabel}
+            triggerClassName="h-8 w-[4.25rem] px-2"
+          />
+        </div>
+        <Button
+          variant="outline"
+          size="icon"
+          className="h-9 w-9 shrink-0"
           disabled={safePage >= pageCount - 1}
           onClick={onNext}
+          aria-label="Next page"
         >
-          Next
+          <ChevronRight className="h-4 w-4" />
         </Button>
       </div>
-    </div>
+
+      <div className="hidden sm:flex sm:flex-wrap sm:items-center sm:justify-between sm:gap-2">
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-muted-foreground">{rowsPerPageLabel}</span>
+          <PageSizeSelect
+            pageSize={pageSize}
+            onPageSizeChange={onPageSizeChange}
+            ariaLabel={rowsPerPageLabel}
+            triggerClassName="h-9 w-[90px]"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" disabled={safePage <= 0} onClick={onPrevious}>
+            Previous
+          </Button>
+          <span className="text-sm tabular-nums text-muted-foreground">
+            Page {safePage + 1} of {pageCount}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={safePage >= pageCount - 1}
+            onClick={onNext}
+          >
+            Next
+          </Button>
+        </div>
+      </div>
+    </>
   );
 }
