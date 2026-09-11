@@ -2,16 +2,40 @@
 
 Visual mock only. Flag: `SHOW_CLIENT_RETURN_MOCK` in `src/features/orders/client-returns/clientReturnMock.ts`. Confirm does not write to the database.
 
-Use this file as the source of truth for **tables, cards, and list columns** so the return UI stays consistent.
+Use this file as the source of truth for **tables, cards, list columns, and the planned schema** so the return UI and SQL stay consistent.
 
-Breakpoint: **768px** (`useIsMobile()` in `src/hooks/use-mobile.tsx`).
+**Scope:** warehouse-linked Standard Account companies only (`get_linked_warehouse_company_id()`). Not Return to Warehouse (`RT-…`) and not warehouse Client Stock Returns inspect.
 
-- Desktop ≥ 768: **table**
-- Mobile &lt; 768: **cards** (`QtyInputCard`)
+Do not FK inventory rows to returns — join `company_id` + `variant_id` (+ `agent_id` on agent inventory).
 
-No table/cards toggle. Layout follows viewport only.
+**Migration file (not applied until you run it in the SQL editor):**
+`supabase/migrations/20260911120000_client_order_returns.sql`
 
-**No migration yet.** Schema below is the agreed model for when we wire RPC. Do not FK inventory rows to returns — join `company_id` + `variant_id` (+ `agent_id` on agent inventory).
+UI stays mock (`SHOW_CLIENT_RETURN_MOCK`) until the app is wired to these RPCs.
+
+---
+
+## Breakpoints
+
+| Surface | Breakpoint | Layout |
+|---|---|---|
+| Create-return wizard | 768px (`useIsMobile()`) | ≥ 768 table · &lt; 768 `QtyInputCard` |
+| History list | 1024px | Cards below `lg`. Table/Cards toggle from `lg` up (`localStorage` key `client-order-returns-view`) |
+
+History default: **Cards** below 1024px, **Table** at 1024px+ (remembered if the user toggles). Old stored value `'dialog'` maps to cards.
+
+---
+
+## Roles
+
+| Role | Create CR | Approve / Reject | List |
+|---|---|---|---|
+| Mobile sales | Yes → `pending_leader` | No | Own / team returns (when wired) |
+| Team leader | Yes → auto-`posted` (RPC; wizard not switched yet) | **Yes** (only role that can act) | Team returns |
+| Admin / super admin | View history | **No** (view only) | All company returns |
+| Warehouse role | No | No | Use Client Stock Returns (`RT-…`) |
+
+Reject **closes that CR**. Agent may file a **new** CR on the same ORD. Remaining returnable qty = sold − **posted** only (pending / rejected do not consume).
 
 ---
 
@@ -21,13 +45,20 @@ Numbering: `CR-{INITIALS}-{YYYYMM}-000001` (RPC bumps from latest row for that c
 
 `reason` is **TEXT**, not an enum. UI options: Defect, Duplicate order, Missing parts, Other (free text).
 
-**Status** exists on the header (`posted` | `cancelled`) for later void. The history UI currently **hides** Status because everything is posted.
+Internal status: `pending_leader` | `posted` | `rejected` | `cancelled`.
 
-Not in this schema yet (UI already mocks them — add when migrating):
+UI labels (do **not** show “Posted”):
 
-- Change-item / exchange lines (always required; match brand + qty, not price)
-- Agent signature
-- Team leader approval (`pending_leader` → skip if TL created the ORD)
+| Internal | Badge |
+|---|---|
+| `pending_leader` | Pending |
+| `posted` | Approve |
+| `rejected` | Reject |
+| `cancelled` | Cancelled |
+
+Badge classes: `clientReturnStatusBadgeClass` in `clientReturnMock.ts`.
+
+Stock moves **only when status becomes `posted`** (TL approve, or TL auto-post on submit).
 
 ### 1. `main_inventory` (super admin / admin)
 
@@ -50,28 +81,36 @@ Not in this schema yet (UI already mocks them — add when migrating):
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid PK | |
-| `return_number` | text | `CR-{INITIALS}-{YYYYMM}-000001` (RPC bumps from latest row, 6-digit sequence) |
+| `return_number` | text | `CR-{INITIALS}-{YYYYMM}-000001` |
 | `company_id` | uuid FK → `companies` | |
 | `client_order_id` | uuid FK → `client_orders` | The ORD |
 | `order_number` | text | Snapshot `ORD-2026-AB-0042` |
 | `client_id` | uuid FK → `clients` | |
 | `client_name` | text | Snapshot |
-| `returned_by` | uuid FK → `profiles` | Who posted it |
+| `returned_by` | uuid FK → `profiles` | Who submitted it |
 | `returned_by_name` | text | Snapshot |
 | `original_agent_id` | uuid FK → `profiles` NULL | Seller on the ORD |
 | `return_date` | date | Day goods came back |
 | `reason` | text NOT NULL | `defect` / `duplicate_order` / `missing_parts` / or Other text |
 | `notes` | text NULL | Extra explanation |
-| `status` | text | `posted` \| `cancelled` |
+| `status` | text | `pending_leader` \| `posted` \| `rejected` \| `cancelled` |
+| `agent_signature_url` | text NULL | Sign step |
+| `approved_at` | timestamptz NULL | Set on approve / auto-post |
+| `approved_by` | uuid FK → `profiles` NULL | |
+| `approved_by_name` | text NULL | Snapshot for the **Approved by** column |
+| `rejected_at` | timestamptz NULL | |
+| `rejected_by` | uuid FK → `profiles` NULL | |
+| `rejected_by_name` | text NULL | Snapshot for the **Rejected by** column |
+| `rejection_note` | text NULL | Optional note on reject |
 | `created_at` | timestamptz | When recorded |
 | `updated_at` | timestamptz | |
 | `cancelled_at` | timestamptz NULL | |
 | `cancelled_by` | uuid FK → `profiles` NULL | |
 | UNIQUE | `(company_id, return_number)` | |
 
-### 4. `client_order_return_items` (SKU lines)
+### 4. `client_order_return_items` (returned SKUs)
 
-Returned SKUs only. Cap posted qty ≤ sold qty on the original ORD line.
+Returned SKUs only. Cap **posted** qty ≤ sold qty on the original ORD line.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -82,12 +121,31 @@ Returned SKUs only. Cap posted qty ≤ sold qty on the original ORD line.
 | `variant_id` | uuid FK → `variants` | Maps to both inventory tables |
 | `brand_name` | text | Snapshot |
 | `variant_name` | text | Snapshot |
+| `variant_type` | text | Snapshot (flavor, battery, …) |
 | `quantity` | integer CHECK &gt; 0 | |
 | `unit_price` | numeric(10,2) | From the ORD line |
 | `line_total` | numeric(10,2) | qty × unit price |
 | `created_at` | timestamptz | |
 
-### 5. `client_order_return_attachments` (photos)
+### 5. `client_order_return_change_items` (exchange SKUs)
+
+Always required. Match **brand + qty**, not price. Replacement from agent sellable stock.
+
+After a real post: returned SKUs → **Returned** (not sellable). Change-item SKUs stay **Available / Stock**.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid PK | |
+| `return_id` | uuid FK → `client_order_returns` | CASCADE |
+| `company_id` | uuid FK → `companies` | |
+| `variant_id` | uuid FK → `variants` | |
+| `brand_name` | text | Snapshot — same brand as returned qty |
+| `variant_name` | text | Snapshot |
+| `variant_type` | text | Snapshot |
+| `quantity` | integer CHECK &gt; 0 | Per brand, sum(change) = sum(returned) |
+| `created_at` | timestamptz | |
+
+### 6. `client_order_return_attachments` (photos)
 
 | Column | Type | Notes |
 |---|---|---|
@@ -111,15 +169,16 @@ Returned SKUs only. Cap posted qty ≤ sold qty on the original ORD line.
 |---|---|
 | Scanning a list (CR history, inventory returned-qty drill-in) | **Accordion** |
 | Doing a return (qty, reason, photos, sign, confirm) | **Dialog** |
+| Viewing one CR from a card Eye | **View dialog** (read-only Close) |
 
-**Rule:** create return → wizard dialog. History list has **two view modes** (toggle, saved in `localStorage`):
+**Rule:** create return → wizard dialog. History list has **two view modes** (toggle from `lg`, saved in `localStorage`):
 
 | Mode | What you get |
 |---|---|
-| **Table** | Accordion table. Expand in place. |
+| **Table** | Accordion table. Expand in place. Horizontal scroll. |
 | **Cards** | Card list. Eye (top-right) opens `ClientReturnViewDialog`. |
 
-Default: Cards on mobile, Table on desktop. User choice is remembered.
+Approve / Reject live on the **list** (cards + table Action), not in the view dialog. Confirm with AlertDialogs (reject optional note). Mock local state only.
 
 Inventory click on returned qty: **dialog shell**, accordion **inside** for CR rows. Do not stack dialog-on-dialog for that list.
 
@@ -146,6 +205,8 @@ Return Items and Change Items are grouped by **brand accordion**.
 
 After Review, a confirm dialog requires typing the **client name** (case-insensitive trim), same idea as Create PO team-leader name confirm.
 
+Wizard still toasts only (no DB). Submit is not yet switched to pending vs posted by role.
+
 ---
 
 ## Desktop tables (create return)
@@ -159,7 +220,7 @@ Always table. One table per brand, inside the brand accordion.
 | Variant | left | SKU name |
 | Type | left | Color badge (see below) |
 | Sold | right | Original ORD qty |
-| Already returned | right | Mock remaining = sold − already returned |
+| Already returned | right | Remaining = sold − **posted** returns |
 | Return now | right | Number input, clamped. Helper: `max N` or `Max is N.` |
 
 Qty cannot exceed remaining. Exceeding clamps and shows **Max is N.**
@@ -265,53 +326,82 @@ Display labels: Flavor, Battery, POSM, FOC, NCV.
 
 ---
 
-## History list table
+## History list
 
 File: `src/features/orders/client-returns/ClientOrderReturnsPage.tsx`
 
-**No Status column.** A posted CR is live; Posted on every row adds nothing until cancel exists.
+Route: `/client-order-returns`. Page size **25** (`ListPagination`).
 
-**View** (Eye) opens a dialog. No accordion on this page.
+Filters (chips, default **All**): All / Pending / Approve / Reject, with counts.
 
-| Column | Notes |
-|---|---|
-| CR # | `CR-{INITIALS}-{YYYYMM}-000001` |
-| ORD # | Original order |
-| Client | Client name |
-| Returned by | Agent who posted |
-| Returned date | Date only (`MMM d, yyyy`) |
-| Created | Date + time |
-| Reason | Badge |
-| Qty | Total units, rose, right |
-| (Eye) | Opens view dialog |
+Search haystack: CR #, ORD #, client, returned by, status label, notes, rejection note, approved-by name, rejected-by name, brands.
 
-Default page size **25**.
+### Table (desktop)
 
-### Mobile (&lt; 768)
+Accordion rows. Wrapper is `overflow-x-auto` with inner `min-w-[90rem]` so columns do not compress — **scroll the row horizontally**.
 
-**Cards**. Eye icon is **top-right**.
+Chevron is outside the column grid. **Qty** and **Action** are shrink-0 siblings to the right of the grid (Action `w-[11.75rem]`, Qty `w-10`). Action column exists only for team leaders.
+
+| Column | Width (grid) | Notes |
+|---|---|---|
+| Return | `11rem` | CR # (mono, semibold) stacked over ORD # (muted). Truncate, `title` tooltip. |
+| Client | `9rem` | Truncate |
+| Returned by | `8.5rem` | Who submitted |
+| Returned date | `7.25rem` | Date only `MMM d, yyyy`. Always a column. |
+| Brands | `9rem` | Secondary badges, truncate |
+| Status | `6.5rem` | Pending / Approve / Reject badge |
+| Approved by | `8.5rem` | Name + date under it, or — |
+| Rejected by | `8.5rem` | Name + date under it, or — |
+| Qty | `w-10` | Total units, rose, right, outside the grid |
+| Action | `w-[11.75rem]` | **Team leader + pending only:** Reject / Approve. Empty for posted/rejected. Hidden for super admin / admin. |
+
+Pending rows: amber left border on cards. Table Action shows both buttons.
+
+Do **not** hide Returned date, Returned by, Brands, Approved by, or Rejected by — scroll instead.
+
+### Accordion expand
+
+Always show:
+
+- **Returned date** (`MMM d, yyyy`)
+- **Created** (`MMM d, yyyy · h:mm a`)
+- **Reason** badge
+- If decided: **Approved by** or **Rejected by** + full datetime
+
+Then `ClientReturnExpandedMeta` + per-brand `BrandReturnedTable`.
+
+### Cards
+
+Eye is **top-right**, circular outline, view-only.
 
 Each card:
 
-- CR # left, Eye right
-- ORD #
-- Client name
-- Returned by / Returned date / Created (label–value rows)
-- Reason badge + qty
+- CR #, ORD #, Status badge
+- Client name (heading)
+- 2-col meta: Returned by, Returned date, Created, Returned brands, Approved by, Rejected by
+- Reason badge + units
+- Pending + team leader: full-width **Reject / Approve** under a border
 
 ### View dialog
 
 File: `src/features/orders/client-returns/ClientReturnViewDialog.tsx`
 
+View-only (Close). No Approve / Reject here.
+
 Header: CR # · ORD # · client · qty.
 
-Body:
+Body is `ClientReturnExpandedMeta`:
 
 ```
-Client name:  …
-Agent name:   …
-Reason:       …
-Notes:        …
+Client name:    …
+Agent name:     …
+Returned date:  …
+Created:        …
+Status:         …
+Approved by / at  (if posted)
+Rejected by / at / Rejection  (if rejected)
+Reason:         …
+Notes:          …
 
 Photo:
 [thumb] [thumb]     ← click opens full-size dialog
@@ -358,23 +448,29 @@ Targets: first return qty, first change SKU that can still take qty, reason / ot
 | File | Role |
 |---|---|
 | `ReturnClientOrderDialog.tsx` | Create-return wizard, desktop table + mobile `QtyInputCard` |
-| `ClientOrderReturnsPage.tsx` | CR history list |
-| `ClientReturnViewDialog.tsx` | View one CR (meta + brand tables) |
+| `ClientOrderReturnsPage.tsx` | CR history list (table + cards, TL actions) |
+| `ClientReturnViewDialog.tsx` | View one CR (meta + brand tables), view-only |
 | `ReturnedStockDetailDialog.tsx` | Inventory returned-qty drill-in |
 | `ClientReturnBrandTable.tsx` | Brand/variant table + type badges |
-| `ClientReturnExpandedMeta.tsx` | Expand block: client, agent, reason, notes, photos |
+| `ClientReturnExpandedMeta.tsx` | Expand / view block: client, dates, status, actors, reason, notes, photos |
 | `ClientOrderReturnTimeline.tsx` | Order timeline (returns as events) |
 | `clientReturnMock.ts` | Dummy data + mock flag |
 
 ---
 
+## RPCs (after migration)
+
+| Function | Who | Result |
+|---|---|---|
+| `create_client_order_return(...)` | mobile sales, team leader | Sales → `pending_leader`. TL → `posted` + `returned_stock`. |
+| `approve_client_order_return(id)` | team leader only | `pending_leader` → `posted` + stock |
+| `reject_client_order_return(id, note)` | team leader only | Closes the CR. No stock move. |
+
+Storage bucket: `client-order-return-proofs` (path `{company_id}/...`).
+
 ## Next (not built yet)
 
-1. **Team leader approval** of agent-submitted returns (`pending_leader` → approve / reject).
-2. **Skip approval** when the team leader created the original order — auto-post.
-3. **Return-process timeline** (submitted → pending leader → approved / rejected / posted), not only a single “Return posted” event.
-
-Open questions:
-
-- Reject: send back so the agent can edit and resubmit, or reject = closed CR?
-- Pending list: new “Pending client returns” for the leader, or approve only from Client Order Returns?
+1. **Run the migration** in the SQL editor, then confirm tables/RPCs exist.
+2. **Wire the UI** off mock (`SHOW_CLIENT_RETURN_MOCK`) to the RPCs + SELECT.
+3. **Hide the feature** when the company is not warehouse-linked (menu + Return button), same gate as Return to Warehouse.
+4. **Return-process timeline** on the ORD (submitted → pending leader → approved / rejected), not only a single “Return posted” event.
