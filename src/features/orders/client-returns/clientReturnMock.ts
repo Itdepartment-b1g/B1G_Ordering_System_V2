@@ -20,6 +20,8 @@ export type MockClientReturnLine = {
   quantity: number;
 };
 
+export type MockClientReturnStatus = 'pending_leader' | 'posted' | 'rejected' | 'cancelled';
+
 export type MockClientReturn = {
   id: string;
   returnNumber: string;
@@ -32,7 +34,12 @@ export type MockClientReturn = {
   notes: string | null;
   lines: MockClientReturnLine[];
   proofLabels: string[];
-  status: 'posted' | 'cancelled';
+  status: MockClientReturnStatus;
+  rejectionNote: string | null;
+  approvedByName: string | null;
+  approvedAt: string | null;
+  rejectedByName: string | null;
+  rejectedAt: string | null;
 };
 
 export const MOCK_CLIENT_RETURNS: MockClientReturn[] = [
@@ -62,6 +69,11 @@ export const MOCK_CLIENT_RETURNS: MockClientReturn[] = [
     ],
     proofLabels: ['capture-box.jpg', 'capture-leak.jpg'],
     status: 'posted',
+    rejectionNote: null,
+    approvedByName: 'Ana Reyes',
+    approvedAt: '2026-09-08T16:10:00+08:00',
+    rejectedByName: null,
+    rejectedAt: null,
   },
   {
     id: 'mock-cr-2',
@@ -79,6 +91,11 @@ export const MOCK_CLIENT_RETURNS: MockClientReturn[] = [
     ],
     proofLabels: ['upload-receipt.jpg'],
     status: 'posted',
+    rejectionNote: null,
+    approvedByName: 'Ana Reyes',
+    approvedAt: '2026-09-09T11:20:00+08:00',
+    rejectedByName: null,
+    rejectedAt: null,
   },
   {
     id: 'mock-cr-3',
@@ -97,6 +114,11 @@ export const MOCK_CLIENT_RETURNS: MockClientReturn[] = [
     ],
     proofLabels: ['capture-open-box.jpg'],
     status: 'posted',
+    rejectionNote: null,
+    approvedByName: 'Ana Reyes',
+    approvedAt: '2026-09-09T17:05:00+08:00',
+    rejectedByName: null,
+    rejectedAt: null,
   },
   {
     id: 'mock-cr-4',
@@ -114,6 +136,11 @@ export const MOCK_CLIENT_RETURNS: MockClientReturn[] = [
     ],
     proofLabels: ['capture-seal.jpg'],
     status: 'posted',
+    rejectionNote: null,
+    approvedByName: 'Ana Reyes',
+    approvedAt: '2026-09-10T10:40:00+08:00',
+    rejectedByName: null,
+    rejectedAt: null,
   },
   {
     id: 'mock-cr-5',
@@ -129,7 +156,12 @@ export const MOCK_CLIENT_RETURNS: MockClientReturn[] = [
       { variantName: 'Flavor D', brandName: 'Demo Brand', variantType: 'flavor', quantity: 3 },
     ],
     proofLabels: ['upload-receipt-2.jpg'],
-    status: 'posted',
+    status: 'pending_leader',
+    rejectionNote: null,
+    approvedByName: null,
+    approvedAt: null,
+    rejectedByName: null,
+    rejectedAt: null,
   },
   {
     id: 'mock-cr-6',
@@ -146,9 +178,89 @@ export const MOCK_CLIENT_RETURNS: MockClientReturn[] = [
       { variantName: 'Flavor A', brandName: 'Demo Brand', variantType: 'flavor', quantity: 1 },
     ],
     proofLabels: [],
-    status: 'posted',
+    status: 'rejected',
+    rejectionNote: 'Photo does not show the returned items clearly.',
+    approvedByName: null,
+    approvedAt: null,
+    rejectedByName: 'Ana Reyes',
+    rejectedAt: '2026-09-11T12:15:00+08:00',
+  },
+  {
+    id: 'mock-cr-7',
+    returnNumber: 'CR-MTS-202609-000007',
+    orderNumber: 'ORD-2026-MTS-0074',
+    clientName: 'Tita Rosa Store',
+    returnedByName: 'Jose Cruz',
+    returnDate: '2026-09-11',
+    createdAt: '2026-09-11T15:20:00+08:00',
+    reason: 'defect',
+    notes: 'Pod leaking after first use.',
+    lines: [
+      { variantName: 'Ice Mint', brandName: 'Relx', variantType: 'flavor', quantity: 2 },
+      { variantName: 'Classic', brandName: 'Relx', variantType: 'flavor', quantity: 1 },
+    ],
+    proofLabels: ['capture-leak-2.jpg'],
+    status: 'pending_leader',
+    rejectionNote: null,
+    approvedByName: null,
+    approvedAt: null,
+    rejectedByName: null,
+    rejectedAt: null,
+  },
+  {
+    id: 'mock-cr-8',
+    returnNumber: 'CR-MTS-202609-000008',
+    orderNumber: 'ORD-2026-MTS-0078',
+    clientName: "Mang Tony's Mart",
+    returnedByName: 'Maria Santos',
+    returnDate: '2026-09-12',
+    createdAt: '2026-09-12T09:40:00+08:00',
+    reason: 'missing_parts',
+    notes: 'No charger in the kit.',
+    lines: [
+      { variantName: 'Battery X', brandName: 'Vaporesso', variantType: 'battery', quantity: 1 },
+    ],
+    proofLabels: ['capture-kit.jpg'],
+    status: 'pending_leader',
+    rejectionNote: null,
+    approvedByName: null,
+    approvedAt: null,
+    rejectedByName: null,
+    rejectedAt: null,
   },
 ];
+
+export function getReturnActionActor(row: MockClientReturn): {
+  kind: 'approve' | 'reject' | null;
+  name: string | null;
+  at: string | null;
+} {
+  if (row.status === 'posted') {
+    return { kind: 'approve', name: row.approvedByName, at: row.approvedAt };
+  }
+  if (row.status === 'rejected') {
+    return { kind: 'reject', name: row.rejectedByName, at: row.rejectedAt };
+  }
+  return { kind: null, name: null, at: null };
+}
+
+export function formatClientReturnStatus(status: MockClientReturnStatus): string {
+  if (status === 'pending_leader') return 'Pending';
+  if (status === 'posted') return 'Approve';
+  if (status === 'rejected') return 'Reject';
+  return 'Cancelled';
+}
+
+export function clientReturnStatusBadgeClass(status: MockClientReturnStatus): string {
+  if (status === 'pending_leader') return 'bg-yellow-50 text-yellow-700 border-yellow-200';
+  if (status === 'posted') return 'bg-green-50 text-green-700 border-green-200';
+  if (status === 'rejected') return 'bg-red-50 text-red-700 border-red-200';
+  return 'bg-slate-50 text-slate-600 border-slate-200';
+}
+
+export function isPostedClientReturn(row: MockClientReturn): boolean {
+  return row.status === 'posted';
+}
 
 export function formatClientReturnReason(reason: string): string {
   const option = CLIENT_RETURN_REASON_OPTIONS.find((o) => o.value === reason);
@@ -165,7 +277,7 @@ export function getMockProofPhotoUrl(fileName: string): string {
 
 export function getMockReturnedQtyForName(variantName: string): number {
   const needle = variantName.trim().toLowerCase();
-  return MOCK_CLIENT_RETURNS.reduce((sum, cr) => {
+  return MOCK_CLIENT_RETURNS.filter(isPostedClientReturn).reduce((sum, cr) => {
     return (
       sum +
       cr.lines
@@ -208,6 +320,7 @@ export function buildMockReturnedStockByVariantId(
 
   const unmatched: Array<{ cr: MockClientReturn; line: MockClientReturnLine }> = [];
   for (const cr of MOCK_CLIENT_RETURNS) {
+    if (!isPostedClientReturn(cr)) continue;
     for (const line of cr.lines) {
       const id = catalogByName.get(line.variantName.trim().toLowerCase());
       if (id) {
@@ -239,8 +352,9 @@ export function buildMockReturnedQtyByVariantId(
 
 export function getMockReturnsForVariant(variantName: string): MockClientReturn[] {
   const needle = variantName.trim().toLowerCase();
-  const matched = MOCK_CLIENT_RETURNS.filter((cr) =>
-    cr.lines.some((line) => line.variantName.trim().toLowerCase() === needle)
+  const matched = MOCK_CLIENT_RETURNS.filter(
+    (cr) =>
+      isPostedClientReturn(cr) && cr.lines.some((line) => line.variantName.trim().toLowerCase() === needle)
   );
   return matched.length > 0 ? matched : MOCK_CLIENT_RETURNS;
 }
@@ -258,7 +372,9 @@ export function getMockReturnsForOrder(orderNumber: string): MockClientReturn[] 
 export function getMockAlreadyReturnedQty(orderNumber: string, variantName: string): number {
   const orderNeedle = orderNumber.trim().toLowerCase();
   const variantNeedle = variantName.trim().toLowerCase();
-  return MOCK_CLIENT_RETURNS.filter((cr) => cr.orderNumber.trim().toLowerCase() === orderNeedle).reduce(
+  return MOCK_CLIENT_RETURNS.filter(
+    (cr) => isPostedClientReturn(cr) && cr.orderNumber.trim().toLowerCase() === orderNeedle
+  ).reduce(
     (sum, cr) =>
       sum +
       cr.lines

@@ -1,5 +1,6 @@
 import { RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
   DialogContent,
@@ -8,7 +9,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { getMockReturnLineQty, type MockClientReturn } from './clientReturnMock';
+import {
+  clientReturnStatusBadgeClass,
+  formatClientReturnStatus,
+  getMockReturnLineQty,
+  type MockClientReturn,
+} from './clientReturnMock';
 import { BrandReturnedTable, groupLinesByBrand } from './ClientReturnBrandTable';
 import { ClientReturnExpandedMeta } from './ClientReturnExpandedMeta';
 
@@ -26,9 +32,14 @@ export function ClientReturnViewDialog({ open, onOpenChange, row }: ClientReturn
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl w-[95vw] max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+          <DialogTitle className="flex items-center gap-2 flex-wrap">
             <RotateCcw className="h-5 w-5 text-rose-600" />
             <span className="font-mono">{row?.returnNumber || 'Return'}</span>
+            {row ? (
+              <Badge variant="outline" className={`font-normal ${clientReturnStatusBadgeClass(row.status)}`}>
+                {formatClientReturnStatus(row.status)}
+              </Badge>
+            ) : null}
           </DialogTitle>
           <DialogDescription>
             {row ? (

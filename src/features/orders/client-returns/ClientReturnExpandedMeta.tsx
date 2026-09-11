@@ -1,3 +1,4 @@
+import { format } from 'date-fns';
 import { useState } from 'react';
 import { ImageIcon } from 'lucide-react';
 import {
@@ -9,7 +10,9 @@ import {
 } from '@/components/ui/dialog';
 import {
   formatClientReturnReason,
+  formatClientReturnStatus,
   getMockProofPhotoUrl,
+  getReturnActionActor,
   type MockClientReturn,
 } from './clientReturnMock';
 
@@ -25,12 +28,35 @@ function MetaRow({ label, value }: { label: string; value: string }) {
 export function ClientReturnExpandedMeta({ row }: { row: MockClientReturn }) {
   const [previewFileName, setPreviewFileName] = useState<string | null>(null);
   const previewUrl = previewFileName ? getMockProofPhotoUrl(previewFileName) : null;
+  const actor = getReturnActionActor(row);
 
   return (
     <div className="space-y-3 rounded-md border bg-muted/20 p-3">
       <dl className="space-y-1.5">
         <MetaRow label="Client name" value={row.clientName} />
         <MetaRow label="Agent name" value={row.returnedByName} />
+        <MetaRow label="Returned date" value={format(new Date(row.returnDate), 'MMM d, yyyy')} />
+        <MetaRow label="Created" value={format(new Date(row.createdAt), 'MMM d, yyyy · h:mm a')} />
+        <MetaRow label="Status" value={formatClientReturnStatus(row.status)} />
+        {actor.kind === 'approve' ? (
+          <>
+            <MetaRow label="Approved by" value={actor.name || '—'} />
+            <MetaRow
+              label="Approved at"
+              value={actor.at ? format(new Date(actor.at), 'MMM d, yyyy · h:mm a') : '—'}
+            />
+          </>
+        ) : null}
+        {actor.kind === 'reject' ? (
+          <>
+            <MetaRow label="Rejected by" value={actor.name || '—'} />
+            <MetaRow
+              label="Rejected at"
+              value={actor.at ? format(new Date(actor.at), 'MMM d, yyyy · h:mm a') : '—'}
+            />
+            <MetaRow label="Rejection" value={row.rejectionNote?.trim() || '—'} />
+          </>
+        ) : null}
         <MetaRow label="Reason" value={formatClientReturnReason(row.reason)} />
         <MetaRow label="Notes" value={row.notes?.trim() || '—'} />
       </dl>
