@@ -1,12 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import { Check, Eye, LayoutGrid, List, RotateCcw, Search, X } from 'lucide-react';
-import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import {
@@ -483,16 +481,6 @@ export default function ClientOrderReturnsPage() {
         </p>
       </div>
 
-      <Alert className="border-amber-200 bg-amber-50 text-amber-950">
-        <AlertDescription>
-          Visual mock with dummy data. No database writes. Open an approved order on{' '}
-          <Link to="/my-orders" className="underline font-medium">
-            My Orders
-          </Link>{' '}
-          to see the order → return timeline.
-        </AlertDescription>
-      </Alert>
-
       <Card className="min-w-0 overflow-hidden">
         <CardHeader className="pb-4">
           <div className="flex flex-col gap-3">
@@ -526,8 +514,14 @@ export default function ClientOrderReturnsPage() {
         <CardContent className="min-w-0">
           {filtered.length === 0 ? (
             <div className="py-12 text-center space-y-1">
-              <p className="text-sm font-medium">No matching returns</p>
-              <p className="text-sm text-muted-foreground">Try another status filter or search.</p>
+              <p className="text-sm font-medium">
+                {rows.length === 0 ? 'No client returns yet' : 'No matching returns'}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {rows.length === 0
+                  ? 'Returns filed from an approved order will show up here.'
+                  : 'Try another status filter or search.'}
+              </p>
             </div>
           ) : (
             <>

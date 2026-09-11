@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react';
 import { RotateCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Accordion,
   AccordionContent,
@@ -73,10 +72,6 @@ export function ReturnedStockDetailDialog({
         </DialogHeader>
 
         <div className="flex-1 min-h-0 overflow-y-auto space-y-3">
-          <Alert className="border-amber-200 bg-amber-50 text-amber-950">
-            <AlertDescription>Visual mock — these rows are dummy data, not live returns.</AlertDescription>
-          </Alert>
-
           {returns.length === 0 ? (
             <p className="text-sm text-muted-foreground py-6 text-center">No returns for this variant.</p>
           ) : (

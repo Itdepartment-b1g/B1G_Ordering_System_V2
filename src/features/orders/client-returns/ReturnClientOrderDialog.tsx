@@ -9,7 +9,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Dialog,
   DialogContent,
@@ -718,12 +717,6 @@ export function ReturnClientOrderDialog({
           />
 
           <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-1 pt-2">
-            <Alert className="border-amber-200 bg-amber-50 text-amber-950">
-              <AlertDescription>
-                Visual mock with dummy data. Confirm does not save a return or change stock.
-              </AlertDescription>
-            </Alert>
-
             {step === 0 && (
               <div className="space-y-3">
                 <Accordion

@@ -1,6 +1,6 @@
 /**
- * Client-order return UI mock. Flip to false before wiring the real RPC/migration.
- * Dummy data only — nothing is written to the database.
+ * Client-order return UI scaffolding. Flip to false to hide the feature until RPC wiring.
+ * History starts empty; wizard confirm still does not write to the database.
  */
 export const SHOW_CLIENT_RETURN_MOCK = true;
 
@@ -42,193 +42,7 @@ export type MockClientReturn = {
   rejectedAt: string | null;
 };
 
-export const MOCK_CLIENT_RETURNS: MockClientReturn[] = [
-  {
-    id: 'mock-cr-1',
-    returnNumber: 'CR-MTS-202609-000001',
-    orderNumber: 'ORD-2026-MTS-0042',
-    clientName: "Juan's Sari-Sari",
-    returnedByName: 'Maria Santos',
-    returnDate: '2026-09-08',
-    createdAt: '2026-09-08T14:22:00+08:00',
-    reason: 'defect',
-    notes: 'Leak on 3 pods. Client opened the box yesterday.',
-    lines: [
-      { variantName: 'Flavor A', brandName: 'Demo Brand', variantType: 'flavor', quantity: 3 },
-      { variantName: 'Flavor B', brandName: 'Demo Brand', variantType: 'flavor', quantity: 2 },
-      { variantName: 'Flavor C', brandName: 'Demo Brand', variantType: 'flavor', quantity: 1 },
-      { variantName: 'Flavor D', brandName: 'Demo Brand', variantType: 'flavor', quantity: 2 },
-      { variantName: 'Flavor E', brandName: 'Demo Brand', variantType: 'flavor', quantity: 1 },
-      { variantName: 'Flavor F', brandName: 'Demo Brand', variantType: 'flavor', quantity: 4 },
-      { variantName: 'Ice Mint', brandName: 'Relx', variantType: 'flavor', quantity: 2 },
-      { variantName: 'Berry Blast', brandName: 'Relx', variantType: 'flavor', quantity: 1 },
-      { variantName: 'Classic', brandName: 'Relx', variantType: 'flavor', quantity: 4 },
-      { variantName: 'Battery X', brandName: 'Vaporesso', variantType: 'battery', quantity: 1 },
-      { variantName: 'Battery Y', brandName: 'Vaporesso', variantType: 'battery', quantity: 2 },
-      { variantName: 'Coil Pack', brandName: 'Vaporesso', variantType: 'posm', quantity: 3 },
-    ],
-    proofLabels: ['capture-box.jpg', 'capture-leak.jpg'],
-    status: 'posted',
-    rejectionNote: null,
-    approvedByName: 'Ana Reyes',
-    approvedAt: '2026-09-08T16:10:00+08:00',
-    rejectedByName: null,
-    rejectedAt: null,
-  },
-  {
-    id: 'mock-cr-2',
-    returnNumber: 'CR-MTS-202609-000002',
-    orderNumber: 'ORD-2026-MTS-0042',
-    clientName: "Juan's Sari-Sari",
-    returnedByName: 'Maria Santos',
-    returnDate: '2026-09-09',
-    createdAt: '2026-09-09T10:05:00+08:00',
-    reason: 'duplicate_order',
-    notes: 'Accidental double order last Friday.',
-    lines: [
-      { variantName: 'Flavor A', brandName: 'Demo Brand', variantType: 'flavor', quantity: 2 },
-      { variantName: 'Ice Mint', brandName: 'Relx', variantType: 'flavor', quantity: 1 },
-    ],
-    proofLabels: ['upload-receipt.jpg'],
-    status: 'posted',
-    rejectionNote: null,
-    approvedByName: 'Ana Reyes',
-    approvedAt: '2026-09-09T11:20:00+08:00',
-    rejectedByName: null,
-    rejectedAt: null,
-  },
-  {
-    id: 'mock-cr-3',
-    returnNumber: 'CR-MTS-202609-000003',
-    orderNumber: 'ORD-2026-MTS-0058',
-    clientName: 'Pedro Mart',
-    returnedByName: 'Maria Santos',
-    returnDate: '2026-09-09',
-    createdAt: '2026-09-09T16:40:00+08:00',
-    reason: 'missing_parts',
-    notes: 'Charger missing from the box.',
-    lines: [
-      { variantName: 'Battery X', brandName: 'Vaporesso', variantType: 'battery', quantity: 1 },
-      { variantName: 'Battery Y', brandName: 'Vaporesso', variantType: 'battery', quantity: 1 },
-      { variantName: 'Coil Pack', brandName: 'Vaporesso', variantType: 'posm', quantity: 2 },
-    ],
-    proofLabels: ['capture-open-box.jpg'],
-    status: 'posted',
-    rejectionNote: null,
-    approvedByName: 'Ana Reyes',
-    approvedAt: '2026-09-09T17:05:00+08:00',
-    rejectedByName: null,
-    rejectedAt: null,
-  },
-  {
-    id: 'mock-cr-4',
-    returnNumber: 'CR-MTS-202609-000004',
-    orderNumber: 'ORD-2026-MTS-0061',
-    clientName: 'Aling Nena Store',
-    returnedByName: 'Jose Cruz',
-    returnDate: '2026-09-10',
-    createdAt: '2026-09-10T09:15:00+08:00',
-    reason: 'defect',
-    notes: 'Seal broken on arrival.',
-    lines: [
-      { variantName: 'Classic', brandName: 'Relx', variantType: 'flavor', quantity: 2 },
-      { variantName: 'Berry Blast', brandName: 'Relx', variantType: 'flavor', quantity: 1 },
-    ],
-    proofLabels: ['capture-seal.jpg'],
-    status: 'posted',
-    rejectionNote: null,
-    approvedByName: 'Ana Reyes',
-    approvedAt: '2026-09-10T10:40:00+08:00',
-    rejectedByName: null,
-    rejectedAt: null,
-  },
-  {
-    id: 'mock-cr-5',
-    returnNumber: 'CR-MTS-202609-000005',
-    orderNumber: 'ORD-2026-MTS-0064',
-    clientName: 'Kuya Ben Mart',
-    returnedByName: 'Maria Santos',
-    returnDate: '2026-09-10',
-    createdAt: '2026-09-10T13:40:00+08:00',
-    reason: 'duplicate_order',
-    notes: null,
-    lines: [
-      { variantName: 'Flavor D', brandName: 'Demo Brand', variantType: 'flavor', quantity: 3 },
-    ],
-    proofLabels: ['upload-receipt-2.jpg'],
-    status: 'pending_leader',
-    rejectionNote: null,
-    approvedByName: null,
-    approvedAt: null,
-    rejectedByName: null,
-    rejectedAt: null,
-  },
-  {
-    id: 'mock-cr-6',
-    returnNumber: 'CR-MTS-202609-000006',
-    orderNumber: 'ORD-2026-MTS-0070',
-    clientName: 'Central Sari-Sari',
-    returnedByName: 'Jose Cruz',
-    returnDate: '2026-09-11',
-    createdAt: '2026-09-11T11:05:00+08:00',
-    reason: 'other',
-    notes: 'Client changed order mix.',
-    lines: [
-      { variantName: 'Battery X', brandName: 'Vaporesso', variantType: 'battery', quantity: 2 },
-      { variantName: 'Flavor A', brandName: 'Demo Brand', variantType: 'flavor', quantity: 1 },
-    ],
-    proofLabels: [],
-    status: 'rejected',
-    rejectionNote: 'Photo does not show the returned items clearly.',
-    approvedByName: null,
-    approvedAt: null,
-    rejectedByName: 'Ana Reyes',
-    rejectedAt: '2026-09-11T12:15:00+08:00',
-  },
-  {
-    id: 'mock-cr-7',
-    returnNumber: 'CR-MTS-202609-000007',
-    orderNumber: 'ORD-2026-MTS-0074',
-    clientName: 'Tita Rosa Store',
-    returnedByName: 'Jose Cruz',
-    returnDate: '2026-09-11',
-    createdAt: '2026-09-11T15:20:00+08:00',
-    reason: 'defect',
-    notes: 'Pod leaking after first use.',
-    lines: [
-      { variantName: 'Ice Mint', brandName: 'Relx', variantType: 'flavor', quantity: 2 },
-      { variantName: 'Classic', brandName: 'Relx', variantType: 'flavor', quantity: 1 },
-    ],
-    proofLabels: ['capture-leak-2.jpg'],
-    status: 'pending_leader',
-    rejectionNote: null,
-    approvedByName: null,
-    approvedAt: null,
-    rejectedByName: null,
-    rejectedAt: null,
-  },
-  {
-    id: 'mock-cr-8',
-    returnNumber: 'CR-MTS-202609-000008',
-    orderNumber: 'ORD-2026-MTS-0078',
-    clientName: "Mang Tony's Mart",
-    returnedByName: 'Maria Santos',
-    returnDate: '2026-09-12',
-    createdAt: '2026-09-12T09:40:00+08:00',
-    reason: 'missing_parts',
-    notes: 'No charger in the kit.',
-    lines: [
-      { variantName: 'Battery X', brandName: 'Vaporesso', variantType: 'battery', quantity: 1 },
-    ],
-    proofLabels: ['capture-kit.jpg'],
-    status: 'pending_leader',
-    rejectionNote: null,
-    approvedByName: null,
-    approvedAt: null,
-    rejectedByName: null,
-    rejectedAt: null,
-  },
-];
+export const MOCK_CLIENT_RETURNS: MockClientReturn[] = [];
 
 export function getReturnActionActor(row: MockClientReturn): {
   kind: 'approve' | 'reject' | null;
@@ -306,7 +120,7 @@ function addMockReturnedStock(
   map.set(variantId, current);
 }
 
-/** Map catalog variants → dummy returned qty and the CRs that make up that qty. */
+/** Map catalog variants → returned qty and the CRs that make up that qty. */
 export function buildMockReturnedStockByVariantId(
   variants: Array<{ id: string; name: string }>
 ): Map<string, MockReturnedStock> {
@@ -318,28 +132,18 @@ export function buildMockReturnedStockByVariantId(
     catalogByName.set(variant.name.trim().toLowerCase(), variant.id);
   }
 
-  const unmatched: Array<{ cr: MockClientReturn; line: MockClientReturnLine }> = [];
   for (const cr of MOCK_CLIENT_RETURNS) {
     if (!isPostedClientReturn(cr)) continue;
     for (const line of cr.lines) {
       const id = catalogByName.get(line.variantName.trim().toLowerCase());
-      if (id) {
-        addMockReturnedStock(map, id, line.quantity, cr);
-      } else {
-        unmatched.push({ cr, line });
-      }
+      if (id) addMockReturnedStock(map, id, line.quantity, cr);
     }
   }
-
-  unmatched.forEach((item, index) => {
-    const variant = variants[index % variants.length];
-    addMockReturnedStock(map, variant.id, item.line.quantity, item.cr);
-  });
 
   return map;
 }
 
-/** Map catalog variants → dummy returned qty. Unmatched mock lines round-robin across variants. */
+/** Map catalog variants → returned qty. */
 export function buildMockReturnedQtyByVariantId(
   variants: Array<{ id: string; name: string }>
 ): Map<string, number> {
@@ -352,11 +156,10 @@ export function buildMockReturnedQtyByVariantId(
 
 export function getMockReturnsForVariant(variantName: string): MockClientReturn[] {
   const needle = variantName.trim().toLowerCase();
-  const matched = MOCK_CLIENT_RETURNS.filter(
+  return MOCK_CLIENT_RETURNS.filter(
     (cr) =>
       isPostedClientReturn(cr) && cr.lines.some((line) => line.variantName.trim().toLowerCase() === needle)
   );
-  return matched.length > 0 ? matched : MOCK_CLIENT_RETURNS;
 }
 
 export function getMockReturnLineQty(row: MockClientReturn): number {
@@ -365,8 +168,7 @@ export function getMockReturnLineQty(row: MockClientReturn): number {
 
 export function getMockReturnsForOrder(orderNumber: string): MockClientReturn[] {
   const needle = orderNumber.trim().toLowerCase();
-  const matched = MOCK_CLIENT_RETURNS.filter((cr) => cr.orderNumber.trim().toLowerCase() === needle);
-  return matched.length > 0 ? matched : MOCK_CLIENT_RETURNS;
+  return MOCK_CLIENT_RETURNS.filter((cr) => cr.orderNumber.trim().toLowerCase() === needle);
 }
 
 export function getMockAlreadyReturnedQty(orderNumber: string, variantName: string): number {
@@ -414,16 +216,6 @@ export function buildMockChangeItemCatalog(
       });
     }
     byBrand.set(brand, list);
-  }
-
-  for (const [brand, list] of byBrand) {
-    list.push({
-      id: `chg-${brand}-alt`.toLowerCase().replace(/\s+/g, '-'),
-      brandName: brand,
-      variantName: 'Replacement Mix',
-      variantType: list[0]?.variantType || 'flavor',
-      sellableQty: 4,
-    });
   }
 
   return Array.from(byBrand.values()).flat();
