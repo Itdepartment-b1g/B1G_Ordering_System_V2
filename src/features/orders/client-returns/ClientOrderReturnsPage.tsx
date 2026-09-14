@@ -516,7 +516,7 @@ export default function ClientOrderReturnsPage() {
           <TabsTrigger value="inventory" className="gap-1.5 py-2.5 text-xs sm:text-sm">
             <Package className="h-4 w-4 shrink-0" />
             <span className="sm:hidden">Inventory</span>
-            <span className="hidden sm:inline">Returned inventory</span>
+            <span className="hidden sm:inline">Returned Items</span>
             {inventoryRows.length > 0 ? (
               <span className="tabular-nums opacity-80">({inventoryRows.length})</span>
             ) : null}
