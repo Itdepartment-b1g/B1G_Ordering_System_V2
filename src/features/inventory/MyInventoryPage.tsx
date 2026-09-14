@@ -9,7 +9,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Search, Package, ChevronDown, ChevronRight, ArrowLeft, FileSignature, ShoppingCart, Loader2, CheckCircle2, ClipboardCheck, PackageMinus, Info } from 'lucide-react';
+import { Search, Package, ChevronDown, ArrowLeft, FileSignature, ShoppingCart, Loader2, CheckCircle2, ClipboardCheck, PackageMinus, Info } from 'lucide-react';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -32,9 +32,35 @@ import {
 } from '@/features/orders/client-returns/clientReturnApi';
 import type { MockClientReturn } from '@/features/orders/client-returns/clientReturnMock';
 import { ReturnedStockDetailDialog } from '@/features/orders/client-returns/ReturnedStockDetailDialog';
+import {
+  getListPaginationSlice,
+  ListPagination,
+  type PageSize,
+} from '@/features/shared/components/ListPagination';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+
+const INVENTORY_PAGE_SIZE: PageSize = 15;
+
+type InventoryBrandSortKey = 'name' | 'variants' | 'stock' | 'returned' | 'status';
+
+const DEFAULT_INVENTORY_BRAND_SORT_KEY: InventoryBrandSortKey = 'name';
+const DEFAULT_INVENTORY_BRAND_SORT_DIRECTION = 'asc' as const;
 
 const LOW_STOCK_THRESHOLD = 10;
 const isLowStock = (stock: number) => stock <= LOW_STOCK_THRESHOLD;
+
+function brandStatusRank(total: number, hasLow: boolean): number {
+  if (total === 0) return 2;
+  if (hasLow) return 1;
+  return 0;
+}
 
 type ReturnedStockEntry = { qty: number; returns: MockClientReturn[] };
 
@@ -127,6 +153,38 @@ const getVariantTypeColor = (type: string) => {
   }
 };
 
+const VARIANT_TYPE_ORDER = ['flavor', 'battery', 'posm', 'foc', 'ncv'];
+
+function formatVariantTypeLabel(type: string, plural = false): string {
+  const value = type.toLowerCase();
+  if (value === 'posm') return 'POSM';
+  if (value === 'foc') return 'FOC';
+  if (value === 'ncv') return 'NCV';
+  if (value === 'battery') return plural ? 'Batteries' : 'Battery';
+  if (value === 'flavor') return plural ? 'Flavors' : 'Flavor';
+  const base = value ? value.charAt(0).toUpperCase() + value.slice(1) : 'Other';
+  if (!plural) return base;
+  return base.endsWith('s') ? base : `${base}s`;
+}
+
+function typeExpandKey(brandId: string, type: string) {
+  return `${brandId}::${type.toLowerCase()}`;
+}
+
+function sortedVariantTypeEntries(
+  variantsByType?: Map<string, AgentVariant[]>
+): Array<[string, AgentVariant[]]> {
+  if (!variantsByType) return [];
+  return Array.from(variantsByType.entries()).sort(([a], [b]) => {
+    const ai = VARIANT_TYPE_ORDER.indexOf(a.toLowerCase());
+    const bi = VARIANT_TYPE_ORDER.indexOf(b.toLowerCase());
+    const ao = ai === -1 ? 99 : ai;
+    const bo = bi === -1 ? 99 : bi;
+    if (ao !== bo) return ao - bo;
+    return a.localeCompare(b);
+  });
+}
+
 export default function MyInventory() {
   const { agentBrands } = useAgentInventory();
   const { user } = useAuth();
@@ -135,6 +193,11 @@ export default function MyInventory() {
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedBrands, setExpandedBrands] = useState<string[]>([]);
+  const [mobileBrandDialog, setMobileBrandDialog] = useState<AgentBrand | null>(null);
+  const [brandPage, setBrandPage] = useState(0);
+  const [brandPageSize, setBrandPageSize] = useState<PageSize>(INVENTORY_PAGE_SIZE);
+  const [brandSortState, setBrandSortState] =
+    useState<TableSortCycleState<InventoryBrandSortKey>>(createInitialTableSortCycle);
   const [remitDialogOpen, setRemitDialogOpen] = useState(false);
   const [remitting, setRemitting] = useState(false);
   const [leaderId, setLeaderId] = useState<string | null>(null);
@@ -165,15 +228,32 @@ export default function MyInventory() {
   const [signatureConfirmed, setSignatureConfirmed] = useState(false);
 
   const toggleBrandExpand = (brandId: string) => {
-    setExpandedBrands(prev =>
-      prev.includes(brandId)
-        ? prev.filter(id => id !== brandId)
-        : [...prev, brandId]
+    setExpandedBrands((prev) =>
+      prev.includes(brandId) ? prev.filter((id) => id !== brandId) : [...prev, brandId]
     );
   };
 
   const getTotalStock = (brand: any) => {
     return (brand.allVariants || []).reduce((sum: number, v: any) => sum + v.stock, 0);
+  };
+
+  const getTypeStock = (variants: AgentVariant[]) =>
+    variants.reduce((sum, variant) => sum + variant.stock, 0);
+
+  const getTypeReturnedStock = (variants: AgentVariant[]) => {
+    let qty = 0;
+    const returns: MockClientReturn[] = [];
+    const seen = new Set<string>();
+    for (const variant of variants) {
+      const stock = getReturnedStock(variant.id);
+      qty += stock.qty;
+      for (const row of stock.returns) {
+        if (seen.has(row.id)) continue;
+        seen.add(row.id);
+        returns.push(row);
+      }
+    }
+    return { qty, returns };
   };
 
   const { data: clientReturns = [] } = useQuery({
@@ -288,6 +368,59 @@ export default function MyInventory() {
 
     return matchesSearch;
   });
+
+  const sortedBrands = useMemo(() => {
+    const { key, direction } = resolveTableSortDirection(
+      brandSortState,
+      DEFAULT_INVENTORY_BRAND_SORT_KEY,
+      DEFAULT_INVENTORY_BRAND_SORT_DIRECTION
+    );
+    const dir = direction === 'asc' ? 1 : -1;
+    return [...filteredBrands].sort((a, b) => {
+      const aTotal = getTotalStock(a);
+      const bTotal = getTotalStock(b);
+      const aLow = (a.allVariants || []).some((v: any) => isLowStock(v.stock) && v.stock > 0);
+      const bLow = (b.allVariants || []).some((v: any) => isLowStock(v.stock) && v.stock > 0);
+      let result = 0;
+      switch (key) {
+        case 'variants':
+          result = (a.allVariants?.length || 0) - (b.allVariants?.length || 0);
+          break;
+        case 'stock':
+          result = aTotal - bTotal;
+          break;
+        case 'returned':
+          result = getBrandReturnedStock(a).qty - getBrandReturnedStock(b).qty;
+          break;
+        case 'status':
+          result = brandStatusRank(aTotal, aLow) - brandStatusRank(bTotal, bLow);
+          break;
+        case 'name':
+        default:
+          result = a.name.localeCompare(b.name);
+          break;
+      }
+      return result * dir;
+    });
+  }, [filteredBrands, brandSortState, returnedStockByVariantId]);
+
+  const {
+    pagedItems: pagedBrands,
+    safePage: safeBrandPage,
+    pageCount: brandPageCount,
+  } = getListPaginationSlice(sortedBrands, brandPage, brandPageSize);
+
+  useEffect(() => {
+    setBrandPage(0);
+  }, [searchQuery, brandPageSize, brandSortState]);
+
+  const openMobileBrandDialog = (brand: AgentBrand) => {
+    setMobileBrandDialog(brand);
+  };
+
+  const handleBrandSort = (key: InventoryBrandSortKey) => {
+    setBrandSortState((current) => getNextTableSortCycleState(current, key));
+  };
 
   const getTotalVariants = () => {
     let count = 0;
@@ -883,266 +1016,507 @@ export default function MyInventory() {
             </div>
           </div>
         </CardHeader>
-        <CardContent>
-          {/* Mobile List */}
+        <CardContent className="space-y-4">
+          {/* Mobile: brand summary cards → details dialog */}
           <div className="md:hidden space-y-2">
-            {filteredBrands.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
+            {pagedBrands.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground border rounded-lg">
                 <p>{searchQuery ? 'No results found' : 'No inventory'}</p>
               </div>
             ) : (
-              filteredBrands.map((brand) => (
-                <Card key={brand.id}>
-                  <div className="p-3">
-                    {/* Brand Header */}
-                    <div className="flex items-start justify-between mb-2">
-                      <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold truncate">{brand.name}</h3>
-                        <div className="text-xs text-muted-foreground mt-0.5">
-                          {brand.flavors.length + brand.batteries.length + (brand.posms || []).length} items
+              pagedBrands.map((brand) => {
+                const brandTotal = getTotalStock(brand);
+                const brandHasLow = (brand.allVariants || []).some(
+                  (v: any) => v.stock > 0 && (v.status === 'low' || isLowStock(v.stock))
+                );
+                const itemCount = (brand.allVariants || []).length;
+                const statusLabel =
+                  brandTotal === 0 ? 'Out of Stock' : brandHasLow ? 'Low stock' : 'In Stock';
+                const statusPill =
+                  brandTotal === 0
+                    ? 'bg-red-100 text-red-700'
+                    : brandHasLow
+                      ? 'bg-amber-100 text-amber-700'
+                      : 'bg-blue-100 text-blue-700';
+
+                return (
+                  <Card key={brand.id} className="overflow-hidden">
+                    <div className="p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <h3 className="font-semibold truncate">{brand.name}</h3>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {itemCount} item{itemCount === 1 ? '' : 's'}
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0 space-y-1">
+                          <div
+                            className={`text-2xl font-bold tabular-nums leading-none ${
+                              brandHasLow && brandTotal > 0 ? 'text-amber-600' : ''
+                            }`}
+                          >
+                            {brandTotal}
+                          </div>
+                          <span
+                            className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-medium ${statusPill}`}
+                          >
+                            {statusLabel}
+                          </span>
                         </div>
                       </div>
-                      <div className="text-right ml-3">
-                        {(() => {
-                          const total = getTotalStock(brand);
-                          const hasLow = brand.flavors.some((f: any) => f.status === 'low' || isLowStock(f.stock)) || brand.batteries.some((b: any) => b.status === 'low' || isLowStock(b.stock)) || (brand.posms || []).some((p: any) => p.status === 'low' || isLowStock(p.stock));
-                          return (
-                            <>
-                              <div className={`text-xl font-bold ${hasLow && total > 0 ? 'text-amber-600' : ''}`}>{total}</div>
-                              {total === 0 ? <div className="text-xs text-red-600">Out</div> : hasLow ? <div className="text-xs text-yellow-600">Low</div> : <div className="text-xs text-green-600">OK</div>}
-                            </>
-                          );
-                        })()}
-                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="w-full mt-3"
+                        onClick={() => openMobileBrandDialog(brand)}
+                      >
+                        Show Details
+                      </Button>
                     </div>
-                    {/* Details */}
-                    {expandedBrands.includes(brand.id) && (
-                      <div className="space-y-2 pt-2 border-t mt-2">
-                        {brand.variantsByType && Array.from(brand.variantsByType.entries()).map(([type, variants]) => (
-                          <div key={type}>
-                            <div className="text-xs font-semibold text-muted-foreground mb-1 capitalize">
-                              {type === 'posm' ? 'POSM' : type === 'foc' ? 'FOC' : type === 'ncv' ? 'NCV' : `${type}s`}
-                            </div>
-                            <div className="space-y-1">
-                              {variants.map((v: any) => (
-                                <div key={v.id} className="flex items-center justify-between text-sm py-1">
-                                  <span className="truncate">{v.name}</span>
-                                  <div className="text-right ml-2 flex-shrink-0">
-                                    <span className={`font-semibold ${isLowStock(v.stock) ? 'text-amber-600' : ''}`}>{v.stock}</span>
-                                    {showReturnedColumn && (
-                                      <button
-                                        type="button"
-                                        className={`text-xs font-medium ml-2 ${
-                                          getReturnedStock(v.id).qty > 0
-                                            ? 'text-rose-700 hover:underline'
-                                            : 'text-muted-foreground'
-                                        }`}
-                                        onClick={() => {
-                                          const stock = getReturnedStock(v.id);
-                                          openReturnedDialog(brand.name, v.name, stock.qty, stock.returns);
-                                        }}
+                  </Card>
+                );
+              })
+            )}
+          </div>
+
+          {/* Desktop: one table — brand accordion rows (CR table pattern) */}
+          <div className="hidden md:block rounded-md border overflow-hidden">
+            <Table className="min-w-[720px]">
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="w-10 px-2" />
+                  <SortableTableHead
+                    label="Brand"
+                    sortKey="name"
+                    sortDirection={getTableSortDisplayDirection(brandSortState, 'name')}
+                    onSort={handleBrandSort}
+                  />
+                  <SortableTableHead
+                    label="Variants"
+                    sortKey="variants"
+                    sortDirection={getTableSortDisplayDirection(brandSortState, 'variants')}
+                    onSort={handleBrandSort}
+                    className="text-right w-28"
+                  />
+                  <SortableTableHead
+                    label="Stock"
+                    sortKey="stock"
+                    sortDirection={getTableSortDisplayDirection(brandSortState, 'stock')}
+                    onSort={handleBrandSort}
+                    className="text-right w-28"
+                  />
+                  {showReturnedColumn ? (
+                    <SortableTableHead
+                      label="Returned(For Disposal)"
+                      sortKey="returned"
+                      sortDirection={getTableSortDisplayDirection(brandSortState, 'returned')}
+                      onSort={handleBrandSort}
+                      className="text-right w-44"
+                    />
+                  ) : null}
+                  <SortableTableHead
+                    label="Status"
+                    sortKey="status"
+                    sortDirection={getTableSortDisplayDirection(brandSortState, 'status')}
+                    onSort={handleBrandSort}
+                    className="w-32"
+                  />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pagedBrands.length === 0 ? (
+                  <TableRow>
+                    <TableCell
+                      colSpan={showReturnedColumn ? 6 : 5}
+                      className="text-center py-12 text-muted-foreground"
+                    >
+                      {searchQuery ? 'No results found' : 'No inventory'}
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  pagedBrands.map((brand) => {
+                    const brandOpen = expandedBrands.includes(brand.id);
+                    const typeEntries = sortedVariantTypeEntries(brand.variantsByType);
+                    const brandHasLow = (brand.allVariants || []).some(
+                      (v: any) => v.stock > 0 && (v.status === 'low' || isLowStock(v.stock))
+                    );
+                    const brandTotal = getTotalStock(brand);
+                    const itemCount = (brand.allVariants || []).length;
+                    const brandReturned = showReturnedColumn
+                      ? getBrandReturnedStock(brand)
+                      : { qty: 0, returns: [] as MockClientReturn[] };
+                    const statusLabel =
+                      brandTotal === 0 ? 'Out of Stock' : brandHasLow ? 'Low stock' : 'In Stock';
+                    const statusClass =
+                      brandTotal === 0
+                        ? 'bg-red-100 text-red-700 border-red-200'
+                        : brandHasLow
+                          ? 'bg-amber-100 text-amber-700 border-amber-200'
+                          : 'bg-emerald-100 text-emerald-700 border-emerald-200';
+                    const colSpan = showReturnedColumn ? 6 : 5;
+
+                    return (
+                      <React.Fragment key={brand.id}>
+                        <TableRow className={brandOpen ? 'bg-muted/20' : undefined}>
+                          <TableCell className="px-2">
+                            <button
+                              type="button"
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
+                              onClick={() => toggleBrandExpand(brand.id)}
+                              aria-expanded={brandOpen}
+                              aria-label={
+                                brandOpen ? 'Collapse brand details' : 'Expand brand details'
+                              }
+                            >
+                              <ChevronDown
+                                className={`h-4 w-4 text-muted-foreground transition-transform ${
+                                  brandOpen ? 'rotate-180' : ''
+                                }`}
+                              />
+                            </button>
+                          </TableCell>
+                          <TableCell className="align-top">
+                            <p className="font-semibold truncate" title={brand.name}>
+                              {brand.name}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground truncate mt-0.5">
+                              {typeEntries
+                                .map(
+                                  ([type, variants]) =>
+                                    `${variants.length} ${formatVariantTypeLabel(type, true)}`
+                                )
+                                .join(' · ') || `${itemCount} item${itemCount === 1 ? '' : 's'}`}
+                            </p>
+                          </TableCell>
+                          <TableCell className="align-top text-right font-semibold tabular-nums">
+                            {itemCount}
+                          </TableCell>
+                          <TableCell
+                            className={`align-top text-right font-semibold tabular-nums ${
+                              brandHasLow && brandTotal > 0 ? 'text-amber-600' : ''
+                            }`}
+                          >
+                            {brandTotal}
+                          </TableCell>
+                          {showReturnedColumn ? (
+                            <TableCell className="align-top text-right p-1">
+                              <button
+                                type="button"
+                                className={`w-full min-h-9 rounded-md px-2 py-1.5 text-sm font-semibold tabular-nums ${
+                                  brandReturned.qty > 0
+                                    ? 'text-rose-700 hover:bg-rose-50 hover:underline'
+                                    : 'text-muted-foreground hover:bg-muted/60'
+                                }`}
+                                title="Click to view returned items"
+                                onClick={() =>
+                                  openReturnedDialog(
+                                    brand.name,
+                                    'All variants',
+                                    brandReturned.qty,
+                                    brandReturned.returns
+                                  )
+                                }
+                              >
+                                {brandReturned.qty || '—'}
+                              </button>
+                            </TableCell>
+                          ) : null}
+                          <TableCell className="align-top">
+                            <Badge
+                              variant="secondary"
+                              className={`font-medium border ${statusClass}`}
+                            >
+                              {statusLabel}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+
+                        {brandOpen ? (
+                          <TableRow className="hover:bg-transparent">
+                            <TableCell colSpan={colSpan} className="bg-muted/10 p-4">
+                              <div className="space-y-3 min-w-0 ml-2">
+                                {typeEntries.map(([type, variants]) => {
+                                  const colors = getVariantTypeColor(type);
+                                  const typeKey = typeExpandKey(brand.id, type);
+                                  const typeStock = getTypeStock(variants);
+                                  const typeReturned = showReturnedColumn
+                                    ? getTypeReturnedStock(variants)
+                                    : { qty: 0, returns: [] as MockClientReturn[] };
+                                  const typeHasLow = variants.some(
+                                    (v) => isLowStock(v.stock) && v.stock > 0
+                                  );
+
+                                  return (
+                                    <div
+                                      key={typeKey}
+                                      className="border rounded-lg overflow-hidden bg-background"
+                                    >
+                                      <div
+                                        className={`flex items-center gap-2 px-3 py-2.5 border-b ${colors.headerBg}`}
                                       >
-                                        ret {getReturnedStock(v.id).qty || '—'}
-                                      </button>
-                                    )}
-                                    <span className="text-xs text-muted-foreground ml-1">₱{v.price.toFixed(2)}</span>
-                                  </div>
-                                </div>
-                              ))}
+                                        <span className={`font-semibold ${colors.header}`}>
+                                          {formatVariantTypeLabel(type, true)}
+                                        </span>
+                                        <span className="text-xs text-muted-foreground tabular-nums">
+                                          {variants.length} variant
+                                          {variants.length === 1 ? '' : 's'}
+                                        </span>
+                                        <span
+                                          className={`ml-auto text-sm font-semibold tabular-nums ${
+                                            typeHasLow ? 'text-amber-600' : ''
+                                          }`}
+                                        >
+                                          Stock {typeStock}
+                                        </span>
+                                        {showReturnedColumn ? (
+                                          <button
+                                            type="button"
+                                            className={`text-xs tabular-nums ml-3 ${
+                                              typeReturned.qty > 0
+                                                ? 'text-rose-700 font-semibold hover:underline'
+                                                : 'text-muted-foreground'
+                                            }`}
+                                            onClick={() =>
+                                              openReturnedDialog(
+                                                brand.name,
+                                                formatVariantTypeLabel(type, true),
+                                                typeReturned.qty,
+                                                typeReturned.returns
+                                              )
+                                            }
+                                          >
+                                            Returned {typeReturned.qty || '—'}
+                                          </button>
+                                        ) : null}
+                                      </div>
+
+                                      <div className="overflow-x-auto">
+                                        <Table className="min-w-[680px]">
+                                          <TableHeader>
+                                            <TableRow className="hover:bg-transparent">
+                                              <TableHead>Variant</TableHead>
+                                              <TableHead className="text-right">Stock</TableHead>
+                                              {showReturnedColumn ? (
+                                                <TableHead className="text-right">
+                                                  Returned(For Disposal)
+                                                </TableHead>
+                                              ) : null}
+                                              <TableHead className="text-right">Price</TableHead>
+                                              <TableHead className="text-right">DSP</TableHead>
+                                              <TableHead className="text-right">RSP</TableHead>
+                                              <TableHead>Status</TableHead>
+                                            </TableRow>
+                                          </TableHeader>
+                                          <TableBody>
+                                            {variants.map((variant: any) => (
+                                              <TableRow key={variant.id}>
+                                                <TableCell className="font-medium">
+                                                  {variant.name}
+                                                </TableCell>
+                                                <TableCell
+                                                  className={`text-right font-semibold tabular-nums ${
+                                                    isLowStock(variant.stock) ? 'text-amber-600' : ''
+                                                  }`}
+                                                >
+                                                  {variant.stock}
+                                                </TableCell>
+                                                {showReturnedColumn ? (
+                                                  <TableCell className="p-1 text-right">
+                                                    <button
+                                                      type="button"
+                                                      className={`w-full min-h-9 rounded-md px-2 py-1.5 text-sm font-semibold ${
+                                                        getReturnedStock(variant.id).qty > 0
+                                                          ? 'text-rose-700 hover:bg-rose-50 hover:underline'
+                                                          : 'text-muted-foreground hover:bg-muted/60'
+                                                      }`}
+                                                      title="Click to view returned items"
+                                                      onClick={() => {
+                                                        const stock = getReturnedStock(variant.id);
+                                                        openReturnedDialog(
+                                                          brand.name,
+                                                          variant.name,
+                                                          stock.qty,
+                                                          stock.returns
+                                                        );
+                                                      }}
+                                                    >
+                                                      {getReturnedStock(variant.id).qty || '—'}
+                                                    </button>
+                                                  </TableCell>
+                                                ) : null}
+                                                <TableCell className="text-right font-medium">
+                                                  ₱{variant.price.toFixed(2)}
+                                                </TableCell>
+                                                <TableCell className="text-right text-muted-foreground text-sm">
+                                                  {variant.dspPrice
+                                                    ? `₱${variant.dspPrice.toFixed(2)}`
+                                                    : '—'}
+                                                </TableCell>
+                                                <TableCell className="text-right text-muted-foreground text-sm">
+                                                  {variant.rspPrice
+                                                    ? `₱${variant.rspPrice.toFixed(2)}`
+                                                    : '—'}
+                                                </TableCell>
+                                                <TableCell>
+                                                  <Badge
+                                                    variant={
+                                                      variant.stock === 0
+                                                        ? 'destructive'
+                                                        : isLowStock(variant.stock)
+                                                          ? 'secondary'
+                                                          : 'default'
+                                                    }
+                                                    className={`text-xs font-medium border ${
+                                                      isLowStock(variant.stock) &&
+                                                      variant.stock > 0
+                                                        ? 'bg-amber-100 text-amber-700 border-amber-200'
+                                                        : variant.stock > 0
+                                                          ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                                                          : ''
+                                                    }`}
+                                                  >
+                                                    {variant.stock === 0
+                                                      ? 'Out of stock'
+                                                      : isLowStock(variant.stock)
+                                                        ? 'Low stock'
+                                                        : 'In Stock'}
+                                                  </Badge>
+                                                </TableCell>
+                                              </TableRow>
+                                            ))}
+                                          </TableBody>
+                                        </Table>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ) : null}
+                      </React.Fragment>
+                    );
+                  })
+                )}
+              </TableBody>
+            </Table>
+          </div>
+
+          {sortedBrands.length > 0 ? (
+            <ListPagination
+              pageSize={brandPageSize}
+              safePage={safeBrandPage}
+              pageCount={brandPageCount}
+              onPageSizeChange={(value) => {
+                setBrandPageSize(value);
+                setBrandPage(0);
+              }}
+              onPrevious={() => setBrandPage((current) => Math.max(0, current - 1))}
+              onNext={() => setBrandPage((current) => Math.min(brandPageCount - 1, current + 1))}
+            />
+          ) : null}
+        </CardContent>
+      </Card>
+
+      {/* Mobile brand details: Brand → Type (bordered) → Variants */}
+      <Dialog
+        open={!!mobileBrandDialog}
+        onOpenChange={(open) => {
+          if (!open) setMobileBrandDialog(null);
+        }}
+      >
+        <DialogContent className="w-[95vw] max-w-lg max-h-[85vh] overflow-hidden flex flex-col p-0">
+          {mobileBrandDialog ? (
+            <>
+              <DialogHeader className="px-4 pt-5 pb-3 border-b shrink-0">
+                <DialogTitle>{mobileBrandDialog.name}</DialogTitle>
+                <DialogDescription>
+                  {(mobileBrandDialog.allVariants || []).length} item
+                  {(mobileBrandDialog.allVariants || []).length === 1 ? '' : 's'} ·{' '}
+                  {getTotalStock(mobileBrandDialog)} in stock
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
+                {sortedVariantTypeEntries(mobileBrandDialog.variantsByType).map(([type, variants]) => {
+                  const colors = getVariantTypeColor(type);
+                  const typeStock = getTypeStock(variants);
+                  return (
+                    <div
+                      key={type}
+                      className={`rounded-lg border overflow-hidden bg-background ${colors.headerBg}`}
+                    >
+                      <div className="flex items-center gap-2 px-3 py-2.5">
+                        <span className={`text-sm font-semibold ${colors.header}`}>
+                          {formatVariantTypeLabel(type, true)}
+                        </span>
+                        <span className="text-[11px] text-muted-foreground tabular-nums">
+                          {variants.length}
+                        </span>
+                        <span
+                          className={`ml-auto text-sm font-semibold tabular-nums ${
+                            variants.some((v) => isLowStock(v.stock) && v.stock > 0)
+                              ? 'text-amber-600'
+                              : ''
+                          }`}
+                        >
+                          {typeStock}
+                        </span>
+                      </div>
+
+                      <div className="border-t divide-y bg-background">
+                        {variants.map((v: any) => (
+                          <div
+                            key={v.id}
+                            className="flex items-center justify-between gap-2 px-3 py-2.5"
+                          >
+                            <span className="min-w-0 text-sm font-medium leading-snug break-words">
+                              {v.name}
+                            </span>
+                            <div className="text-right shrink-0 space-y-0.5">
+                              <div
+                                className={`text-sm font-semibold tabular-nums ${
+                                  isLowStock(v.stock) ? 'text-amber-600' : ''
+                                }`}
+                              >
+                                {v.stock}
+                              </div>
+                              <div className="text-[11px] text-muted-foreground">
+                                ₱{v.price.toFixed(2)}
+                                {showReturnedColumn ? (
+                                  <button
+                                    type="button"
+                                    className={`ml-1.5 ${
+                                      getReturnedStock(v.id).qty > 0
+                                        ? 'text-rose-700 font-medium'
+                                        : ''
+                                    }`}
+                                    onClick={() => {
+                                      const stock = getReturnedStock(v.id);
+                                      openReturnedDialog(
+                                        mobileBrandDialog.name,
+                                        v.name,
+                                        stock.qty,
+                                        stock.returns
+                                      );
+                                    }}
+                                  >
+                                    · ret {getReturnedStock(v.id).qty || '—'}
+                                  </button>
+                                ) : null}
+                              </div>
                             </div>
                           </div>
                         ))}
                       </div>
-                    )}
-
-                    {/* Toggle Button */}
-                    <button
-                      onClick={() => toggleBrandExpand(brand.id)}
-                      className="w-full mt-2 pt-2 border-t text-xs text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      {expandedBrands.includes(brand.id) ? 'Hide' : 'Show'} Details
-                    </button>
-                  </div>
-                </Card>
-              ))
-            )}
-          </div>
-
-          {/* Desktop/Tablet: table */}
-          <div className="hidden md:block w-full overflow-x-auto">
-            <Table className="min-w-[900px]">
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-10"></TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead className="text-right">Variants</TableHead>
-                  <TableHead className="text-right">Stock</TableHead>
-                  {showReturnedColumn && (
-                    <TableHead className="text-right">Returned(For Disposal)</TableHead>
-                  )}
-                  <TableHead className="text-right">Price</TableHead>
-                  <TableHead className="text-right">DSP</TableHead>
-                  <TableHead className="text-right">RSP</TableHead>
-                  <TableHead className="text-right">Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredBrands.map((brand) => (
-                  <React.Fragment key={brand.id}>
-                    {/* Brand Row */}
-                    <TableRow className={`hover:bg-muted/50 ${(() => {
-                      const total = getTotalStock(brand);
-                      const hasLow = brand.flavors.some((f: any) => isLowStock(f.stock)) || brand.batteries.some((b: any) => isLowStock(b.stock)) || (brand.posms || []).some((p: any) => isLowStock(p.stock));
-                      return hasLow && total > 0 ? 'bg-amber-50/60' : 'bg-primary/5';
-                    })()}`}>
-                      <TableCell className="cursor-pointer" onClick={() => toggleBrandExpand(brand.id)}>
-                        {expandedBrands.includes(brand.id) ? (
-                          <ChevronDown className="h-4 w-4" />
-                        ) : (
-                          <ChevronRight className="h-4 w-4" />
-                        )}
-                      </TableCell>
-                      <TableCell className="font-bold cursor-pointer" onClick={() => toggleBrandExpand(brand.id)}>
-                        {brand.name}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="default">Brand</Badge>
-                      </TableCell>
-                      <TableCell className="text-right text-muted-foreground cursor-pointer" onClick={() => toggleBrandExpand(brand.id)}>
-                        <span className="text-xs">
-                          {brand.variantsByType && Array.from(brand.variantsByType.entries()).map(([type, variants], idx) => {
-                            const prefix = idx > 0 ? ' • ' : '';
-                            const typeName = type === 'posm' ? 'POSM' : type === 'foc' ? 'FOC' : type === 'ncv' ? 'NCV' : type.charAt(0).toUpperCase() + type.slice(1);
-                            const plural = variants.length !== 1 && type !== 'posm' && type !== 'foc' && type !== 'ncv' ? 's' : '';
-                            return `${prefix}${variants.length} ${typeName}${plural}`;
-                          }).join('')}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-right cursor-pointer" onClick={() => toggleBrandExpand(brand.id)}>
-                        <span className={(() => {
-                          const total = getTotalStock(brand);
-                          const hasLow = (brand.allVariants || []).some((v: any) => isLowStock(v.stock));
-                          return hasLow && total > 0 ? 'font-semibold text-amber-600' : 'font-semibold';
-                        })()}>
-                          {getTotalStock(brand)}
-                        </span>
-                      </TableCell>
-                      {showReturnedColumn && (
-                        <TableCell className="p-1 text-right">
-                          <button
-                            type="button"
-                            className={`w-full min-h-10 rounded-md px-2 py-1.5 text-sm font-semibold ${
-                              getBrandReturnedStock(brand).qty > 0
-                                ? 'text-rose-700 hover:bg-rose-50 hover:underline'
-                                : 'text-muted-foreground hover:bg-muted/60'
-                            }`}
-                            title="Click to view returned items"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              const stock = getBrandReturnedStock(brand);
-                              openReturnedDialog(brand.name, 'All variants', stock.qty, stock.returns);
-                            }}
-                          >
-                            {getBrandReturnedStock(brand).qty || '—'}
-                          </button>
-                        </TableCell>
-                      )}
-                      <TableCell className="text-right text-muted-foreground">-</TableCell>
-                      <TableCell className="text-right text-muted-foreground">-</TableCell>
-                      <TableCell className="text-right text-muted-foreground">-</TableCell>
-                      <TableCell className="text-right">
-                        {(() => {
-                          const total = getTotalStock(brand);
-                          const hasLow = (brand.allVariants || []).some((v: any) => v.status === 'low' || isLowStock(v.stock));
-                          const pillClass = total === 0 ? 'bg-red-100 text-red-700' : hasLow ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700';
-                          const label = total === 0 ? 'Out of Stock' : hasLow ? 'Low stock' : 'In Stock';
-                          return <span className={`px-2 py-1 rounded-full text-xs font-medium ${pillClass}`}>{label}</span>;
-                        })()}
-                      </TableCell>
-                    </TableRow>
-
-                    {/* Dynamic Variant Type Sections */}
-                    {expandedBrands.includes(brand.id) && brand.variantsByType && Array.from(brand.variantsByType.entries()).map(([type, variants]) => {
-                      const colors = getVariantTypeColor(type);
-                      const typeDisplay = type === 'posm' ? 'POSM' : type === 'foc' ? 'FOC' : type === 'ncv' ? 'NCV' : type.toUpperCase();
-
-                      return (
-                        <React.Fragment key={type}>
-                          {/* Type Header */}
-                          <TableRow className={colors.headerBg}>
-                            <TableCell></TableCell>
-                            <TableCell colSpan={showReturnedColumn ? 9 : 8} className="pl-8 py-2">
-                              <span className={`text-xs font-semibold ${colors.header}`}>{typeDisplay}</span>
-                            </TableCell>
-                          </TableRow>
-
-                          {/* Variant Rows */}
-                          {variants.map((variant: any) => (
-                            <TableRow key={variant.id} className={`hover:bg-muted/20 ${isLowStock(variant.stock) && variant.stock > 0 ? 'bg-amber-50/80' : 'bg-muted/10'}`}>
-                              <TableCell></TableCell>
-                              <TableCell className="pl-12 text-sm font-medium">
-                                <span className="text-muted-foreground">↳</span> {variant.name}
-                              </TableCell>
-                              <TableCell>
-                                <Badge variant="secondary" className={`${colors.bg} ${colors.text} capitalize`}>
-                                  {type === 'posm' ? 'POSM' : type === 'foc' ? 'FOC' : type === 'ncv' ? 'NCV' : type}
-                                </Badge>
-                              </TableCell>
-                              <TableCell className="text-right text-muted-foreground text-xs">-</TableCell>
-                              <TableCell className={`text-right font-semibold ${isLowStock(variant.stock) ? 'text-amber-600' : ''}`}>
-                                {variant.stock}
-                              </TableCell>
-                              {showReturnedColumn && (
-                                <TableCell className="p-1 text-right">
-                                  <button
-                                    type="button"
-                                    className={`w-full min-h-10 rounded-md px-2 py-1.5 text-sm font-semibold ${
-                                      getReturnedStock(variant.id).qty > 0
-                                        ? 'text-rose-700 hover:bg-rose-50 hover:underline'
-                                        : 'text-muted-foreground hover:bg-muted/60'
-                                    }`}
-                                    title="Click to view returned items"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      const stock = getReturnedStock(variant.id);
-                                      openReturnedDialog(brand.name, variant.name, stock.qty, stock.returns);
-                                    }}
-                                  >
-                                    {getReturnedStock(variant.id).qty || '—'}
-                                  </button>
-                                </TableCell>
-                              )}
-                              <TableCell className="text-right font-medium">₱{variant.price.toFixed(2)}</TableCell>
-                              <TableCell className="text-right text-muted-foreground text-sm">
-                                {variant.dspPrice ? `₱${variant.dspPrice.toFixed(2)}` : '-'}
-                              </TableCell>
-                              <TableCell className="text-right text-muted-foreground text-sm">
-                                {variant.rspPrice ? `₱${variant.rspPrice.toFixed(2)}` : '-'}
-                              </TableCell>
-                              <TableCell className="text-right">
-                                <Badge
-                                  variant={
-                                    variant.stock === 0 ? 'destructive' :
-                                      isLowStock(variant.stock) ? 'secondary' : 'default'
-                                  }
-                                  className={`text-xs ${isLowStock(variant.stock) && variant.stock > 0 ? 'bg-amber-100 text-amber-700 border-amber-200' : ''}`}
-                                >
-                                  {variant.stock === 0 ? 'Out of stock' : isLowStock(variant.stock) ? 'Low stock' : variant.status === 'available' ? 'available' : variant.status}
-                                </Badge>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </React.Fragment>
-                      );
-                    })}
-                  </React.Fragment>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
-      </Card>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       {/* My Return Requests (mobile sales only) */}
       {user?.role !== 'team_leader' && <MyReturnRequestsSection />}
