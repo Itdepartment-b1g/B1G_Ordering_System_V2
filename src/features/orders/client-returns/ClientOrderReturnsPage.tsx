@@ -1,23 +1,26 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { Check, ClipboardList, Eye, LayoutGrid, List, Loader2, Package, RotateCcw, Search, X } from 'lucide-react';
+import { Check, ChevronDown, ClipboardList, Eye, LayoutGrid, List, Loader2, Package, RotateCcw, Search, Truck, X } from 'lucide-react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from '@/components/ui/accordion';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   getListPaginationSlice,
   ListPagination,
   type PageSize,
 } from '@/features/shared/components/ListPagination';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -44,16 +47,36 @@ import { ClientReturnExpandedMeta } from './ClientReturnExpandedMeta';
 import { ClientReturnViewDialog } from './ClientReturnViewDialog';
 import { ReturnedInventoryPanel } from './ReturnedInventoryPanel';
 import { ReturnedStockDetailDialog } from './ReturnedStockDetailDialog';
+import { ReturnLeaderViewDialog } from './ReturnLeaderViewDialog';
+import { ReturnToLeaderPanel } from './ReturnToLeaderPanel';
+import {
+  approveReturnLeaderHandover,
+  canCreateReturnLeader,
+  canReviewReturnLeaderAsLeader,
+  canReviewReturnLeaderAsSuperAdmin,
+  CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY,
+  fetchClientReturnStockHolds,
+  fetchReturnLeaderHandovers,
+  rejectReturnLeaderHandover,
+  RETURN_LEADER_HANDOVERS_QUERY_KEY,
+  type ReturnLeaderHandover,
+} from './returnLeaderApi';
+import type { PackageProofPhotoItem } from '@/features/shared/components/MultiProofPhotoField';
+import {
+  DEFAULT_CLIENT_RETURN_HISTORY_SORT_DIRECTION,
+  DEFAULT_CLIENT_RETURN_HISTORY_SORT_KEY,
+  sortClientReturnHistory,
+  type ClientReturnHistorySortKey,
+} from './utils/clientReturnsSorting';
 
 const HISTORY_PAGE_SIZE: PageSize = 25;
 const VIEW_MODE_KEY = 'client-order-returns-view';
-const TABLE_COLS =
-  'grid-cols-[11rem_9rem_8.5rem_7.25rem_9rem_6.5rem_8.5rem_8.5rem]';
-const TABLE_MIN_WIDTH = 'min-w-[90rem]';
+const TABLE_MIN_WIDTH = 'min-w-[78rem]';
 
 type HistoryViewMode = 'table' | 'cards';
 type StatusFilter = 'all' | 'pending_leader' | 'posted' | 'rejected';
-type PageTab = 'history' | 'inventory';
+type PageTab = 'history' | 'inventory' | 'returnToLeader';
+type RlConfirmKind = 'approve' | 'reject' | null;
 
 function isCompactViewport() {
   return typeof window !== 'undefined' && window.innerWidth < 1024;
@@ -331,7 +354,9 @@ export default function ClientOrderReturnsPage() {
   const queryClient = useQueryClient();
   const { hasWarehouseHubLink } = usePermissions();
   const isLeader = user?.role === 'team_leader';
+  const isSuperAdmin = user?.role === 'super_admin';
   const canReview = isLeader;
+  const canBulkReturn = canCreateReturnLeader(user?.role);
   const showReturns = canShowClientOrderReturns(hasWarehouseHubLink, user?.role);
 
   const {
@@ -358,13 +383,83 @@ export default function ClientOrderReturnsPage() {
   const [acting, setActing] = useState(false);
   const [pageTab, setPageTab] = useState<PageTab>('history');
   const [inventoryRow, setInventoryRow] = useState<ReturnedInventoryRow | null>(null);
+  const [rlViewRow, setRlViewRow] = useState<ReturnLeaderHandover | null>(null);
+  const [rlActionRow, setRlActionRow] = useState<ReturnLeaderHandover | null>(null);
+  const [rlConfirmKind, setRlConfirmKind] = useState<RlConfirmKind>(null);
+  const [rlActing, setRlActing] = useState(false);
+  const [historySortState, setHistorySortState] =
+    useState<TableSortCycleState<ClientReturnHistorySortKey>>(createInitialTableSortCycle);
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+
+  const toggleExpanded = (id: string) => {
+    setExpandedRows((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const holderId =
-    user?.role === 'mobile_sales' || user?.role === 'sales_agent' ? user.id : undefined;
+    user?.role === 'mobile_sales' || user?.role === 'sales_agent' || user?.role === 'team_leader'
+      ? user.id
+      : undefined;
 
-  const inventoryRows = useMemo(
-    () => buildReturnedInventoryRows(rows, { holderId }),
-    [rows, holderId]
+  const {
+    data: holdRows = [],
+    isLoading: holdsLoading,
+    isError: holdsError,
+  } = useQuery({
+    queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY, user?.company_id, holderId],
+    enabled: showReturns && !!holderId,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    queryFn: async () => {
+      try {
+        return await fetchClientReturnStockHolds(holderId!);
+      } catch {
+        return [];
+      }
+    },
+  });
+
+  const {
+    data: rlRows = [],
+    isLoading: rlLoading,
+    isError: rlIsError,
+    error: rlError,
+  } = useQuery({
+    queryKey: [RETURN_LEADER_HANDOVERS_QUERY_KEY, user?.company_id],
+    enabled: showReturns && !!user?.company_id,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    queryFn: async () => {
+      try {
+        return await fetchReturnLeaderHandovers();
+      } catch {
+        return [];
+      }
+    },
+  });
+
+  const inventoryRows = useMemo(() => {
+    if (holdRows.length > 0) return holdRows;
+    if (holdsError || !holderId) return buildReturnedInventoryRows(rows, { holderId });
+    return buildReturnedInventoryRows(rows, { holderId });
+  }, [holdRows, holdsError, rows, holderId]);
+
+  const pendingRlCount = useMemo(
+    () =>
+      rlRows.filter((row) => {
+        if (row.status === 'pending_leader' && canReviewReturnLeaderAsLeader(user?.role, row, user?.id)) {
+          return true;
+        }
+        if (row.status === 'pending_super_admin' && canReviewReturnLeaderAsSuperAdmin(user?.role, row)) {
+          return true;
+        }
+        return false;
+      }).length,
+    [rlRows, user?.id, user?.role]
   );
 
   const startApprove = (row: MockClientReturn) => {
@@ -409,7 +504,7 @@ export default function ClientOrderReturnsPage() {
 
   const filtered = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    return rows.filter((row) => {
+    const matched = rows.filter((row) => {
       if (statusFilter !== 'all' && row.status !== statusFilter) return false;
       if (!query) return true;
       const haystack = [
@@ -430,13 +525,23 @@ export default function ClientOrderReturnsPage() {
         .toLowerCase();
       return haystack.includes(query);
     });
-  }, [rows, searchQuery, statusFilter]);
+    const { key, direction } = resolveTableSortDirection(
+      historySortState,
+      DEFAULT_CLIENT_RETURN_HISTORY_SORT_KEY,
+      DEFAULT_CLIENT_RETURN_HISTORY_SORT_DIRECTION
+    );
+    return sortClientReturnHistory(matched, key, direction);
+  }, [rows, searchQuery, statusFilter, historySortState]);
 
   useEffect(() => {
     setPage(0);
-  }, [searchQuery, pageSize, statusFilter]);
+  }, [searchQuery, pageSize, statusFilter, historySortState]);
 
   const { pagedItems, safePage, pageCount } = getListPaginationSlice(filtered, page, pageSize);
+
+  const handleHistorySort = (key: ClientReturnHistorySortKey) => {
+    setHistorySortState((current) => getNextTableSortCycleState(current, key));
+  };
 
   const handleApproveConfirm = async () => {
     if (!canReview || !actionRow || acting) return;
@@ -485,6 +590,70 @@ export default function ClientOrderReturnsPage() {
     }
   };
 
+  const startRlApprove = (row: ReturnLeaderHandover) => {
+    setRlViewRow(null);
+    setRlActionRow(row);
+    setRlConfirmKind('approve');
+  };
+
+  const startRlReject = (row: ReturnLeaderHandover) => {
+    setRlViewRow(null);
+    setRlActionRow(row);
+    setRlConfirmKind('reject');
+  };
+
+  const handleRlApproveConfirm = async (photos: PackageProofPhotoItem[]) => {
+    if (!rlActionRow || rlActing || !user?.company_id) return;
+    setRlActing(true);
+    try {
+      await approveReturnLeaderHandover(rlActionRow.id, photos, user.company_id);
+      await queryClient.invalidateQueries({ queryKey: [RETURN_LEADER_HANDOVERS_QUERY_KEY] });
+      await queryClient.invalidateQueries({ queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY] });
+      toast({
+        title: 'Return confirmed',
+        description: `${rlActionRow.returnNumber} received.`,
+      });
+      setRlConfirmKind(null);
+      setRlActionRow(null);
+    } catch (err) {
+      toast({
+        title: 'Could not confirm return',
+        description: err instanceof Error ? err.message : 'Failed to confirm return to leader',
+        variant: 'destructive',
+      });
+    } finally {
+      setRlActing(false);
+    }
+  };
+
+  const handleRlRejectConfirm = async (note?: string) => {
+    if (!rlActionRow || rlActing) return;
+    setRlActing(true);
+    try {
+      await rejectReturnLeaderHandover(rlActionRow.id, note);
+      await queryClient.invalidateQueries({ queryKey: [RETURN_LEADER_HANDOVERS_QUERY_KEY] });
+      toast({
+        title: 'Return rejected',
+        description: `${rlActionRow.returnNumber} was rejected.`,
+      });
+      setRlConfirmKind(null);
+      setRlActionRow(null);
+    } catch (err) {
+      toast({
+        title: 'Could not reject return',
+        description: err instanceof Error ? err.message : 'Failed to reject return to leader',
+        variant: 'destructive',
+      });
+    } finally {
+      setRlActing(false);
+    }
+  };
+
+  const refreshInventoryQueries = async () => {
+    await queryClient.invalidateQueries({ queryKey: [RETURN_LEADER_HANDOVERS_QUERY_KEY] });
+    await queryClient.invalidateQueries({ queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY] });
+  };
+
   if (!showReturns) {
     return (
       <div className="p-8">
@@ -501,24 +670,38 @@ export default function ClientOrderReturnsPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Client Order Returns</h1>
         <p className="text-muted-foreground">
-          {isLeader
-            ? 'Returns is CR history from your team. Returned inventory is posted stock grouped by brand, and is not sellable.'
-            : 'Returns is CR history. Returned inventory is posted stock grouped by brand, and is not sellable.'}
+          {isSuperAdmin
+            ? 'Confirm team leader return handovers (RL). Super admin does not hold stock.'
+            : isLeader
+              ? 'CR history, returned items you hold, and RL handovers from your team.'
+              : 'CR history, your returned items, and submit RL handovers to your team leader.'}
         </p>
       </div>
 
       <Tabs value={pageTab} onValueChange={(value) => setPageTab(value as PageTab)} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-2 h-auto p-1">
+        <TabsList
+          className={`grid w-full h-auto p-1 ${isSuperAdmin ? 'grid-cols-2' : 'grid-cols-3'}`}
+        >
           <TabsTrigger value="history" className="gap-1.5 py-2.5 text-xs sm:text-sm">
             <ClipboardList className="h-4 w-4 shrink-0" />
             Returns
           </TabsTrigger>
-          <TabsTrigger value="inventory" className="gap-1.5 py-2.5 text-xs sm:text-sm">
-            <Package className="h-4 w-4 shrink-0" />
-            <span className="sm:hidden">Inventory</span>
-            <span className="hidden sm:inline">Returned Items</span>
-            {inventoryRows.length > 0 ? (
-              <span className="tabular-nums opacity-80">({inventoryRows.length})</span>
+          {!isSuperAdmin ? (
+            <TabsTrigger value="inventory" className="gap-1.5 py-2.5 text-xs sm:text-sm">
+              <Package className="h-4 w-4 shrink-0" />
+              <span className="sm:hidden">Items</span>
+              <span className="hidden sm:inline">Returned Items</span>
+              {inventoryRows.length > 0 ? (
+                <span className="tabular-nums opacity-80">({inventoryRows.length})</span>
+              ) : null}
+            </TabsTrigger>
+          ) : null}
+          <TabsTrigger value="returnToLeader" className="gap-1.5 py-2.5 text-xs sm:text-sm">
+            <Truck className="h-4 w-4 shrink-0" />
+            <span className="sm:hidden">RL</span>
+            <span className="hidden sm:inline">Return to TL</span>
+            {pendingRlCount > 0 ? (
+              <span className="tabular-nums opacity-80">({pendingRlCount})</span>
             ) : null}
           </TabsTrigger>
         </TabsList>
@@ -596,130 +779,186 @@ export default function ClientOrderReturnsPage() {
               )}
 
               {viewMode === 'table' && (
-                <div className="rounded-md border overflow-x-auto min-w-0">
-                  <div className={TABLE_MIN_WIDTH}>
-                  <div className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-muted-foreground bg-muted/50 border-b">
-                    <span className="w-4 shrink-0" />
-                    <div className={`grid flex-1 gap-2 items-center ${TABLE_COLS}`}>
-                      <span>Return</span>
-                      <span>Client</span>
-                      <span>Returned by</span>
-                      <span>Returned date</span>
-                      <span>Brands</span>
-                      <span>Status</span>
-                      <span>Approved by</span>
-                      <span>Rejected by</span>
-                    </div>
-                    <span className="w-10 shrink-0 text-right">Qty</span>
-                    {canReview ? <span className="w-[11.75rem] shrink-0 text-right">Action</span> : null}
-                  </div>
-                  <Accordion type="multiple" className="w-full">
-                    {pagedItems.map((row) => {
-                      const qty = getMockReturnLineQty(row);
-                      const actor = getReturnActionActor(row);
-                      return (
-                        <AccordionItem key={row.id} value={row.id} className="px-3">
-                          <div className="flex items-center gap-2 w-full">
-                            <div className="flex-1 min-w-0 [&>h3]:w-full">
-                              <AccordionTrigger className="w-full hover:no-underline py-3 justify-start gap-2 [&>svg]:order-first [&>svg]:h-4 [&>svg]:w-4 [&>svg]:shrink-0">
-                                <div className={`grid w-full gap-2 text-left text-sm items-center ${TABLE_COLS}`}>
-                                  <div className="min-w-0">
-                                    <p className="font-mono text-xs font-semibold truncate whitespace-nowrap" title={row.returnNumber}>
-                                      {row.returnNumber}
-                                    </p>
-                                    <p className="font-mono text-[11px] text-muted-foreground truncate whitespace-nowrap" title={row.orderNumber}>
-                                      {row.orderNumber}
-                                    </p>
-                                  </div>
-                                  <span className="truncate min-w-0" title={row.clientName}>
-                                    {row.clientName}
-                                  </span>
-                                  <span className="truncate min-w-0" title={row.returnedByName}>
-                                    {row.returnedByName}
-                                  </span>
-                                  <span className="text-sm whitespace-nowrap">
-                                    {format(new Date(row.returnDate), 'MMM d, yyyy')}
-                                  </span>
-                                  <div className="min-w-0 overflow-hidden">
-                                    <ReturnedBrandBadges brands={uniqueReturnBrands(row.lines)} />
-                                  </div>
-                                  <ReturnStatusBadge status={row.status} />
-                                  <ActorNameCell name={row.approvedByName} at={row.approvedAt} />
-                                  <ActorNameCell name={row.rejectedByName} at={row.rejectedAt} />
-                                </div>
-                              </AccordionTrigger>
-                            </div>
-                            <span className="w-10 shrink-0 font-semibold text-rose-700 tabular-nums text-right">
-                              {qty}
-                            </span>
-                            {canReview ? (
-                              <div className="py-2 shrink-0 flex justify-end w-[11.75rem]">
-                                {row.status === 'pending_leader' ? (
-                                  <PendingReturnActions
-                                    onApprove={() => startApprove(row)}
-                                    onReject={() => startReject(row)}
+                <div className="rounded-md border overflow-hidden">
+                  <Table className={`table-fixed ${TABLE_MIN_WIDTH}`}>
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead className="w-10 px-2" />
+                        <SortableTableHead
+                          label="Return"
+                          sortKey="returnNumber"
+                          sortDirection={getTableSortDisplayDirection(historySortState, 'returnNumber')}
+                          onSort={handleHistorySort}
+                          className="w-[12rem]"
+                        />
+                        <SortableTableHead
+                          label="Client"
+                          sortKey="clientName"
+                          sortDirection={getTableSortDisplayDirection(historySortState, 'clientName')}
+                          onSort={handleHistorySort}
+                          className="w-[10rem]"
+                        />
+                        <SortableTableHead
+                          label="Returned by"
+                          sortKey="returnedByName"
+                          sortDirection={getTableSortDisplayDirection(historySortState, 'returnedByName')}
+                          onSort={handleHistorySort}
+                          className="w-[9rem]"
+                        />
+                        <SortableTableHead
+                          label="Returned date"
+                          sortKey="returnDate"
+                          sortDirection={getTableSortDisplayDirection(historySortState, 'returnDate')}
+                          onSort={handleHistorySort}
+                          className="w-[8rem]"
+                        />
+                        <TableHead className="w-[9rem]">Brands</TableHead>
+                        <SortableTableHead
+                          label="Status"
+                          sortKey="status"
+                          sortDirection={getTableSortDisplayDirection(historySortState, 'status')}
+                          onSort={handleHistorySort}
+                          className="w-[7rem]"
+                        />
+                        <SortableTableHead
+                          label="Approved by"
+                          sortKey="approvedByName"
+                          sortDirection={getTableSortDisplayDirection(historySortState, 'approvedByName')}
+                          onSort={handleHistorySort}
+                          className="w-[9rem]"
+                        />
+                        <SortableTableHead
+                          label="Rejected by"
+                          sortKey="rejectedByName"
+                          sortDirection={getTableSortDisplayDirection(historySortState, 'rejectedByName')}
+                          onSort={handleHistorySort}
+                          className="w-[9rem]"
+                        />
+                        <SortableTableHead
+                          label="Qty"
+                          sortKey="qty"
+                          sortDirection={getTableSortDisplayDirection(historySortState, 'qty')}
+                          onSort={handleHistorySort}
+                          className="w-16 text-right"
+                        />
+                        {canReview ? <TableHead className="w-[12rem] text-right">Action</TableHead> : null}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {pagedItems.map((row) => {
+                        const qty = getMockReturnLineQty(row);
+                        const actor = getReturnActionActor(row);
+                        const isOpen = expandedRows.has(row.id);
+                        const colSpan = canReview ? 11 : 10;
+                        return (
+                          <Fragment key={row.id}>
+                            <TableRow className={isOpen ? 'bg-muted/20' : undefined}>
+                              <TableCell className="px-2">
+                                <button
+                                  type="button"
+                                  className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
+                                  onClick={() => toggleExpanded(row.id)}
+                                  aria-expanded={isOpen}
+                                  aria-label={isOpen ? 'Collapse return details' : 'Expand return details'}
+                                >
+                                  <ChevronDown
+                                    className={`h-4 w-4 text-muted-foreground transition-transform ${
+                                      isOpen ? 'rotate-180' : ''
+                                    }`}
                                   />
-                                ) : null}
-                              </div>
-                            ) : null}
-                          </div>
-                          {canReview && row.status === 'pending_leader' ? (
-                            <div className="lg:hidden pb-3">
-                              <PendingReturnActions
-                                layout="stack"
-                                onApprove={() => startApprove(row)}
-                                onReject={() => startReject(row)}
-                              />
-                            </div>
-                          ) : null}
-                          <AccordionContent>
-                            <div className="lg:ml-6 space-y-2 min-w-0 max-w-4xl">
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-muted-foreground mb-3">
-                                <p className="lg:hidden">
-                                  Returned by{' '}
-                                  <span className="font-medium text-foreground">{row.returnedByName}</span>
+                                </button>
+                              </TableCell>
+                              <TableCell className="align-top">
+                                <p className="font-mono text-xs font-semibold truncate" title={row.returnNumber}>
+                                  {row.returnNumber}
                                 </p>
-                                <p>
-                                  Returned date{' '}
-                                  <span className="font-medium text-foreground">
-                                    {format(new Date(row.returnDate), 'MMM d, yyyy')}
-                                  </span>
+                                <p className="font-mono text-[11px] text-muted-foreground truncate" title={row.orderNumber}>
+                                  {row.orderNumber}
                                 </p>
-                                <p>
-                                  Created{' '}
-                                  <span className="font-medium text-foreground">
-                                    {format(new Date(row.createdAt), 'MMM d, yyyy · h:mm a')}
-                                  </span>
-                                </p>
-                                <p>
-                                  Reason{' '}
-                                  <Badge variant="outline" className="font-normal">
-                                    {formatClientReturnReason(row.reason)}
-                                  </Badge>
-                                </p>
-                                {actor.kind ? (
-                                  <p className="sm:col-span-2">
-                                    {actor.kind === 'reject' ? 'Rejected by' : 'Approved by'}{' '}
-                                    <span className="font-medium text-foreground">{actor.name || '—'}</span>
-                                    {actor.at ? (
-                                      <>
-                                        {' · '}
+                              </TableCell>
+                              <TableCell className="align-top truncate" title={row.clientName}>
+                                {row.clientName}
+                              </TableCell>
+                              <TableCell className="align-top truncate" title={row.returnedByName}>
+                                {row.returnedByName}
+                              </TableCell>
+                              <TableCell className="align-top whitespace-nowrap">
+                                {format(new Date(row.returnDate), 'MMM d, yyyy')}
+                              </TableCell>
+                              <TableCell className="align-top">
+                                <ReturnedBrandBadges brands={uniqueReturnBrands(row.lines)} />
+                              </TableCell>
+                              <TableCell className="align-top">
+                                <ReturnStatusBadge status={row.status} />
+                              </TableCell>
+                              <TableCell className="align-top">
+                                <ActorNameCell name={row.approvedByName} at={row.approvedAt} />
+                              </TableCell>
+                              <TableCell className="align-top">
+                                <ActorNameCell name={row.rejectedByName} at={row.rejectedAt} />
+                              </TableCell>
+                              <TableCell className="align-top text-right font-semibold tabular-nums text-rose-700">
+                                {qty}
+                              </TableCell>
+                              {canReview ? (
+                                <TableCell className="align-top text-right">
+                                  {row.status === 'pending_leader' ? (
+                                    <PendingReturnActions
+                                      onApprove={() => startApprove(row)}
+                                      onReject={() => startReject(row)}
+                                    />
+                                  ) : null}
+                                </TableCell>
+                              ) : null}
+                            </TableRow>
+                            {isOpen ? (
+                              <TableRow className="hover:bg-transparent">
+                                <TableCell colSpan={colSpan} className="bg-muted/10 p-4">
+                                  <div className="space-y-2 min-w-0 max-w-4xl ml-2">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-muted-foreground mb-3">
+                                      <p>
+                                        Returned date{' '}
                                         <span className="font-medium text-foreground">
-                                          {format(new Date(actor.at), 'MMM d, yyyy · h:mm a')}
+                                          {format(new Date(row.returnDate), 'MMM d, yyyy')}
                                         </span>
-                                      </>
-                                    ) : null}
-                                  </p>
-                                ) : null}
-                              </div>
-                              <ReturnHistoryDetails row={row} />
-                            </div>
-                          </AccordionContent>
-                        </AccordionItem>
-                      );
-                    })}
-                  </Accordion>
-                  </div>
+                                      </p>
+                                      <p>
+                                        Created{' '}
+                                        <span className="font-medium text-foreground">
+                                          {format(new Date(row.createdAt), 'MMM d, yyyy · h:mm a')}
+                                        </span>
+                                      </p>
+                                      <p>
+                                        Reason{' '}
+                                        <Badge variant="outline" className="font-normal">
+                                          {formatClientReturnReason(row.reason)}
+                                        </Badge>
+                                      </p>
+                                      {actor.kind ? (
+                                        <p className="sm:col-span-2">
+                                          {actor.kind === 'reject' ? 'Rejected by' : 'Approved by'}{' '}
+                                          <span className="font-medium text-foreground">{actor.name || '—'}</span>
+                                          {actor.at ? (
+                                            <>
+                                              {' · '}
+                                              <span className="font-medium text-foreground">
+                                                {format(new Date(actor.at), 'MMM d, yyyy · h:mm a')}
+                                              </span>
+                                            </>
+                                          ) : null}
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                    <ReturnHistoryDetails row={row} />
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            ) : null}
+                          </Fragment>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
                 </div>
               )}
 
@@ -742,29 +981,49 @@ export default function ClientOrderReturnsPage() {
       </Card>
         </TabsContent>
 
-        <TabsContent value="inventory" className="mt-0">
-          {isLoading ? (
-            <Card>
-              <CardContent className="py-12 flex items-center justify-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Loading returned inventory...
-              </CardContent>
-            </Card>
-          ) : isError ? (
-            <Card>
-              <CardContent className="py-12 text-center space-y-1">
-                <p className="text-sm font-medium">Could not load returned inventory</p>
-                <p className="text-sm text-muted-foreground">
-                  {error instanceof Error ? error.message : 'Refresh the page and try again.'}
-                </p>
-              </CardContent>
-            </Card>
-          ) : (
-            <ReturnedInventoryPanel
-              rows={inventoryRows}
-              onRowClick={(row) => setInventoryRow(row)}
-            />
-          )}
+        {!isSuperAdmin ? (
+          <TabsContent value="inventory" className="mt-0">
+            {isLoading || holdsLoading ? (
+              <Card>
+                <CardContent className="py-12 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading returned inventory...
+                </CardContent>
+              </Card>
+            ) : isError ? (
+              <Card>
+                <CardContent className="py-12 text-center space-y-1">
+                  <p className="text-sm font-medium">Could not load returned inventory</p>
+                  <p className="text-sm text-muted-foreground">
+                    {error instanceof Error ? error.message : 'Refresh the page and try again.'}
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
+              <ReturnedInventoryPanel
+                rows={inventoryRows}
+                onRowClick={(row) => setInventoryRow(row)}
+                canBulkReturn={canBulkReturn}
+                companyId={user?.company_id}
+                submitterName={user?.full_name}
+                onSubmitted={() => void refreshInventoryQueries()}
+              />
+            )}
+          </TabsContent>
+        ) : null}
+
+        <TabsContent value="returnToLeader" className="mt-0">
+          <ReturnToLeaderPanel
+            rows={rlRows}
+            isLoading={rlLoading}
+            isError={rlIsError}
+            error={rlError}
+            canReviewLeader={(row) => canReviewReturnLeaderAsLeader(user?.role, row, user?.id)}
+            canReviewSuperAdmin={(row) => canReviewReturnLeaderAsSuperAdmin(user?.role, row)}
+            onView={(row) => setRlViewRow(row)}
+            onApprove={startRlApprove}
+            onReject={startRlReject}
+          />
         </TabsContent>
       </Tabs>
 
@@ -802,6 +1061,29 @@ export default function ClientOrderReturnsPage() {
         }}
         onApprove={() => void handleApproveConfirm()}
         onReject={(note) => void handleRejectConfirm(note)}
+      />
+
+      <ReturnLeaderViewDialog
+        open={!!rlViewRow}
+        onOpenChange={(open) => {
+          if (!open) setRlViewRow(null);
+        }}
+        row={rlViewRow}
+      />
+
+      <ReturnLeaderViewDialog
+        mode={rlConfirmKind === 'reject' ? 'reject' : rlConfirmKind === 'approve' ? 'approve' : 'view'}
+        open={rlConfirmKind === 'approve' || rlConfirmKind === 'reject'}
+        row={rlActionRow}
+        acting={rlActing}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen && !rlActing) {
+            setRlConfirmKind(null);
+            setRlActionRow(null);
+          }
+        }}
+        onApprove={(photos) => void handleRlApproveConfirm(photos)}
+        onReject={(note) => void handleRlRejectConfirm(note)}
       />
     </div>
   );

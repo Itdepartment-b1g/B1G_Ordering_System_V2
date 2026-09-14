@@ -470,6 +470,29 @@ Targets: first return qty, first change SKU that can still take qty, reason / ot
 
 Storage bucket: `client-order-return-proofs` (path `{company_id}/...`).
 
+---
+
+## Return to Leader (RL)
+
+Numbering: `RL-{INITIALS}-{YYYYMM}-000001` (same counter pattern as CR).
+
+Migration: `supabase/migrations/20260914160000_return_leader_handovers.sql`
+
+| Path | Creator | Approver | Stock move |
+|---|---|---|---|
+| MS → TL | mobile sales | team leader (+ proof) | `from_holder` → `to_holder` |
+| TL confirm | team leader | super admin (+ proof) | none (TL already holds) |
+
+Ledger: `client_return_stock_holds` (holder = mobile sales or team leader only). Available qty = on hand − pending RL out.
+
+UI tabs on `ClientOrderReturnsPage`: **Returns** · **Returned Items** (bulk RL submit) · **Return to TL** (RL history + approve).
+
+| RPC | Who |
+|---|---|
+| `create_return_leader_handover(items, notes)` | mobile sales, team leader |
+| `approve_return_leader_handover(id, attachments)` | TL (pending_leader) or super_admin (pending_super_admin) |
+| `reject_return_leader_handover(id, note)` | same approver |
+
 ## Next (not built yet)
 
 1. **Run the migration** in the SQL editor, then confirm tables/RPCs exist.

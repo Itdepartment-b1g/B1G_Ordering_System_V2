@@ -1,12 +1,26 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHeader, TableRow } from '@/components/ui/table';
 import {
   getListPaginationSlice,
   ListPagination,
   type PageSize,
 } from '@/features/shared/components/ListPagination';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
 import type { MockClientReturnLine } from './clientReturnMock';
+import {
+  DEFAULT_BRAND_VARIANT_SORT_DIRECTION,
+  DEFAULT_BRAND_VARIANT_SORT_KEY,
+  sortBrandVariants,
+  type BrandVariantSortKey,
+} from './utils/clientReturnsSorting';
 
 const BRAND_PAGE_SIZE: PageSize = 25;
 
@@ -78,12 +92,28 @@ export function BrandReturnedTable({
 }) {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(BRAND_PAGE_SIZE);
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<BrandVariantSortKey>>(createInitialTableSortCycle);
   const brandQty = variants.reduce((sum, line) => sum + line.quantity, 0);
-  const { pagedItems, safePage, pageCount } = getListPaginationSlice(variants, page, pageSize);
+
+  const sortedVariants = useMemo(() => {
+    const { key, direction } = resolveTableSortDirection(
+      sortState,
+      DEFAULT_BRAND_VARIANT_SORT_KEY,
+      DEFAULT_BRAND_VARIANT_SORT_DIRECTION
+    );
+    return sortBrandVariants(variants, key, direction);
+  }, [variants, sortState]);
+
+  const { pagedItems, safePage, pageCount } = getListPaginationSlice(sortedVariants, page, pageSize);
 
   useEffect(() => {
     setPage(0);
-  }, [brandName, variants.length, pageSize]);
+  }, [brandName, variants.length, pageSize, sortState]);
+
+  const handleSort = (key: BrandVariantSortKey) => {
+    setSortState((current) => getNextTableSortCycleState(current, key));
+  };
 
   return (
     <div className="rounded-md border bg-muted/20 overflow-hidden">
@@ -96,9 +126,25 @@ export function BrandReturnedTable({
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Variant</TableHead>
-            <TableHead>Type</TableHead>
-            <TableHead className="text-right">Qty</TableHead>
+            <SortableTableHead
+              label="Variant"
+              sortKey="variantName"
+              sortDirection={getTableSortDisplayDirection(sortState, 'variantName')}
+              onSort={handleSort}
+            />
+            <SortableTableHead
+              label="Type"
+              sortKey="variantType"
+              sortDirection={getTableSortDisplayDirection(sortState, 'variantType')}
+              onSort={handleSort}
+            />
+            <SortableTableHead
+              label="Qty"
+              sortKey="quantity"
+              sortDirection={getTableSortDisplayDirection(sortState, 'quantity')}
+              onSort={handleSort}
+              className="text-right"
+            />
           </TableRow>
         </TableHeader>
         <TableBody>

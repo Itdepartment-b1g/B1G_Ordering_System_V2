@@ -1,14 +1,8 @@
 import { format } from 'date-fns';
-import { useEffect, useState } from 'react';
-import { RotateCcw } from 'lucide-react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import { ChevronDown, RotateCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from '@/components/ui/accordion';
 import {
   Dialog,
   DialogContent,
@@ -16,11 +10,20 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   getListPaginationSlice,
   ListPagination,
   type PageSize,
 } from '@/features/shared/components/ListPagination';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
 import { formatClientReturnReason, type MockClientReturn } from './clientReturnMock';
 import {
   BrandReturnedTable,
@@ -29,6 +32,12 @@ import {
   variantTypeBadgeClass,
 } from './ClientReturnBrandTable';
 import { ClientReturnExpandedMeta } from './ClientReturnExpandedMeta';
+import {
+  DEFAULT_RETURNED_STOCK_DETAIL_SORT_DIRECTION,
+  DEFAULT_RETURNED_STOCK_DETAIL_SORT_KEY,
+  sortReturnedStockDetailRows,
+  type ReturnedStockDetailSortKey,
+} from './utils/clientReturnsSorting';
 
 const CR_PAGE_SIZE: PageSize = 25;
 
@@ -151,15 +160,45 @@ export function ReturnedStockDetailDialog({
 }: ReturnedStockDetailDialogProps) {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(CR_PAGE_SIZE);
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<ReturnedStockDetailSortKey>>(createInitialTableSortCycle);
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (open) {
       setPage(0);
       setPageSize(CR_PAGE_SIZE);
+      setSortState(createInitialTableSortCycle());
+      setExpandedRows(new Set());
     }
   }, [open, returns]);
 
-  const { pagedItems, safePage, pageCount } = getListPaginationSlice(returns, page, pageSize);
+  const sortedReturns = useMemo(() => {
+    const { key, direction } = resolveTableSortDirection(
+      sortState,
+      DEFAULT_RETURNED_STOCK_DETAIL_SORT_KEY,
+      DEFAULT_RETURNED_STOCK_DETAIL_SORT_DIRECTION
+    );
+    return sortReturnedStockDetailRows(returns, key, direction, (row) =>
+      qtyForVariant(row, variantId, variantName)
+    );
+  }, [returns, sortState, variantId, variantName]);
+
+  const { pagedItems, safePage, pageCount } = getListPaginationSlice(sortedReturns, page, pageSize);
+
+  const handleSort = (key: ReturnedStockDetailSortKey) => {
+    setSortState((current) => getNextTableSortCycleState(current, key));
+    setPage(0);
+  };
+
+  const toggleExpanded = (id: string) => {
+    setExpandedRows((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -213,60 +252,126 @@ export function ReturnedStockDetailDialog({
               </div>
 
               <div className="hidden md:block rounded-md border overflow-hidden">
-                <div className="grid grid-cols-[1.5rem_1.1fr_1.1fr_0.9fr_0.75fr_1.15fr_0.8fr_0.4fr] gap-2 px-3 py-2 text-xs font-medium text-muted-foreground bg-muted/50 border-b">
-                  <span />
-                  <span>CR #</span>
-                  <span>ORD #</span>
-                  <span>Client</span>
-                  <span>Returned date</span>
-                  <span>Created</span>
-                  <span>Reason</span>
-                  <span className="text-right">Qty</span>
-                </div>
-
-                <Accordion type="multiple" className="w-full">
-                  {pagedItems.map((row) => {
-                    const qty = qtyForVariant(row, variantId, variantName);
-                    const brandGroups = groupLinesByBrand(row.lines);
-                    return (
-                      <AccordionItem key={row.id} value={row.id} className="px-3">
-                        <AccordionTrigger className="hover:no-underline py-3 justify-start gap-2 [&>svg]:order-first [&>svg]:h-4 [&>svg]:w-4">
-                          <div className="grid w-full grid-cols-[1.1fr_1.1fr_0.9fr_0.75fr_1.15fr_0.8fr_0.4fr] gap-2 text-left text-sm">
-                            <span className="font-mono text-xs font-semibold">{row.returnNumber}</span>
-                            <span className="font-mono text-xs text-muted-foreground">{row.orderNumber}</span>
-                            <span className="truncate">{row.clientName}</span>
-                            <span className="text-xs text-muted-foreground whitespace-nowrap">
+                <Table className="table-fixed min-w-[56rem]">
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="w-10 px-2" />
+                      <SortableTableHead
+                        label="CR #"
+                        sortKey="returnNumber"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'returnNumber')}
+                        onSort={handleSort}
+                        className="w-[9rem]"
+                      />
+                      <SortableTableHead
+                        label="ORD #"
+                        sortKey="orderNumber"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'orderNumber')}
+                        onSort={handleSort}
+                        className="w-[9rem]"
+                      />
+                      <SortableTableHead
+                        label="Client"
+                        sortKey="clientName"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'clientName')}
+                        onSort={handleSort}
+                        className="w-[9rem]"
+                      />
+                      <SortableTableHead
+                        label="Returned date"
+                        sortKey="returnDate"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'returnDate')}
+                        onSort={handleSort}
+                        className="w-[7.5rem]"
+                      />
+                      <SortableTableHead
+                        label="Created"
+                        sortKey="createdAt"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'createdAt')}
+                        onSort={handleSort}
+                        className="w-[9rem]"
+                      />
+                      <SortableTableHead
+                        label="Reason"
+                        sortKey="reason"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'reason')}
+                        onSort={handleSort}
+                        className="w-[7rem]"
+                      />
+                      <SortableTableHead
+                        label="Qty"
+                        sortKey="qty"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'qty')}
+                        onSort={handleSort}
+                        className="w-16 text-right"
+                      />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pagedItems.map((row) => {
+                      const qty = qtyForVariant(row, variantId, variantName);
+                      const brandGroups = groupLinesByBrand(row.lines);
+                      const isOpen = expandedRows.has(row.id);
+                      return (
+                        <Fragment key={row.id}>
+                          <TableRow className={isOpen ? 'bg-muted/20' : undefined}>
+                            <TableCell className="px-2">
+                              <button
+                                type="button"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
+                                onClick={() => toggleExpanded(row.id)}
+                                aria-expanded={isOpen}
+                              >
+                                <ChevronDown
+                                  className={`h-4 w-4 text-muted-foreground transition-transform ${
+                                    isOpen ? 'rotate-180' : ''
+                                  }`}
+                                />
+                              </button>
+                            </TableCell>
+                            <TableCell className="font-mono text-xs font-semibold truncate">
+                              {row.returnNumber}
+                            </TableCell>
+                            <TableCell className="font-mono text-xs text-muted-foreground truncate">
+                              {row.orderNumber}
+                            </TableCell>
+                            <TableCell className="truncate">{row.clientName}</TableCell>
+                            <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                               {format(new Date(row.returnDate), 'MMM d, yyyy')}
-                            </span>
-                            <span className="text-xs text-muted-foreground whitespace-nowrap">
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                               {format(new Date(row.createdAt), 'MMM d, yyyy h:mm a')}
-                            </span>
-                            <span>
+                            </TableCell>
+                            <TableCell>
                               <Badge variant="outline" className="font-normal">
                                 {formatClientReturnReason(row.reason)}
                               </Badge>
-                            </span>
-                            <span className="font-semibold text-rose-700 tabular-nums text-right">
+                            </TableCell>
+                            <TableCell className="text-right font-semibold tabular-nums text-rose-700">
                               {qty}
-                            </span>
-                          </div>
-                        </AccordionTrigger>
-                        <AccordionContent>
-                          <div className="space-y-3 mb-2 ml-6">
-                            <ClientReturnExpandedMeta row={row} />
-                            {brandGroups.map((group) => (
-                              <BrandReturnedTable
-                                key={group.brandName}
-                                brandName={group.brandName}
-                                variants={group.variants}
-                              />
-                            ))}
-                          </div>
-                        </AccordionContent>
-                      </AccordionItem>
-                    );
-                  })}
-                </Accordion>
+                            </TableCell>
+                          </TableRow>
+                          {isOpen ? (
+                            <TableRow className="hover:bg-transparent">
+                              <TableCell colSpan={8} className="bg-muted/10 p-4">
+                                <div className="space-y-3">
+                                  <ClientReturnExpandedMeta row={row} />
+                                  {brandGroups.map((group) => (
+                                    <BrandReturnedTable
+                                      key={group.brandName}
+                                      brandName={group.brandName}
+                                      variants={group.variants}
+                                    />
+                                  ))}
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ) : null}
+                        </Fragment>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
               </div>
 
               <ListPagination
