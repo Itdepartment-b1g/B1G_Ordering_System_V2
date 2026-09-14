@@ -235,7 +235,9 @@ export function ReturnedStockDetailDialog({
         <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3 sm:px-6">
           {returns.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">
-              No returns for this variant.
+              {totalReturned > 0
+                ? 'Stock is on hand, but no matching client return (CR) history was found for this variant.'
+                : 'No returns for this variant.'}
             </p>
           ) : (
             <div className="space-y-3">

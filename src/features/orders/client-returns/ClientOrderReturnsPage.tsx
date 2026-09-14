@@ -443,8 +443,13 @@ export default function ClientOrderReturnsPage() {
   });
 
   const inventoryRows = useMemo(() => {
-    const crFallback = buildReturnedInventoryRows(rows, { holderId });
-    const crByVariant = new Map(crFallback.map((row) => [row.variantId, row]));
+    // MS: only their own posted CRs. TL: any posted CRs they can see (team), so detail still
+    // shows CR # after stock was transferred to the leader on RL confirm.
+    const crForDetail = buildReturnedInventoryRows(
+      rows,
+      isLeader ? undefined : { holderId }
+    );
+    const crByVariant = new Map(crForDetail.map((row) => [row.variantId, row]));
 
     // Holds ledger is the source of truth for Returned Items (MS → TL transfer on RL confirm).
     // Do not fall back to CR history when the holds query succeeded (including empty).
@@ -458,8 +463,8 @@ export default function ClientOrderReturnsPage() {
     }
 
     if (!holderId) return [];
-    return crFallback;
-  }, [holdRows, holdsError, rows, holderId]);
+    return buildReturnedInventoryRows(rows, { holderId });
+  }, [holdRows, holdsError, rows, holderId, isLeader]);
 
   const pendingRlCount = useMemo(
     () =>
@@ -682,8 +687,8 @@ export default function ClientOrderReturnsPage() {
   return (
     <div className="p-4 md:p-8 space-y-6 min-w-0">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Client Order Returns</h1>
-        <p className="text-muted-foreground">
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Client Order Returns</h1>
+        <p className="text-sm sm:text-base text-muted-foreground mt-1">
           {isSuperAdmin
             ? 'Confirm team leader return handovers (RL). Super admin does not hold stock.'
             : isLeader

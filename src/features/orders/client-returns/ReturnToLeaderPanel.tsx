@@ -19,7 +19,6 @@ import {
   resolveTableSortDirection,
   type TableSortCycleState,
 } from '@/features/shared/utils/tableSortCycle';
-import { BrandReturnedTable, groupLinesByBrand } from './ClientReturnBrandTable';
 import {
   getReturnLeaderLineQty,
   returnLeaderStatusBadgeClass,
@@ -65,63 +64,102 @@ function ReturnLeaderCard({
 }) {
   const qty = getReturnLeaderLineQty(row);
   const pending = canReview && (row.status === 'pending_leader' || row.status === 'pending_super_admin');
-  const brandGroups = groupLinesByBrand(
-    row.lines.map((line) => ({
-      brandName: line.brandName,
-      variantName: line.variantName,
-      variantType: line.variantType,
-      quantity: line.quantity,
-    }))
-  );
+  const skuCount = row.lines.length;
+  const previewLines = row.lines.slice(0, 3);
 
   return (
     <div
-      className={`rounded-2xl border bg-background p-4 shadow-sm ${
+      className={`rounded-xl border bg-background p-3.5 ${
         pending ? 'border-l-[3px] border-l-amber-400' : ''
       }`}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 space-y-1">
-          <p className="font-mono font-semibold text-sm break-all">{row.returnNumber}</p>
-          <Badge variant="outline" className={`font-normal ${returnLeaderStatusBadgeClass(row.status)}`}>
-            {returnLeaderStatusLabel(row.status)}
-          </Badge>
-        </div>
-        <Button type="button" variant="outline" size="sm" className="h-9 shrink-0" onClick={onView}>
-          <Eye className="h-4 w-4 mr-1.5" />
-          View
+      <div className="flex items-start gap-2">
+        <button type="button" className="min-w-0 flex-1 text-left space-y-1.5" onClick={onView}>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-mono text-[13px] font-semibold leading-tight break-all">
+              {row.returnNumber}
+            </p>
+            <Badge
+              variant="outline"
+              className={`h-5 px-1.5 text-[10px] font-medium ${returnLeaderStatusBadgeClass(row.status)}`}
+            >
+              {returnLeaderStatusLabel(row.status)}
+            </Badge>
+          </div>
+          <p className="text-sm font-medium text-foreground/90 truncate">{row.submittedByName}</p>
+          <p className="text-xs text-muted-foreground">
+            {format(new Date(row.createdAt), 'MMM d · h:mm a')}
+            <span className="mx-1.5 text-border">·</span>
+            <span className="font-semibold tabular-nums text-rose-700">
+              {qty} unit{qty === 1 ? '' : 's'}
+            </span>
+            {skuCount > 0 ? (
+              <>
+                <span className="mx-1.5 text-border">·</span>
+                <span className="tabular-nums">
+                  {skuCount} SKU{skuCount === 1 ? '' : 's'}
+                </span>
+              </>
+            ) : null}
+          </p>
+        </button>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="h-9 w-9 shrink-0"
+          onClick={onView}
+          aria-label={`View ${row.returnNumber}`}
+        >
+          <Eye className="h-4 w-4" />
         </Button>
       </div>
 
-      <p className="text-lg font-bold tracking-tight mt-3 break-words">{row.submittedByName}</p>
-
-      <div className="grid grid-cols-2 gap-x-3 gap-y-3 mt-3 text-sm">
-        <div>
-          <p className="text-xs text-muted-foreground">Submitted</p>
-          <p className="font-semibold">{format(new Date(row.createdAt), 'MMM d, yyyy · h:mm a')}</p>
-        </div>
-        <div>
-          <p className="text-xs text-muted-foreground">Units</p>
-          <p className="font-semibold tabular-nums text-rose-700">{qty}</p>
-        </div>
-      </div>
-
-      {brandGroups.length > 0 ? (
-        <div className="mt-3 space-y-2">
-          <p className="text-xs font-medium text-muted-foreground">Items</p>
-          {brandGroups.map((group) => (
-            <BrandReturnedTable key={group.brandName} brandName={group.brandName} variants={group.variants} />
+      {previewLines.length > 0 ? (
+        <button type="button" className="mt-3 w-full text-left space-y-1.5" onClick={onView}>
+          {previewLines.map((line) => (
+            <div
+              key={`${line.variantId}-${line.variantName}`}
+              className="flex items-center gap-2 rounded-lg bg-muted/40 px-2.5 py-1.5"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium truncate">
+                  <span className="text-muted-foreground">{line.brandName}</span>
+                  <span className="mx-1 text-muted-foreground/60">·</span>
+                  {line.variantName}
+                </p>
+              </div>
+              <span className="shrink-0 text-xs font-semibold tabular-nums text-rose-700">
+                {line.quantity}
+              </span>
+            </div>
           ))}
-        </div>
+          {row.lines.length > previewLines.length ? (
+            <p className="px-0.5 text-[11px] text-muted-foreground">
+              +{row.lines.length - previewLines.length} more · tap View
+            </p>
+          ) : null}
+        </button>
+      ) : skuCount === 0 ? (
+        <p className="mt-3 text-xs text-muted-foreground">Tap View for full details.</p>
       ) : null}
 
       {pending ? (
-        <div className="mt-4 pt-3 border-t grid grid-cols-2 gap-2">
-          <Button type="button" variant="outline" className="h-10 text-red-700 border-red-200" onClick={onReject}>
+        <div className="mt-3 pt-3 border-t grid grid-cols-2 gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10 text-red-700 border-red-200"
+            onClick={onReject}
+          >
             <X className="h-3.5 w-3.5 mr-1" />
             Reject
           </Button>
-          <Button type="button" className="h-10 bg-emerald-600 hover:bg-emerald-700" onClick={onApprove}>
+          <Button
+            type="button"
+            className="h-10 bg-emerald-600 hover:bg-emerald-700"
+            onClick={onApprove}
+          >
             <Check className="h-3.5 w-3.5 mr-1" />
             Confirm
           </Button>
@@ -195,22 +233,22 @@ export function ReturnToLeaderPanel({
     setSortState((current) => getNextTableSortCycleState(current, key));
   };
 
-  const filterOptions: Array<{ id: StatusFilter; label: string }> = [
-    { id: 'all', label: 'All' },
-    { id: 'pending_leader', label: 'Pending TL' },
-    { id: 'pending_super_admin', label: 'Pending SA' },
-    { id: 'received', label: 'Received' },
-    { id: 'rejected', label: 'Rejected' },
+  const filterOptions: Array<{ id: StatusFilter; label: string; shortLabel: string }> = [
+    { id: 'all', label: 'All', shortLabel: 'All' },
+    { id: 'pending_leader', label: 'Pending TL', shortLabel: 'Pending' },
+    { id: 'pending_super_admin', label: 'Pending SA', shortLabel: 'SA' },
+    { id: 'received', label: 'Received', shortLabel: 'Received' },
+    { id: 'rejected', label: 'Rejected', shortLabel: 'Rejected' },
   ];
 
   return (
-    <Card>
-      <CardHeader className="pb-4 space-y-3">
+    <Card className="min-w-0 overflow-hidden">
+      <CardHeader className="pb-3 space-y-3 px-4 sm:px-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
+          <div className="min-w-0">
             <h2 className="font-semibold">Return to leader</h2>
             <p className="text-sm text-muted-foreground mt-0.5">
-              RL handovers · {rows.length} record{rows.length === 1 ? '' : 's'}
+              {rows.length} record{rows.length === 1 ? '' : 's'}
             </p>
           </div>
           <div className="relative w-full sm:w-64">
@@ -223,20 +261,23 @@ export function ReturnToLeaderPanel({
             />
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {filterOptions.map((option) => (
-            <Button
-              key={option.id}
-              type="button"
-              size="sm"
-              variant={statusFilter === option.id ? 'default' : 'outline'}
-              className="h-8"
-              onClick={() => setStatusFilter(option.id)}
-            >
-              {option.label}
-              <span className="ml-1 tabular-nums opacity-80">{counts[option.id]}</span>
-            </Button>
-          ))}
+        <div className="-mx-4 px-4 sm:mx-0 sm:px-0 overflow-x-auto">
+          <div className="flex gap-2 min-w-max pb-0.5">
+            {filterOptions.map((option) => (
+              <Button
+                key={option.id}
+                type="button"
+                size="sm"
+                variant={statusFilter === option.id ? 'default' : 'outline'}
+                className="h-8 shrink-0"
+                onClick={() => setStatusFilter(option.id)}
+              >
+                <span className="sm:hidden">{option.shortLabel}</span>
+                <span className="hidden sm:inline">{option.label}</span>
+                <span className="ml-1 tabular-nums opacity-80">{counts[option.id]}</span>
+              </Button>
+            ))}
+          </div>
         </div>
       </CardHeader>
       <CardContent>
