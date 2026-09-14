@@ -87,15 +87,9 @@ function ReturnLeaderCard({
             {returnLeaderStatusLabel(row.status)}
           </Badge>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          className="h-10 w-10 shrink-0 rounded-full"
-          onClick={onView}
-          aria-label={`View ${row.returnNumber}`}
-        >
-          <Eye className="h-4 w-4" />
+        <Button type="button" variant="outline" size="sm" className="h-9 shrink-0" onClick={onView}>
+          <Eye className="h-4 w-4 mr-1.5" />
+          View
         </Button>
       </div>
 
@@ -114,7 +108,8 @@ function ReturnLeaderCard({
 
       {brandGroups.length > 0 ? (
         <div className="mt-3 space-y-2">
-          {brandGroups.slice(0, 2).map((group) => (
+          <p className="text-xs font-medium text-muted-foreground">Items</p>
+          {brandGroups.map((group) => (
             <BrandReturnedTable key={group.brandName} brandName={group.brandName} variants={group.variants} />
           ))}
         </div>
@@ -346,34 +341,41 @@ export function ReturnToLeaderPanel({
                           {qty}
                         </TableCell>
                         <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                          {pending ? (
-                            <div className="inline-flex items-center gap-1.5">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="h-8 text-red-700 border-red-200"
-                                onClick={() => onReject(row)}
-                              >
-                                <X className="h-3.5 w-3.5" />
-                                Reject
-                              </Button>
-                              <Button
-                                type="button"
-                                size="sm"
-                                className="h-8 bg-emerald-600 hover:bg-emerald-700"
-                                onClick={() => onApprove(row)}
-                              >
-                                <Check className="h-3.5 w-3.5" />
-                                Confirm
-                              </Button>
-                            </div>
-                          ) : (
-                            <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => onView(row)}>
+                          <div className="inline-flex items-center gap-1.5">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-8"
+                              onClick={() => onView(row)}
+                            >
                               <Eye className="h-3.5 w-3.5" />
                               View
                             </Button>
-                          )}
+                            {pending ? (
+                              <>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8 text-red-700 border-red-200"
+                                  onClick={() => onReject(row)}
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                  Reject
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  className="h-8 bg-emerald-600 hover:bg-emerald-700"
+                                  onClick={() => onApprove(row)}
+                                >
+                                  <Check className="h-3.5 w-3.5" />
+                                  Confirm
+                                </Button>
+                              </>
+                            ) : null}
+                          </div>
                         </TableCell>
                       </TableRow>
                     );

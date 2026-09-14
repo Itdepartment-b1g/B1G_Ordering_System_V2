@@ -175,6 +175,10 @@ export function ReturnLeaderViewDialog({
                     <span className="text-muted-foreground">Submitted by </span>
                     <span className="font-medium">{row.submittedByName}</span>
                   </p>
+                  <p>
+                    <span className="text-muted-foreground">Units </span>
+                    <span className="font-semibold tabular-nums text-rose-700">{qty}</span>
+                  </p>
                   {row.notes ? (
                     <p>
                       <span className="text-muted-foreground">Notes </span>
@@ -183,13 +187,22 @@ export function ReturnLeaderViewDialog({
                   ) : null}
                 </div>
 
-                {brandGroups.map((group) => (
-                  <BrandReturnedTable
-                    key={group.brandName}
-                    brandName={group.brandName}
-                    variants={group.variants}
-                  />
-                ))}
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold">
+                    {isApprove ? 'Items to receive' : isReject ? 'Items in this return' : 'Items'}
+                  </p>
+                  {brandGroups.length > 0 ? (
+                    brandGroups.map((group) => (
+                      <BrandReturnedTable
+                        key={group.brandName}
+                        brandName={group.brandName}
+                        variants={group.variants}
+                      />
+                    ))
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No item lines on this return.</p>
+                  )}
+                </div>
 
                 {row.proofPhotos.length > 0 ? (
                   <div className="space-y-2">
@@ -291,7 +304,7 @@ export function ReturnLeaderViewDialog({
           if (!nextOpen) closeNameConfirm();
         }}
       >
-        <AlertDialogContent className="z-[70]">
+        <AlertDialogContent className="z-[70] max-h-[90vh] overflow-y-auto">
           <AlertDialogHeader>
             <AlertDialogTitle>Confirm submitter name</AlertDialogTitle>
             <AlertDialogDescription asChild>
@@ -301,6 +314,30 @@ export function ReturnLeaderViewDialog({
                   <span className="font-semibold text-foreground">{submitterName || 'this agent'}</span>.
                   Type that name to confirm {isReject ? 'reject' : 'receipt'}.
                 </p>
+
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold text-foreground">
+                    {isReject ? 'Items being rejected' : 'Items being received'}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {qty} unit{qty === 1 ? '' : 's'} · {brandGroups.length} brand
+                    {brandGroups.length === 1 ? '' : 's'}
+                  </p>
+                  {brandGroups.length > 0 ? (
+                    <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
+                      {brandGroups.map((group) => (
+                        <BrandReturnedTable
+                          key={`confirm-${group.brandName}`}
+                          brandName={group.brandName}
+                          variants={group.variants}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No item lines on this return.</p>
+                  )}
+                </div>
+
                 <div className="space-y-2">
                   <Label htmlFor="rl-submitter-name">Submitter name</Label>
                   <Input

@@ -443,9 +443,22 @@ export default function ClientOrderReturnsPage() {
   });
 
   const inventoryRows = useMemo(() => {
-    if (holdRows.length > 0) return holdRows;
-    if (holdsError || !holderId) return buildReturnedInventoryRows(rows, { holderId });
-    return buildReturnedInventoryRows(rows, { holderId });
+    const crFallback = buildReturnedInventoryRows(rows, { holderId });
+    const crByVariant = new Map(crFallback.map((row) => [row.variantId, row]));
+
+    // Holds ledger is the source of truth for Returned Items (MS → TL transfer on RL confirm).
+    // Do not fall back to CR history when the holds query succeeded (including empty).
+    if (!holdsError) {
+      return holdRows
+        .filter((row) => row.qty > 0)
+        .map((row) => ({
+          ...row,
+          returns: crByVariant.get(row.variantId)?.returns || [],
+        }));
+    }
+
+    if (!holderId) return [];
+    return crFallback;
   }, [holdRows, holdsError, rows, holderId]);
 
   const pendingRlCount = useMemo(
@@ -611,7 +624,7 @@ export default function ClientOrderReturnsPage() {
       await queryClient.invalidateQueries({ queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY] });
       toast({
         title: 'Return confirmed',
-        description: `${rlActionRow.returnNumber} received.`,
+        description: `${rlActionRow.returnNumber} received. Stock moved to your Returned Items.`,
       });
       setRlConfirmKind(null);
       setRlActionRow(null);
@@ -632,6 +645,7 @@ export default function ClientOrderReturnsPage() {
     try {
       await rejectReturnLeaderHandover(rlActionRow.id, note);
       await queryClient.invalidateQueries({ queryKey: [RETURN_LEADER_HANDOVERS_QUERY_KEY] });
+      await queryClient.invalidateQueries({ queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY] });
       toast({
         title: 'Return rejected',
         description: `${rlActionRow.returnNumber} was rejected.`,
@@ -1006,6 +1020,7 @@ export default function ClientOrderReturnsPage() {
                 canBulkReturn={canBulkReturn}
                 companyId={user?.company_id}
                 submitterName={user?.full_name}
+                holderRole={user?.role}
                 onSubmitted={() => void refreshInventoryQueries()}
               />
             )}

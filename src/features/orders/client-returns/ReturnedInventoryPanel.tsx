@@ -28,6 +28,7 @@ type ReturnedInventoryPanelProps = {
   canBulkReturn?: boolean;
   companyId?: string;
   submitterName?: string;
+  holderRole?: string | null;
   onSubmitted?: () => void;
 };
 
@@ -55,6 +56,7 @@ export function ReturnedInventoryPanel({
   canBulkReturn = false,
   companyId,
   submitterName = '',
+  holderRole,
   onSubmitted,
 }: ReturnedInventoryPanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -62,6 +64,7 @@ export function ReturnedInventoryPanel({
   const [pageSize, setPageSize] = useState<PageSize>(PAGE_SIZE);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [openBrands, setOpenBrands] = useState<Set<string>>(new Set());
+  const isTeamLeader = holderRole === 'team_leader';
 
   const filteredRows = useMemo(() => {
     const needle = searchQuery.trim().toLowerCase();
@@ -107,11 +110,16 @@ export function ReturnedInventoryPanel({
         <CardHeader className="pb-4 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h2 className="font-semibold">Returned stock</h2>
+              <h2 className="font-semibold">
+                {isTeamLeader ? 'Returned stock (team)' : 'Returned stock'}
+              </h2>
               <p className="text-sm text-muted-foreground mt-0.5">
                 {brandGroups.length} brand{brandGroups.length === 1 ? '' : 's'} · {filteredRows.length} SKU
                 {filteredRows.length === 1 ? '' : 's'} · {totalQty.toLocaleString()} unit
-                {totalQty === 1 ? '' : 's'} · not sellable
+                {totalQty === 1 ? '' : 's'}
+                {isTeamLeader
+                  ? ' · received from mobile sales · not sellable'
+                  : ' · not sellable · moves to TL after they confirm RL'}
               </p>
             </div>
             <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
@@ -138,12 +146,18 @@ export function ReturnedInventoryPanel({
             <div className="text-center py-12 px-4">
               <RotateCcw className="h-8 w-8 mx-auto text-muted-foreground/60 mb-3" />
               <p className="font-medium">
-                {searchQuery ? 'No matching returned items' : 'No returned stock yet'}
+                {searchQuery
+                  ? 'No matching returned items'
+                  : isTeamLeader
+                    ? 'No returned stock held yet'
+                    : 'No returned stock yet'}
               </p>
               <p className="text-sm text-muted-foreground mt-1">
                 {searchQuery
                   ? 'Try a different brand or variant name.'
-                  : 'Posted client returns will show here grouped by brand.'}
+                  : isTeamLeader
+                    ? 'When you confirm an RL from mobile sales, those brands and variants appear here.'
+                    : 'Posted client returns show here. After TL confirms your RL, they move to the team leader.'}
               </p>
             </div>
           ) : (
