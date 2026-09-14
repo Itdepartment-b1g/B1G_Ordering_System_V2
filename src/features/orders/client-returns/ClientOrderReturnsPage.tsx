@@ -6,24 +6,12 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import {
   getListPaginationSlice,
   ListPagination,
@@ -361,21 +349,19 @@ export default function ClientOrderReturnsPage() {
   const [viewMode, setViewMode] = useState<HistoryViewMode>(readStoredViewMode);
   const [actionRow, setActionRow] = useState<MockClientReturn | null>(null);
   const [confirmKind, setConfirmKind] = useState<'approve' | 'reject' | null>(null);
-  const [rejectNote, setRejectNote] = useState('');
   const [acting, setActing] = useState(false);
 
   const startApprove = (row: MockClientReturn) => {
     if (!canReview) return;
     setViewRow(null);
     setActionRow(row);
-    setRejectNote('');
     setConfirmKind('approve');
   };
 
   const startReject = (row: MockClientReturn) => {
     if (!canReview) return;
+    setViewRow(null);
     setActionRow(row);
-    setRejectNote('');
     setConfirmKind('reject');
   };
 
@@ -460,18 +446,17 @@ export default function ClientOrderReturnsPage() {
     }
   };
 
-  const handleRejectConfirm = async () => {
+  const handleRejectConfirm = async (note?: string) => {
     if (!canReview || !actionRow || acting) return;
     setActing(true);
     try {
-      await rejectClientOrderReturn(actionRow.id, rejectNote);
+      await rejectClientOrderReturn(actionRow.id, note);
       await queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] });
       toast({
         title: 'Return rejected',
         description: `${actionRow.returnNumber} is closed. Agent can file a new CR on the same ORD.`,
       });
       setConfirmKind(null);
-      setRejectNote('');
       setActionRow(null);
     } catch (err) {
       toast({
@@ -732,62 +717,19 @@ export default function ClientOrderReturnsPage() {
       />
 
       <ClientReturnViewDialog
-        mode="approve"
-        open={confirmKind === 'approve'}
+        mode={confirmKind === 'reject' ? 'reject' : confirmKind === 'approve' ? 'approve' : 'view'}
+        open={confirmKind === 'approve' || confirmKind === 'reject'}
         row={actionRow}
         acting={acting}
-        onOpenChange={(open) => {
-          if (!open && !acting) {
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen && !acting) {
             setConfirmKind(null);
             setActionRow(null);
           }
         }}
         onApprove={() => void handleApproveConfirm()}
+        onReject={(note) => void handleRejectConfirm(note)}
       />
-
-      <AlertDialog
-        open={confirmKind === 'reject'}
-        onOpenChange={(open) => {
-          if (!open) {
-            setConfirmKind(null);
-            setRejectNote('');
-          }
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Reject this return?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {actionRow
-                ? `${actionRow.returnNumber} will be closed. The agent can still create a new CR on ${actionRow.orderNumber}.`
-                : 'This return will be closed.'}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="reject-note">Note (optional)</Label>
-            <Textarea
-              id="reject-note"
-              value={rejectNote}
-              onChange={(e) => setRejectNote(e.target.value)}
-              placeholder="Why this return is rejected"
-              rows={3}
-            />
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={acting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(event) => {
-                event.preventDefault();
-                void handleRejectConfirm();
-              }}
-              disabled={acting}
-            >
-              {acting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-              Reject
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }
