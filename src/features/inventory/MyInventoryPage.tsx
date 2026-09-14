@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import React from 'react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -15,6 +16,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { format } from 'date-fns';
 import { useAgentInventory } from './hooks';
 import { useAuth } from '@/features/auth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
@@ -23,10 +25,12 @@ import { ReturnToMainDialog } from './components/ReturnToMainDialog';
 import MyReturnRequestsSection from './components/MyReturnRequestsSection';
 import type { RemittanceOrder, BankOrderNote } from './types';
 import {
-  SHOW_CLIENT_RETURN_MOCK,
-  buildMockReturnedStockByVariantId,
-  type MockClientReturn,
-} from '@/features/orders/client-returns/clientReturnMock';
+  CLIENT_ORDER_RETURNS_QUERY_KEY,
+  buildReturnedStockByVariantId,
+  canShowClientOrderReturns,
+  fetchClientOrderReturns,
+} from '@/features/orders/client-returns/clientReturnApi';
+import type { MockClientReturn } from '@/features/orders/client-returns/clientReturnMock';
 import { ReturnedStockDetailDialog } from '@/features/orders/client-returns/ReturnedStockDetailDialog';
 
 const LOW_STOCK_THRESHOLD = 10;
@@ -57,6 +61,8 @@ const getVariantTypeColor = (type: string) => {
 export default function MyInventory() {
   const { agentBrands } = useAgentInventory();
   const { user } = useAuth();
+  const { hasWarehouseHubLink } = usePermissions();
+  const showReturnedColumn = canShowClientOrderReturns(hasWarehouseHubLink, user?.role);
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedBrands, setExpandedBrands] = useState<string[]>([]);
@@ -101,11 +107,18 @@ export default function MyInventory() {
     return (brand.allVariants || []).reduce((sum: number, v: any) => sum + v.stock, 0);
   };
 
-  const mockReturnedStockByVariantId = useMemo(() => {
-    if (!SHOW_CLIENT_RETURN_MOCK) return new Map<string, { qty: number; returns: MockClientReturn[] }>();
-    const variants = (agentBrands || []).flatMap((brand) => brand.allVariants || []);
-    return buildMockReturnedStockByVariantId(variants);
-  }, [agentBrands]);
+  const { data: clientReturns = [] } = useQuery({
+    queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY, user?.company_id, user?.id],
+    enabled: showReturnedColumn && !!user?.company_id,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    queryFn: fetchClientOrderReturns,
+  });
+
+  const returnedStockByVariantId = useMemo(() => {
+    if (!showReturnedColumn) return new Map<string, { qty: number; returns: MockClientReturn[] }>();
+    return buildReturnedStockByVariantId(clientReturns, { holderId: user?.id });
+  }, [clientReturns, showReturnedColumn, user?.id]);
 
   const openReturnedDialog = (
     brandName: string,
@@ -122,7 +135,7 @@ export default function MyInventory() {
   };
 
   const getReturnedStock = (variantId: string) =>
-    mockReturnedStockByVariantId.get(variantId) || { qty: 0, returns: [] as MockClientReturn[] };
+    returnedStockByVariantId.get(variantId) || { qty: 0, returns: [] as MockClientReturn[] };
 
   const getBrandReturnedStock = (brand: { allVariants?: Array<{ id: string }> }) => {
     const returnsById = new Map<string, MockClientReturn>();
@@ -813,7 +826,7 @@ export default function MyInventory() {
                                   <span className="truncate">{v.name}</span>
                                   <div className="text-right ml-2 flex-shrink-0">
                                     <span className={`font-semibold ${isLowStock(v.stock) ? 'text-amber-600' : ''}`}>{v.stock}</span>
-                                    {SHOW_CLIENT_RETURN_MOCK && (
+                                    {showReturnedColumn && (
                                       <button
                                         type="button"
                                         className={`text-xs font-medium ml-2 ${
@@ -862,7 +875,7 @@ export default function MyInventory() {
                   <TableHead>Type</TableHead>
                   <TableHead className="text-right">Variants</TableHead>
                   <TableHead className="text-right">Stock</TableHead>
-                  {SHOW_CLIENT_RETURN_MOCK && (
+                  {showReturnedColumn && (
                     <TableHead className="text-right">Returned</TableHead>
                   )}
                   <TableHead className="text-right">Price</TableHead>
@@ -912,7 +925,7 @@ export default function MyInventory() {
                           {getTotalStock(brand)}
                         </span>
                       </TableCell>
-                      {SHOW_CLIENT_RETURN_MOCK && (
+                      {showReturnedColumn && (
                         <TableCell className="p-1 text-right">
                           <button
                             type="button"
@@ -956,7 +969,7 @@ export default function MyInventory() {
                           {/* Type Header */}
                           <TableRow className={colors.headerBg}>
                             <TableCell></TableCell>
-                            <TableCell colSpan={SHOW_CLIENT_RETURN_MOCK ? 9 : 8} className="pl-8 py-2">
+                            <TableCell colSpan={showReturnedColumn ? 9 : 8} className="pl-8 py-2">
                               <span className={`text-xs font-semibold ${colors.header}`}>{typeDisplay}</span>
                             </TableCell>
                           </TableRow>
@@ -977,7 +990,7 @@ export default function MyInventory() {
                               <TableCell className={`text-right font-semibold ${isLowStock(variant.stock) ? 'text-amber-600' : ''}`}>
                                 {variant.stock}
                               </TableCell>
-                              {SHOW_CLIENT_RETURN_MOCK && (
+                              {showReturnedColumn && (
                                 <TableCell className="p-1 text-right">
                                   <button
                                     type="button"
@@ -2090,7 +2103,7 @@ export default function MyInventory() {
         onOpenChange={setReturnToMainDialogOpen}
       />
 
-      {SHOW_CLIENT_RETURN_MOCK && (
+      {showReturnedColumn && (
         <ReturnedStockDetailDialog
           open={!!returnedDialog}
           onOpenChange={(open) => {

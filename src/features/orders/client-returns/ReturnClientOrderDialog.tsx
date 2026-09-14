@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Camera, Check, PenTool, RotateCcw, X } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Camera, Check, Loader2, PenTool, RotateCcw, X } from 'lucide-react';
 import { format } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/features/auth';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -45,12 +47,18 @@ import {
 } from '@/features/shared/components/MultiProofPhotoField';
 import {
   CLIENT_RETURN_REASON_OPTIONS,
-  buildMockChangeItemCatalog,
   formatClientReturnReason,
-  getMockAlreadyReturnedQty,
   type ClientReturnReasonOption,
   type MockChangeItemSku,
 } from './clientReturnMock';
+import {
+  CLIENT_ORDER_RETURN_CHANGE_CATALOG_QUERY_KEY,
+  CLIENT_ORDER_RETURN_POSTED_QTY_QUERY_KEY,
+  CLIENT_ORDER_RETURNS_QUERY_KEY,
+  createClientOrderReturn,
+  fetchChangeItemCatalog,
+  fetchPostedReturnedQtyByItemId,
+} from './clientReturnApi';
 import { formatVariantType, variantTypeBadgeClass } from './ClientReturnBrandTable';
 
 export type ReturnClientOrderLine = {
@@ -65,9 +73,11 @@ export type ReturnClientOrderLine = {
 type ReturnClientOrderDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  orderId: string;
   orderNumber: string;
   clientName: string;
   items: ReturnClientOrderLine[];
+  onSuccess?: () => void;
 };
 
 type StockShortfall = {
@@ -86,6 +96,61 @@ const RETURN_STEPS = [
 ] as const;
 
 const LAST_STEP = RETURN_STEPS.length - 1;
+
+function isUnusableCameraLabel(label: string) {
+  return /ir\b|infrared|windows hello|tof|depth/i.test(label);
+}
+
+async function openCameraStream(mode: 'user' | 'environment'): Promise<MediaStream> {
+  const withFacingMode = () =>
+    navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: mode }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false,
+    });
+
+  try {
+    const bootstrap = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const cameras = devices.filter((device) => device.kind === 'videoinput');
+    const usable = cameras.filter((device) => !isUnusableCameraLabel(device.label));
+    const pool = usable.length > 0 ? usable : cameras;
+    const preferred =
+      mode === 'environment'
+        ? pool.find((device) => /back|rear|environment/i.test(device.label)) || pool[0]
+        : pool.find((device) => /front|user|face/i.test(device.label)) || pool[0];
+    const currentId = bootstrap.getVideoTracks()[0]?.getSettings().deviceId;
+    if (!preferred?.deviceId || preferred.deviceId === currentId) {
+      return bootstrap;
+    }
+    bootstrap.getTracks().forEach((track) => track.stop());
+    return await navigator.mediaDevices.getUserMedia({
+      video: {
+        deviceId: { exact: preferred.deviceId },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
+      audio: false,
+    });
+  } catch {
+    return withFacingMode();
+  }
+}
+
+function attachStreamToVideo(video: HTMLVideoElement, stream: MediaStream) {
+  video.muted = true;
+  video.autoplay = true;
+  video.playsInline = true;
+  video.setAttribute('playsinline', 'true');
+  video.setAttribute('webkit-playsinline', 'true');
+  if (video.srcObject !== stream) {
+    video.srcObject = stream;
+  }
+  const play = () => {
+    void video.play().catch(() => undefined);
+  };
+  video.onloadedmetadata = play;
+  if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) play();
+}
 
 function ReturnItemsStepper({
   currentStep,
@@ -268,13 +333,22 @@ function changeSkuMax(
 export function ReturnClientOrderDialog({
   open,
   onOpenChange,
+  orderId,
   orderNumber,
   clientName,
   items,
+  onSuccess,
 }: ReturnClientOrderDialogProps) {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
   const captureInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
   const [step, setStep] = useState(0);
+  const [showCamera, setShowCamera] = useState(false);
+  const [cameraStarting, setCameraStarting] = useState(false);
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [changeQuantities, setChangeQuantities] = useState<Record<string, number>>({});
   const [reason, setReason] = useState<ClientReturnReasonOption | ''>('');
@@ -294,9 +368,23 @@ export function ReturnClientOrderDialog({
   const [invalidField, setInvalidField] = useState<string | null>(null);
   const [openReturnBrands, setOpenReturnBrands] = useState<string[]>([]);
   const [openChangeBrands, setOpenChangeBrands] = useState<string[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+
+  const itemIdsKey = items.map((item) => item.id).join(',');
+
+  const stopCamera = () => {
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    cameraStreamRef.current = null;
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setShowCamera(false);
+    setCameraStarting(false);
+  };
 
   useEffect(() => {
     if (!open) {
+      stopCamera();
       setStep(0);
       setQuantities({});
       setChangeQuantities({});
@@ -315,13 +403,14 @@ export function ReturnClientOrderDialog({
       setInvalidField(null);
       setOpenReturnBrands([]);
       setOpenChangeBrands([]);
+      setSubmitting(false);
       revokePackageProofPreviews(photos);
       setPhotos([]);
       return;
     }
     const initial: Record<string, number> = {};
     for (const item of items) {
-      initial[item.id] = 0;
+      if (item.id) initial[item.id] = 0;
     }
     setQuantities(initial);
     setChangeQuantities({});
@@ -335,20 +424,72 @@ export function ReturnClientOrderDialog({
     setAgentSignatureDataUrl('');
     setSignatureOpen(false);
     setInvalidField(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset photos only when dialog closes
-  }, [open, items]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset when the dialog or order lines change
+  }, [open, orderId, itemIdsKey]);
+
+  useEffect(() => {
+    if (!open || step !== 3) {
+      stopCamera();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- stop the stream when leaving Proof
+  }, [open, step]);
+
+  useEffect(() => {
+    if (!showCamera) return;
+    const video = videoRef.current;
+    const stream = cameraStreamRef.current;
+    if (!video || !stream) return;
+    attachStreamToVideo(video, stream);
+  }, [showCamera]);
+
+  useEffect(() => {
+    return () => {
+      cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+    };
+  }, []);
+
+  const orderBrandNames = useMemo(
+    () => Array.from(new Set(items.map((item) => item.brandName?.trim() || 'Unknown'))),
+    [items]
+  );
+
+  const { data: postedQtyByItemId = {} } = useQuery({
+    queryKey: [CLIENT_ORDER_RETURN_POSTED_QTY_QUERY_KEY, orderId],
+    enabled: open && !!orderId,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    queryFn: () => fetchPostedReturnedQtyByItemId(orderId),
+  });
+
+  const { data: liveChangeCatalog = [] } = useQuery({
+    queryKey: [
+      CLIENT_ORDER_RETURN_CHANGE_CATALOG_QUERY_KEY,
+      user?.id,
+      user?.company_id,
+      orderBrandNames.join('|'),
+    ],
+    enabled: open && !!user?.id && !!user?.company_id && orderBrandNames.length > 0,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    queryFn: () => fetchChangeItemCatalog(user!.id, user!.company_id as string, orderBrandNames),
+  });
 
   const lines = useMemo(
     () =>
       items.map((item) => {
-        const alreadyReturned = getMockAlreadyReturnedQty(orderNumber, item.variantName);
+        const alreadyReturned = Number(postedQtyByItemId[item.id]) || 0;
         const remaining = Math.max(0, item.quantity - alreadyReturned);
         return { ...item, alreadyReturned, remaining, variantType: item.variantType || 'flavor' };
       }),
-    [items, orderNumber]
+    [items, postedQtyByItemId]
   );
 
   const itemsByBrand = useMemo(() => groupByBrandName(lines), [lines]);
+  const remainingTotal = useMemo(
+    () => lines.reduce((sum, line) => sum + line.remaining, 0),
+    [lines]
+  );
 
   const selectedLines = lines.filter((line) => (quantities[line.id] || 0) > 0);
   const totalReturning = selectedLines.reduce((sum, line) => sum + (quantities[line.id] || 0), 0);
@@ -362,7 +503,7 @@ export function ReturnClientOrderDialog({
     return map;
   }, [selectedLines, quantities]);
 
-  const changeCatalog = useMemo(() => buildMockChangeItemCatalog(items), [items]);
+  const changeCatalog = Array.isArray(liveChangeCatalog) ? liveChangeCatalog : [];
 
   useEffect(() => {
     if (!open) return;
@@ -606,6 +747,88 @@ export function ReturnClientOrderDialog({
     ]);
   };
 
+  const startCamera = async (mode: 'user' | 'environment' = facingMode) => {
+    if (photos.length >= 3) {
+      setFormError('You can attach up to 3 photos.');
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      toast({
+        title: 'Camera not available',
+        description: 'This browser cannot open the camera. Upload a photo from files instead.',
+        variant: 'destructive',
+      });
+      captureInputRef.current?.click();
+      return;
+    }
+    setFormError(null);
+    setCameraStarting(true);
+    try {
+      cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+      const stream = await openCameraStream(mode);
+      cameraStreamRef.current = stream;
+      setFacingMode(mode);
+      setShowCamera(true);
+      requestAnimationFrame(() => {
+        if (videoRef.current && cameraStreamRef.current) {
+          attachStreamToVideo(videoRef.current, cameraStreamRef.current);
+        }
+      });
+    } catch (err) {
+      cameraStreamRef.current = null;
+      setShowCamera(false);
+      const denied =
+        err instanceof DOMException &&
+        (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError');
+      toast({
+        title: 'Could not open camera',
+        description: denied
+          ? 'Allow camera access in the browser, then try Take photo again. You can still upload a file.'
+          : 'No camera was found, or it is in use. Upload a photo from files instead.',
+        variant: 'destructive',
+      });
+    } finally {
+      setCameraStarting(false);
+    }
+  };
+
+  const capturePhotoFromCamera = () => {
+    const video = videoRef.current;
+    if (!video || video.videoWidth === 0) {
+      toast({
+        title: 'Camera not ready',
+        description: 'Wait a moment for the preview, then capture again.',
+      });
+      return;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.translate(canvas.width, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(video, 0, 0);
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          toast({
+            title: 'Could not capture photo',
+            description: 'Try again, or upload a file instead.',
+            variant: 'destructive',
+          });
+          return;
+        }
+        const file = new File([blob], `capture-${Date.now()}.jpg`, { type: 'image/jpeg' });
+        handleCaptureFile(file);
+        stopCamera();
+      },
+      'image/jpeg',
+      0.9
+    );
+  };
+
   const clientNameMatches =
     clientName.trim().length > 0 &&
     clientNameConfirmInput.trim().toLowerCase() === clientName.trim().toLowerCase();
@@ -625,7 +848,7 @@ export function ReturnClientOrderDialog({
     setClientConfirmOpen(true);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     const error = itemsError() || changeError() || reasonError() || proofError() || signatureError();
     if (error) {
       setFormError(error);
@@ -640,13 +863,71 @@ export function ReturnClientOrderDialog({
       });
       return;
     }
+    if (!orderId || !user?.company_id) {
+      toast({
+        title: 'Cannot save return',
+        description: 'Missing order or company. Refresh and try again.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    const missingLineId = selectedLines.find((line) => !line.id);
+    if (missingLineId) {
+      toast({
+        title: 'Cannot save return',
+        description: 'This order is missing item ids. Refresh My Orders and try again.',
+        variant: 'destructive',
+      });
+      return;
+    }
 
-    toast({
-      title: 'Mock return only — not saved',
-      description: `${totalReturning} unit(s) returned, ${totalChanging} change item(s) on ${orderNumber}. No database write.`,
-    });
-    setClientConfirmOpen(false);
-    onOpenChange(false);
+    setSubmitting(true);
+    try {
+      const saved = await createClientOrderReturn({
+        companyId: user.company_id,
+        clientOrderId: orderId,
+        returnDate,
+        reason: reason === 'other' ? otherReason.trim() : reason,
+        notes: notes.trim(),
+        signatureDataUrl: agentSignatureDataUrl,
+        items: selectedLines.map((line) => ({
+          clientOrderItemId: line.id,
+          quantity: quantities[line.id] || 0,
+        })),
+        changeItems: selectedChangeSkus.map((sku) => ({
+          variantId: sku.id,
+          quantity: changeQuantities[sku.id] || 0,
+        })),
+        photos,
+      });
+
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] }),
+        queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURN_POSTED_QTY_QUERY_KEY, orderId] }),
+        queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURN_CHANGE_CATALOG_QUERY_KEY] }),
+        queryClient.invalidateQueries({ queryKey: ['inventory'] }),
+      ]);
+      onSuccess?.();
+
+      toast({
+        title: saved.status === 'posted' ? 'Return posted' : 'Return submitted',
+        description:
+          saved.status === 'posted'
+            ? `${saved.returnNumber} saved and posted against ${orderNumber}.`
+            : `${saved.returnNumber} saved. Waiting for team leader approval.`,
+      });
+      setClientConfirmOpen(false);
+      onOpenChange(false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to save client return';
+      toast({
+        title: 'Could not save return',
+        description: message,
+        variant: 'destructive',
+      });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const reasonLabel =
@@ -674,8 +955,20 @@ export function ReturnClientOrderDialog({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-3xl w-[95vw] max-h-[90vh] overflow-hidden flex flex-col">
+      <Dialog
+        open={open}
+        onOpenChange={(nextOpen) => {
+          if (submitting && !nextOpen) return;
+          onOpenChange(nextOpen);
+        }}
+      >
+        <DialogContent
+          className={cn(
+            'max-w-3xl w-[95vw] max-h-[90vh] overflow-hidden flex flex-col',
+            showCamera &&
+              '![transform:none] !left-4 !right-4 !top-8 !w-auto sm:!left-1/2 sm:!right-auto sm:!w-[min(95vw,48rem)] sm:!ml-[calc(min(95vw,48rem)/-2)]'
+          )}
+        >
           <DialogHeader>
             <DialogTitle>Return items</DialogTitle>
             <DialogDescription>
@@ -719,6 +1012,11 @@ export function ReturnClientOrderDialog({
           <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-1 pt-2">
             {step === 0 && (
               <div className="space-y-3">
+                {remainingTotal <= 0 ? (
+                  <p className="text-sm text-muted-foreground rounded-md border bg-muted/30 p-3">
+                    Nothing left to return on this order. Posted returns already used the sold qty.
+                  </p>
+                ) : null}
                 <Accordion
                   type="multiple"
                   value={openReturnBrands}
@@ -1079,31 +1377,83 @@ export function ReturnClientOrderDialog({
                       setInvalidField(null);
                       setPhotos(next);
                     }}
-                    emptyTitle="Upload photo"
-                    recommendedHint="Upload or take photo"
+                    emptyTitle="Upload from files"
+                    recommendedHint="Select a file, or take a photo"
                   />
                 </div>
                 <input
                   ref={captureInputRef}
                   type="file"
                   accept="image/*"
-                  capture="environment"
                   className="hidden"
                   onChange={(e) => {
                     handleCaptureFile(e.target.files?.[0] ?? null);
                     e.target.value = '';
                   }}
                 />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => captureInputRef.current?.click()}
-                  disabled={photos.length >= 3}
-                >
-                  <Camera className="h-4 w-4 mr-2" />
-                  Take photo
-                </Button>
+                {showCamera ? (
+                  <div className="relative border rounded-lg overflow-hidden bg-black">
+                    <video
+                      ref={(el) => {
+                        videoRef.current = el;
+                        if (el && cameraStreamRef.current) {
+                          attachStreamToVideo(el, cameraStreamRef.current);
+                        }
+                      }}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="relative z-0 w-full h-64 bg-black object-cover -scale-x-100"
+                    />
+                    <div className="absolute bottom-3 left-0 right-0 flex justify-center gap-2 px-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={stopCamera}
+                        className="bg-red-600 hover:bg-red-700 text-white"
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() =>
+                          void startCamera(facingMode === 'user' ? 'environment' : 'user')
+                        }
+                        className="bg-gray-700 hover:bg-gray-800 text-white"
+                      >
+                        <RotateCcw className="h-4 w-4 mr-2" />
+                        {facingMode === 'user' ? 'Back' : 'Front'}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={capturePhotoFromCamera}
+                        className="bg-white hover:bg-gray-100 text-gray-900"
+                      >
+                        <Camera className="h-4 w-4 mr-2" />
+                        Capture
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => void startCamera('environment')}
+                    disabled={photos.length >= 3 || cameraStarting}
+                  >
+                    {cameraStarting ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Camera className="h-4 w-4 mr-2" />
+                    )}
+                    Take photo
+                  </Button>
+                )}
               </div>
             )}
 
@@ -1298,19 +1648,19 @@ export function ReturnClientOrderDialog({
               Returning {totalReturning} · Changing {totalChanging}
             </Badge>
             <div className="flex flex-wrap gap-2 w-full sm:w-auto justify-end">
-              <Button variant="outline" onClick={() => onOpenChange(false)}>
+              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
                 Cancel
               </Button>
               {step > 0 && (
-                <Button variant="outline" onClick={goBack}>
+                <Button variant="outline" onClick={goBack} disabled={submitting}>
                   Back
                 </Button>
               )}
               {step < LAST_STEP ? (
-                <Button onClick={goNext}>Next</Button>
+                <Button onClick={goNext} disabled={submitting}>Next</Button>
               ) : (
-                <Button onClick={handleConfirmReturnClick}>
-                  <RotateCcw className="h-4 w-4 mr-2" />
+                <Button onClick={handleConfirmReturnClick} disabled={submitting}>
+                  {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RotateCcw className="h-4 w-4 mr-2" />}
                   Confirm return
                 </Button>
               )}
@@ -1340,6 +1690,7 @@ export function ReturnClientOrderDialog({
       <AlertDialog
         open={clientConfirmOpen}
         onOpenChange={(nextOpen) => {
+          if (submitting) return;
           setClientConfirmOpen(nextOpen);
           if (!nextOpen) setClientNameConfirmInput('');
         }}
@@ -1371,15 +1722,22 @@ export function ReturnClientOrderDialog({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={submitting}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={(e) => {
                 e.preventDefault();
-                handleSubmit();
+                void handleSubmit();
               }}
-              disabled={!clientNameMatches}
+              disabled={!clientNameMatches || submitting}
             >
-              Post return
+              {submitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                'Post return'
+              )}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

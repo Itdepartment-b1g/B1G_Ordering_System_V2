@@ -8,6 +8,8 @@ import { sendNotification, sendNotificationToCompanyRoles } from '@/features/sha
 //order page
 export interface OrderItem {
   id: string;
+  /** client_order_items.id — required when filing a client return */
+  clientOrderItemId?: string;
   brandName: string;
   variantName: string;
   variantType: string;
@@ -255,9 +257,13 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         (itemsFallback || []).forEach((row: any) => {
           const list = ordersWithEmbeddedItems[row.client_order_id] || [];
           list.push({
-            id: row.variant_id,
+            id: row.id,
+            variant_id: row.variant_id,
             quantity: row.quantity,
             unit_price: row.unit_price,
+            selling_price: row.selling_price,
+            dsp_price: row.dsp_price,
+            rsp_price: row.rsp_price,
             variant: row.variant || null,
           });
           ordersWithEmbeddedItems[row.client_order_id] = list;
@@ -281,6 +287,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
 
           return {
             id: item.variant_id,
+            clientOrderItemId: item.id,
             brandName: brandName,
             variantName: variant?.name || 'Unknown',
             variantType: variant?.variant_type || 'flavor',

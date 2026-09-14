@@ -49,6 +49,11 @@ export function usePermissions() {
       return hasWarehouseHubLink === true;
     }
 
+    if (route === '/client-order-returns') {
+      if (user?.role === 'warehouse') return false;
+      return hasWarehouseHubLink === true;
+    }
+
     // PO Receiving is only available for team leaders whose tenant is linked to a warehouse hub.
     if (route === '/inventory/po-receive') {
       return user?.role === 'team_leader' && hasWarehouseHubLink === true;

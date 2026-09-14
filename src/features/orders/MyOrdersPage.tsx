@@ -56,7 +56,11 @@ import { sendOrderConfirmationEmail } from '@/lib/email.helpers';
 import { usePaymentSettings } from '@/features/finance/hooks/usePaymentSettings';
 import type { BankAccount } from '@/types/database.types';
 import { PRICING_OPTIONS, type PricingColumn } from '@/types/database.types';
-import { SHOW_CLIENT_RETURN_MOCK } from './client-returns/clientReturnMock';
+import { usePermissions } from '@/hooks/usePermissions';
+import {
+  canCreateClientOrderReturn,
+  canShowClientOrderReturns,
+} from './client-returns/clientReturnApi';
 import { ReturnClientOrderDialog } from './client-returns/ReturnClientOrderDialog';
 import { ClientOrderReturnTimeline } from './client-returns/ClientOrderReturnTimeline';
 
@@ -126,10 +130,13 @@ function orderMatchesStatusFilter(order: Order, filter: MyOrdersStatusFilter): b
 
 export default function MyOrdersPage() {
   const { user } = useAuth();
+  const { hasWarehouseHubLink } = usePermissions();
+  const showClientReturns = canShowClientOrderReturns(hasWarehouseHubLink, user?.role);
+  const canFileClientReturn = showClientReturns && canCreateClientOrderReturn(user?.role);
   const isAdmin = user?.role === 'admin';
   const canCustomizePricing = ['team_leader', 'manager', 'admin'].includes(user?.role || '');
   const { getOrdersByAgent, addOrder, orders: allOrders } = useOrders();
-  const { agentBrands } = useAgentInventory();
+  const { agentBrands, refreshInventory } = useAgentInventory();
   const [searchQuery, setSearchQuery] = useState('');
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
@@ -657,11 +664,26 @@ export default function MyOrdersPage() {
   const calculateTotal = () => calculateSubtotal() + calculateTax() - discount;
 
   const canShowClientReturn = (order: { status?: string; stage?: string }) =>
-    SHOW_CLIENT_RETURN_MOCK && (order.status === 'approved' || order.stage === 'admin_approved');
+    canFileClientReturn && (order.status === 'approved' || order.stage === 'admin_approved');
+
+  const returnDialogItems = useMemo(
+    () =>
+      (orderToReturn?.items || []).map((item) => ({
+        id: item.clientOrderItemId || item.id,
+        brandName: item.brandName,
+        variantName: item.variantName,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        variantType: item.variantType,
+      })),
+    [orderToReturn]
+  );
 
   const openClientReturn = (order: Order) => {
+    setViewDialogOpen(false);
+    setOrderToView(null);
     setOrderToReturn(order);
-    setReturnDialogOpen(true);
+    window.setTimeout(() => setReturnDialogOpen(true), 0);
   };
 
   const handleViewOrder = (order: any) => {
@@ -2043,7 +2065,7 @@ export default function MyOrdersPage() {
           <p className="text-sm text-muted-foreground">Manage your client orders</p>
         </div>
         <div className="flex w-full sm:w-auto flex-col sm:flex-row gap-2">
-          {SHOW_CLIENT_RETURN_MOCK && (
+          {showClientReturns && (
             <Button variant="outline" className="w-full sm:w-auto" asChild>
               <Link to="/client-order-returns">
                 <RotateCcw className="h-4 w-4 mr-2" />
@@ -4657,7 +4679,7 @@ export default function MyOrdersPage() {
                 </div>
               )}
 
-              {SHOW_CLIENT_RETURN_MOCK && (
+              {showClientReturns && (
                 <div className="border-t pt-4">
                   <ClientOrderReturnTimeline order={orderToView} />
                 </div>
@@ -5021,23 +5043,20 @@ export default function MyOrdersPage() {
         </DialogContent>
       </Dialog>
 
-      {SHOW_CLIENT_RETURN_MOCK && (
+      {showClientReturns && (
         <ReturnClientOrderDialog
           open={returnDialogOpen}
           onOpenChange={(open) => {
             setReturnDialogOpen(open);
             if (!open) setOrderToReturn(null);
           }}
+          orderId={orderToReturn?.id || ''}
           orderNumber={orderToReturn?.orderNumber || ''}
           clientName={orderToReturn?.clientName || ''}
-          items={(orderToReturn?.items || []).map((item) => ({
-            id: item.id,
-            brandName: item.brandName,
-            variantName: item.variantName,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-            variantType: item.variantType,
-          }))}
+          items={returnDialogItems}
+          onSuccess={() => {
+            void refreshInventory();
+          }}
         />
       )}
     </div>

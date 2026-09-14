@@ -39,11 +39,12 @@ import PageManualDialog from '@/features/inventory/warehouse-manual/components/P
 import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
 import MainInventoryManual from '@/features/inventory/warehouse-manual/components/MainInventoryManual';
 import {
-  SHOW_CLIENT_RETURN_MOCK,
-  buildMockReturnedStockByVariantId,
-  MOCK_CLIENT_RETURNS,
-  type MockClientReturn,
-} from '@/features/orders/client-returns/clientReturnMock';
+  canShowClientOrderReturns,
+  CLIENT_ORDER_RETURNS_QUERY_KEY,
+  buildReturnedStockByVariantId,
+  fetchClientOrderReturns,
+} from '@/features/orders/client-returns/clientReturnApi';
+import type { MockClientReturn } from '@/features/orders/client-returns/clientReturnMock';
 import { ReturnedStockDetailDialog } from '@/features/orders/client-returns/ReturnedStockDetailDialog';
 
 interface ReturnHistoryEntry {
@@ -928,17 +929,24 @@ export default function MainInventoryPage() {
     </TableCell>
   );
 
-  const showReturnedColumn = SHOW_CLIENT_RETURN_MOCK && !isWarehouse;
+  const showReturnedColumn = canShowClientOrderReturns(hasWarehouseHubLink, user?.role) && !isWarehouse;
 
-  const mockReturnedStockByVariantId = useMemo(() => {
-    if (!showReturnedColumn) return new Map<string, { qty: number; returns: MockClientReturn[] }>();
-    const variants = brands.flatMap((brand) => brand.allVariants || []);
-    return buildMockReturnedStockByVariantId(variants);
-  }, [brands, showReturnedColumn]);
+  const { data: clientReturns = [] } = useQuery({
+    queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY, user?.company_id],
+    enabled: showReturnedColumn && !!user?.company_id,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    queryFn: fetchClientOrderReturns,
+  });
+
+  const returnedStockByVariantId = useMemo(
+    () => (showReturnedColumn ? buildReturnedStockByVariantId(clientReturns) : new Map<string, { qty: number; returns: MockClientReturn[] }>()),
+    [clientReturns, showReturnedColumn]
+  );
 
   const totalReturnedStock = useMemo(
-    () => Array.from(mockReturnedStockByVariantId.values()).reduce((sum, stock) => sum + stock.qty, 0),
-    [mockReturnedStockByVariantId]
+    () => Array.from(returnedStockByVariantId.values()).reduce((sum, stock) => sum + stock.qty, 0),
+    [returnedStockByVariantId]
   );
 
   const openReturnedDialog = (
@@ -957,7 +965,7 @@ export default function MainInventoryPage() {
 
   const renderReturnedCell = (brandName: string, variant: Variant) => {
     if (!showReturnedColumn) return null;
-    const stock = mockReturnedStockByVariantId.get(variant.id);
+    const stock = returnedStockByVariantId.get(variant.id);
     const qty = stock?.qty || 0;
     const returns = stock?.returns || [];
     return (
@@ -1312,7 +1320,7 @@ export default function MainInventoryPage() {
                 '',
                 'All variants',
                 totalReturnedStock,
-                MOCK_CLIENT_RETURNS
+                clientReturns.filter((row) => row.status === 'posted')
               )
             }
             title="Click to view returned items"

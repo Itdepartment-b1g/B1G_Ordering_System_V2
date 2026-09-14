@@ -70,9 +70,11 @@ export function groupLinesByBrand(lines: MockClientReturnLine[]) {
 export function BrandReturnedTable({
   brandName,
   variants,
+  qtyClassName = 'text-rose-700',
 }: {
   brandName: string;
   variants: MockClientReturnLine[];
+  qtyClassName?: string;
 }) {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(BRAND_PAGE_SIZE);
@@ -111,7 +113,7 @@ export function BrandReturnedTable({
                   {formatVariantType(line.variantType)}
                 </Badge>
               </TableCell>
-              <TableCell className="text-right font-semibold text-rose-700 tabular-nums">
+              <TableCell className={`text-right font-semibold tabular-nums ${qtyClassName}`}>
                 {line.quantity}
               </TableCell>
             </TableRow>

@@ -561,6 +561,7 @@ export function AppSidebar() {
   // Get menu items based on role, then filter by permissions
   const menuItems = useMemo(() => {
     const canSeeReturnToWarehouse = hasWarehouseHubLink === true;
+    const canSeeClientOrderReturns = hasWarehouseHubLink === true && user?.role !== 'warehouse';
 
     // Filter menu items based on permissions
     const filterMenuItems = (items: MenuItem[]): MenuItem[] => {
@@ -574,6 +575,9 @@ export function AppSidebar() {
           if (item.hasSubmenu && item.submenu) {
             const filteredSubmenu = item.submenu.filter((subItem) => {
               if (subItem.url === '/inventory/return-to-warehouse' && !canSeeReturnToWarehouse) {
+                return false;
+              }
+              if (subItem.url === '/client-order-returns' && !canSeeClientOrderReturns) {
                 return false;
               }
               return checkPermission(subItem.url);
@@ -590,6 +594,9 @@ export function AppSidebar() {
               ...item,
               submenu: item.submenu.filter((subItem) => {
                 if (subItem.url === '/inventory/return-to-warehouse' && !canSeeReturnToWarehouse) {
+                  return false;
+                }
+                if (subItem.url === '/client-order-returns' && !canSeeClientOrderReturns) {
                   return false;
                 }
                 return checkPermission(subItem.url);

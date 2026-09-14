@@ -1,14 +1,18 @@
 import { CheckCircle2, Clock, RotateCcw, ShoppingCart, XCircle } from 'lucide-react';
 import { format } from 'date-fns';
+import { useQuery } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
 import type { Order } from '../OrderContext';
 import {
   formatClientReturnReason,
   getMockReturnLineQty,
-  getMockReturnsForOrder,
+  type MockClientReturn,
 } from './clientReturnMock';
+import {
+  CLIENT_ORDER_RETURNS_QUERY_KEY,
+  fetchClientOrderReturnsForOrder,
+} from './clientReturnApi';
 
 type TimelineEvent = {
   id: string;
@@ -25,7 +29,7 @@ function formatWhen(value: string | undefined): string {
   return format(parsed, 'MMM d, yyyy h:mm a');
 }
 
-function buildTimelineEvents(order: Order): TimelineEvent[] {
+function buildTimelineEvents(order: Order, returns: MockClientReturn[]): TimelineEvent[] {
   const events: TimelineEvent[] = [
     {
       id: 'created',
@@ -73,14 +77,22 @@ function buildTimelineEvents(order: Order): TimelineEvent[] {
     });
   }
 
-  for (const cr of getMockReturnsForOrder(order.orderNumber)) {
+  for (const cr of returns) {
     const qty = getMockReturnLineQty(cr);
+    const title =
+      cr.status === 'posted'
+        ? `Return posted · ${cr.returnNumber}`
+        : cr.status === 'rejected'
+          ? `Return rejected · ${cr.returnNumber}`
+          : cr.status === 'pending_leader'
+            ? `Return pending · ${cr.returnNumber}`
+            : `Return cancelled · ${cr.returnNumber}`;
     events.push({
       id: cr.id,
-      at: cr.createdAt,
-      title: `Return posted · ${cr.returnNumber}`,
+      at: cr.status === 'posted' ? cr.approvedAt || cr.createdAt : cr.rejectedAt || cr.createdAt,
+      title,
       detail: `${formatClientReturnReason(cr.reason)} · ${qty} unit${qty === 1 ? '' : 's'} · ${cr.returnedByName}${cr.notes ? ` · ${cr.notes}` : ''}`,
-      tone: 'return',
+      tone: cr.status === 'rejected' ? 'danger' : 'return',
     });
   }
 
@@ -106,9 +118,14 @@ type ClientOrderReturnTimelineProps = {
 };
 
 export function ClientOrderReturnTimeline({ order }: ClientOrderReturnTimelineProps) {
-  const events = buildTimelineEvents(order);
-  const matched = getMockReturnsForOrder(order.orderNumber);
-  const isSample = !matched.every((row) => row.orderNumber === order.orderNumber);
+  const { data: returns = [] } = useQuery({
+    queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY, 'order', order.id],
+    enabled: !!order.id,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    queryFn: () => fetchClientOrderReturnsForOrder(order.id),
+  });
+  const events = buildTimelineEvents(order, returns);
 
   return (
     <div className="space-y-3">
@@ -119,15 +136,6 @@ export function ClientOrderReturnTimeline({ order }: ClientOrderReturnTimelinePr
           {events.length} event{events.length === 1 ? '' : 's'}
         </Badge>
       </div>
-
-      {isSample && (
-        <Alert className="border-amber-200 bg-amber-50 text-amber-950">
-          <AlertDescription>
-            Sample returns are shown on this order for the visual mock. Live data will only list CRs
-            for this ORD number.
-          </AlertDescription>
-        </Alert>
-      )}
 
       <ol className="space-y-0">
         {events.map((event, index) => {

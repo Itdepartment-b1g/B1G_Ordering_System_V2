@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { Check, Eye, LayoutGrid, List, RotateCcw, Search, X } from 'lucide-react';
+import { Check, Eye, LayoutGrid, List, Loader2, RotateCcw, Search, X } from 'lucide-react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -30,17 +31,23 @@ import {
 } from '@/features/shared/components/ListPagination';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
+import { usePermissions } from '@/hooks/usePermissions';
 import {
   clientReturnStatusBadgeClass,
   formatClientReturnReason,
   formatClientReturnStatus,
   getMockReturnLineQty,
   getReturnActionActor,
-  MOCK_CLIENT_RETURNS,
-  SHOW_CLIENT_RETURN_MOCK,
   type MockClientReturn,
   type MockClientReturnStatus,
 } from './clientReturnMock';
+import {
+  CLIENT_ORDER_RETURNS_QUERY_KEY,
+  approveClientOrderReturn,
+  canShowClientOrderReturns,
+  fetchClientOrderReturns,
+  rejectClientOrderReturn,
+} from './clientReturnApi';
 import { BrandReturnedTable, groupLinesByBrand } from './ClientReturnBrandTable';
 import { ClientReturnExpandedMeta } from './ClientReturnExpandedMeta';
 import { ClientReturnViewDialog } from './ClientReturnViewDialog';
@@ -64,14 +71,6 @@ function readStoredViewMode(): HistoryViewMode {
   const saved = window.localStorage.getItem(VIEW_MODE_KEY);
   if (saved === 'table' || saved === 'cards') return saved;
   return 'table';
-}
-
-function cloneMockReturns(): MockClientReturn[] {
-  return MOCK_CLIENT_RETURNS.map((row) => ({
-    ...row,
-    lines: row.lines.map((line) => ({ ...line })),
-    proofLabels: [...row.proofLabels],
-  }));
 }
 
 function ActorNameCell({ name, at }: { name: string | null; at: string | null }) {
@@ -335,10 +334,25 @@ function StatusFilterChips({
 export default function ClientOrderReturnsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { hasWarehouseHubLink } = usePermissions();
   const isLeader = user?.role === 'team_leader';
   const canReview = isLeader;
+  const showReturns = canShowClientOrderReturns(hasWarehouseHubLink, user?.role);
 
-  const [rows, setRows] = useState<MockClientReturn[]>(cloneMockReturns);
+  const {
+    data: rows = [],
+    isLoading,
+    isError,
+    error,
+  } = useQuery({
+    queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY, user?.company_id],
+    enabled: showReturns && !!user?.company_id,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    queryFn: fetchClientOrderReturns,
+  });
+
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [page, setPage] = useState(0);
@@ -348,9 +362,11 @@ export default function ClientOrderReturnsPage() {
   const [actionRow, setActionRow] = useState<MockClientReturn | null>(null);
   const [confirmKind, setConfirmKind] = useState<'approve' | 'reject' | null>(null);
   const [rejectNote, setRejectNote] = useState('');
+  const [acting, setActing] = useState(false);
 
   const startApprove = (row: MockClientReturn) => {
     if (!canReview) return;
+    setViewRow(null);
     setActionRow(row);
     setRejectNote('');
     setConfirmKind('approve');
@@ -420,52 +436,61 @@ export default function ClientOrderReturnsPage() {
 
   const { pagedItems, safePage, pageCount } = getListPaginationSlice(filtered, page, pageSize);
 
-  const updateRow = (id: string, patch: Partial<MockClientReturn>) => {
-    setRows((current) => current.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+  const handleApproveConfirm = async () => {
+    if (!canReview || !actionRow || acting) return;
+    setActing(true);
+    try {
+      await approveClientOrderReturn(actionRow.id);
+      await queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] });
+      await queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      toast({
+        title: 'Return approved',
+        description: `${actionRow.returnNumber} posted. Returned stock was updated.`,
+      });
+      setConfirmKind(null);
+      setActionRow(null);
+    } catch (err) {
+      toast({
+        title: 'Could not approve return',
+        description: err instanceof Error ? err.message : 'Failed to approve client return',
+        variant: 'destructive',
+      });
+    } finally {
+      setActing(false);
+    }
   };
 
-  const handleApproveConfirm = () => {
-    if (!canReview || !actionRow) return;
-    updateRow(actionRow.id, {
-      status: 'posted',
-      rejectionNote: null,
-      approvedByName: user?.full_name?.trim() || 'Team leader',
-      approvedAt: new Date().toISOString(),
-      rejectedByName: null,
-      rejectedAt: null,
-    });
-    toast({
-      title: 'Return approved',
-      description: `${actionRow.returnNumber} approved. Mock only — no stock change.`,
-    });
-    setConfirmKind(null);
-    setActionRow(null);
+  const handleRejectConfirm = async () => {
+    if (!canReview || !actionRow || acting) return;
+    setActing(true);
+    try {
+      await rejectClientOrderReturn(actionRow.id, rejectNote);
+      await queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] });
+      toast({
+        title: 'Return rejected',
+        description: `${actionRow.returnNumber} is closed. Agent can file a new CR on the same ORD.`,
+      });
+      setConfirmKind(null);
+      setRejectNote('');
+      setActionRow(null);
+    } catch (err) {
+      toast({
+        title: 'Could not reject return',
+        description: err instanceof Error ? err.message : 'Failed to reject client return',
+        variant: 'destructive',
+      });
+    } finally {
+      setActing(false);
+    }
   };
 
-  const handleRejectConfirm = () => {
-    if (!canReview || !actionRow) return;
-    updateRow(actionRow.id, {
-      status: 'rejected',
-      rejectionNote: rejectNote.trim() || null,
-      rejectedByName: user?.full_name?.trim() || 'Team leader',
-      rejectedAt: new Date().toISOString(),
-      approvedByName: null,
-      approvedAt: null,
-    });
-    toast({
-      title: 'Return rejected',
-      description: `${actionRow.returnNumber} is closed. Agent can file a new CR on the same ORD.`,
-    });
-    setConfirmKind(null);
-    setRejectNote('');
-    setActionRow(null);
-  };
-
-  if (!SHOW_CLIENT_RETURN_MOCK) {
+  if (!showReturns) {
     return (
       <div className="p-8">
         <h1 className="text-3xl font-bold tracking-tight">Client Order Returns</h1>
-        <p className="text-muted-foreground mt-2">This page is hidden until the mock flag is enabled.</p>
+        <p className="text-muted-foreground mt-2">
+          Client order returns are available when this company is linked to a warehouse.
+        </p>
       </div>
     );
   }
@@ -512,7 +537,19 @@ export default function ClientOrderReturnsPage() {
           </div>
         </CardHeader>
         <CardContent className="min-w-0">
-          {filtered.length === 0 ? (
+          {isLoading ? (
+            <div className="py-12 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading returns...
+            </div>
+          ) : isError ? (
+            <div className="py-12 text-center space-y-1">
+              <p className="text-sm font-medium">Could not load returns</p>
+              <p className="text-sm text-muted-foreground">
+                {error instanceof Error ? error.message : 'Refresh the page and try again.'}
+              </p>
+            </div>
+          ) : filtered.length === 0 ? (
             <div className="py-12 text-center space-y-1">
               <p className="text-sm font-medium">
                 {rows.length === 0 ? 'No client returns yet' : 'No matching returns'}
@@ -694,22 +731,19 @@ export default function ClientOrderReturnsPage() {
         row={viewRow}
       />
 
-      <AlertDialog open={confirmKind === 'approve'} onOpenChange={(open) => !open && setConfirmKind(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Approve this return?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {actionRow
-                ? `${actionRow.returnNumber} will be approved. Mock only — inventory will not change.`
-                : 'This return will be approved.'}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleApproveConfirm}>Approve</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ClientReturnViewDialog
+        mode="approve"
+        open={confirmKind === 'approve'}
+        row={actionRow}
+        acting={acting}
+        onOpenChange={(open) => {
+          if (!open && !acting) {
+            setConfirmKind(null);
+            setActionRow(null);
+          }
+        }}
+        onApprove={() => void handleApproveConfirm()}
+      />
 
       <AlertDialog
         open={confirmKind === 'reject'}
@@ -740,8 +774,17 @@ export default function ClientOrderReturnsPage() {
             />
           </div>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleRejectConfirm}>Reject</AlertDialogAction>
+            <AlertDialogCancel disabled={acting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void handleRejectConfirm();
+              }}
+              disabled={acting}
+            >
+              {acting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+              Reject
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

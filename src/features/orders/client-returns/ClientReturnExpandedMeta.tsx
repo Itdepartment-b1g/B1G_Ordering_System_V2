@@ -1,4 +1,4 @@
-import { format } from 'date-fns';
+import { format, isValid } from 'date-fns';
 import { useState } from 'react';
 import { ImageIcon } from 'lucide-react';
 import {
@@ -11,10 +11,16 @@ import {
 import {
   formatClientReturnReason,
   formatClientReturnStatus,
-  getMockProofPhotoUrl,
   getReturnActionActor,
   type MockClientReturn,
 } from './clientReturnMock';
+
+function formatMetaDate(value: string | null | undefined, withTime = false): string {
+  if (!value) return '—';
+  const parsed = new Date(value);
+  if (!isValid(parsed)) return value;
+  return format(parsed, withTime ? 'MMM d, yyyy · h:mm a' : 'MMM d, yyyy');
+}
 
 function MetaRow({ label, value }: { label: string; value: string }) {
   return (
@@ -26,8 +32,10 @@ function MetaRow({ label, value }: { label: string; value: string }) {
 }
 
 export function ClientReturnExpandedMeta({ row }: { row: MockClientReturn }) {
-  const [previewFileName, setPreviewFileName] = useState<string | null>(null);
-  const previewUrl = previewFileName ? getMockProofPhotoUrl(previewFileName) : null;
+  const photos = row.proofPhotos?.length
+    ? row.proofPhotos
+    : row.proofLabels.map((fileName) => ({ fileName, url: '', path: '' }));
+  const [preview, setPreview] = useState<(typeof photos)[number] | null>(null);
   const actor = getReturnActionActor(row);
 
   return (
@@ -35,15 +43,15 @@ export function ClientReturnExpandedMeta({ row }: { row: MockClientReturn }) {
       <dl className="space-y-1.5">
         <MetaRow label="Client name" value={row.clientName} />
         <MetaRow label="Agent name" value={row.returnedByName} />
-        <MetaRow label="Returned date" value={format(new Date(row.returnDate), 'MMM d, yyyy')} />
-        <MetaRow label="Created" value={format(new Date(row.createdAt), 'MMM d, yyyy · h:mm a')} />
+        <MetaRow label="Returned date" value={formatMetaDate(row.returnDate)} />
+        <MetaRow label="Created" value={formatMetaDate(row.createdAt, true)} />
         <MetaRow label="Status" value={formatClientReturnStatus(row.status)} />
         {actor.kind === 'approve' ? (
           <>
             <MetaRow label="Approved by" value={actor.name || '—'} />
             <MetaRow
               label="Approved at"
-              value={actor.at ? format(new Date(actor.at), 'MMM d, yyyy · h:mm a') : '—'}
+              value={formatMetaDate(actor.at, true)}
             />
           </>
         ) : null}
@@ -52,7 +60,7 @@ export function ClientReturnExpandedMeta({ row }: { row: MockClientReturn }) {
             <MetaRow label="Rejected by" value={actor.name || '—'} />
             <MetaRow
               label="Rejected at"
-              value={actor.at ? format(new Date(actor.at), 'MMM d, yyyy · h:mm a') : '—'}
+              value={formatMetaDate(actor.at, true)}
             />
             <MetaRow label="Rejection" value={row.rejectionNote?.trim() || '—'} />
           </>
@@ -62,40 +70,46 @@ export function ClientReturnExpandedMeta({ row }: { row: MockClientReturn }) {
       </dl>
       <div className="space-y-2">
         <p className="text-sm text-muted-foreground">Photo:</p>
-        {row.proofLabels.length === 0 ? (
+        {photos.length === 0 ? (
           <p className="text-sm text-muted-foreground">No photo</p>
         ) : (
           <div className="flex flex-wrap gap-2">
-            {row.proofLabels.map((fileName) => (
+            {photos.map((photo) => (
               <button
-                key={fileName}
+                key={`${photo.path}-${photo.fileName}`}
                 type="button"
-                onClick={() => setPreviewFileName(fileName)}
+                onClick={() => setPreview(photo)}
                 title="View full size"
                 className="w-32 rounded-md border bg-background overflow-hidden text-left hover:opacity-90 transition-opacity cursor-pointer"
               >
-                <img
-                  src={getMockProofPhotoUrl(fileName)}
-                  alt={fileName}
-                  className="h-24 w-full object-cover bg-muted"
-                />
-                <span className="block text-[10px] px-1.5 py-1 truncate text-muted-foreground">{fileName}</span>
+                {photo.url ? (
+                  <img
+                    src={photo.url}
+                    alt={photo.fileName}
+                    className="h-24 w-full object-cover bg-muted"
+                  />
+                ) : (
+                  <div className="h-24 w-full flex items-center justify-center bg-muted text-muted-foreground">
+                    <ImageIcon className="h-6 w-6" />
+                  </div>
+                )}
+                <span className="block text-[10px] px-1.5 py-1 truncate text-muted-foreground">{photo.fileName}</span>
               </button>
             ))}
           </div>
         )}
       </div>
 
-      <Dialog open={!!previewFileName} onOpenChange={(open) => !open && setPreviewFileName(null)}>
+      <Dialog open={!!preview} onOpenChange={(open) => !open && setPreview(null)}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle>Photo</DialogTitle>
-            <DialogDescription>{previewFileName || 'Proof photo'}</DialogDescription>
+            <DialogDescription>{preview?.fileName || 'Proof photo'}</DialogDescription>
           </DialogHeader>
-          {previewUrl ? (
+          {preview?.url ? (
             <img
-              src={previewUrl}
-              alt={previewFileName || 'Proof photo'}
+              src={preview.url}
+              alt={preview.fileName || 'Proof photo'}
               className="w-full max-h-[75vh] object-contain rounded-md bg-muted"
             />
           ) : (

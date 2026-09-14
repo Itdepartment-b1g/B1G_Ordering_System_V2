@@ -1,6 +1,6 @@
 /**
- * Client-order return UI scaffolding. Flip to false to hide the feature until RPC wiring.
- * History starts empty; wizard confirm still does not write to the database.
+ * Client-order return display helpers and shared row types.
+ * Persistence goes through RPCs in clientReturnApi.ts.
  */
 export const SHOW_CLIENT_RETURN_MOCK = true;
 
@@ -13,11 +13,18 @@ export const CLIENT_RETURN_REASON_OPTIONS = [
 
 export type ClientReturnReasonOption = (typeof CLIENT_RETURN_REASON_OPTIONS)[number]['value'];
 
+export type ClientReturnProofPhoto = {
+  fileName: string;
+  url: string;
+  path: string;
+};
+
 export type MockClientReturnLine = {
   variantName: string;
   brandName: string;
   variantType: string;
   quantity: number;
+  variantId?: string;
 };
 
 export type MockClientReturnStatus = 'pending_leader' | 'posted' | 'rejected' | 'cancelled';
@@ -33,13 +40,17 @@ export type MockClientReturn = {
   reason: string;
   notes: string | null;
   lines: MockClientReturnLine[];
+  changeLines?: MockClientReturnLine[];
   proofLabels: string[];
+  proofPhotos?: ClientReturnProofPhoto[];
   status: MockClientReturnStatus;
   rejectionNote: string | null;
   approvedByName: string | null;
   approvedAt: string | null;
   rejectedByName: string | null;
   rejectedAt: string | null;
+  originalAgentId?: string | null;
+  returnedBy?: string | null;
 };
 
 export const MOCK_CLIENT_RETURNS: MockClientReturn[] = [];
