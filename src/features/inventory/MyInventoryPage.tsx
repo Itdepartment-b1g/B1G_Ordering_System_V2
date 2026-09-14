@@ -979,7 +979,7 @@ export default function MyInventory() {
                   <TableHead className="text-right">Variants</TableHead>
                   <TableHead className="text-right">Stock</TableHead>
                   {showReturnedColumn && (
-                    <TableHead className="text-right">Returned</TableHead>
+                    <TableHead className="text-right">Returned(For Disposal)</TableHead>
                   )}
                   <TableHead className="text-right">Price</TableHead>
                   <TableHead className="text-right">DSP</TableHead>
