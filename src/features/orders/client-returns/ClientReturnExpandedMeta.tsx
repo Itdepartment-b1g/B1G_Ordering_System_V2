@@ -24,8 +24,8 @@ function formatMetaDate(value: string | null | undefined, withTime = false): str
 
 function MetaRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="grid grid-cols-[7.5rem_1fr] gap-2 text-sm">
-      <dt className="text-muted-foreground">{label}:</dt>
+    <div className="flex flex-col gap-0.5 text-sm sm:grid sm:grid-cols-[7.5rem_1fr] sm:gap-2">
+      <dt className="text-muted-foreground">{label}</dt>
       <dd className="font-medium break-words">{value}</dd>
     </div>
   );

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { Check, Eye, LayoutGrid, List, Loader2, RotateCcw, Search, X } from 'lucide-react';
+import { Check, ClipboardList, Eye, LayoutGrid, List, Loader2, Package, RotateCcw, Search, X } from 'lucide-react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Accordion,
   AccordionContent,
@@ -32,13 +33,17 @@ import {
 import {
   CLIENT_ORDER_RETURNS_QUERY_KEY,
   approveClientOrderReturn,
+  buildReturnedInventoryRows,
   canShowClientOrderReturns,
   fetchClientOrderReturns,
   rejectClientOrderReturn,
+  type ReturnedInventoryRow,
 } from './clientReturnApi';
 import { BrandReturnedTable, groupLinesByBrand } from './ClientReturnBrandTable';
 import { ClientReturnExpandedMeta } from './ClientReturnExpandedMeta';
 import { ClientReturnViewDialog } from './ClientReturnViewDialog';
+import { ReturnedInventoryPanel } from './ReturnedInventoryPanel';
+import { ReturnedStockDetailDialog } from './ReturnedStockDetailDialog';
 
 const HISTORY_PAGE_SIZE: PageSize = 25;
 const VIEW_MODE_KEY = 'client-order-returns-view';
@@ -48,6 +53,7 @@ const TABLE_MIN_WIDTH = 'min-w-[90rem]';
 
 type HistoryViewMode = 'table' | 'cards';
 type StatusFilter = 'all' | 'pending_leader' | 'posted' | 'rejected';
+type PageTab = 'history' | 'inventory';
 
 function isCompactViewport() {
   return typeof window !== 'undefined' && window.innerWidth < 1024;
@@ -350,6 +356,16 @@ export default function ClientOrderReturnsPage() {
   const [actionRow, setActionRow] = useState<MockClientReturn | null>(null);
   const [confirmKind, setConfirmKind] = useState<'approve' | 'reject' | null>(null);
   const [acting, setActing] = useState(false);
+  const [pageTab, setPageTab] = useState<PageTab>('history');
+  const [inventoryRow, setInventoryRow] = useState<ReturnedInventoryRow | null>(null);
+
+  const holderId =
+    user?.role === 'mobile_sales' || user?.role === 'sales_agent' ? user.id : undefined;
+
+  const inventoryRows = useMemo(
+    () => buildReturnedInventoryRows(rows, { holderId }),
+    [rows, holderId]
+  );
 
   const startApprove = (row: MockClientReturn) => {
     if (!canReview) return;
@@ -486,11 +502,28 @@ export default function ClientOrderReturnsPage() {
         <h1 className="text-3xl font-bold tracking-tight">Client Order Returns</h1>
         <p className="text-muted-foreground">
           {isLeader
-            ? 'All client returns from your team. Filter by Pending to approve or reject.'
-            : 'History of items returned against an ORD number (CR-MTS-YYYYMM-000001).'}
+            ? 'Returns is CR history from your team. Returned inventory is posted stock grouped by brand, and is not sellable.'
+            : 'Returns is CR history. Returned inventory is posted stock grouped by brand, and is not sellable.'}
         </p>
       </div>
 
+      <Tabs value={pageTab} onValueChange={(value) => setPageTab(value as PageTab)} className="space-y-4">
+        <TabsList className="grid w-full grid-cols-2 h-auto p-1">
+          <TabsTrigger value="history" className="gap-1.5 py-2.5 text-xs sm:text-sm">
+            <ClipboardList className="h-4 w-4 shrink-0" />
+            Returns
+          </TabsTrigger>
+          <TabsTrigger value="inventory" className="gap-1.5 py-2.5 text-xs sm:text-sm">
+            <Package className="h-4 w-4 shrink-0" />
+            <span className="sm:hidden">Inventory</span>
+            <span className="hidden sm:inline">Returned inventory</span>
+            {inventoryRows.length > 0 ? (
+              <span className="tabular-nums opacity-80">({inventoryRows.length})</span>
+            ) : null}
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="history" className="mt-0">
       <Card className="min-w-0 overflow-hidden">
         <CardHeader className="pb-4">
           <div className="flex flex-col gap-3">
@@ -707,6 +740,46 @@ export default function ClientOrderReturnsPage() {
           )}
         </CardContent>
       </Card>
+        </TabsContent>
+
+        <TabsContent value="inventory" className="mt-0">
+          {isLoading ? (
+            <Card>
+              <CardContent className="py-12 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading returned inventory...
+              </CardContent>
+            </Card>
+          ) : isError ? (
+            <Card>
+              <CardContent className="py-12 text-center space-y-1">
+                <p className="text-sm font-medium">Could not load returned inventory</p>
+                <p className="text-sm text-muted-foreground">
+                  {error instanceof Error ? error.message : 'Refresh the page and try again.'}
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <ReturnedInventoryPanel
+              rows={inventoryRows}
+              onRowClick={(row) => setInventoryRow(row)}
+            />
+          )}
+        </TabsContent>
+      </Tabs>
+
+      <ReturnedStockDetailDialog
+        open={!!inventoryRow}
+        onOpenChange={(open) => {
+          if (!open) setInventoryRow(null);
+        }}
+        brandName={inventoryRow?.brandName}
+        variantName={inventoryRow?.variantName || ''}
+        variantType={inventoryRow?.variantType}
+        variantId={inventoryRow?.variantId}
+        totalReturned={inventoryRow?.qty || 0}
+        returns={inventoryRow?.returns || []}
+      />
 
       <ClientReturnViewDialog
         open={!!viewRow}

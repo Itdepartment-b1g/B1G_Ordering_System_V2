@@ -14,6 +14,7 @@ import { Search, Edit, Package, ChevronRight, Users, TrendingUp, Eye, RefreshCw,
 import { Link } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/usePermissions';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useInventory, type Variant, type Brand } from './InventoryContext';
 import { supabase } from '@/lib/supabase';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
@@ -41,10 +42,12 @@ import MainInventoryManual from '@/features/inventory/warehouse-manual/component
 import {
   canShowClientOrderReturns,
   CLIENT_ORDER_RETURNS_QUERY_KEY,
+  buildReturnedInventoryRows,
   buildReturnedStockByVariantId,
   fetchClientOrderReturns,
 } from '@/features/orders/client-returns/clientReturnApi';
 import type { MockClientReturn } from '@/features/orders/client-returns/clientReturnMock';
+import { ReturnedInventoryPanel } from '@/features/orders/client-returns/ReturnedInventoryPanel';
 import { ReturnedStockDetailDialog } from '@/features/orders/client-returns/ReturnedStockDetailDialog';
 
 interface ReturnHistoryEntry {
@@ -159,6 +162,7 @@ export default function MainInventoryPage() {
     totalReturned: number;
     returns: MockClientReturn[];
   } | null>(null);
+  const [inventoryTab, setInventoryTab] = useState('stock');
 
   const [batchViewTarget, setBatchViewTarget] = useState<{
     variantId: string;
@@ -949,6 +953,11 @@ export default function MainInventoryPage() {
     [returnedStockByVariantId]
   );
 
+  const returnedInventoryRows = useMemo(
+    () => (showReturnedColumn ? buildReturnedInventoryRows(clientReturns) : []),
+    [clientReturns, showReturnedColumn]
+  );
+
   const openReturnedDialog = (
     brandName: string,
     variantName: string,
@@ -1315,14 +1324,7 @@ export default function MainInventoryPage() {
         {showReturnedColumn && (
           <Card
             className="cursor-pointer hover:bg-rose-50/40 transition-colors"
-            onClick={() =>
-              openReturnedDialog(
-                '',
-                'All variants',
-                totalReturnedStock,
-                clientReturns.filter((row) => row.status === 'posted')
-              )
-            }
+            onClick={() => setInventoryTab('returns')}
             title="Click to view returned items"
           >
             <CardContent className="p-4">

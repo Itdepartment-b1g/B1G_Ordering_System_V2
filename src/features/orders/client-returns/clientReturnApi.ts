@@ -274,6 +274,47 @@ export function buildReturnedStockByVariantId(
   return map;
 }
 
+export type ReturnedInventoryRow = {
+  variantId: string;
+  brandId?: string;
+  brandName: string;
+  variantName: string;
+  variantType: string;
+  qty: number;
+  returns: MockClientReturn[];
+};
+
+export function buildReturnedInventoryRows(
+  returns: MockClientReturn[],
+  options?: { holderId?: string | null }
+): ReturnedInventoryRow[] {
+  const byVariant = buildReturnedStockByVariantId(returns, options);
+  const rows: ReturnedInventoryRow[] = [];
+
+  for (const [variantId, stock] of byVariant) {
+    const line = stock.returns
+      .flatMap((cr) => cr.lines)
+      .find((item) => item.variantId === variantId);
+    rows.push({
+      variantId,
+      brandId: line?.brandId,
+      brandName: line?.brandName || 'Unknown',
+      variantName: line?.variantName || variantId,
+      variantType: line?.variantType || 'flavor',
+      qty: stock.qty,
+      returns: stock.returns,
+    });
+  }
+
+  return rows.sort((a, b) => {
+    const brandCompare = a.brandName.localeCompare(b.brandName);
+    if (brandCompare !== 0) return brandCompare;
+    const typeCompare = a.variantType.localeCompare(b.variantType);
+    if (typeCompare !== 0) return typeCompare;
+    return a.variantName.localeCompare(b.variantName);
+  });
+}
+
 export async function createClientOrderReturn(input: {
   companyId: string;
   clientOrderId: string;
