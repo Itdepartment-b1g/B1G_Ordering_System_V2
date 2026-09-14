@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, CreditCard, Camera, RotateCcw, Smartphone, CheckCircle, Split, Pencil, Loader2, FileDown, Filter, Download, ChevronDown, Printer } from 'lucide-react';
+import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, CreditCard, Camera, RotateCcw, Smartphone, CheckCircle, Split, Pencil, Loader2, FileDown, Filter, Download, ChevronDown, Printer, Clock, MoreVertical } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Link } from 'react-router-dom';
 import { Textarea } from '@/components/ui/textarea';
@@ -231,6 +231,7 @@ export default function MyOrdersPage() {
 
   // View Dialog States
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
+  const [timelineDialogOpen, setTimelineDialogOpen] = useState(false);
   const [returnDialogOpen, setReturnDialogOpen] = useState(false);
   const [orderToReturn, setOrderToReturn] = useState<Order | null>(null);
   const [orderToView, setOrderToView] = useState<any>(null);
@@ -680,6 +681,7 @@ export default function MyOrdersPage() {
   );
 
   const openClientReturn = (order: Order) => {
+    setTimelineDialogOpen(false);
     setViewDialogOpen(false);
     setOrderToView(null);
     setOrderToReturn(order);
@@ -687,9 +689,56 @@ export default function MyOrdersPage() {
   };
 
   const handleViewOrder = (order: any) => {
+    setTimelineDialogOpen(false);
     setOrderToView(order);
     setViewDialogOpen(true);
   };
+
+  const openOrderTimeline = (order: Order) => {
+    setViewDialogOpen(false);
+    setOrderToView(order);
+    setTimelineDialogOpen(true);
+  };
+
+  const orderActionsMenu = (order: Order) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 shrink-0"
+          aria-label={`Actions for ${order.orderNumber}`}
+        >
+          <MoreVertical className="h-4 w-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuItem onClick={() => handleViewOrder(order)}>
+          <Eye className="h-4 w-4 mr-2" />
+          View
+        </DropdownMenuItem>
+        {showClientReturns ? (
+          <DropdownMenuItem onClick={() => openOrderTimeline(order)}>
+            <Clock className="h-4 w-4 mr-2" />
+            Order timeline
+          </DropdownMenuItem>
+        ) : null}
+        {canShowClientReturn(order) ? (
+          <DropdownMenuItem onClick={() => openClientReturn(order)}>
+            <RotateCcw className="h-4 w-4 mr-2" />
+            Return order
+          </DropdownMenuItem>
+        ) : null}
+        {order.stage === 'needs_revision' ? (
+          <DropdownMenuItem onClick={() => handleEditOrder(order)}>
+            <Pencil className="h-4 w-4 mr-2" />
+            Edit
+          </DropdownMenuItem>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 
   const handlePrintOrderReceipt = (order: Order) => {
     try {
@@ -2860,14 +2909,17 @@ export default function MyOrdersPage() {
               paginatedOrders.map((order) => (
                   <Card key={order.id}>
                   <div className="p-3">
-                    <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-start justify-between mb-2 gap-2">
                       <div className="flex-1 min-w-0">
                         <div className="font-mono font-semibold text-sm truncate">{order.orderNumber}</div>
                         <div className="text-xs text-muted-foreground mt-0.5 truncate">{order.clientName}</div>
                       </div>
-                      <Badge variant={getDisplayStatus(order).variant} className="ml-2 flex-shrink-0 text-xs">
-                        {getDisplayStatus(order).text}
-                      </Badge>
+                      <div className="flex items-start gap-1 shrink-0">
+                        <Badge variant={getDisplayStatus(order).variant} className="text-xs">
+                          {getDisplayStatus(order).text}
+                        </Badge>
+                        {orderActionsMenu(order)}
+                      </div>
                     </div>
                     <div className="space-y-1 text-xs pt-2 border-t">
                       <div className="flex items-center justify-between">
@@ -2882,30 +2934,6 @@ export default function MyOrdersPage() {
                         </div>
                         <div className="font-semibold text-sm">₱{order.total.toLocaleString()}</div>
                       </div>
-                    </div>
-                    <div className="flex gap-2 mt-2 pt-2 border-t">
-                      <button 
-                        onClick={() => handleViewOrder(order)}
-                        className="flex-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                      >
-                        View Details
-                      </button>
-                      {canShowClientReturn(order) && (
-                        <button
-                          onClick={() => openClientReturn(order)}
-                          className="flex-1 text-xs text-rose-600 hover:text-rose-700 font-medium transition-colors"
-                        >
-                          Return
-                        </button>
-                      )}
-                      {order.stage === 'needs_revision' && (
-                        <button
-                          onClick={() => handleEditOrder(order)}
-                          className="flex-1 text-xs text-amber-600 hover:text-amber-700 font-medium transition-colors"
-                        >
-                          Edit
-                        </button>
-                      )}
                     </div>
                   </div>
                 </Card>
@@ -2989,30 +3017,7 @@ export default function MyOrdersPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-center align-middle">
-                      <Button variant="ghost" size="icon" onClick={() => handleViewOrder(order)}>
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                      {canShowClientReturn(order) && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => openClientReturn(order)}
-                          className="text-rose-600 hover:text-rose-700"
-                          title="Return items"
-                        >
-                          <RotateCcw className="h-4 w-4" />
-                        </Button>
-                      )}
-                      {order.stage === 'needs_revision' && (
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          onClick={() => handleEditOrder(order)}
-                          className="text-amber-600 hover:text-amber-700"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                      )}
+                      {orderActionsMenu(order)}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -4284,16 +4289,46 @@ export default function MyOrdersPage() {
       </AlertDialog>
 
       {/* View Order Dialog */}
-      <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+      <Dialog
+        open={viewDialogOpen}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen && timelineDialogOpen) return;
+          setViewDialogOpen(nextOpen);
+          if (!nextOpen) {
+            setOrderToView(null);
+            setTimelineDialogOpen(false);
+          }
+        }}
+      >
+        <DialogContent
+          className="max-w-4xl w-[95vw] max-h-[90vh] overflow-y-auto p-4 sm:p-6"
+          onPointerDownOutside={(event) => {
+            if (timelineDialogOpen) event.preventDefault();
+          }}
+          onInteractOutside={(event) => {
+            if (timelineDialogOpen) event.preventDefault();
+          }}
+        >
+          <DialogHeader className="space-y-3 sm:space-y-0 sm:flex sm:flex-row sm:items-start sm:justify-between sm:gap-4 pr-8">
             <DialogTitle>Order Details</DialogTitle>
             {orderToView && (
-              <div className="flex shrink-0 gap-2">
+              <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2 w-full sm:w-auto">
+                {showClientReturns && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full sm:w-auto min-h-[44px] sm:min-h-8"
+                    onClick={() => setTimelineDialogOpen(true)}
+                  >
+                    <Clock className="h-4 w-4 mr-2" />
+                    Timeline
+                  </Button>
+                )}
                 {canShowClientReturn(orderToView) && (
                   <Button
                     variant="outline"
                     size="sm"
+                    className="w-full sm:w-auto min-h-[44px] sm:min-h-8"
                     onClick={() => openClientReturn(orderToView)}
                   >
                     <RotateCcw className="h-4 w-4 mr-2" />
@@ -4303,6 +4338,7 @@ export default function MyOrdersPage() {
                 <Button
                   variant="outline"
                   size="sm"
+                  className="w-full sm:w-auto min-h-[44px] sm:min-h-8"
                   onClick={() => handlePrintOrderReceipt(orderToView)}
                 >
                   <Printer className="h-4 w-4 mr-2" />
@@ -4678,12 +4714,6 @@ export default function MyOrdersPage() {
                   <p className="text-sm text-muted-foreground bg-muted p-3 rounded-lg">{orderToView.notes}</p>
                 </div>
               )}
-
-              {showClientReturns && (
-                <div className="border-t pt-4">
-                  <ClientOrderReturnTimeline order={orderToView} />
-                </div>
-              )}
             </div>
           )}
         </DialogContent>
@@ -5042,6 +5072,14 @@ export default function MyOrdersPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {showClientReturns && (
+        <ClientOrderReturnTimeline
+          open={timelineDialogOpen && !!orderToView}
+          onOpenChange={setTimelineDialogOpen}
+          order={orderToView}
+        />
+      )}
 
       {showClientReturns && (
         <ReturnClientOrderDialog

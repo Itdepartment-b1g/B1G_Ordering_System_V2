@@ -2,6 +2,15 @@ import { CheckCircle2, Clock, RotateCcw, ShoppingCart, XCircle } from 'lucide-re
 import { format } from 'date-fns';
 import { useQuery } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import type { Order } from '../OrderContext';
 import {
@@ -13,6 +22,7 @@ import {
   CLIENT_ORDER_RETURNS_QUERY_KEY,
   fetchClientOrderReturnsForOrder,
 } from './clientReturnApi';
+import { BrandReturnedTable, groupLinesByBrand } from './ClientReturnBrandTable';
 
 type TimelineEvent = {
   id: string;
@@ -113,60 +123,119 @@ const TONE_CLASS: Record<TimelineEvent['tone'], { wrap: string; rail: string }> 
   return: { wrap: 'border-rose-200 bg-rose-50 text-rose-700', rail: 'bg-rose-200' },
 };
 
-type ClientOrderReturnTimelineProps = {
-  order: Order;
-};
-
-export function ClientOrderReturnTimeline({ order }: ClientOrderReturnTimelineProps) {
-  const { data: returns = [] } = useQuery({
-    queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY, 'order', order.id],
-    enabled: !!order.id,
-    staleTime: 0,
-    refetchOnMount: 'always',
-    queryFn: () => fetchClientOrderReturnsForOrder(order.id),
-  });
-  const events = buildTimelineEvents(order, returns);
+function ReturnEventItems({ cr }: { cr: MockClientReturn }) {
+  const returnedGroups = groupLinesByBrand(cr.lines);
+  const changeGroups = groupLinesByBrand(cr.changeLines || []);
+  if (returnedGroups.length === 0 && changeGroups.length === 0) return null;
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <ShoppingCart className="h-4 w-4 text-muted-foreground" />
-        <h4 className="font-semibold text-lg">Order timeline</h4>
-        <Badge variant="outline" className="font-normal">
-          {events.length} event{events.length === 1 ? '' : 's'}
-        </Badge>
-      </div>
-
-      <ol className="space-y-0">
-        {events.map((event, index) => {
-          const tone = TONE_CLASS[event.tone];
-          const isLast = index === events.length - 1;
-          return (
-            <li key={event.id} className="relative flex gap-3">
-              <div className="flex flex-col items-center shrink-0 w-7">
-                <span
-                  className={cn(
-                    'flex h-7 w-7 items-center justify-center rounded-full border shrink-0',
-                    tone.wrap
-                  )}
-                >
-                  <EventIcon tone={event.tone} />
-                </span>
-                {!isLast ? (
-                  <span className={cn('mt-1 w-px flex-1 min-h-[18px]', tone.rail)} aria-hidden />
-                ) : null}
-              </div>
-              <div className={cn('min-w-0 flex-1 space-y-0.5', !isLast && 'pb-4')}>
-                <p className="text-sm font-medium leading-5">{event.title}</p>
-                <p className="text-xs text-muted-foreground">{formatWhen(event.at)}</p>
-                {event.detail ? (
-                  <p className="text-xs text-muted-foreground leading-5">{event.detail}</p>
-                ) : null}
-              </div>
-            </li>
-          );
-        })}
-      </ol>
+    <div className="space-y-2 pt-1">
+      {returnedGroups.length > 0 ? (
+        <div className="space-y-2">
+          <p className="text-xs font-semibold">Returned</p>
+          {returnedGroups.map((group) => (
+            <BrandReturnedTable
+              key={`ret-${cr.id}-${group.brandName}`}
+              brandName={group.brandName}
+              variants={group.variants}
+            />
+          ))}
+        </div>
+      ) : null}
+      {changeGroups.length > 0 ? (
+        <div className="space-y-2">
+          <p className="text-xs font-semibold">Change item</p>
+          {changeGroups.map((group) => (
+            <BrandReturnedTable
+              key={`chg-${cr.id}-${group.brandName}`}
+              brandName={group.brandName}
+              variants={group.variants}
+              qtyClassName="text-emerald-700"
+            />
+          ))}
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+type ClientOrderReturnTimelineProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  order: Order | null;
+};
+
+export function ClientOrderReturnTimeline({ open, onOpenChange, order }: ClientOrderReturnTimelineProps) {
+  const { data: returns = [] } = useQuery({
+    queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY, 'order', order?.id],
+    enabled: open && !!order?.id,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    queryFn: () => fetchClientOrderReturnsForOrder(order!.id),
+  });
+  const events = order ? buildTimelineEvents(order, returns) : [];
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl w-[95vw] max-h-[90vh] overflow-hidden flex flex-col z-[70]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 flex-wrap">
+            <ShoppingCart className="h-5 w-5 text-muted-foreground" />
+            Order timeline
+            <Badge variant="outline" className="font-normal">
+              {events.length} event{events.length === 1 ? '' : 's'}
+            </Badge>
+          </DialogTitle>
+          <DialogDescription>
+            {order ? `${order.orderNumber} · ${order.clientName}` : 'Order events'}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+          {events.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No timeline events yet.</p>
+          ) : (
+            <ol className="space-y-0">
+              {events.map((event, index) => {
+                const tone = TONE_CLASS[event.tone];
+                const isLast = index === events.length - 1;
+                const cr = returns.find((row) => row.id === event.id);
+                return (
+                  <li key={event.id} className="relative flex gap-3">
+                    <div className="flex flex-col items-center shrink-0 w-7">
+                      <span
+                        className={cn(
+                          'flex h-7 w-7 items-center justify-center rounded-full border shrink-0',
+                          tone.wrap
+                        )}
+                      >
+                        <EventIcon tone={event.tone} />
+                      </span>
+                      {!isLast ? (
+                        <span className={cn('mt-1 w-px flex-1 min-h-[18px]', tone.rail)} aria-hidden />
+                      ) : null}
+                    </div>
+                    <div className={cn('min-w-0 flex-1 space-y-0.5', !isLast && 'pb-4')}>
+                      <p className="text-sm font-medium leading-5">{event.title}</p>
+                      <p className="text-xs text-muted-foreground">{formatWhen(event.at)}</p>
+                      {event.detail ? (
+                        <p className="text-xs text-muted-foreground leading-5">{event.detail}</p>
+                      ) : null}
+                      {cr ? <ReturnEventItems cr={cr} /> : null}
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
