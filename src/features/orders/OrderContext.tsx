@@ -10,6 +10,7 @@ export interface OrderItem {
   id: string;
   /** client_order_items.id — required when filing a client return */
   clientOrderItemId?: string;
+  brandId?: string;
   brandName: string;
   variantName: string;
   variantType: string;
@@ -197,7 +198,9 @@ export function OrderProvider({ children }: { children: ReactNode }) {
             variant:variants(
               name,
               variant_type,
-              brand:brands(name)
+              brand_id,
+              variant_type_id,
+              brand:brands(id, name)
             )
           )
         `);
@@ -249,7 +252,9 @@ export function OrderProvider({ children }: { children: ReactNode }) {
             variant:variants(
               name,
               variant_type,
-              brand:brands(name)
+              brand_id,
+              variant_type_id,
+              brand:brands(id, name)
             )
           `)
           .in('client_order_id', orderIdsNeedingItems);
@@ -280,14 +285,17 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         const items = rawItems.map((item: any) => {
           // Handle variant data - check if it's an object or nested
           const variant = item.variant || {};
-          const brand = variant.brand || {};
+          const brandRaw = variant.brand;
+          const brand = Array.isArray(brandRaw) ? (brandRaw[0] || {}) : (brandRaw || {});
           const brandName = (typeof brand === 'object' && brand.name) ? brand.name : (typeof brand === 'string' ? brand : 'Unknown');
+          const brandId = typeof brand === 'object' && brand.id ? String(brand.id) : (variant.brand_id ? String(variant.brand_id) : undefined);
 
           const unitPrice = Number(item.unit_price) || 0;
 
           return {
             id: item.variant_id,
             clientOrderItemId: item.id,
+            brandId,
             brandName: brandName,
             variantName: variant?.name || 'Unknown',
             variantType: variant?.variant_type || 'flavor',

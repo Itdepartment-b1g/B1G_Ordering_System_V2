@@ -23,7 +23,7 @@ import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import { ReturnInventoryDialog } from './components/ReturnInventoryDialog';
 import { ReturnToMainDialog } from './components/ReturnToMainDialog';
 import MyReturnRequestsSection from './components/MyReturnRequestsSection';
-import type { RemittanceOrder, BankOrderNote } from './types';
+import type { AgentBrand, AgentVariant, RemittanceOrder, BankOrderNote } from './types';
 import {
   CLIENT_ORDER_RETURNS_QUERY_KEY,
   buildReturnedStockByVariantId,
@@ -35,6 +35,75 @@ import { ReturnedStockDetailDialog } from '@/features/orders/client-returns/Retu
 
 const LOW_STOCK_THRESHOLD = 10;
 const isLowStock = (stock: number) => stock <= LOW_STOCK_THRESHOLD;
+
+type ReturnedStockEntry = { qty: number; returns: MockClientReturn[] };
+
+function emptyReturnedStock(): ReturnedStockEntry {
+  return { qty: 0, returns: [] };
+}
+
+function variantTypeKey(variantType?: string) {
+  return (variantType || 'flavor').toLowerCase();
+}
+
+function appendVariantToBrand(brand: AgentBrand, variant: AgentVariant) {
+  if (brand.allVariants.some((item) => item.id === variant.id)) return;
+  brand.allVariants.push(variant);
+  const typeKey = variantTypeKey(variant.variantType);
+  const typeList = brand.variantsByType.get(typeKey);
+  if (typeList) typeList.push(variant);
+  else brand.variantsByType.set(typeKey, [variant]);
+  if (typeKey === 'flavor') brand.flavors.push(variant);
+  else if (typeKey === 'battery') brand.batteries.push(variant);
+  else if (typeKey === 'posm') brand.posms.push(variant);
+}
+
+function placeholderReturnedVariant(line: {
+  variantId: string;
+  variantName: string;
+  variantType: string;
+}): AgentVariant {
+  return {
+    id: line.variantId,
+    name: line.variantName,
+    variantType: line.variantType || 'flavor',
+    stock: 0,
+    price: 0,
+    status: 'none',
+  };
+}
+
+function emptyAgentBrand(id: string, name: string): AgentBrand {
+  return {
+    id,
+    name,
+    flavors: [],
+    batteries: [],
+    posms: [],
+    foc: [],
+    allVariants: [],
+    variantsByType: new Map(),
+  };
+}
+
+function returnedVariantMeta(
+  returns: MockClientReturn[],
+  variantId: string
+): { brandId?: string; brandName: string; variantName: string; variantType: string } | null {
+  for (const cr of returns) {
+    for (const line of cr.lines) {
+      if (line.variantId === variantId) {
+        return {
+          brandId: line.brandId,
+          brandName: line.brandName,
+          variantName: line.variantName,
+          variantType: line.variantType,
+        };
+      }
+    }
+  }
+  return null;
+}
 
 // Sold tab (End of Day Cash Remittance): only show orders on or after this date. Orders before are v1 imports.
 const SOLD_TAB_ORDER_DATE_THRESHOLD = '2026-02-17';
@@ -115,8 +184,8 @@ export default function MyInventory() {
     queryFn: fetchClientOrderReturns,
   });
 
-  const returnedStockByVariantId = useMemo(() => {
-    if (!showReturnedColumn) return new Map<string, { qty: number; returns: MockClientReturn[] }>();
+  const returnedStockByVariantId = useMemo((): Map<string, ReturnedStockEntry> => {
+    if (!showReturnedColumn) return new Map();
     return buildReturnedStockByVariantId(clientReturns, { holderId: user?.id });
   }, [clientReturns, showReturnedColumn, user?.id]);
 
@@ -135,7 +204,7 @@ export default function MyInventory() {
   };
 
   const getReturnedStock = (variantId: string) =>
-    returnedStockByVariantId.get(variantId) || { qty: 0, returns: [] as MockClientReturn[] };
+    returnedStockByVariantId.get(variantId) || emptyReturnedStock();
 
   const getBrandReturnedStock = (brand: { allVariants?: Array<{ id: string }> }) => {
     const returnsById = new Map<string, MockClientReturn>();
@@ -150,33 +219,67 @@ export default function MyInventory() {
     return { qty, returns: Array.from(returnsById.values()) };
   };
 
-  // Create a deep copy of brands with filtering applied at the variant level
-  // Only include brands that end up having at least one item with stock > 0
-  const activeBrands = agentBrands
-    .map(brand => {
-      const allVariantsWithStock = (brand.allVariants || []).filter((v: any) => v.stock > 0);
-      const variantsByTypeWithStock = new Map<string, any[]>();
+  // Keep sellable stock, plus variants/brands that only have returned qty (so the Return column still has a basis)
+  const activeBrands = useMemo(() => {
+    const hasReturnedQty = (variantId: string) =>
+      showReturnedColumn && (returnedStockByVariantId.get(variantId)?.qty || 0) > 0;
+    const keepVariant = (variant: AgentVariant) => variant.stock > 0 || hasReturnedQty(variant.id);
 
-      // Rebuild variantsByType with only items that have stock > 0
+    const brands: AgentBrand[] = agentBrands.map((brand) => {
+      const allVariants = (brand.allVariants || []).filter(keepVariant);
+      const variantsByType = new Map<string, AgentVariant[]>();
       if (brand.variantsByType) {
         brand.variantsByType.forEach((variants, type) => {
-          const filtered = variants.filter((v: any) => v.stock > 0);
-          if (filtered.length > 0) {
-            variantsByTypeWithStock.set(type, filtered);
-          }
+          const filtered = variants.filter(keepVariant);
+          if (filtered.length > 0) variantsByType.set(type, filtered);
         });
       }
-
       return {
         ...brand,
-        allVariants: allVariantsWithStock,
-        variantsByType: variantsByTypeWithStock,
-        flavors: brand.flavors.filter((f: any) => f.stock > 0),
-        batteries: brand.batteries.filter((b: any) => b.stock > 0),
-        posms: (brand.posms || []).filter((p: any) => p.stock > 0)
+        allVariants,
+        variantsByType,
+        flavors: brand.flavors.filter(keepVariant),
+        batteries: brand.batteries.filter(keepVariant),
+        posms: (brand.posms || []).filter(keepVariant),
+        foc: (brand.foc || []).filter(keepVariant),
       };
-    })
-    .filter(brand => brand.allVariants.length > 0);
+    });
+
+    if (showReturnedColumn) {
+      const seenIds = new Set<string>();
+      for (const brand of brands) {
+        for (const variant of brand.allVariants) seenIds.add(variant.id);
+      }
+
+      for (const [variantId, stock] of returnedStockByVariantId) {
+        if (stock.qty <= 0 || seenIds.has(variantId)) continue;
+        const meta = returnedVariantMeta(clientReturns, variantId);
+        if (!meta) continue;
+        const brandNameKey = meta.brandName.toLowerCase();
+        let brand = meta.brandId
+          ? brands.find((item) => item.id === meta.brandId)
+          : undefined;
+        if (!brand) {
+          brand = brands.find((item) => item.name.toLowerCase() === brandNameKey);
+        }
+        if (!brand) {
+          brand = emptyAgentBrand(meta.brandId || `returned-brand:${meta.brandName}`, meta.brandName);
+          brands.push(brand);
+        }
+        appendVariantToBrand(
+          brand,
+          placeholderReturnedVariant({
+            variantId,
+            variantName: meta.variantName,
+            variantType: meta.variantType,
+          })
+        );
+        seenIds.add(variantId);
+      }
+    }
+
+    return brands.filter((brand) => brand.allVariants.length > 0);
+  }, [agentBrands, clientReturns, returnedStockByVariantId, showReturnedColumn]);
 
   const filteredBrands = activeBrands.filter(brand => {
     const matchesSearch =
@@ -197,7 +300,7 @@ export default function MyInventory() {
   const getLowStockCount = () => {
     let count = 0;
     activeBrands.forEach(brand => {
-      count += (brand.allVariants || []).filter((v: any) => v.status === 'low' || isLowStock(v.stock)).length;
+      count += (brand.allVariants || []).filter((v: any) => v.stock > 0 && (v.status === 'low' || isLowStock(v.stock))).length;
     });
     return count;
   };
@@ -294,7 +397,7 @@ export default function MyInventory() {
     console.log('🎧 MyInventoryPage: Setting up real-time subscriptions');
 
     // Debounce timer for real-time updates
-    let orderDebounceTimer: NodeJS.Timeout | null = null;
+    let orderDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
     const debouncedOrderRefresh = () => {
       if (orderDebounceTimer) clearTimeout(orderDebounceTimer);

@@ -43,13 +43,25 @@ function parseRpcResult(data: unknown, fallbackError: string): RpcResult {
   throw new Error(fallbackError);
 }
 
+function nestedRecord(value: unknown): Record<string, unknown> {
+  if (Array.isArray(value)) return asRecord(value[0]);
+  return asRecord(value);
+}
+
 function mapLine(item: Record<string, unknown>): MockClientReturn['lines'][number] {
+  const variant = nestedRecord(item.variant ?? item.variants);
+  const brand = nestedRecord(variant.brand ?? variant.brands);
+  const variantId = item.variant_id ? String(item.variant_id) : variant.id ? String(variant.id) : undefined;
+  const brandId = item.brand_id ? String(item.brand_id) : brand.id ? String(brand.id) : undefined;
+  const variantTypeId = item.variant_type_id ? String(item.variant_type_id) : undefined;
   return {
-    variantName: String(item.variant_name || 'Unknown'),
-    brandName: String(item.brand_name || 'Unknown'),
-    variantType: String(item.variant_type || 'flavor'),
+    variantName: String(variant.name || item.variant_name || 'Unknown'),
+    brandName: String(brand.name || item.brand_name || 'Unknown'),
+    variantType: String(variant.variant_type || item.variant_type || 'flavor'),
     quantity: Number(item.quantity) || 0,
-    variantId: item.variant_id ? String(item.variant_id) : undefined,
+    variantId,
+    brandId,
+    variantTypeId,
   };
 }
 
@@ -111,17 +123,25 @@ const RETURN_SELECT = `
   rejected_at,
   items:client_order_return_items (
     variant_id,
-    variant_name,
-    brand_name,
-    variant_type,
-    quantity
+    brand_id,
+    variant_type_id,
+    quantity,
+    variant:variants (
+      name,
+      variant_type,
+      brand:brands ( id, name )
+    )
   ),
   change_items:client_order_return_change_items (
     variant_id,
-    variant_name,
-    brand_name,
-    variant_type,
-    quantity
+    brand_id,
+    variant_type_id,
+    quantity,
+    variant:variants (
+      name,
+      variant_type,
+      brand:brands ( id, name )
+    )
   ),
   attachments:client_order_return_attachments (
     file_url,
@@ -182,9 +202,9 @@ export async function fetchPostedReturnedQtyByItemId(
 export async function fetchChangeItemCatalog(
   userId: string,
   companyId: string,
-  brandNames: string[]
+  brandIds: string[]
 ): Promise<MockChangeItemSku[]> {
-  const wanted = new Set(brandNames.map((name) => name.trim().toLowerCase()).filter(Boolean));
+  const wanted = new Set(brandIds.filter(Boolean));
   if (wanted.size === 0) return [];
 
   const { data, error } = await supabase
@@ -197,7 +217,9 @@ export async function fetchChangeItemCatalog(
         id,
         name,
         variant_type,
-        brand:brands ( name )
+        variant_type_id,
+        brand_id,
+        brand:brands ( id, name )
       )
     `
     )
@@ -211,15 +233,18 @@ export async function fetchChangeItemCatalog(
       const variant = Array.isArray(record.variant) ? record.variant[0] : record.variant;
       const variantRecord = asRecord(variant);
       const brand = Array.isArray(variantRecord.brand) ? variantRecord.brand[0] : variantRecord.brand;
-      const brandName = String(asRecord(brand).name || 'Unknown');
-      if (!wanted.has(brandName.trim().toLowerCase())) return null;
+      const brandRecord = asRecord(brand);
+      const brandId = String(variantRecord.brand_id || brandRecord.id || '');
+      if (!wanted.has(brandId)) return null;
       const variantId = String(record.variant_id || variantRecord.id || '');
       if (!variantId) return null;
       return {
         id: variantId,
-        brandName,
+        brandId,
+        brandName: String(brandRecord.name || 'Unknown'),
         variantName: String(variantRecord.name || variantId),
         variantType: String(variantRecord.variant_type || 'flavor'),
+        variantTypeId: variantRecord.variant_type_id ? String(variantRecord.variant_type_id) : undefined,
         sellableQty: Math.max(0, Number(record.stock) || 0),
       } satisfies MockChangeItemSku;
     })

@@ -671,6 +671,7 @@ export default function MyOrdersPage() {
     () =>
       (orderToReturn?.items || []).map((item) => ({
         id: item.clientOrderItemId || item.id,
+        brandId: item.brandId,
         brandName: item.brandName,
         variantName: item.variantName,
         quantity: item.quantity,

@@ -25,6 +25,8 @@ export type MockClientReturnLine = {
   variantType: string;
   quantity: number;
   variantId?: string;
+  brandId?: string;
+  variantTypeId?: string;
 };
 
 export type MockClientReturnStatus = 'pending_leader' | 'posted' | 'rejected' | 'cancelled';
@@ -203,6 +205,8 @@ export type MockChangeItemSku = {
   variantName: string;
   variantType: string;
   sellableQty: number;
+  brandId?: string;
+  variantTypeId?: string;
 };
 
 /** Dummy sellable SKUs for the change-item step, scoped to brands on the order. */

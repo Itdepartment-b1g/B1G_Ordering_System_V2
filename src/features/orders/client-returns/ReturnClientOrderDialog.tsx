@@ -63,6 +63,7 @@ import { formatVariantType, variantTypeBadgeClass } from './ClientReturnBrandTab
 
 export type ReturnClientOrderLine = {
   id: string;
+  brandId?: string;
   brandName: string;
   variantName: string;
   quantity: number;
@@ -449,8 +450,8 @@ export function ReturnClientOrderDialog({
     };
   }, []);
 
-  const orderBrandNames = useMemo(
-    () => Array.from(new Set(items.map((item) => item.brandName?.trim() || 'Unknown'))),
+  const orderBrandIds = useMemo(
+    () => Array.from(new Set(items.map((item) => item.brandId).filter((id): id is string => Boolean(id)))),
     [items]
   );
 
@@ -467,12 +468,12 @@ export function ReturnClientOrderDialog({
       CLIENT_ORDER_RETURN_CHANGE_CATALOG_QUERY_KEY,
       user?.id,
       user?.company_id,
-      orderBrandNames.join('|'),
+      orderBrandIds.join('|'),
     ],
-    enabled: open && !!user?.id && !!user?.company_id && orderBrandNames.length > 0,
+    enabled: open && !!user?.id && !!user?.company_id && orderBrandIds.length > 0,
     staleTime: 0,
     refetchOnMount: 'always',
-    queryFn: () => fetchChangeItemCatalog(user!.id, user!.company_id as string, orderBrandNames),
+    queryFn: () => fetchChangeItemCatalog(user!.id, user!.company_id as string, orderBrandIds),
   });
 
   const lines = useMemo(

@@ -8,8 +8,10 @@ Use this file as the source of truth for **tables, cards, list columns, and the 
 
 Do not FK inventory rows to returns — join `company_id` + `variant_id` (+ `agent_id` on agent inventory).
 
-**Migration file (not applied until you run it in the SQL editor):**
+**Migration files (not applied until you run them in the SQL editor):**
 `supabase/migrations/20260911120000_client_order_returns.sql`
+`supabase/migrations/20260914120000_client_order_return_deduct_change_stock.sql`
+`supabase/migrations/20260914140000_client_order_return_line_ids.sql`
 
 UI stays mock (`SHOW_CLIENT_RETURN_MOCK`) until the app is wired to these RPCs.
 
@@ -112,6 +114,8 @@ Stock moves **only when status becomes `posted`** (TL approve, or TL auto-post o
 
 Returned SKUs only. Cap **posted** qty ≤ sold qty on the original ORD line.
 
+Display names (`brand`, `variant`, `type`) are **joined** from `brands` / `variants` / `variant_types`. Do not store name snapshots on these lines.
+
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid PK | |
@@ -119,9 +123,8 @@ Returned SKUs only. Cap **posted** qty ≤ sold qty on the original ORD line.
 | `company_id` | uuid FK → `companies` | |
 | `client_order_item_id` | uuid FK → `client_order_items` | Original sold line |
 | `variant_id` | uuid FK → `variants` | Maps to both inventory tables |
-| `brand_name` | text | Snapshot |
-| `variant_name` | text | Snapshot |
-| `variant_type` | text | Snapshot (flavor, battery, …) |
+| `brand_id` | uuid FK → `brands` | Copied from `variants.brand_id`. Change qty matches this ID. |
+| `variant_type_id` | uuid FK → `variant_types` NULL | Copied from `variants.variant_type_id`. Names are joined, not stored. |
 | `quantity` | integer CHECK &gt; 0 | |
 | `unit_price` | numeric(10,2) | From the ORD line |
 | `line_total` | numeric(10,2) | qty × unit price |
@@ -139,9 +142,8 @@ After a real post: returned SKUs → **Returned** (not sellable). Change-item SK
 | `return_id` | uuid FK → `client_order_returns` | CASCADE |
 | `company_id` | uuid FK → `companies` | |
 | `variant_id` | uuid FK → `variants` | |
-| `brand_name` | text | Snapshot — same brand as returned qty |
-| `variant_name` | text | Snapshot |
-| `variant_type` | text | Snapshot |
+| `brand_id` | uuid FK → `brands` | Same brand as returned qty (ID, not name) |
+| `variant_type_id` | uuid FK → `variant_types` NULL | Copied from `variants.variant_type_id`. Names are joined. |
 | `quantity` | integer CHECK &gt; 0 | Per brand, sum(change) = sum(returned) |
 | `created_at` | timestamptz | |
 
