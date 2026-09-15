@@ -64,6 +64,14 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
+import {
+  buildSaReturnTimeline,
+  formatSaReturnTimelineAt,
+  formatSaReturnType,
+  saReturnTypeBadgeClass,
+  type SaReturnType,
+} from './utils/saReturnDisplay';
+
 type ReturnStatus =
   | 'pending_receive'
   | 'partially_received'
@@ -100,8 +108,15 @@ type ClientReturnRow = {
   id: string;
   request_number: string;
   status: ReturnStatus;
+  return_type: SaReturnType;
   notes: string | null;
   created_at: string;
+  created_by: string | null;
+  source_agent_id: string | null;
+  approved_at: string | null;
+  approved_by: string | null;
+  cancelled_at: string | null;
+  cancelled_by: string | null;
   destination_location_id: string | null;
   signature_url: string | null;
   signature_path: string | null;
@@ -109,6 +124,10 @@ type ClientReturnRow = {
   proof_image_path: string | null;
   client_company: { company_name: string } | null;
   destination_location: { id: string; name: string; is_main: boolean | null } | null;
+  created_by_user: { full_name: string } | null;
+  source_agent: { full_name: string } | null;
+  approved_by_user: { full_name: string } | null;
+  cancelled_by_user: { full_name: string } | null;
   items: Array<{
     id: string;
     warehouse_variant_id: string;
@@ -260,8 +279,16 @@ function mapRow(raw: Record<string, unknown>): ClientReturnRow {
     id: raw.id as string,
     request_number: raw.request_number as string,
     status: raw.status as ReturnStatus,
+    return_type:
+      (raw.return_type as SaReturnType) === 'item_disposal' ? 'item_disposal' : 'my_inventory',
     notes: (raw.notes as string | null) ?? null,
     created_at: raw.created_at as string,
+    created_by: (raw.created_by as string | null) ?? null,
+    source_agent_id: (raw.source_agent_id as string | null) ?? null,
+    approved_at: (raw.approved_at as string | null) ?? null,
+    approved_by: (raw.approved_by as string | null) ?? null,
+    cancelled_at: (raw.cancelled_at as string | null) ?? null,
+    cancelled_by: (raw.cancelled_by as string | null) ?? null,
     destination_location_id: (raw.destination_location_id as string | null) ?? null,
     signature_url: (raw.signature_url as string | null) ?? null,
     signature_path: (raw.signature_path as string | null) ?? null,
@@ -275,6 +302,22 @@ function mapRow(raw: Record<string, unknown>): ClientReturnRow {
           is_main: destinationLocation.is_main ?? null,
         }
       : null,
+    created_by_user: firstRelation(
+      raw.created_by_user as ClientReturnRow['created_by_user'] | ClientReturnRow['created_by_user'][]
+    ),
+    source_agent: firstRelation(
+      raw.source_agent as ClientReturnRow['source_agent'] | ClientReturnRow['source_agent'][]
+    ),
+    approved_by_user: firstRelation(
+      raw.approved_by_user as
+        | ClientReturnRow['approved_by_user']
+        | ClientReturnRow['approved_by_user'][]
+    ),
+    cancelled_by_user: firstRelation(
+      raw.cancelled_by_user as
+        | ClientReturnRow['cancelled_by_user']
+        | ClientReturnRow['cancelled_by_user'][]
+    ),
     items,
     receipts,
   };
@@ -345,8 +388,15 @@ export default function WarehouseClientStockReturnsPage() {
           id,
           request_number,
           status,
+          return_type,
           notes,
           created_at,
+          created_by,
+          source_agent_id,
+          approved_at,
+          approved_by,
+          cancelled_at,
+          cancelled_by,
           destination_location_id,
           signature_url,
           signature_path,
@@ -360,6 +410,10 @@ export default function WarehouseClientStockReturnsPage() {
             name,
             is_main
           ),
+          created_by_user:profiles!created_by ( full_name ),
+          source_agent:profiles!source_agent_id ( full_name ),
+          approved_by_user:profiles!approved_by ( full_name ),
+          cancelled_by_user:profiles!cancelled_by ( full_name ),
           items:standard_account_stock_return_request_items (
             id,
             warehouse_variant_id,
@@ -611,8 +665,11 @@ export default function WarehouseClientStockReturnsPage() {
   }, [inspectOpen, inspectLots]);
 
   const validationError = useMemo(
-    () => getInspectValidationError(inspectItems),
-    [inspectItems]
+    () =>
+      getInspectValidationError(inspectItems, {
+        forceDisposal: selectedReturn?.return_type === 'item_disposal',
+      }),
+    [inspectItems, selectedReturn?.return_type]
   );
 
   const handleInspect = async () => {
@@ -625,12 +682,15 @@ export default function WarehouseClientStockReturnsPage() {
       return;
     }
 
-    const lines = buildInspectPayload(inspectItems);
+    const forceDisposal = selectedReturn.return_type === 'item_disposal';
+    const lines = buildInspectPayload(inspectItems, { forceDisposal });
     if (lines.length === 0) {
       toast({
         variant: 'destructive',
         title: 'Nothing to inspect',
-        description: 'Enter good or damaged quantities for at least one line.',
+        description: forceDisposal
+          ? 'Enter disposal quantities for at least one line.'
+          : 'Enter good or damaged quantities for at least one line.',
       });
       return;
     }
@@ -725,8 +785,8 @@ export default function WarehouseClientStockReturnsPage() {
             Client Stock Returns
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Inspect returns from linked Standard Accounts (RT-YYYYMM-####). Good qty restocks a batch
-            at the chosen location; damaged goes to disposal.
+            Inspect returns from linked Standard Accounts (RT-YYYYMM-####). Stock Return: good restocks
+            a batch, damaged goes to disposal. For Disposal: all inspected qty goes to disposal.
           </p>
         </div>
         <PageManualDialog
@@ -802,7 +862,10 @@ export default function WarehouseClientStockReturnsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Return #</TableHead>
+                  <TableHead>Type</TableHead>
                   <TableHead>Client</TableHead>
+                  <TableHead>From TL</TableHead>
+                  <TableHead>Approved by</TableHead>
                   <TableHead>Destination</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Items</TableHead>
@@ -822,7 +885,32 @@ export default function WarehouseClientStockReturnsPage() {
                   return (
                     <TableRow key={row.id}>
                       <TableCell className="font-medium">{row.request_number}</TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="secondary"
+                          className={`font-medium border ${saReturnTypeBadgeClass(row.return_type)}`}
+                        >
+                          {formatSaReturnType(row.return_type)}
+                        </Badge>
+                      </TableCell>
                       <TableCell>{row.client_company?.company_name ?? '—'}</TableCell>
+                      <TableCell className="text-sm">
+                        {row.source_agent?.full_name ?? '—'}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {row.approved_by_user?.full_name ? (
+                          <div>
+                            <p className="font-medium">{row.approved_by_user.full_name}</p>
+                            {row.approved_at ? (
+                              <p className="text-xs text-muted-foreground">
+                                {format(new Date(row.approved_at), 'MMM d, yyyy')}
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : (
+                          '—'
+                        )}
+                      </TableCell>
                       <TableCell className="text-sm">{destLabel}</TableCell>
                       <TableCell>
                         <Badge variant={STATUS_VARIANT[row.status]}>
@@ -939,6 +1027,25 @@ export default function WarehouseClientStockReturnsPage() {
             <div className="space-y-4 text-sm">
               <div className="grid grid-cols-2 gap-3">
                 <div>
+                  <span className="text-muted-foreground">Type</span>
+                  <div className="mt-1">
+                    <Badge
+                      variant="secondary"
+                      className={`font-medium border ${saReturnTypeBadgeClass(detailReturn.return_type)}`}
+                    >
+                      {formatSaReturnType(detailReturn.return_type)}
+                    </Badge>
+                  </div>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Status</span>
+                  <div className="mt-1">
+                    <Badge variant={STATUS_VARIANT[detailReturn.status]}>
+                      {STATUS_LABELS[detailReturn.status]}
+                    </Badge>
+                  </div>
+                </div>
+                <div>
                   <span className="text-muted-foreground">Client</span>
                   <p className="font-medium">
                     {detailReturn.client_company?.company_name ?? '—'}
@@ -955,16 +1062,57 @@ export default function WarehouseClientStockReturnsPage() {
                   </p>
                 </div>
                 <div>
-                  <span className="text-muted-foreground">Status</span>
-                  <div className="mt-1">
-                    <Badge variant={STATUS_VARIANT[detailReturn.status]}>
-                      {STATUS_LABELS[detailReturn.status]}
-                    </Badge>
-                  </div>
+                  <span className="text-muted-foreground">From team leader</span>
+                  <p>{detailReturn.source_agent?.full_name ?? '—'}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Approved by</span>
+                  <p>
+                    {detailReturn.approved_by_user?.full_name ?? '—'}
+                    {detailReturn.approved_at
+                      ? ` · ${format(new Date(detailReturn.approved_at), 'PPp')}`
+                      : ''}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Submitted by</span>
+                  <p>{detailReturn.created_by_user?.full_name ?? '—'}</p>
                 </div>
                 <div>
                   <span className="text-muted-foreground">Created</span>
                   <p>{format(new Date(detailReturn.created_at), 'PPp')}</p>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="font-medium mb-3">Timeline</h4>
+                <div className="relative ml-2 space-y-4 border-l pl-4">
+                  {buildSaReturnTimeline({
+                    createdAt: detailReturn.created_at,
+                    createdByName: detailReturn.created_by_user?.full_name,
+                    sourceAgentId: detailReturn.source_agent_id,
+                    sourceAgentName: detailReturn.source_agent?.full_name,
+                    approvedAt: detailReturn.approved_at,
+                    approvedByName: detailReturn.approved_by_user?.full_name,
+                    cancelledAt: detailReturn.cancelled_at,
+                    cancelledByName: detailReturn.cancelled_by_user?.full_name,
+                    status: detailReturn.status,
+                    receipts: detailReturn.receipts.map((r) => ({
+                      id: r.id,
+                      received_at: r.received_at,
+                    })),
+                  }).map((event) => (
+                    <div key={event.id} className="relative">
+                      <span className="absolute -left-[1.35rem] top-1.5 h-2.5 w-2.5 rounded-full bg-primary" />
+                      <p className="font-medium text-sm">{event.title}</p>
+                      {event.detail ? (
+                        <p className="text-xs text-muted-foreground">{event.detail}</p>
+                      ) : null}
+                      <p className="text-xs text-muted-foreground">
+                        {formatSaReturnTimelineAt(event.at)}
+                      </p>
+                    </div>
+                  ))}
                 </div>
               </div>
 
@@ -1054,7 +1202,10 @@ export default function WarehouseClientStockReturnsPage() {
                 </div>
               ) : (
                 <p className="text-xs text-muted-foreground">
-                  No inspection recorded yet. Inspect to assign batch and good/damaged qty.
+                  No inspection recorded yet. Inspect to assign batch
+                  {detailReturn.return_type === 'item_disposal'
+                    ? ' and disposal qty.'
+                    : ' and good/damaged qty.'}
                 </p>
               )}
 
@@ -1116,6 +1267,7 @@ export default function WarehouseClientStockReturnsPage() {
             : 'Client company'
         }
         requestNotes={selectedReturn?.notes}
+        forceDisposal={selectedReturn?.return_type === 'item_disposal'}
         items={inspectItems}
         onItemsChange={setInspectItems}
         mainLots={inspectLots}

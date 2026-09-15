@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ImagePlus, Loader2, PenTool, Trash2 } from 'lucide-react';
+import { ImagePlus, Loader2, Package, PackageMinus, PenTool, Trash2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
@@ -45,6 +45,11 @@ type LinkedWarehouseLocation = {
   is_main: boolean;
 };
 
+/** UI-only for now; disposal stock wiring comes with a later migration. */
+export type ReturnStockKind = 'my_inventory' | 'item_disposal';
+
+type DialogStep = 'choose' | 'form';
+
 const ACCEPTED_PROOF_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_PROOF_IMAGE_BYTES = 5 * 1024 * 1024;
 
@@ -85,6 +90,8 @@ export function StandardAccountReturnToWarehouseDialog({
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [step, setStep] = useState<DialogStep>('choose');
+  const [stockKind, setStockKind] = useState<ReturnStockKind>('my_inventory');
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [filter, setFilter] = useState('');
   const [notes, setNotes] = useState('');
@@ -97,6 +104,8 @@ export function StandardAccountReturnToWarehouseDialog({
 
   useEffect(() => {
     if (!open) {
+      setStep('choose');
+      setStockKind('my_inventory');
       setQuantities({});
       setFilter('');
       setNotes('');
@@ -110,9 +119,17 @@ export function StandardAccountReturnToWarehouseDialog({
     }
   }, [open]);
 
+  const selectStockKind = (next: ReturnStockKind) => {
+    setStockKind(next);
+    setQuantities({});
+    setFilter('');
+    setFormError(null);
+    setStep('form');
+  };
+
   const { data: locations = [], isLoading: loadingLocations } = useQuery({
     queryKey: ['sa-return-linked-warehouse-locations', companyId],
-    enabled: open && !!companyId,
+    enabled: open && step === 'form' && !!companyId,
     staleTime: 0,
     refetchOnMount: 'always',
     queryFn: async (): Promise<LinkedWarehouseLocation[]> => {
@@ -127,17 +144,90 @@ export function StandardAccountReturnToWarehouseDialog({
   });
 
   useEffect(() => {
-    if (!open || destinationLocationId || locations.length === 0) return;
+    if (!open || step !== 'form' || destinationLocationId || locations.length === 0) return;
     const main = locations.find((l) => l.is_main);
     setDestinationLocationId(main?.id || locations[0].id);
-  }, [open, locations, destinationLocationId]);
+  }, [open, step, locations, destinationLocationId]);
 
   const { data: rows = [], isLoading } = useQuery({
-    queryKey: ['sa-return-available-inventory', companyId, inventorySource, userId],
-    enabled: open && !!companyId && (inventorySource === 'main' || !!userId),
+    queryKey: ['sa-return-available-inventory', companyId, inventorySource, userId, stockKind],
+    enabled: open && step === 'form' && !!companyId && (inventorySource === 'main' || !!userId),
     staleTime: 0,
     refetchOnMount: 'always',
     queryFn: async (): Promise<InventoryReturnRow[]> => {
+      const mapVariantRow = (
+        variantId: string,
+        availableRaw: number,
+        variantRaw: unknown
+      ): InventoryReturnRow | null => {
+        const available = Math.max(0, Number(availableRaw) || 0);
+        if (available <= 0) return null;
+        const variant = Array.isArray(variantRaw) ? variantRaw[0] : variantRaw;
+        const brand =
+          variant &&
+          (Array.isArray((variant as { brand?: unknown }).brand)
+            ? (variant as { brand: unknown[] }).brand[0]
+            : (variant as { brand?: unknown }).brand);
+        return {
+          variant_id: variantId,
+          brandName: (brand as { name?: string })?.name ?? 'Unknown Brand',
+          variantName: (variant as { name?: string })?.name ?? variantId,
+          variantType: (variant as { variant_type?: string })?.variant_type ?? 'unknown',
+          available,
+        };
+      };
+
+      if (stockKind === 'item_disposal') {
+        if (inventorySource === 'leader') {
+          const { data, error } = await supabase
+            .from('client_return_stock_holds')
+            .select(
+              `
+              variant_id,
+              qty_on_hand,
+              variant:variants (
+                name,
+                variant_type,
+                brand:brands ( name )
+              )
+            `
+            )
+            .eq('company_id', companyId!)
+            .eq('holder_id', userId!)
+            .gt('qty_on_hand', 0);
+          if (error) throw error;
+          return (data ?? [])
+            .map((row) => {
+              const r = row as Record<string, unknown>;
+              return mapVariantRow(String(r.variant_id), Number(r.qty_on_hand) || 0, r.variant);
+            })
+            .filter(Boolean) as InventoryReturnRow[];
+        }
+
+        const { data, error } = await supabase
+          .from('main_inventory')
+          .select(
+            `
+            variant_id,
+            returned_stock,
+            variant:variants (
+              name,
+              variant_type,
+              brand:brands ( name )
+            )
+          `
+          )
+          .eq('company_id', companyId!)
+          .gt('returned_stock', 0);
+        if (error) throw error;
+        return (data ?? [])
+          .map((row) => {
+            const r = row as Record<string, unknown>;
+            return mapVariantRow(String(r.variant_id), Number(r.returned_stock) || 0, r.variant);
+          })
+          .filter(Boolean) as InventoryReturnRow[];
+      }
+
       if (inventorySource === 'leader') {
         const { data, error } = await supabase
           .from('agent_inventory')
@@ -333,6 +423,7 @@ export function StandardAccountReturnToWarehouseDialog({
         p_signature_path: signature.path,
         p_proof_image_url: proof.url,
         p_proof_image_path: proof.path,
+        p_return_type: stockKind,
       });
       if (error) throw error;
       const result = data as {
@@ -394,6 +485,8 @@ export function StandardAccountReturnToWarehouseDialog({
       await queryClient.invalidateQueries({ queryKey: ['sa-return-available-inventory'] });
       await queryClient.invalidateQueries({ queryKey: ['agent-inventory'] });
       await queryClient.invalidateQueries({ queryKey: ['my-inventory'] });
+      await queryClient.invalidateQueries({ queryKey: ['client-return-stock-holds'] });
+      await queryClient.invalidateQueries({ queryKey: ['returned-inventory'] });
       await onSuccess?.();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to create return';
@@ -410,18 +503,105 @@ export function StandardAccountReturnToWarehouseDialog({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
+      {/* Step 1: choose return type */}
+      <Dialog
+        open={open && step === 'choose'}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) onOpenChange(false);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>New return</DialogTitle>
+            <DialogDescription>Choose what you want to return to the warehouse.</DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-3 py-1">
+            <button
+              type="button"
+              className="rounded-lg border p-4 text-left hover:bg-muted/50 hover:border-primary/40 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => selectStockKind('my_inventory')}
+            >
+              <div className="flex items-start gap-3">
+                <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted">
+                  <Package className="h-4 w-4" />
+                </span>
+                <div className="min-w-0 space-y-1">
+                  <h3 className="font-semibold leading-none">Stock Return</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Return stock from your inventory. Super admin must approve before returning to
+                    warehouse.
+                  </p>
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              className="rounded-lg border p-4 text-left hover:bg-muted/50 hover:border-primary/40 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => selectStockKind('item_disposal')}
+            >
+              <div className="flex items-start gap-3">
+                <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted">
+                  <PackageMinus className="h-4 w-4" />
+                </span>
+                <div className="min-w-0 space-y-1">
+                  <h3 className="font-semibold leading-none">For Disposal</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Return stock from client orders. Items are not sellable and will be sent to the
+                    warehouse after Super Admin approval.
+                  </p>
+                </div>
+              </div>
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Step 2: return form */}
+      <Dialog
+        open={open && step === 'form'}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) onOpenChange(false);
+        }}
+      >
         <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>Return stock to warehouse</DialogTitle>
+            <DialogTitle>
+              {stockKind === 'item_disposal'
+                ? 'Return for item disposal'
+                : 'Return stock to warehouse'}
+            </DialogTitle>
             <DialogDescription>
-              {inventorySource === 'leader'
-                ? 'Choose main or a sub-warehouse, select products from your inventory, attach a proof photo, and sign. Your stock and company allocated stock are deducted when submitted; the warehouse inspects good vs damaged and picks the batch lot.'
-                : 'Choose main or a sub-warehouse, select products, attach a proof photo, and sign. Stock is held when submitted; the warehouse inspects good vs damaged and picks the batch lot.'}
+              {stockKind === 'item_disposal'
+                ? 'Select client-returned stock for disposal. Items are not sellable and will be sent to the warehouse after Super Admin approval.'
+                : inventorySource === 'leader'
+                  ? 'Choose main or a sub-warehouse, select products from your inventory, attach a proof photo, and sign. Your stock and company allocated stock are deducted when submitted; the warehouse inspects good vs damaged and picks the batch lot.'
+                  : 'Choose main or a sub-warehouse, select products, attach a proof photo, and sign. Stock is held when submitted; the warehouse inspects good vs damaged and picks the batch lot.'}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3 flex-1 overflow-y-auto min-h-0 pr-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="secondary">
+                {stockKind === 'item_disposal' ? 'For Disposal' : 'Stock Return'}
+              </Badge>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => {
+                  setQuantities({});
+                  setFilter('');
+                  setFormError(null);
+                  setStep('choose');
+                }}
+              >
+                Change type
+              </Button>
+            </div>
+
             <div className="space-y-1.5">
               <Label>Return to location</Label>
               <Select
@@ -464,11 +644,15 @@ export function StandardAccountReturnToWarehouseDialog({
                 <div className="flex items-center justify-center py-12 text-muted-foreground">
                   <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading inventory…
                 </div>
-                  ) : byBrand.length === 0 ? (
+              ) : byBrand.length === 0 ? (
                 <div className="py-12 text-center text-sm text-muted-foreground">
-                  {inventorySource === 'leader'
-                    ? 'No stock in your inventory to return.'
-                    : 'No available stock to return.'}
+                  {stockKind === 'item_disposal'
+                    ? inventorySource === 'leader'
+                      ? 'No returned stock held for disposal.'
+                      : 'No company returned stock for disposal.'
+                    : inventorySource === 'leader'
+                      ? 'No stock in your inventory to return.'
+                      : 'No available stock to return.'}
                 </div>
               ) : (
                 <Accordion type="multiple" className="w-full">

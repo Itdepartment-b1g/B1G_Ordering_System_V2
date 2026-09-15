@@ -56,6 +56,14 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
+import {
+  buildSaReturnTimeline,
+  formatSaReturnTimelineAt,
+  formatSaReturnType,
+  saReturnTypeBadgeClass,
+  type SaReturnType,
+} from './utils/saReturnDisplay';
+
 type ReturnStatus =
   | 'pending_approval'
   | 'pending_receive'
@@ -76,6 +84,7 @@ type SaReturnReceiptLine = {
 
 type SaReturnReceipt = {
   id: string;
+  received_at?: string | null;
   lines: SaReturnReceiptLine[];
 };
 
@@ -83,16 +92,24 @@ type SaReturnRow = {
   id: string;
   request_number: string;
   status: ReturnStatus;
+  return_type: SaReturnType;
   notes: string | null;
   created_at: string;
   created_by: string | null;
   source_agent_id: string | null;
+  approved_at: string | null;
+  approved_by: string | null;
+  cancelled_at: string | null;
+  cancelled_by: string | null;
   signature_url: string | null;
   signature_path: string | null;
   proof_image_url: string | null;
   proof_image_path: string | null;
   destination_location: { name: string; is_main: boolean | null } | null;
   created_by_user: { full_name: string } | null;
+  source_agent: { full_name: string } | null;
+  approved_by_user: { full_name: string } | null;
+  cancelled_by_user: { full_name: string } | null;
   items: Array<{
     id: string;
     warehouse_variant_id: string;
@@ -130,6 +147,15 @@ function firstRelation<T>(value: T | T[] | null | undefined): T | null {
 function mapRow(raw: Record<string, unknown>): SaReturnRow {
   const createdBy = firstRelation(
     raw.created_by_user as SaReturnRow['created_by_user'] | SaReturnRow['created_by_user'][]
+  );
+  const sourceAgent = firstRelation(
+    raw.source_agent as SaReturnRow['source_agent'] | SaReturnRow['source_agent'][]
+  );
+  const approvedByUser = firstRelation(
+    raw.approved_by_user as SaReturnRow['approved_by_user'] | SaReturnRow['approved_by_user'][]
+  );
+  const cancelledByUser = firstRelation(
+    raw.cancelled_by_user as SaReturnRow['cancelled_by_user'] | SaReturnRow['cancelled_by_user'][]
   );
   const destinationLocation = firstRelation(
     raw.destination_location as
@@ -193,24 +219,36 @@ function mapRow(raw: Record<string, unknown>): SaReturnRow {
 
     return {
       id: r.id as string,
+      received_at: (r.received_at as string | null) ?? null,
       lines,
     } satisfies SaReturnReceipt;
   });
+
+  const returnType =
+    (raw.return_type as SaReturnType) === 'item_disposal' ? 'item_disposal' : 'my_inventory';
 
   return {
     id: raw.id as string,
     request_number: raw.request_number as string,
     status: raw.status as ReturnStatus,
+    return_type: returnType,
     notes: (raw.notes as string | null) ?? null,
     created_at: raw.created_at as string,
     created_by: (raw.created_by as string | null) ?? null,
     source_agent_id: (raw.source_agent_id as string | null) ?? null,
+    approved_at: (raw.approved_at as string | null) ?? null,
+    approved_by: (raw.approved_by as string | null) ?? null,
+    cancelled_at: (raw.cancelled_at as string | null) ?? null,
+    cancelled_by: (raw.cancelled_by as string | null) ?? null,
     signature_url: (raw.signature_url as string | null) ?? null,
     signature_path: (raw.signature_path as string | null) ?? null,
     proof_image_url: (raw.proof_image_url as string | null) ?? null,
     proof_image_path: (raw.proof_image_path as string | null) ?? null,
     destination_location: destinationLocation,
     created_by_user: createdBy,
+    source_agent: sourceAgent,
+    approved_by_user: approvedByUser,
+    cancelled_by_user: cancelledByUser,
     items,
     receipts,
   };
@@ -253,10 +291,15 @@ export default function StandardAccountReturnToWarehousePage() {
           id,
           request_number,
           status,
+          return_type,
           notes,
           created_at,
           created_by,
           source_agent_id,
+          approved_at,
+          approved_by,
+          cancelled_at,
+          cancelled_by,
           signature_url,
           signature_path,
           proof_image_url,
@@ -266,6 +309,9 @@ export default function StandardAccountReturnToWarehousePage() {
             is_main
           ),
           created_by_user:profiles!created_by ( full_name ),
+          source_agent:profiles!source_agent_id ( full_name ),
+          approved_by_user:profiles!approved_by ( full_name ),
+          cancelled_by_user:profiles!cancelled_by ( full_name ),
           items:standard_account_stock_return_request_items (
             id,
             warehouse_variant_id,
@@ -278,6 +324,7 @@ export default function StandardAccountReturnToWarehousePage() {
           ),
           receipts:standard_account_stock_return_receipts (
             id,
+            received_at,
             lines:standard_account_stock_return_receipt_lines (
               warehouse_variant_id,
               qty_good,
@@ -563,8 +610,11 @@ export default function StandardAccountReturnToWarehousePage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Return #</TableHead>
+                  <TableHead>Type</TableHead>
                   <TableHead>Destination</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>From TL</TableHead>
+                  <TableHead>Approved by</TableHead>
                   <TableHead>Items</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
@@ -582,11 +632,36 @@ export default function StandardAccountReturnToWarehousePage() {
                   return (
                     <TableRow key={row.id}>
                       <TableCell className="font-medium">{row.request_number}</TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="secondary"
+                          className={`font-medium border ${saReturnTypeBadgeClass(row.return_type)}`}
+                        >
+                          {formatSaReturnType(row.return_type)}
+                        </Badge>
+                      </TableCell>
                       <TableCell className="text-sm">{destLabel}</TableCell>
                       <TableCell>
                         <Badge variant={STATUS_VARIANT[row.status]}>
                           {STATUS_LABELS[row.status]}
                         </Badge>
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {row.source_agent?.full_name ?? '—'}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {row.approved_by_user?.full_name ? (
+                          <div>
+                            <p className="font-medium">{row.approved_by_user.full_name}</p>
+                            {row.approved_at ? (
+                              <p className="text-xs text-muted-foreground">
+                                {format(new Date(row.approved_at), 'MMM d, yyyy')}
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : (
+                          '—'
+                        )}
                       </TableCell>
                       <TableCell className="text-sm">
                         {row.items.length} SKU · {inspected}/{totalQty} inspected
@@ -724,14 +799,15 @@ export default function StandardAccountReturnToWarehousePage() {
             <div className="space-y-4 text-sm">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <span className="text-muted-foreground">Destination</span>
-                  <p className="font-medium">
-                    {detailReturn.destination_location
-                      ? `${detailReturn.destination_location.name}${
-                          detailReturn.destination_location.is_main ? ' (Main)' : ' (Sub)'
-                        }`
-                      : '—'}
-                  </p>
+                  <span className="text-muted-foreground">Type</span>
+                  <div className="mt-1">
+                    <Badge
+                      variant="secondary"
+                      className={`font-medium border ${saReturnTypeBadgeClass(detailReturn.return_type)}`}
+                    >
+                      {formatSaReturnType(detailReturn.return_type)}
+                    </Badge>
+                  </div>
                 </div>
                 <div>
                   <span className="text-muted-foreground">Status</span>
@@ -742,12 +818,69 @@ export default function StandardAccountReturnToWarehousePage() {
                   </div>
                 </div>
                 <div>
+                  <span className="text-muted-foreground">Destination</span>
+                  <p className="font-medium">
+                    {detailReturn.destination_location
+                      ? `${detailReturn.destination_location.name}${
+                          detailReturn.destination_location.is_main ? ' (Main)' : ' (Sub)'
+                        }`
+                      : '—'}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">From team leader</span>
+                  <p>{detailReturn.source_agent?.full_name ?? '—'}</p>
+                </div>
+                <div>
                   <span className="text-muted-foreground">Submitted by</span>
                   <p>{detailReturn.created_by_user?.full_name ?? '—'}</p>
                 </div>
                 <div>
+                  <span className="text-muted-foreground">Approved by</span>
+                  <p>
+                    {detailReturn.approved_by_user?.full_name ?? '—'}
+                    {detailReturn.approved_at
+                      ? ` · ${format(new Date(detailReturn.approved_at), 'PPp')}`
+                      : ''}
+                  </p>
+                </div>
+                <div>
                   <span className="text-muted-foreground">Created</span>
                   <p>{format(new Date(detailReturn.created_at), 'PPp')}</p>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="font-medium mb-3">Timeline</h4>
+                <div className="relative ml-2 space-y-4 border-l pl-4">
+                  {buildSaReturnTimeline({
+                    createdAt: detailReturn.created_at,
+                    createdByName: detailReturn.created_by_user?.full_name,
+                    sourceAgentId: detailReturn.source_agent_id,
+                    sourceAgentName: detailReturn.source_agent?.full_name,
+                    approvedAt: detailReturn.approved_at,
+                    approvedByName: detailReturn.approved_by_user?.full_name,
+                    cancelledAt: detailReturn.cancelled_at,
+                    cancelledByName: detailReturn.cancelled_by_user?.full_name,
+                    status: detailReturn.status,
+                    receipts: detailReturn.receipts
+                      .filter((r) => r.received_at)
+                      .map((r) => ({
+                        id: r.id,
+                        received_at: r.received_at as string,
+                      })),
+                  }).map((event) => (
+                    <div key={event.id} className="relative">
+                      <span className="absolute -left-[1.35rem] top-1.5 h-2.5 w-2.5 rounded-full bg-primary" />
+                      <p className="font-medium text-sm">{event.title}</p>
+                      {event.detail ? (
+                        <p className="text-xs text-muted-foreground">{event.detail}</p>
+                      ) : null}
+                      <p className="text-xs text-muted-foreground">
+                        {formatSaReturnTimelineAt(event.at)}
+                      </p>
+                    </div>
+                  ))}
                 </div>
               </div>
 

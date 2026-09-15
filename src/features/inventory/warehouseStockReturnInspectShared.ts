@@ -56,23 +56,45 @@ export function getMaxQtyForInspectSplit(item: InspectRequestItem, splitId: stri
   return Math.max(0, remaining - otherAllocated);
 }
 
-export function buildInspectPayload(items: InspectRequestItem[]): InspectRpcLine[] {
+export function buildInspectPayload(
+  items: InspectRequestItem[],
+  options?: { forceDisposal?: boolean }
+): InspectRpcLine[] {
+  const forceDisposal = !!options?.forceDisposal;
   return items.flatMap((item) =>
     item.splits
       .filter((split) => getSplitInspectedQty(split) > 0)
-      .map((split) => ({
-        request_item_id: item.request_item_id,
-        destination_lot_id: split.destination_lot_id,
-        qty_good: Math.max(0, split.qty_good),
-        qty_damaged: Math.max(0, split.qty_damaged),
-      }))
+      .map((split) => {
+        const good = Math.max(0, split.qty_good);
+        const damaged = Math.max(0, split.qty_damaged);
+        if (forceDisposal) {
+          return {
+            request_item_id: item.request_item_id,
+            destination_lot_id: split.destination_lot_id,
+            qty_good: 0,
+            qty_damaged: good + damaged,
+          };
+        }
+        return {
+          request_item_id: item.request_item_id,
+          destination_lot_id: split.destination_lot_id,
+          qty_good: good,
+          qty_damaged: damaged,
+        };
+      })
   );
 }
 
-export function getInspectValidationError(items: InspectRequestItem[]): string | null {
-  const payload = buildInspectPayload(items);
+export function getInspectValidationError(
+  items: InspectRequestItem[],
+  options?: { forceDisposal?: boolean }
+): string | null {
+  const forceDisposal = !!options?.forceDisposal;
+  const payload = buildInspectPayload(items, { forceDisposal });
   if (payload.length === 0) {
-    return 'Enter good or damaged quantities for at least one distribution row.';
+    return forceDisposal
+      ? 'Enter disposal quantities for at least one distribution row.'
+      : 'Enter good or damaged quantities for at least one distribution row.';
   }
 
   for (const item of items) {
@@ -87,6 +109,9 @@ export function getInspectValidationError(items: InspectRequestItem[]): string |
       if (qty <= 0) continue;
       if (split.qty_good < 0 || split.qty_damaged < 0) {
         return 'Quantities cannot be negative.';
+      }
+      if (!forceDisposal && split.qty_good > 0 && split.qty_damaged > 0) {
+        // allowed — stock return can split good/damaged on one row
       }
       if (!split.destination_lot_id) {
         return `Select a main warehouse batch for each row with quantity (${item.variant_name}).`;
@@ -103,6 +128,9 @@ export function getInspectValidationError(items: InspectRequestItem[]): string |
   return null;
 }
 
-export function isInspectConfirmReady(items: InspectRequestItem[]): boolean {
-  return getInspectValidationError(items) === null;
+export function isInspectConfirmReady(
+  items: InspectRequestItem[],
+  options?: { forceDisposal?: boolean }
+): boolean {
+  return getInspectValidationError(items, options) === null;
 }
