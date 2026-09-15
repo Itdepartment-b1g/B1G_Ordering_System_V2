@@ -29,6 +29,8 @@ export type WarehouseDisposalSortable = {
   disposed_by_user: { full_name: string } | null;
   fulfillment_po: { po_number: string } | null;
   rebate: { rebate_number: string } | null;
+  sa_return?: { request_number: string; return_type: string | null } | null;
+  stock_return?: { request_number: string } | null;
 };
 
 function getBrandLabel(row: WarehouseDisposalSortable): string {
@@ -45,10 +47,20 @@ function getLocationLabel(row: WarehouseDisposalSortable): string {
 }
 
 function getReferenceLabel(row: WarehouseDisposalSortable): string {
-  return row.fulfillment_po?.po_number ?? row.rebate?.rebate_number ?? '';
+  return (
+    row.sa_return?.request_number ??
+    row.stock_return?.request_number ??
+    row.fulfillment_po?.po_number ??
+    row.rebate?.rebate_number ??
+    ''
+  );
 }
 
 function getSourceLabel(row: WarehouseDisposalSortable): string {
+  if (row.source_type === 'standard_account_return') {
+    if (row.sa_return?.return_type === 'item_disposal') return 'For Disposal';
+    return 'Client stock return';
+  }
   return row.source_type;
 }
 

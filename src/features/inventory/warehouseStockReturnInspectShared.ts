@@ -20,7 +20,7 @@ export type InspectRequestItem = {
 
 export type InspectRpcLine = {
   request_item_id: string;
-  destination_lot_id: string;
+  destination_lot_id?: string | null;
   qty_good: number;
   qty_damaged: number;
 };
@@ -70,14 +70,13 @@ export function buildInspectPayload(
         if (forceDisposal) {
           return {
             request_item_id: item.request_item_id,
-            destination_lot_id: split.destination_lot_id,
             qty_good: 0,
             qty_damaged: good + damaged,
           };
         }
         return {
           request_item_id: item.request_item_id,
-          destination_lot_id: split.destination_lot_id,
+          destination_lot_id: split.destination_lot_id || null,
           qty_good: good,
           qty_damaged: damaged,
         };
@@ -87,14 +86,18 @@ export function buildInspectPayload(
 
 export function getInspectValidationError(
   items: InspectRequestItem[],
-  options?: { forceDisposal?: boolean }
+  options?: { forceDisposal?: boolean; notes?: string | null }
 ): string | null {
   const forceDisposal = !!options?.forceDisposal;
   const payload = buildInspectPayload(items, { forceDisposal });
   if (payload.length === 0) {
     return forceDisposal
-      ? 'Enter disposal quantities for at least one distribution row.'
+      ? 'Enter a disposal quantity for at least one product.'
       : 'Enter good or damaged quantities for at least one distribution row.';
+  }
+
+  if (forceDisposal && !options?.notes?.trim()) {
+    return 'Inspection notes are required for For Disposal.';
   }
 
   for (const item of items) {
@@ -110,18 +113,17 @@ export function getInspectValidationError(
       if (split.qty_good < 0 || split.qty_damaged < 0) {
         return 'Quantities cannot be negative.';
       }
-      if (!forceDisposal && split.qty_good > 0 && split.qty_damaged > 0) {
-        // allowed — stock return can split good/damaged on one row
-      }
-      if (!split.destination_lot_id) {
+      if (!forceDisposal && !split.destination_lot_id) {
         return `Select a main warehouse batch for each row with quantity (${item.variant_name}).`;
       }
     }
   }
 
-  for (const line of payload) {
-    if (!line.destination_lot_id) {
-      return 'Main warehouse batch lot selection is required for each distribution row.';
+  if (!forceDisposal) {
+    for (const line of payload) {
+      if (line.qty_good > 0 && !line.destination_lot_id) {
+        return 'Main warehouse batch lot selection is required for each distribution row.';
+      }
     }
   }
 
@@ -130,7 +132,7 @@ export function getInspectValidationError(
 
 export function isInspectConfirmReady(
   items: InspectRequestItem[],
-  options?: { forceDisposal?: boolean }
+  options?: { forceDisposal?: boolean; notes?: string | null }
 ): boolean {
   return getInspectValidationError(items, options) === null;
 }

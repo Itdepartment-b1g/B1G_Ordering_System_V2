@@ -616,20 +616,28 @@ export default function WarehouseClientStockReturnsPage() {
   };
 
   const openInspect = (row: ClientReturnRow) => {
+    const forceDisposal = row.return_type === 'item_disposal';
     const items: InspectRequestItem[] = row.items
       .filter((i) => i.return_quantity > i.inspected_quantity)
-      .map((i) => ({
-        request_item_id: i.id,
-        variant_id: i.warehouse_variant_id,
-        brand_name: i.variant?.brand?.name ?? '—',
-        variant_name: i.variant?.name ?? '—',
-        variant_type: i.variant?.variant_type ?? '',
-        sub_batch_number: null,
-        sub_expiration_date: null,
-        return_quantity: i.return_quantity,
-        inspected_quantity: i.inspected_quantity,
-        splits: [createInspectSplit()],
-      }));
+      .map((i) => {
+        const remaining = Math.max(0, i.return_quantity - i.inspected_quantity);
+        return {
+          request_item_id: i.id,
+          variant_id: i.warehouse_variant_id,
+          brand_name: i.variant?.brand?.name ?? '—',
+          variant_name: i.variant?.name ?? '—',
+          variant_type: i.variant?.variant_type ?? '',
+          sub_batch_number: null,
+          sub_expiration_date: null,
+          return_quantity: i.return_quantity,
+          inspected_quantity: i.inspected_quantity,
+          splits: [
+            createInspectSplit(
+              forceDisposal ? { qty_damaged: remaining, qty_good: 0 } : undefined
+            ),
+          ],
+        };
+      });
 
     if (items.length === 0) {
       toast({
@@ -668,8 +676,9 @@ export default function WarehouseClientStockReturnsPage() {
     () =>
       getInspectValidationError(inspectItems, {
         forceDisposal: selectedReturn?.return_type === 'item_disposal',
+        notes: inspectNotes,
       }),
-    [inspectItems, selectedReturn?.return_type]
+    [inspectItems, inspectNotes, selectedReturn?.return_type]
   );
 
   const handleInspect = async () => {
@@ -714,13 +723,18 @@ export default function WarehouseClientStockReturnsPage() {
 
       toast({
         title: 'Return inspected',
-        description: result.fully_received
-          ? `${result.request_number ?? 'Return'} fully received.`
-          : `${result.request_number ?? 'Return'} partially inspected.`,
+        description: forceDisposal
+          ? `${result.request_number ?? 'Return'} logged to Disposal log${
+              result.fully_received ? ' (fully received).' : ' (partial).'
+            }`
+          : result.fully_received
+            ? `${result.request_number ?? 'Return'} fully received.`
+            : `${result.request_number ?? 'Return'} partially inspected.`,
       });
       setInspectOpen(false);
       setSelectedReturn(null);
       await queryClient.refetchQueries({ queryKey: ['sa-client-stock-returns'] });
+      await queryClient.invalidateQueries({ queryKey: ['warehouse-inventory-disposals'] });
       await queryClient.invalidateQueries({ queryKey: ['inventory'] });
       await queryClient.invalidateQueries({ queryKey: ['warehouse-batch-aging'] });
     } catch (err: unknown) {
@@ -1202,10 +1216,10 @@ export default function WarehouseClientStockReturnsPage() {
                 </div>
               ) : (
                 <p className="text-xs text-muted-foreground">
-                  No inspection recorded yet. Inspect to assign batch
+                  No inspection recorded yet.{' '}
                   {detailReturn.return_type === 'item_disposal'
-                    ? ' and disposal qty.'
-                    : ' and good/damaged qty.'}
+                    ? 'Inspect to send qty to the Disposal log (no batch).'
+                    : 'Inspect to assign batch and good/damaged qty.'}
                 </p>
               )}
 

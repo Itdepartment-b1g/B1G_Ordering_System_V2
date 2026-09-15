@@ -154,7 +154,7 @@ export function WarehouseStockReturnInspectDialog({
           <DialogTitle>Inspect returned stock — {requestNumber}</DialogTitle>
           <DialogDescription>
             {forceDisposal
-              ? `From ${fromLocationName}. For Disposal returns — all inspected qty goes to disposal (not sellable stock). Pick main batches and enter disposal quantities.`
+              ? `From ${fromLocationName}. For Disposal — qty goes to the Disposal log only (not into warehouse batches). Confirm quantities and add inspection notes if needed.`
               : `From ${fromLocationName}. Sub batch is fixed from submit. Add rows to distribute returned qty across main warehouse batches (and expiry when needed), then split good vs damaged.`}
           </DialogDescription>
         </DialogHeader>
@@ -167,7 +167,57 @@ export function WarehouseStockReturnInspectDialog({
             </div>
           ) : null}
 
-          {loadingLots ? (
+          {forceDisposal ? (
+            items.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">Nothing left to inspect.</p>
+            ) : (
+              <div className="space-y-3">
+                {items.map((item) => {
+                  const remaining = getInspectRemaining(item);
+                  const split = item.splits[0];
+                  const qty = split?.qty_damaged ?? 0;
+
+                  return (
+                    <div
+                      key={item.request_item_id}
+                      className="rounded-lg border p-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"
+                    >
+                      <div className="min-w-0 space-y-1">
+                        <p className="text-sm font-medium">
+                          {item.brand_name} · {item.variant_name}
+                          <span className="text-muted-foreground font-normal">
+                            {' '}
+                            ({item.variant_type})
+                          </span>
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Remaining to dispose: {remaining}
+                        </p>
+                      </div>
+                      <div className="grid gap-1 w-full sm:w-32">
+                        <Label className="text-xs">Disposal qty</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          max={remaining}
+                          className="h-9 text-right"
+                          value={qty || ''}
+                          onChange={(e) => {
+                            if (!split) return;
+                            setSplitDamaged(
+                              item.request_item_id,
+                              split.id,
+                              parseInt(e.target.value, 10) || 0
+                            );
+                          }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )
+          ) : loadingLots ? (
             <p className="text-sm text-muted-foreground text-center py-8">Loading main batch lots…</p>
           ) : items.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-8">Nothing left to inspect.</p>
@@ -226,11 +276,7 @@ export function WarehouseStockReturnInspectDialog({
                           return (
                             <div
                               key={split.id}
-                              className={
-                                forceDisposal
-                                  ? 'grid gap-2 sm:grid-cols-[minmax(200px,1.4fr)_100px_auto] items-end'
-                                  : 'grid gap-2 sm:grid-cols-[minmax(200px,1.4fr)_88px_88px_auto] items-end'
-                              }
+                              className="grid gap-2 sm:grid-cols-[minmax(200px,1.4fr)_88px_88px_auto] items-end"
                             >
                               <div className="grid gap-1">
                                 <Label className="text-xs">Main batch</Label>
@@ -254,79 +300,55 @@ export function WarehouseStockReturnInspectDialog({
                                   </SelectContent>
                                 </Select>
                               </div>
-                              {forceDisposal ? (
-                                <div className="grid gap-1">
-                                  <Label className="text-xs">Disposal qty</Label>
-                                  <Input
-                                    type="number"
-                                    min={0}
-                                    max={maxRow}
-                                    className="h-9 text-right"
-                                    value={split.qty_damaged || ''}
-                                    onChange={(e) =>
-                                      setSplitDamaged(
-                                        item.request_item_id,
-                                        split.id,
-                                        parseInt(e.target.value, 10) || 0
-                                      )
-                                    }
-                                  />
-                                </div>
-                              ) : (
-                                <>
-                                  <div className="grid gap-1">
-                                    <Label className="text-xs">Good</Label>
-                                    <Input
-                                      type="number"
-                                      min={0}
-                                      max={maxRow}
-                                      className="h-9 text-right"
-                                      value={split.qty_good || ''}
-                                      onChange={(e) =>
-                                        setSplitQty(
-                                          item.request_item_id,
-                                          split.id,
-                                          'qty_good',
-                                          parseInt(e.target.value, 10) || 0
-                                        )
-                                      }
-                                    />
-                                  </div>
-                                  <div className="grid gap-1">
-                                    <Label className="text-xs">Damaged</Label>
-                                    <Input
-                                      type="number"
-                                      min={0}
-                                      max={maxRow}
-                                      className="h-9 text-right"
-                                      value={split.qty_damaged || ''}
-                                      onChange={(e) =>
-                                        setSplitQty(
-                                          item.request_item_id,
-                                          split.id,
-                                          'qty_damaged',
-                                          parseInt(e.target.value, 10) || 0
-                                        )
-                                      }
-                                    />
-                                  </div>
-                                </>
-                              )}
+                              <div className="grid gap-1">
+                                <Label className="text-xs">Good</Label>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  max={maxRow}
+                                  className="h-9 text-right"
+                                  value={split.qty_good || ''}
+                                  onChange={(e) =>
+                                    setSplitQty(
+                                      item.request_item_id,
+                                      split.id,
+                                      'qty_good',
+                                      parseInt(e.target.value, 10) || 0
+                                    )
+                                  }
+                                />
+                              </div>
+                              <div className="grid gap-1">
+                                <Label className="text-xs">Damaged</Label>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  max={maxRow}
+                                  className="h-9 text-right"
+                                  value={split.qty_damaged || ''}
+                                  onChange={(e) =>
+                                    setSplitQty(
+                                      item.request_item_id,
+                                      split.id,
+                                      'qty_damaged',
+                                      parseInt(e.target.value, 10) || 0
+                                    )
+                                  }
+                                />
+                              </div>
                               <div className="flex items-center gap-1">
-                                {!forceDisposal && (
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-9 px-2 text-xs"
-                                    disabled={maxRow <= 0}
-                                    onClick={() =>
-                                      setSplitGood(item.request_item_id, split.id, maxRow)
-                                    }
-                                  >
-                                    All good
-                                  </Button>
-                                )}
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-9 px-2 text-xs"
+                                  disabled={maxRow <= 0}
+                                  onClick={() =>
+                                    setSplitGood(item.request_item_id, split.id, maxRow)
+                                  }
+                                >
+                                  All good
+                                </Button>
                                 <Button
                                   type="button"
                                   variant="ghost"
@@ -337,7 +359,7 @@ export function WarehouseStockReturnInspectDialog({
                                     setSplitDamaged(item.request_item_id, split.id, maxRow)
                                   }
                                 >
-                                  {forceDisposal ? 'All qty' : 'All dmg'}
+                                  All dmg
                                 </Button>
                                 <Button
                                   type="button"
@@ -372,8 +394,24 @@ export function WarehouseStockReturnInspectDialog({
           )}
 
           <div className="grid gap-2">
-            <Label>Inspection notes (optional)</Label>
-            <Textarea value={notes} onChange={(e) => onNotesChange(e.target.value)} rows={2} />
+            <Label>
+              {forceDisposal ? (
+                <>
+                  Inspection notes <span className="text-destructive">*</span>
+                </>
+              ) : (
+                'Inspection notes (optional)'
+              )}
+            </Label>
+            <Textarea
+              value={notes}
+              onChange={(e) => onNotesChange(e.target.value)}
+              rows={forceDisposal ? 3 : 2}
+              placeholder={
+                forceDisposal ? 'Required — reason / notes for the Disposal log…' : undefined
+              }
+              required={forceDisposal}
+            />
           </div>
           {validationError && <p className="text-sm text-destructive">{validationError}</p>}
         </div>
@@ -384,13 +422,20 @@ export function WarehouseStockReturnInspectDialog({
           </Button>
           <Button
             onClick={onConfirm}
-            disabled={submitting || loadingLots || !!validationError || items.length === 0}
+            disabled={
+              submitting ||
+              (!forceDisposal && loadingLots) ||
+              !!validationError ||
+              items.length === 0
+            }
           >
             {submitting ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Confirming…
               </>
+            ) : forceDisposal ? (
+              'Confirm disposal'
             ) : (
               'Confirm inspection'
             )}

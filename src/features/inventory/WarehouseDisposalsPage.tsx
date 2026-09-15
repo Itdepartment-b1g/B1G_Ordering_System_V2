@@ -55,6 +55,8 @@ type DisposalRow = {
   disposed_by_user: { full_name: string } | null;
   fulfillment_po: { po_number: string } | null;
   rebate: { rebate_number: string } | null;
+  sa_return: { request_number: string; return_type: string | null } | null;
+  stock_return: { request_number: string } | null;
 };
 
 type LocationOption = {
@@ -68,7 +70,26 @@ const SOURCE_LABELS: Record<string, string> = {
   sub_warehouse_return: 'Sub-warehouse return',
   adjustment: 'Adjustment',
   other: 'Other',
+  standard_account_return: 'Client stock return',
 };
+
+function disposalSourceLabel(row: DisposalRow): string {
+  if (row.source_type === 'standard_account_return') {
+    if (row.sa_return?.return_type === 'item_disposal') return 'For Disposal';
+    return 'Client stock return';
+  }
+  return SOURCE_LABELS[row.source_type] ?? row.source_type;
+}
+
+function disposalReferenceLabel(row: DisposalRow): string {
+  return (
+    row.sa_return?.request_number ??
+    row.stock_return?.request_number ??
+    row.fulfillment_po?.po_number ??
+    row.rebate?.rebate_number ??
+    ''
+  );
+}
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
 const DEFAULT_PAGE_SIZE = PAGE_SIZE_OPTIONS[0];
@@ -111,6 +132,11 @@ type RawDisposalRow = {
   disposed_by_user: { full_name: string } | { full_name: string }[] | null;
   fulfillment_po: { po_number: string } | { po_number: string }[] | null;
   rebate: { rebate_number: string } | { rebate_number: string }[] | null;
+  sa_return:
+    | { request_number: string; return_type: string | null }
+    | { request_number: string; return_type: string | null }[]
+    | null;
+  stock_return: { request_number: string } | { request_number: string }[] | null;
 };
 
 function mapDisposalRow(raw: RawDisposalRow): DisposalRow {
@@ -134,6 +160,8 @@ function mapDisposalRow(raw: RawDisposalRow): DisposalRow {
     disposed_by_user: firstRelation(raw.disposed_by_user),
     fulfillment_po: firstRelation(raw.fulfillment_po),
     rebate: firstRelation(raw.rebate),
+    sa_return: firstRelation(raw.sa_return),
+    stock_return: firstRelation(raw.stock_return),
   };
 }
 
@@ -205,7 +233,14 @@ export default function WarehouseDisposalsPage() {
           ),
           disposed_by_user:profiles!warehouse_inventory_disposals_disposed_by_fkey ( full_name ),
           fulfillment_po:purchase_orders!warehouse_inventory_disposals_fulfillment_po_id_fkey ( po_number ),
-          rebate:key_account_po_rebates!warehouse_inventory_disposals_rebate_id_fkey ( rebate_number )
+          rebate:key_account_po_rebates!warehouse_inventory_disposals_rebate_id_fkey ( rebate_number ),
+          sa_return:standard_account_stock_return_requests!warehouse_inventory_disposals_sa_stock_return_request_id_fkey (
+            request_number,
+            return_type
+          ),
+          stock_return:warehouse_stock_return_requests!warehouse_inventory_disposals_stock_return_request_id_fkey (
+            request_number
+          )
         `
         )
         .eq('company_id', user!.company_id!)
@@ -243,18 +278,19 @@ export default function WarehouseDisposalsPage() {
       const variant = row.variant;
       const brand = extractBrandName(variant?.brand ?? null);
       const variantName = variant?.name ?? '';
-      const poNumber = row.fulfillment_po?.po_number ?? '';
-      const rebateNumber = row.rebate?.rebate_number ?? '';
+      const reference = disposalReferenceLabel(row);
       const locationName = row.warehouse_location?.name ?? '';
       const disposedBy = row.disposed_by_user?.full_name ?? '';
+      const sourceLabel = disposalSourceLabel(row);
 
       return (
         brand.toLowerCase().includes(term) ||
         variantName.toLowerCase().includes(term) ||
-        poNumber.toLowerCase().includes(term) ||
-        rebateNumber.toLowerCase().includes(term) ||
+        reference.toLowerCase().includes(term) ||
         locationName.toLowerCase().includes(term) ||
-        disposedBy.toLowerCase().includes(term)
+        disposedBy.toLowerCase().includes(term) ||
+        sourceLabel.toLowerCase().includes(term) ||
+        row.source_type.toLowerCase().includes(term)
       );
     });
   }, [dateScopedDisposals, searchQuery]);
@@ -303,7 +339,7 @@ export default function WarehouseDisposalsPage() {
 
   const pageTitle = isMainWarehouseUser ? 'Disposal log' : 'Disposal log (your location)';
   const pageDescription = isMainWarehouseUser
-    ? 'Damaged or unsellable units from rebate returns across all warehouse locations.'
+    ? 'Damaged or unsellable units from rebate returns, client For Disposal returns, and other warehouse inspections.'
     : 'Damaged or unsellable units logged for your assigned sub-warehouse.';
 
   return (
@@ -351,7 +387,8 @@ export default function WarehouseDisposalsPage() {
         <CardHeader>
           <CardTitle>Disposed items</CardTitle>
           <CardDescription>
-            Good-condition returns are restocked; damaged units appear here only and are not sellable inventory.
+            Good-condition Stock Returns are restocked. For Disposal returns and damaged units appear
+            here only and are not sellable inventory.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -360,7 +397,7 @@ export default function WarehouseDisposalsPage() {
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 className="pl-9"
-                placeholder="Search brand, variant, PO, rebate, location…"
+                placeholder="Search brand, variant, RT, PO, rebate, location…"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
@@ -401,7 +438,7 @@ export default function WarehouseDisposalsPage() {
           ) : filteredDisposals.length === 0 ? (
             <p className="py-10 text-center text-sm text-muted-foreground">
               {disposals.length === 0
-                ? 'No disposal records yet. Damaged units from rebate return inspection will appear here.'
+                ? 'No disposal records yet. Damaged units and For Disposal client returns will appear here after warehouse inspect.'
                 : 'No disposal records match the selected date range or search.'}
             </p>
           ) : (
@@ -455,7 +492,7 @@ export default function WarehouseDisposalsPage() {
                       onSort={handleSort}
                     />
                     <SortableTableHead
-                      label="PO / Rebate"
+                      label="Reference"
                       sortKey="reference"
                       sortDirection={getTableSortDisplayDirection(sortState, 'reference')}
                       onSort={handleSort}
@@ -492,12 +529,10 @@ export default function WarehouseDisposalsPage() {
                       <TableCell className="text-muted-foreground">{row.variant?.variant_type ?? '—'}</TableCell>
                       <TableCell className="text-right font-medium">{row.quantity}</TableCell>
                       <TableCell>
-                        <Badge variant="secondary">
-                          {SOURCE_LABELS[row.source_type] ?? row.source_type}
-                        </Badge>
+                        <Badge variant="secondary">{disposalSourceLabel(row)}</Badge>
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
-                        {row.fulfillment_po?.po_number ?? row.rebate?.rebate_number ?? '—'}
+                        {disposalReferenceLabel(row) || '—'}
                       </TableCell>
                       <TableCell>{row.disposed_by_user?.full_name ?? '—'}</TableCell>
                       <TableCell className="max-w-[200px] truncate text-muted-foreground" title={row.notes ?? undefined}>
