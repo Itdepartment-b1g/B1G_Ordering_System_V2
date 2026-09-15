@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,22 +16,60 @@ import {
   XCircle,
   Loader2,
   Eye,
+  History,
   AlertCircle,
   ThumbsUp,
   ThumbsDown,
   Edit3,
-  Users,
   Package,
+  Printer,
+  Search,
 } from 'lucide-react';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { useQueryClient, useQuery } from '@tanstack/react-query';
 import type { TLRequestWithDetails } from '@/types/tlStockRequests.types';
+import {
+  DateRangeFilterPopover,
+  type DateRangeFilterValue,
+} from '@/features/shared/components/DateRangeFilterPopover';
+import {
+  DEFAULT_PAGE_SIZE,
+  getListPaginationSlice,
+  ListPagination,
+  type PageSize,
+} from '@/features/shared/components/ListPagination';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import { getDateRangeFromPreset } from '@/lib/dateRangePresets';
+import {
+  groupTlRequests,
+  invalidateTlTransferQueries,
+  mapTlTransferRows,
+  type TLRequestGroup,
+} from './tl-stock-transfer/tlStockTransferShared';
+import {
+  DEFAULT_TL_TRANSFER_SORT_DIRECTION,
+  DEFAULT_TL_TRANSFER_SORT_KEY,
+  filterTlTransferGroups,
+  sortTlTransferGroups,
+  type TlTransferListSortKey,
+} from './tl-stock-transfer/tlStockTransferListHelpers';
+import { useTlTransferRealtime } from './tl-stock-transfer/useTlTransferRealtime';
+import { printTlStockTransferRequest } from './tl-stock-transfer/exportTlTransferPdfs';
+import { TLTransferDetailsDialog } from './tl-stock-transfer/TLTransferDetailsDialog';
+import { TLTransferHistoryDialog } from './tl-stock-transfer/TLTransferHistoryDialog';
+import { TLTransferRowActionsMenu } from './tl-stock-transfer/TLTransferRowActionsMenu';
 
-interface ReviewDialogData extends TLRequestWithDetails {
-  source_available_quantity: number;
-}
+type ReviewLine = TLRequestWithDetails & { source_available_quantity: number };
+type SelectedGroup = Omit<TLRequestGroup, 'items'> & { items: ReviewLine[] };
 
 export default function AdminTLRequestsPage() {
   const { user } = useAuth();
@@ -38,14 +77,23 @@ export default function AdminTLRequestsPage() {
   const queryClient = useQueryClient();
   
   const [activeTab, setActiveTab] = useState('pending');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<TlTransferListSortKey>>(createInitialTableSortCycle);
   const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
-  const [selectedRequest, setSelectedRequest] = useState<ReviewDialogData | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsRequest, setDetailsRequest] = useState<TLRequestWithDetails | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLines, setHistoryLines] = useState<TLRequestWithDetails[]>([]);
+  const [selectedGroup, setSelectedGroup] = useState<SelectedGroup | null>(null);
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [modifyDialogOpen, setModifyDialogOpen] = useState(false);
   
-  const [approvedQuantity, setApprovedQuantity] = useState<number>(0);
-  const [modifiedQuantity, setModifiedQuantity] = useState<number>(0);
+  const [modifiedQtyById, setModifiedQtyById] = useState<Record<string, number>>({});
   const [adminNotes, setAdminNotes] = useState('');
   const [rejectionReason, setRejectionReason] = useState('');
   
@@ -63,12 +111,16 @@ export default function AdminTLRequestsPage() {
           *,
           requester:profiles!requester_leader_id(id, full_name, region, email),
           source:profiles!source_leader_id(id, full_name, region, email),
-          variant:variants(
-            id,
-            name,
-            variant_type,
-            brand_id,
-            brand:brands(name)
+          tdrs:tl_stock_request_tdrs(tdr_number, kind, created_at),
+          items:tl_stock_request_items(
+            *,
+            variant:variants(
+              id,
+              name,
+              variant_type,
+              brand_id,
+              brand:brands(name)
+            )
           )
         `)
         .eq('company_id', user.company_id)
@@ -76,115 +128,185 @@ export default function AdminTLRequestsPage() {
       
       if (error) throw error;
       
-      return (data?.map((req: any) => ({
-        ...req,
-        variant: {
-          id: req.variant.id,
-          name: req.variant.name,
-          type: req.variant.variant_type,
-          brand_id: req.variant.brand_id,
-          brand_name: req.variant.brand.name,
-        },
-      })) || []) as TLRequestWithDetails[];
+      return mapTlTransferRows(data || []);
     },
     enabled: !!user?.company_id && (user?.role === 'admin' || user?.role === 'super_admin'),
+    staleTime: 0,
+    refetchOnMount: 'always',
   });
   
-  // Real-time subscription
-  useEffect(() => {
-    if (!user?.company_id) return;
-    
-    const channel = supabase
-      .channel('admin_tl_stock_requests_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'tl_stock_requests',
-          filter: `company_id=eq.${user.company_id}`,
-        },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ['admin-tl-requests'] });
-        }
-      )
-      .subscribe();
-    
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user?.company_id, queryClient]);
+  useTlTransferRealtime({
+    enabled: !!user?.company_id && (user?.role === 'admin' || user?.role === 'super_admin'),
+    companyId: user?.company_id,
+    channelKey: 'admin',
+  });
   
-  // Filter requests by tab
-  const filteredRequests = useMemo(() => {
+  const groupedRequests = useMemo(() => groupTlRequests(requests), [requests]);
+
+  const tabGroups = useMemo(() => {
     switch (activeTab) {
       case 'pending':
-        return requests.filter((r) => r.status === 'pending_admin');
+        return groupedRequests.filter((group) => group.status === 'pending_admin');
       case 'approved':
-        return requests.filter((r) => r.status === 'pending_source_tl' || r.status === 'pending_receipt' || r.status === 'completed');
+        return groupedRequests.filter((group) =>
+          ['pending_source_tl', 'pending_receipt', 'completed', 'incomplete'].includes(group.status)
+        );
       case 'rejected':
-        return requests.filter((r) => r.status === 'admin_rejected' || r.status === 'source_tl_rejected');
+        return groupedRequests.filter(
+          (group) => group.status === 'admin_rejected' || group.status === 'source_tl_rejected'
+        );
       default:
-        return requests;
+        return groupedRequests;
     }
-  }, [requests, activeTab]);
+  }, [groupedRequests, activeTab]);
+
+  const dateRange = useMemo(
+    () =>
+      getDateRangeFromPreset(
+        dateRangeFilter.preset,
+        dateRangeFilter.customStart,
+        dateRangeFilter.customEnd
+      ),
+    [dateRangeFilter]
+  );
+
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        sortState,
+        DEFAULT_TL_TRANSFER_SORT_KEY,
+        DEFAULT_TL_TRANSFER_SORT_DIRECTION
+      ),
+    [sortState]
+  );
+
+  const filteredGroups = useMemo(
+    () => filterTlTransferGroups(tabGroups, searchQuery, dateRange),
+    [tabGroups, searchQuery, dateRange]
+  );
+
+  const sortedGroups = useMemo(
+    () =>
+      sortTlTransferGroups(
+        filteredGroups,
+        resolvedSortKey,
+        resolvedSortDirection,
+        'requester'
+      ),
+    [filteredGroups, resolvedSortKey, resolvedSortDirection]
+  );
+
+  const { pageCount, safePage, pagedItems } = useMemo(
+    () => getListPaginationSlice(sortedGroups, page, pageSize),
+    [sortedGroups, page, pageSize]
+  );
+
+  useEffect(() => {
+    setPage(0);
+  }, [activeTab, searchQuery, dateRangeFilter, pageSize, sortState]);
   
-  // Stats
   const stats = useMemo(() => {
     return {
-      total: requests.length,
-      pending: requests.filter((r) => r.status === 'pending_admin').length,
-      approved: requests.filter((r) => r.status === 'pending_source_tl' || r.status === 'pending_receipt' || r.status === 'completed').length,
-      rejected: requests.filter((r) => r.status === 'admin_rejected' || r.status === 'source_tl_rejected').length,
+      total: groupedRequests.length,
+      pending: groupedRequests.filter((group) => group.status === 'pending_admin').length,
+      approved: groupedRequests.filter((group) =>
+        ['pending_source_tl', 'pending_receipt', 'completed', 'incomplete'].includes(group.status)
+      ).length,
+      rejected: groupedRequests.filter(
+        (group) => group.status === 'admin_rejected' || group.status === 'source_tl_rejected'
+      ).length,
     };
-  }, [requests]);
+  }, [groupedRequests]);
+
+  const pendingItems = selectedGroup?.items.filter((item) => item.status === 'pending_admin') ?? [];
+  const insufficientItems = pendingItems.filter(
+    (item) => item.source_available_quantity < item.requested_quantity
+  );
+  const canApproveFull = pendingItems.length > 0 && insufficientItems.length === 0;
+  const canApproveModified = pendingItems.some((item) => item.source_available_quantity > 0);
+
+  const handleSort = (key: TlTransferListSortKey) => {
+    setSortState((current) => getNextTableSortCycleState(current, key));
+  };
   
-  // Open review dialog
-  const handleReview = async (request: TLRequestWithDetails) => {
-    // Fetch source TL's available quantity
-    const { data, error } = await supabase
-      .from('agent_inventory')
-      .select('stock')
-      .eq('agent_id', request.source_leader_id)
-      .eq('variant_id', request.variant_id)
-      .maybeSingle();
-    
-    const availableQty = data?.stock || 0;
-    
-    setSelectedRequest({
-      ...request,
-      source_available_quantity: availableQty,
-    });
-    setApprovedQuantity(request.requested_quantity);
-    setModifiedQuantity(Math.min(request.requested_quantity, availableQty));
+  const openDetails = (group: TLRequestGroup) => {
+    setDetailsRequest(group.items[0] ?? null);
+    setDetailsOpen(true);
+  };
+
+  const openHistory = (group: TLRequestGroup) => {
+    setHistoryLines(group.items);
+    setHistoryOpen(true);
+  };
+
+  const handleReview = async (group: TLRequestGroup) => {
+    const variantIds = [...new Set(group.items.map((item) => item.variant_id).filter(Boolean))];
+    const sourceId = group.items[0]?.source_leader_id;
+    let stockRows: { variant_id: string; stock: number }[] = [];
+    if (sourceId && variantIds.length > 0) {
+      const { data } = await supabase
+        .from('agent_inventory')
+        .select('variant_id, stock')
+        .eq('agent_id', sourceId)
+        .in('variant_id', variantIds);
+      stockRows = (data || []) as { variant_id: string; stock: number }[];
+    }
+
+    const stockByVariant = new Map(
+      stockRows.map((row) => [row.variant_id, Number(row.stock || 0)])
+    );
+    const items: ReviewLine[] = group.items.map((item) => ({
+      ...item,
+      source_available_quantity: stockByVariant.get(item.variant_id) || 0,
+    }));
+
+    setSelectedGroup({ ...group, items });
+    setModifiedQtyById(
+      Object.fromEntries(
+        items.map((item) => [
+          item.id,
+          Math.min(item.requested_quantity, stockByVariant.get(item.variant_id) || 0) ||
+            item.requested_quantity,
+        ])
+      )
+    );
     setAdminNotes('');
     setRejectionReason('');
     setReviewDialogOpen(true);
   };
+
+  const runOnPendingItems = async (
+    action: (item: ReviewLine) => Promise<void>
+  ) => {
+    if (!selectedGroup) return;
+    for (const item of pendingItems) {
+      await action(item);
+    }
+  };
   
-  // Approve full request
   const handleApproveFull = async () => {
-    if (!selectedRequest) return;
+    if (!selectedGroup || !canApproveFull) return;
     
     setProcessing(true);
     try {
-      const { data, error } = await supabase.rpc('admin_approve_tl_request', {
-        p_request_id: selectedRequest.id,
-        p_approved_quantity: selectedRequest.requested_quantity,
-        p_notes: adminNotes || null,
+      await runOnPendingItems(async (item) => {
+        const { data, error } = await supabase.rpc('admin_approve_tl_request', {
+          p_request_id: item.id,
+          p_approved_quantity: item.requested_quantity,
+          p_notes: adminNotes || null,
+        });
+        if (error) throw error;
+        if (!data.success) throw new Error(data.error || 'Failed to approve request');
       });
-      
-      if (error) throw error;
-      if (!data.success) throw new Error(data.error || 'Failed to approve request');
       
       toast({
         title: 'Request Approved',
-        description: `Approved ${selectedRequest.requested_quantity} units`,
+        description: `Approved ${pendingItems.length} item(s) for ${selectedGroup.requester.full_name}`,
       });
       
       setApproveDialogOpen(false);
       setReviewDialogOpen(false);
-      queryClient.invalidateQueries({ queryKey: ['admin-tl-requests'] });
+      invalidateTlTransferQueries(queryClient);
     } catch (error: any) {
       console.error('Error approving request:', error);
       toast({
@@ -197,38 +319,57 @@ export default function AdminTLRequestsPage() {
     }
   };
   
-  // Approve modified quantity
   const handleApproveModified = async () => {
-    if (!selectedRequest || modifiedQuantity <= 0) return;
-    
-    if (modifiedQuantity > selectedRequest.source_available_quantity) {
-      toast({
-        title: 'Invalid Quantity',
-        description: 'Approved quantity exceeds available stock',
-        variant: 'destructive',
-      });
-      return;
+    if (!selectedGroup) return;
+
+    for (const item of pendingItems) {
+      const qty = Number(modifiedQtyById[item.id] || 0);
+      if (qty <= 0) {
+        toast({
+          title: 'Invalid Quantity',
+          description: `Enter a quantity greater than 0 for ${item.variant.brand_name} ${item.variant.name}.`,
+          variant: 'destructive',
+        });
+        return;
+      }
+      if (qty > item.requested_quantity) {
+        toast({
+          title: 'Invalid Quantity',
+          description: `Approved qty cannot exceed requested qty for ${item.variant.name}.`,
+          variant: 'destructive',
+        });
+        return;
+      }
+      if (qty > item.source_available_quantity) {
+        toast({
+          title: 'Invalid Quantity',
+          description: `Approved qty exceeds available stock for ${item.variant.name}.`,
+          variant: 'destructive',
+        });
+        return;
+      }
     }
     
     setProcessing(true);
     try {
-      const { data, error } = await supabase.rpc('admin_approve_tl_request', {
-        p_request_id: selectedRequest.id,
-        p_approved_quantity: modifiedQuantity,
-        p_notes: adminNotes || null,
+      await runOnPendingItems(async (item) => {
+        const { data, error } = await supabase.rpc('admin_approve_tl_request', {
+          p_request_id: item.id,
+          p_approved_quantity: Number(modifiedQtyById[item.id] || 0),
+          p_notes: adminNotes || null,
+        });
+        if (error) throw error;
+        if (!data.success) throw new Error(data.error || 'Failed to approve request');
       });
-      
-      if (error) throw error;
-      if (!data.success) throw new Error(data.error || 'Failed to approve request');
       
       toast({
         title: 'Request Approved',
-        description: `Approved ${modifiedQuantity} units (modified from ${selectedRequest.requested_quantity})`,
+        description: `Approved modified quantities for ${pendingItems.length} item(s)`,
       });
       
       setModifyDialogOpen(false);
       setReviewDialogOpen(false);
-      queryClient.invalidateQueries({ queryKey: ['admin-tl-requests'] });
+      invalidateTlTransferQueries(queryClient);
     } catch (error: any) {
       console.error('Error approving request:', error);
       toast({
@@ -241,9 +382,8 @@ export default function AdminTLRequestsPage() {
     }
   };
   
-  // Reject request
   const handleReject = async () => {
-    if (!selectedRequest || !rejectionReason.trim()) {
+    if (!selectedGroup || !rejectionReason.trim()) {
       toast({
         title: 'Rejection Reason Required',
         description: 'Please provide a reason for rejection',
@@ -254,13 +394,14 @@ export default function AdminTLRequestsPage() {
     
     setProcessing(true);
     try {
-      const { data, error } = await supabase.rpc('admin_reject_tl_request', {
-        p_request_id: selectedRequest.id,
-        p_reason: rejectionReason,
+      await runOnPendingItems(async (item) => {
+        const { data, error } = await supabase.rpc('admin_reject_tl_request', {
+          p_request_id: item.id,
+          p_reason: rejectionReason,
+        });
+        if (error) throw error;
+        if (!data.success) throw new Error(data.error || 'Failed to reject request');
       });
-      
-      if (error) throw error;
-      if (!data.success) throw new Error(data.error || 'Failed to reject request');
       
       toast({
         title: 'Request Rejected',
@@ -269,7 +410,7 @@ export default function AdminTLRequestsPage() {
       
       setRejectDialogOpen(false);
       setReviewDialogOpen(false);
-      queryClient.invalidateQueries({ queryKey: ['admin-tl-requests'] });
+      invalidateTlTransferQueries(queryClient);
     } catch (error: any) {
       console.error('Error rejecting request:', error);
       toast({
@@ -296,14 +437,21 @@ export default function AdminTLRequestsPage() {
         return (
           <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200">
             <Clock className="h-3 w-3 mr-1" />
-            Awaiting Source TL
+            Awaiting Dispatch
           </Badge>
         );
       case 'pending_receipt':
         return (
           <Badge variant="secondary" className="bg-purple-50 text-purple-700 border-purple-200">
             <AlertCircle className="h-3 w-3 mr-1" />
-            Pending Receipt
+            In Transit
+          </Badge>
+        );
+      case 'incomplete':
+        return (
+          <Badge variant="secondary" className="bg-orange-50 text-orange-800 border-orange-200">
+            <AlertCircle className="h-3 w-3 mr-1" />
+            Incomplete
           </Badge>
         );
       case 'completed':
@@ -343,8 +491,18 @@ export default function AdminTLRequestsPage() {
     <div className="container mx-auto p-4 space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-bold">Team Leader Stock Requests</h1>
-        <p className="text-muted-foreground">Review and approve stock requests between team leaders</p>
+        <h1 className="text-3xl font-bold">Team Leader Stock Transfers</h1>
+        <p className="text-muted-foreground">
+          Approve requests before the source TL can dispatch. Open any transfer to see TDRs, receive
+          counts, and print receipts when a team leader asks.{' '}
+          <Link
+            to="/inventory/tl-transfer-shortages"
+            className="text-primary underline-offset-4 hover:underline"
+          >
+            Transfer shortages
+          </Link>{' '}
+          are investigated by the dispatching team leader.
+        </p>
       </div>
       
       {/* Statistics */}
@@ -377,9 +535,29 @@ export default function AdminTLRequestsPage() {
       
       {/* Requests Table */}
       <Card>
-        <CardHeader>
-          <CardTitle>Stock Requests</CardTitle>
-          <CardDescription>Review and manage TL stock requests</CardDescription>
+        <CardHeader className="space-y-3">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <CardTitle>Stock Requests</CardTitle>
+              <CardDescription>Review and manage TL stock requests</CardDescription>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
+              <div className="relative w-full sm:w-[240px]">
+                <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search transfer #, TDR, name…"
+                  className="h-9 pl-8"
+                />
+              </div>
+              <DateRangeFilterPopover
+                value={dateRangeFilter}
+                onChange={setDateRangeFilter}
+                triggerClassName="w-full sm:w-[220px] justify-between h-9"
+              />
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -397,70 +575,140 @@ export default function AdminTLRequestsPage() {
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                 </div>
-              ) : filteredRequests.length === 0 ? (
+              ) : tabGroups.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
                   <p>No requests found</p>
                 </div>
+              ) : sortedGroups.length === 0 ? (
+                <p className="py-10 text-center text-sm text-muted-foreground">
+                  No transfers match this search or date range.
+                </p>
               ) : (
-                <div className="border rounded-lg">
+                <div className="space-y-4">
+                <div className="border rounded-lg overflow-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Request #</TableHead>
-                        <TableHead>Requester TL</TableHead>
-                        <TableHead>Source TL</TableHead>
-                        <TableHead>Product</TableHead>
-                        <TableHead>Requested Qty</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Date</TableHead>
+                        <SortableTableHead
+                          label="Request #"
+                          sortKey="request_number"
+                          sortDirection={getTableSortDisplayDirection(sortState, 'request_number')}
+                          onSort={handleSort}
+                        />
+                        <SortableTableHead
+                          label="TDR"
+                          sortKey="tdr_number"
+                          sortDirection={getTableSortDisplayDirection(sortState, 'tdr_number')}
+                          onSort={handleSort}
+                        />
+                        <SortableTableHead
+                          label="Requested by"
+                          sortKey="counterpart"
+                          sortDirection={getTableSortDisplayDirection(sortState, 'counterpart')}
+                          onSort={handleSort}
+                        />
+                        <SortableTableHead
+                          label="To"
+                          sortKey="source"
+                          sortDirection={getTableSortDisplayDirection(sortState, 'source')}
+                          onSort={handleSort}
+                        />
+                        <SortableTableHead
+                          label="Items"
+                          sortKey="item"
+                          sortDirection={getTableSortDisplayDirection(sortState, 'item')}
+                          onSort={handleSort}
+                        />
+                        <SortableTableHead
+                          label="Qty"
+                          sortKey="requested_quantity"
+                          sortDirection={getTableSortDisplayDirection(sortState, 'requested_quantity')}
+                          onSort={handleSort}
+                          className="text-right"
+                        />
+                        <SortableTableHead
+                          label="Status"
+                          sortKey="status"
+                          sortDirection={getTableSortDisplayDirection(sortState, 'status')}
+                          onSort={handleSort}
+                        />
+                        <SortableTableHead
+                          label="Date"
+                          sortKey="created_at"
+                          sortDirection={getTableSortDisplayDirection(sortState, 'created_at')}
+                          onSort={handleSort}
+                        />
                         <TableHead></TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredRequests.map((request) => (
-                        <TableRow key={request.id}>
-                          <TableCell className="font-medium">{request.request_number}</TableCell>
+                      {pagedItems.map((group) => (
+                        <TableRow key={group.request_number}>
+                          <TableCell className="font-medium">{group.request_number}</TableCell>
+                          <TableCell className="font-mono text-sm">{group.tdr_number || '—'}</TableCell>
                           <TableCell>
                             <div>
-                              <p className="font-medium">{request.requester.full_name}</p>
-                              {request.requester.region && (
-                                <p className="text-sm text-muted-foreground">{request.requester.region}</p>
+                              <p className="font-medium">{group.requester.full_name}</p>
+                              {group.requester.region && (
+                                <p className="text-sm text-muted-foreground">{group.requester.region}</p>
                               )}
                             </div>
                           </TableCell>
                           <TableCell>
                             <div>
-                              <p className="font-medium">{request.source.full_name}</p>
-                              {request.source.region && (
-                                <p className="text-sm text-muted-foreground">{request.source.region}</p>
+                              <p className="font-medium">{group.source.full_name}</p>
+                              {group.source.region && (
+                                <p className="text-sm text-muted-foreground">{group.source.region}</p>
                               )}
                             </div>
                           </TableCell>
                           <TableCell>
-                            <div>
-                              <p className="font-medium">{request.variant.brand_name}</p>
-                              <p className="text-sm text-muted-foreground">
-                                {request.variant.name} {request.variant.type}
-                              </p>
-                            </div>
+                            <p className="font-medium">
+                              {group.items[0]?.variant.brand_name} · {group.items[0]?.variant.name}
+                            </p>
+                            <p className="text-sm text-muted-foreground">
+                              {group.items.length === 1
+                                ? group.items[0]?.variant.type
+                                : `${group.items.length} items`}
+                            </p>
                           </TableCell>
-                          <TableCell>{request.requested_quantity}</TableCell>
-                          <TableCell>{getStatusBadge(request.status)}</TableCell>
-                          <TableCell>{new Date(request.created_at).toLocaleDateString()}</TableCell>
-                          <TableCell>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleReview(request)}
-                            >
-                              <Eye className="h-4 w-4" />
-                            </Button>
+                          <TableCell className="text-right tabular-nums">{group.totalRequested}</TableCell>
+                          <TableCell>{getStatusBadge(group.status)}</TableCell>
+                          <TableCell>{new Date(group.created_at).toLocaleDateString()}</TableCell>
+                          <TableCell className="text-right">
+                            <TLTransferRowActionsMenu
+                              onView={() => openDetails(group)}
+                              onHistory={() => openHistory(group)}
+                              onPrint={() => {
+                                void printTlStockTransferRequest(group.items).catch((error: any) => {
+                                  toast({
+                                    title: 'Could not print transfer',
+                                    description: error?.message || 'Failed to open the print view.',
+                                    variant: 'destructive',
+                                  });
+                                });
+                              }}
+                              onReview={
+                                group.status === 'pending_admin'
+                                  ? () => void handleReview(group)
+                                  : undefined
+                              }
+                            />
                           </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
                   </Table>
+                </div>
+                <ListPagination
+                  pageSize={pageSize}
+                  safePage={safePage}
+                  pageCount={pageCount}
+                  onPageSizeChange={setPageSize}
+                  onPrevious={() => setPage(Math.max(0, safePage - 1))}
+                  onNext={() => setPage(Math.min(pageCount - 1, safePage + 1))}
+                />
                 </div>
               )}
             </TabsContent>
@@ -470,116 +718,185 @@ export default function AdminTLRequestsPage() {
       
       {/* Review Dialog */}
       <Dialog open={reviewDialogOpen} onOpenChange={setReviewDialogOpen}>
-        <DialogContent className="max-w-4xl">
-          <DialogHeader>
-            <DialogTitle>Review Stock Request</DialogTitle>
-            <DialogDescription>Compare and approve stock request</DialogDescription>
+        <DialogContent className="flex max-h-[90vh] w-[95vw] max-w-5xl flex-col gap-0 overflow-hidden p-0">
+            <DialogHeader className="shrink-0 space-y-1 border-b px-6 py-5 pr-12 text-left">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="space-y-1">
+                <DialogTitle>Review Stock Request</DialogTitle>
+                <DialogDescription>
+                  {selectedGroup
+                    ? `${selectedGroup.request_number} · ${selectedGroup.items.length} item(s)`
+                    : 'Compare and approve stock request'}
+                </DialogDescription>
+              </div>
+              {selectedGroup ? (
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openHistory(selectedGroup)}
+                  >
+                    <History className="mr-1 h-4 w-4" />
+                    History
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openDetails(selectedGroup)}
+                  >
+                    <Eye className="mr-1 h-4 w-4" />
+                    View TDRs
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      void printTlStockTransferRequest(selectedGroup.items).catch((error: any) => {
+                        toast({
+                          title: 'Could not print transfer',
+                          description: error?.message || 'Failed to open the print view.',
+                          variant: 'destructive',
+                        });
+                      });
+                    }}
+                  >
+                    <Printer className="mr-1 h-4 w-4" />
+                    Print transfer
+                  </Button>
+                </div>
+              ) : null}
+            </div>
           </DialogHeader>
-          {selectedRequest && (
-            <div className="space-y-6">
-              {/* Request Info */}
-              <div className="grid grid-cols-2 gap-4 p-4 bg-secondary rounded-lg">
+          {selectedGroup && (
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5">
+              <div className="grid grid-cols-2 gap-4 rounded-lg bg-secondary p-4 text-sm lg:grid-cols-4">
                 <div>
                   <Label className="text-muted-foreground">Request Number</Label>
-                  <p className="font-medium">{selectedRequest.request_number}</p>
+                  <p className="font-medium font-mono">{selectedGroup.request_number}</p>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Latest TDR</Label>
+                  <p className="font-medium font-mono">{selectedGroup.tdr_number || '—'}</p>
                 </div>
                 <div>
                   <Label className="text-muted-foreground">Status</Label>
-                  <div className="mt-1">{getStatusBadge(selectedRequest.status)}</div>
+                  <div className="mt-1">{getStatusBadge(selectedGroup.status)}</div>
                 </div>
                 <div>
-                  <Label className="text-muted-foreground">Product</Label>
-                  <p className="font-medium">{selectedRequest.variant.brand_name}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {selectedRequest.variant.name} {selectedRequest.variant.type}
+                  <Label className="text-muted-foreground">Requested by</Label>
+                  <p className="font-medium">{selectedGroup.requester.full_name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {selectedGroup.requester.region || 'No region'} · {selectedGroup.requester.email}
                   </p>
                 </div>
                 <div>
-                  <Label className="text-muted-foreground">Date</Label>
-                  <p className="font-medium">{new Date(selectedRequest.created_at).toLocaleString()}</p>
+                  <Label className="text-muted-foreground">To</Label>
+                  <p className="font-medium">{selectedGroup.source.full_name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {selectedGroup.source.region || 'No region'} · {selectedGroup.source.email}
+                  </p>
+                </div>
+              </div>
+
+              {selectedGroup.requester_notes ? (
+                <div className="rounded-lg border bg-muted/20 px-4 py-3 text-sm">
+                  <p className="font-medium">Requester notes</p>
+                  <p className="mt-1 whitespace-pre-wrap text-muted-foreground">
+                    {selectedGroup.requester_notes}
+                  </p>
+                </div>
+              ) : null}
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-sm font-semibold">Requested items</h3>
+                  <p className="text-xs text-muted-foreground">
+                    {selectedGroup.items.length} item{selectedGroup.items.length === 1 ? '' : 's'} ·{' '}
+                    {selectedGroup.totalRequested} units
+                  </p>
+                </div>
+                <div className="max-h-[42vh] overflow-auto rounded-lg border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead className="min-w-[220px] bg-muted/40">Item</TableHead>
+                        <TableHead className="bg-muted/40 text-right">Requested</TableHead>
+                        <TableHead className="bg-muted/40 text-right">Source stock</TableHead>
+                        <TableHead className="bg-muted/40 text-right">Approved</TableHead>
+                        <TableHead className="bg-muted/40">Availability</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {selectedGroup.items.map((item) => {
+                        const enough = item.source_available_quantity >= item.requested_quantity;
+                        return (
+                          <TableRow key={item.id}>
+                            <TableCell>
+                              <p className="font-medium">
+                                {item.variant.brand_name} · {item.variant.name}
+                              </p>
+                              <p className="text-xs text-muted-foreground">{item.variant.type}</p>
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums font-medium">
+                              {item.requested_quantity}
+                            </TableCell>
+                            <TableCell
+                              className={`text-right tabular-nums font-medium ${
+                                enough ? 'text-green-700' : 'text-red-700'
+                              }`}
+                            >
+                              {item.source_available_quantity}
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {item.admin_approved_quantity ?? '—'}
+                            </TableCell>
+                            <TableCell>
+                              {enough ? (
+                                <Badge
+                                  variant="outline"
+                                  className="bg-green-50 text-green-700 border-green-200"
+                                >
+                                  In stock
+                                </Badge>
+                              ) : (
+                                <Badge
+                                  variant="outline"
+                                  className="bg-red-50 text-red-700 border-red-200"
+                                >
+                                  Short {item.requested_quantity - item.source_available_quantity}
+                                </Badge>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
                 </div>
               </div>
               
-              {/* Side-by-Side Comparison */}
-              <div className="grid grid-cols-2 gap-4">
-                {/* Requester TL */}
-                <Card>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-lg flex items-center gap-2">
-                      <Users className="h-5 w-5" />
-                      Requester: {selectedRequest.requester.full_name}
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    <div>
-                      <Label className="text-muted-foreground">Region</Label>
-                      <p className="font-medium">{selectedRequest.requester.region || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground">Email</Label>
-                      <p className="text-sm">{selectedRequest.requester.email}</p>
-                    </div>
-                    <div className="pt-4 border-t">
-                      <Label className="text-muted-foreground">Requested Quantity</Label>
-                      <p className="text-3xl font-bold text-blue-600">{selectedRequest.requested_quantity}</p>
-                    </div>
-                  </CardContent>
-                </Card>
-                
-                {/* Source TL */}
-                <Card>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-lg flex items-center gap-2">
-                      <Package className="h-5 w-5" />
-                      Source: {selectedRequest.source.full_name}
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    <div>
-                      <Label className="text-muted-foreground">Region</Label>
-                      <p className="font-medium">{selectedRequest.source.region || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground">Email</Label>
-                      <p className="text-sm">{selectedRequest.source.email}</p>
-                    </div>
-                    <div className="pt-4 border-t">
-                      <Label className="text-muted-foreground">Available Quantity</Label>
-                      <p
-                        className={`text-3xl font-bold ${
-                          selectedRequest.source_available_quantity >= selectedRequest.requested_quantity
-                            ? 'text-green-600'
-                            : 'text-red-600'
-                        }`}
-                      >
-                        {selectedRequest.source_available_quantity}
-                      </p>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-              
-              {/* Validation Alert */}
-              {selectedRequest.source_available_quantity < selectedRequest.requested_quantity && (
+              {insufficientItems.length > 0 && selectedGroup.status === 'pending_admin' && (
                 <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-lg">
                   <AlertCircle className="h-5 w-5 text-red-600 mt-0.5" />
                   <div className="flex-1">
-                    <p className="font-medium text-red-900">Insufficient Stock</p>
+                    <p className="font-medium text-red-900">Insufficient stock on {insufficientItems.length} item(s)</p>
                     <p className="text-sm text-red-700">
-                      Cannot approve full request: Source TL has only {selectedRequest.source_available_quantity}{' '}
-                      units available, but {selectedRequest.requested_quantity} units were requested.
+                      Approve Full is disabled. Use Approve Modified to send only what the source TL
+                      currently holds.
                     </p>
                   </div>
                 </div>
               )}
               
-              {/* Actions */}
-              {selectedRequest.status === 'pending_admin' && (
+              {selectedGroup.status === 'pending_admin' && (
                 <div className="flex gap-2">
                   <Button
                     variant="outline"
                     className="flex-1"
-                    disabled={selectedRequest.source_available_quantity < selectedRequest.requested_quantity}
+                    disabled={!canApproveFull}
                     onClick={() => setApproveDialogOpen(true)}
                   >
                     <ThumbsUp className="mr-2 h-4 w-4" />
@@ -588,7 +905,7 @@ export default function AdminTLRequestsPage() {
                   <Button
                     variant="outline"
                     className="flex-1"
-                    disabled={selectedRequest.source_available_quantity === 0}
+                    disabled={!canApproveModified}
                     onClick={() => setModifyDialogOpen(true)}
                   >
                     <Edit3 className="mr-2 h-4 w-4" />
@@ -604,19 +921,18 @@ export default function AdminTLRequestsPage() {
                   </Button>
                 </div>
               )}
-              
-              {/* Additional Info */}
-              {selectedRequest.admin_notes && (
+
+              {selectedGroup.admin_notes && (
                 <div>
                   <Label className="text-muted-foreground">Admin Notes</Label>
-                  <p className="text-sm mt-1">{selectedRequest.admin_notes}</p>
+                  <p className="text-sm mt-1">{selectedGroup.admin_notes}</p>
                 </div>
               )}
               
-              {selectedRequest.rejection_reason && (
+              {selectedGroup.rejection_reason && (
                 <div>
                   <Label className="text-muted-foreground text-destructive">Rejection Reason</Label>
-                  <p className="text-sm mt-1 text-destructive">{selectedRequest.rejection_reason}</p>
+                  <p className="text-sm mt-1 text-destructive">{selectedGroup.rejection_reason}</p>
                 </div>
               )}
             </div>
@@ -630,10 +946,11 @@ export default function AdminTLRequestsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Approve Full Request</AlertDialogTitle>
             <AlertDialogDescription>
-              {selectedRequest && (
+              {selectedGroup && (
                 <>
-                  Approve {selectedRequest.requested_quantity} units for {selectedRequest.requester.full_name}?
-                  The request will be forwarded to {selectedRequest.source.full_name} for final approval.
+                  Approve all requested quantities for {selectedGroup.requester.full_name}?{' '}
+                  {selectedGroup.items.length} item(s), {selectedGroup.totalRequested} units total.
+                  The request will be forwarded to {selectedGroup.source.full_name} for dispatch.
                 </>
               )}
             </AlertDialogDescription>
@@ -665,30 +982,55 @@ export default function AdminTLRequestsPage() {
       
       {/* Approve Modified Dialog */}
       <AlertDialog open={modifyDialogOpen} onOpenChange={setModifyDialogOpen}>
-        <AlertDialogContent>
+        <AlertDialogContent className="max-w-2xl">
           <AlertDialogHeader>
             <AlertDialogTitle>Approve Modified Quantity</AlertDialogTitle>
             <AlertDialogDescription>
-              {selectedRequest && (
-                <>
-                  Modify the approved quantity (max: {selectedRequest.source_available_quantity} available)
-                </>
-              )}
+              Set an approved quantity for each item. It cannot exceed requested qty or source stock.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Approved Quantity</Label>
-              <Input
-                type="number"
-                min="1"
-                max={selectedRequest?.source_available_quantity || 0}
-                value={modifiedQuantity}
-                onChange={(e) => setModifiedQuantity(parseInt(e.target.value) || 0)}
-              />
-              <p className="text-xs text-muted-foreground">
-                Original request: {selectedRequest?.requested_quantity} units
-              </p>
+            <div className="max-h-64 overflow-auto rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Item</TableHead>
+                    <TableHead className="text-right">Requested</TableHead>
+                    <TableHead className="text-right">Available</TableHead>
+                    <TableHead className="w-28">Approve</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {pendingItems.map((item) => (
+                    <TableRow key={item.id}>
+                      <TableCell>
+                        <p className="font-medium">
+                          {item.variant.brand_name} · {item.variant.name}
+                        </p>
+                        <p className="text-xs text-muted-foreground">{item.variant.type}</p>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{item.requested_quantity}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {item.source_available_quantity}
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={Math.min(item.requested_quantity, item.source_available_quantity)}
+                          value={modifiedQtyById[item.id] ?? ''}
+                          onChange={(e) =>
+                            setModifiedQtyById((prev) => ({
+                              ...prev,
+                              [item.id]: parseInt(e.target.value, 10) || 0,
+                            }))
+                          }
+                        />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
             <div className="space-y-2">
               <Label>Notes (Optional)</Label>
@@ -722,7 +1064,8 @@ export default function AdminTLRequestsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Reject Request</AlertDialogTitle>
             <AlertDialogDescription>
-              Provide a reason for rejecting this stock request. The requester will be notified.
+              Provide a reason for rejecting this stock request. All items on the transfer will be
+              rejected and the requester will be notified.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-2">
@@ -754,6 +1097,23 @@ export default function AdminTLRequestsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <TLTransferDetailsDialog
+        open={detailsOpen}
+        request={detailsRequest}
+        allRequests={requests}
+        onOpenChange={(open) => {
+          setDetailsOpen(open);
+          if (!open) setDetailsRequest(null);
+        }}
+      />
+      <TLTransferHistoryDialog
+        open={historyOpen}
+        lines={historyLines}
+        onOpenChange={(open) => {
+          setHistoryOpen(open);
+          if (!open) setHistoryLines([]);
+        }}
+      />
     </div>
   );
 }

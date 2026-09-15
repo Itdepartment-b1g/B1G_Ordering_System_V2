@@ -1,1073 +1,785 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { SignatureCanvas } from '@/components/ui/signature-canvas';
-import {
-  Package,
-  Clock,
-  CheckCircle2,
-  XCircle,
-  Loader2,
-  Plus,
-  Search,
-  Users,
-  ShoppingCart,
-  Trash2,
-  FileText,
-  Eye,
-  AlertCircle,
-} from 'lucide-react';
-import { useAuth } from '@/features/auth';
-import { useToast } from '@/hooks/use-toast';
+import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { Loader2, Package, Plus, Search } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { useQueryClient, useQuery } from '@tanstack/react-query';
-import type { TLStockRequest, TLRequestWithDetails, RequestCartItem } from '@/types/tlStockRequests.types';
+import { useAuth } from '@/features/auth';
+import { usePermissions } from '@/hooks/usePermissions';
+import { useToast } from '@/hooks/use-toast';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  DateRangeFilterPopover,
+  type DateRangeFilterValue,
+} from '@/features/shared/components/DateRangeFilterPopover';
+import {
+  DEFAULT_PAGE_SIZE,
+  getListPaginationSlice,
+  ListPagination,
+  type PageSize,
+} from '@/features/shared/components/ListPagination';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import { getDatePresetLabel, getDateRangeFromPreset } from '@/lib/dateRangePresets';
+import type { TLRequestStatus, TLRequestWithDetails } from '@/types/tlStockRequests.types';
+import { CreateTLStockTransferDialog } from './tl-stock-transfer/CreateTLStockTransferDialog';
+import { TLStockReceiveDialog } from './tl-stock-transfer/TLStockReceiveDialog';
+import { TLTransferDetailsDialog } from './tl-stock-transfer/TLTransferDetailsDialog';
+import { TLTransferHistoryDialog } from './tl-stock-transfer/TLTransferHistoryDialog';
+import IncomingTLRequestsSection from './components/IncomingTLRequestsSection';
+import {
+  TL_REQUEST_SELECT,
+  groupTlRequests,
+  mapTlTransferRows,
+  tlDispatchShortfallSummary,
+  tlRemainingToReceive,
+  tlStatusLabel,
+  type TLRequestGroup,
+} from './tl-stock-transfer/tlStockTransferShared';
+import { fetchIncomingTlTransfers, useTlTransferRealtime } from './tl-stock-transfer/useTlTransferRealtime';
+import { TLTransferLostItemsPanel } from './tl-stock-transfer/TLTransferLostItemsPanel';
+import { useTlLostItemTabCount } from './tl-stock-transfer/tlTransferLostItems';
+import { TLTransferRowActionsMenu } from './tl-stock-transfer/TLTransferRowActionsMenu';
+import { printTlStockTransferRequest } from './tl-stock-transfer/exportTlTransferPdfs';
+import {
+  DEFAULT_TL_TRANSFER_SORT_DIRECTION,
+  DEFAULT_TL_TRANSFER_SORT_KEY,
+  filterTlTransferGroups,
+  sortTlTransferGroups,
+  type TlTransferCounterpartField,
+  type TlTransferListSortKey,
+} from './tl-stock-transfer/tlStockTransferListHelpers';
 
-interface Manager {
-  id: string;
-  full_name: string;
+function statusBadgeClass(status: TLRequestStatus | string) {
+  switch (status) {
+    case 'pending_admin':
+      return 'bg-yellow-50 text-yellow-800 border-yellow-200';
+    case 'pending_source_tl':
+    case 'admin_approved':
+      return 'bg-blue-50 text-blue-800 border-blue-200';
+    case 'pending_receipt':
+      return 'bg-purple-50 text-purple-800 border-purple-200';
+    case 'completed':
+      return 'bg-green-50 text-green-800 border-green-200';
+    case 'incomplete':
+      return 'bg-orange-50 text-orange-800 border-orange-200';
+    case 'admin_rejected':
+    case 'source_tl_rejected':
+    case 'cancelled':
+      return 'bg-red-50 text-red-800 border-red-200';
+    default:
+      return '';
+  }
 }
 
-interface TeamLeader {
-  id: string;
-  full_name: string;
-  region: string | null;
-}
+type TransferTab = 'incoming' | 'dispatched' | 'mine' | 'lost';
 
-interface SourceInventoryItem {
-  variant_id: string;
-  variant_name: string;
-  variant_type: string;
-  brand_name: string;
-  brand_id: string;
+function TransferGroupsTable({
+  groups,
+  counterpartLabel,
+  counterpartField,
+  sortState,
+  onSort,
+  onPrint,
+  onView,
+  onHistory,
+  onReceive,
+}: {
+  groups: TLRequestGroup[];
+  counterpartLabel: string;
+  counterpartField: TlTransferCounterpartField;
+  sortState: TableSortCycleState<TlTransferListSortKey>;
+  onSort: (key: TlTransferListSortKey) => void;
+  onPrint: (group: TLRequestGroup) => void;
+  onView: (group: TLRequestGroup) => void;
+  onHistory: (group: TLRequestGroup) => void;
+  onReceive?: (group: TLRequestGroup) => void;
+}) {
+  return (
+    <div className="border rounded-lg overflow-auto">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <SortableTableHead
+              label="Transfer #"
+              sortKey="request_number"
+              sortDirection={getTableSortDisplayDirection(sortState, 'request_number')}
+              onSort={onSort}
+            />
+            <SortableTableHead
+              label="TDR"
+              sortKey="tdr_number"
+              sortDirection={getTableSortDisplayDirection(sortState, 'tdr_number')}
+              onSort={onSort}
+            />
+            <SortableTableHead
+              label={counterpartLabel}
+              sortKey="counterpart"
+              sortDirection={getTableSortDisplayDirection(sortState, 'counterpart')}
+              onSort={onSort}
+            />
+            <SortableTableHead
+              label="Item"
+              sortKey="item"
+              sortDirection={getTableSortDisplayDirection(sortState, 'item')}
+              onSort={onSort}
+            />
+            <SortableTableHead
+              label="Requested"
+              sortKey="requested_quantity"
+              sortDirection={getTableSortDisplayDirection(sortState, 'requested_quantity')}
+              onSort={onSort}
+              className="text-right"
+            />
+            <SortableTableHead
+              label="Dispatched"
+              sortKey="dispatched_quantity"
+              sortDirection={getTableSortDisplayDirection(sortState, 'dispatched_quantity')}
+              onSort={onSort}
+              className="text-right"
+            />
+            <SortableTableHead
+              label="Received"
+              sortKey="received_quantity"
+              sortDirection={getTableSortDisplayDirection(sortState, 'received_quantity')}
+              onSort={onSort}
+              className="text-right"
+            />
+            <SortableTableHead
+              label="Status"
+              sortKey="status"
+              sortDirection={getTableSortDisplayDirection(sortState, 'status')}
+              onSort={onSort}
+            />
+            <SortableTableHead
+              label="Date"
+              sortKey="created_at"
+              sortDirection={getTableSortDisplayDirection(sortState, 'created_at')}
+              onSort={onSort}
+            />
+            <TableHead />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {groups.map((group) => {
+            const first = group.items[0];
+            const canReceive =
+              !!onReceive &&
+              group.items.some(
+                (item) => item.status === 'pending_receipt' && tlRemainingToReceive(item) > 0
+              );
+            const dispatchShort = group.items
+              .map((item) => tlDispatchShortfallSummary(item))
+              .find((summary) => summary?.reasonLabel);
+            const hasDispatched = group.items.some((item) => item.dispatched_quantity != null);
+            const hasReceived = group.items.some((item) => item.received_quantity != null);
+            const counterpart =
+              counterpartField === 'requester'
+                ? group.requester.full_name
+                : group.source.full_name;
+            return (
+              <TableRow key={group.request_number}>
+                <TableCell className="font-medium">{group.request_number}</TableCell>
+                <TableCell className="font-mono text-sm">{group.tdr_number || '—'}</TableCell>
+                <TableCell>{counterpart}</TableCell>
+                <TableCell>
+                  <p className="font-medium">
+                    {first?.variant.brand_name} · {first?.variant.name}
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {group.items.length === 1
+                      ? first?.variant.type
+                      : `${group.items.length} items`}
+                  </p>
+                </TableCell>
+                <TableCell className="text-right tabular-nums">{group.totalRequested}</TableCell>
+                <TableCell className="text-right">
+                  <span className="tabular-nums">{hasDispatched ? group.totalDispatched : '—'}</span>
+                  {dispatchShort?.reasonLabel ? (
+                    <p className="text-xs font-normal text-amber-800">
+                      {dispatchShort.reasonLabel}
+                    </p>
+                  ) : null}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {hasReceived ? group.totalReceived : '—'}
+                </TableCell>
+                <TableCell>
+                  <Badge variant="secondary" className={statusBadgeClass(group.status)}>
+                    {tlStatusLabel(group.status)}
+                  </Badge>
+                </TableCell>
+                <TableCell>{new Date(group.created_at).toLocaleDateString()}</TableCell>
+                <TableCell className="text-right">
+                  <TLTransferRowActionsMenu
+                    onView={() => onView(group)}
+                    onHistory={() => onHistory(group)}
+                    onPrint={() => onPrint(group)}
+                    onReceive={canReceive ? () => onReceive?.(group) : undefined}
+                  />
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </div>
+  );
 }
 
 export default function TLStockRequestPage() {
   const { user } = useAuth();
+  const { hasWarehouseHubLink, hasWarehouseHubLinkLoading } = usePermissions();
   const { toast } = useToast();
-  const queryClient = useQueryClient();
-  
-  // Selection states
-  const [selectedManagerId, setSelectedManagerId] = useState<string>('');
-  const [selectedSourceTLId, setSelectedSourceTLId] = useState<string>('');
-  const [selectedSourceTL, setSelectedSourceTL] = useState<TeamLeader | null>(null);
-  
-  // Search and cart
+  const [createOpen, setCreateOpen] = useState(false);
+  const [viewOpen, setViewOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [receiveOpen, setReceiveOpen] = useState(false);
+  const [selected, setSelected] = useState<TLRequestWithDetails | null>(null);
+  const [historyLines, setHistoryLines] = useState<TLRequestWithDetails[]>([]);
+  const [tab, setTab] = useState<TransferTab>();
   const [searchQuery, setSearchQuery] = useState('');
-  const [cart, setCart] = useState<RequestCartItem[]>([]);
-  
-  // Dialogs
-  const [viewDialogOpen, setViewDialogOpen] = useState(false);
-  const [selectedRequest, setSelectedRequest] = useState<TLRequestWithDetails | null>(null);
-  const [receiptDialogOpen, setReceiptDialogOpen] = useState(false);
-  const [requestToReceive, setRequestToReceive] = useState<TLRequestWithDetails | null>(null);
-  const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false);
-  const [showSignatureModal, setShowSignatureModal] = useState(false);
-  
-  // Loading states
-  const [submitting, setSubmitting] = useState(false);
-  const [receiving, setReceiving] = useState(false);
-  
-  // Signature
-  const [signatureDataUrl, setSignatureDataUrl] = useState<string>('');
-  
-  // Fetch managers
-  const { data: managers = [], isLoading: managersLoading } = useQuery({
-    queryKey: ['managers', user?.company_id],
-    queryFn: async () => {
-      if (!user?.company_id) return [];
-      
-      const { data, error } = await supabase
-        .from('sub_teams')
-        .select(`
-          manager_id,
-          manager:profiles!sub_teams_manager_id_fkey(id, full_name)
-        `)
-        .eq('company_id', user.company_id);
-      
-      if (error) throw error;
-      
-      // Get unique managers
-      const uniqueManagers = new Map<string, Manager>();
-      data?.forEach((item: any) => {
-        if (item.manager) {
-          uniqueManagers.set(item.manager.id, item.manager);
-        }
-      });
-      
-      const managerList = Array.from(uniqueManagers.values());
-      console.log('📋 Available Manager Teams:', managerList.length, managerList);
-      return managerList;
-    },
-    enabled: !!user?.company_id,
-  });
-  
-  // Fetch team leaders under selected manager
-  const { data: teamLeaders = [], isLoading: teamLeadersLoading } = useQuery({
-    queryKey: ['team-leaders', selectedManagerId, user?.company_id],
-    queryFn: async () => {
-      if (!selectedManagerId || !user?.company_id) return [];
-      
-      const { data, error } = await supabase
-        .from('sub_teams')
-        .select(`
-          leader_id,
-          leader:profiles!sub_teams_leader_id_fkey(id, full_name, region)
-        `)
-        .eq('manager_id', selectedManagerId)
-        .eq('company_id', user.company_id);
-      
-      if (error) throw error;
-      
-      // Filter out current user
-      const leaders = (data?.map((item: any) => item.leader).filter((tl: TeamLeader) => tl && tl.id !== user.id) || []) as TeamLeader[];
-      console.log('👥 Team Leaders in selected manager team:', leaders.length, leaders);
-      return leaders;
-    },
-    enabled: !!selectedManagerId && !!user?.company_id,
-  });
-  
-  // Fetch source TL inventory (without quantities)
-  const { data: sourceInventory = [], isLoading: sourceInventoryLoading } = useQuery({
-    queryKey: ['source-tl-inventory', selectedSourceTLId],
-    queryFn: async () => {
-      if (!selectedSourceTLId) return [];
-      
-      const { data, error } = await supabase
-        .from('agent_inventory')
-        .select(`
-          variant_id,
-          variant:variants(
-            id,
-            name,
-            variant_type,
-            brand_id,
-            brand:brands(name)
-          )
-        `)
-        .eq('agent_id', selectedSourceTLId)
-        .gt('stock', 0);
-      
-      if (error) throw error;
-      
-      return (data?.map((item: any) => ({
-        variant_id: item.variant.id,
-        variant_name: item.variant.name,
-        variant_type: item.variant.variant_type,
-        brand_name: item.variant.brand.name,
-        brand_id: item.variant.brand_id,
-      })) || []) as SourceInventoryItem[];
-    },
-    enabled: !!selectedSourceTLId,
-  });
-  
-  // Fetch my outgoing requests
-  const { data: myRequests = [], isLoading: requestsLoading } = useQuery({
+  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<TlTransferListSortKey>>(createInitialTableSortCycle);
+
+  const { data: myRequests = [], isLoading, error: myRequestsError } = useQuery({
     queryKey: ['my-tl-requests', user?.id],
+    enabled: !!user?.id && hasWarehouseHubLink,
+    staleTime: 0,
+    refetchOnMount: 'always',
     queryFn: async () => {
-      if (!user?.id) return [];
-      
       const { data, error } = await supabase
         .from('tl_stock_requests')
-        .select(`
-          *,
-          requester:profiles!requester_leader_id(id, full_name, region, email),
-          source:profiles!source_leader_id(id, full_name, region, email),
-          variant:variants(
-            id,
-            name,
-            variant_type,
-            brand_id,
-            brand:brands(name)
-          )
-        `)
-        .eq('requester_leader_id', user.id)
+        .select(TL_REQUEST_SELECT)
+        .eq('requester_leader_id', user!.id)
         .order('created_at', { ascending: false });
-      
-      if (error) {
-        console.error('❌ Error fetching TL requests:', error);
-        throw error;
-      }
-      
-      return (data?.map((req: any) => ({
-        ...req,
-        variant: {
-          id: req.variant.id,
-          name: req.variant.name,
-          type: req.variant.variant_type,
-          brand_id: req.variant.brand_id,
-          brand_name: req.variant.brand.name,
-        },
-      })) || []) as TLRequestWithDetails[];
+      if (error) throw error;
+      return mapTlTransferRows(data || []);
     },
-    enabled: !!user?.id,
   });
-  
-  // Real-time subscription
-  useEffect(() => {
-    if (!user?.company_id) return;
-    
-    const channel = supabase
-      .channel('tl_stock_requests_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'tl_stock_requests',
-          filter: `company_id=eq.${user.company_id}`,
-        },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ['my-tl-requests'] });
+
+  const { data: incomingRequests = [] } = useQuery({
+    queryKey: ['incoming-tl-requests', user?.id],
+    enabled: !!user?.id && hasWarehouseHubLink && user?.role === 'team_leader',
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+    queryFn: () => fetchIncomingTlTransfers(user!.id),
+  });
+
+  const { data: dispatchedRequests = [], isLoading: dispatchedLoading } = useQuery({
+    queryKey: ['dispatched-tl-requests', user?.id],
+    enabled: !!user?.id && hasWarehouseHubLink && user?.role === 'team_leader',
+    staleTime: 0,
+    refetchOnMount: 'always',
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('tl_stock_requests')
+        .select(TL_REQUEST_SELECT)
+        .eq('source_leader_id', user!.id)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return mapTlTransferRows(data || []).filter((row) => {
+        if (
+          row.status === 'pending_source_tl' ||
+          row.status === 'admin_approved' ||
+          row.status === 'pending_admin'
+        ) {
+          return false;
         }
-      )
-      .subscribe();
-    
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user?.company_id, queryClient]);
-  
-  // Filter inventory based on search
-  const filteredInventory = useMemo(() => {
-    if (!searchQuery) return sourceInventory;
-    
-    const query = searchQuery.toLowerCase();
-    return sourceInventory.filter(
-      (item) =>
-        item.brand_name.toLowerCase().includes(query) ||
-        item.variant_name.toLowerCase().includes(query) ||
-        item.variant_type.toLowerCase().includes(query)
-    );
-  }, [sourceInventory, searchQuery]);
-  
-  // Add item to cart
-  const addToCart = (item: SourceInventoryItem, quantity: number) => {
-    if (quantity <= 0) {
+        return (
+          row.status === 'pending_receipt' ||
+          row.status === 'completed' ||
+          row.status === 'incomplete' ||
+          row.status === 'source_tl_rejected' ||
+          Number(row.dispatched_quantity || 0) > 0
+        );
+      });
+    },
+  });
+
+  useTlTransferRealtime({
+    enabled: !!user?.company_id && hasWarehouseHubLink,
+    companyId: user?.company_id,
+    channelKey: 'tl-page',
+  });
+
+  const myGroups = useMemo(() => groupTlRequests(myRequests), [myRequests]);
+  const dispatchedGroups = useMemo(
+    () => groupTlRequests(dispatchedRequests),
+    [dispatchedRequests]
+  );
+
+  const stats = useMemo(
+    () => ({
+      total: myGroups.length,
+      pending: myGroups.filter(
+        (r) => r.status === 'pending_admin' || r.status === 'pending_source_tl'
+      ).length,
+      inTransit: myGroups.filter((r) => r.status === 'pending_receipt').length,
+      incomplete: myGroups.filter((r) => r.status === 'incomplete').length,
+      completed: myGroups.filter((r) => r.status === 'completed').length,
+    }),
+    [myGroups]
+  );
+
+  const incomingCount = useMemo(
+    () => groupTlRequests(incomingRequests).length,
+    [incomingRequests]
+  );
+  const lostItemCount = useTlLostItemTabCount();
+  const dispatchedInTransit = useMemo(
+    () => dispatchedGroups.filter((row) => row.status === 'pending_receipt').length,
+    [dispatchedGroups]
+  );
+  const inTransitCount = stats.inTransit;
+  const activeTab = tab ?? 'mine';
+
+  const dateRange = useMemo(
+    () =>
+      getDateRangeFromPreset(
+        dateRangeFilter.preset,
+        dateRangeFilter.customStart,
+        dateRangeFilter.customEnd
+      ),
+    [dateRangeFilter]
+  );
+  const dateRangeLabel = useMemo(
+    () =>
+      getDatePresetLabel(
+        dateRangeFilter.preset,
+        dateRangeFilter.customStart,
+        dateRangeFilter.customEnd
+      ),
+    [dateRangeFilter]
+  );
+
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        sortState,
+        DEFAULT_TL_TRANSFER_SORT_KEY,
+        DEFAULT_TL_TRANSFER_SORT_DIRECTION
+      ),
+    [sortState]
+  );
+
+  const dispatchedFiltered = useMemo(
+    () => filterTlTransferGroups(dispatchedGroups, searchQuery, dateRange),
+    [dispatchedGroups, searchQuery, dateRange]
+  );
+  const dispatchedSorted = useMemo(
+    () =>
+      sortTlTransferGroups(
+        dispatchedFiltered,
+        resolvedSortKey,
+        resolvedSortDirection,
+        'requester'
+      ),
+    [dispatchedFiltered, resolvedSortKey, resolvedSortDirection]
+  );
+  const dispatchedPagination = useMemo(
+    () => getListPaginationSlice(dispatchedSorted, page, pageSize),
+    [dispatchedSorted, page, pageSize]
+  );
+
+  const myFiltered = useMemo(
+    () => filterTlTransferGroups(myGroups, searchQuery, dateRange),
+    [myGroups, searchQuery, dateRange]
+  );
+  const mySorted = useMemo(
+    () => sortTlTransferGroups(myFiltered, resolvedSortKey, resolvedSortDirection, 'source'),
+    [myFiltered, resolvedSortKey, resolvedSortDirection]
+  );
+  const myPagination = useMemo(
+    () => getListPaginationSlice(mySorted, page, pageSize),
+    [mySorted, page, pageSize]
+  );
+
+  const incomingListControls = useMemo(
+    () => ({
+      searchQuery,
+      dateRange,
+      page,
+      pageSize,
+      sortState,
+      onPageChange: setPage,
+      onPageSizeChange: setPageSize,
+      onSort: (key: TlTransferListSortKey) => {
+        setSortState((current) => getNextTableSortCycleState(current, key));
+      },
+    }),
+    [searchQuery, dateRange, page, pageSize, sortState]
+  );
+
+  useEffect(() => {
+    setPage(0);
+  }, [activeTab, searchQuery, dateRangeFilter, pageSize, sortState]);
+
+  const handleSort = (key: TlTransferListSortKey) => {
+    setSortState((current) => getNextTableSortCycleState(current, key));
+  };
+
+  const handleTabChange = (value: string) => {
+    setTab(value as TransferTab);
+    setSortState(createInitialTableSortCycle());
+  };
+
+  const printGroup = (group: TLRequestGroup) => {
+    void printTlStockTransferRequest(group.items).catch((error: any) => {
       toast({
-        title: 'Invalid Quantity',
-        description: 'Quantity must be greater than 0',
+        title: 'Could not print transfer',
+        description: error?.message || 'Failed to open the print view.',
         variant: 'destructive',
       });
-      return;
-    }
-    
-    // Check if item already in cart
-    const existingIndex = cart.findIndex((c) => c.variant_id === item.variant_id);
-    
-    if (existingIndex >= 0) {
-      const newCart = [...cart];
-      newCart[existingIndex].requested_quantity = quantity;
-      setCart(newCart);
-    } else {
-      setCart([
-        ...cart,
-        {
-          variant_id: item.variant_id,
-          variant_name: item.variant_name,
-          variant_type: item.variant_type,
-          brand_name: item.brand_name,
-          requested_quantity: quantity,
-        },
-      ]);
-    }
-    
-    toast({
-      title: 'Added to Cart',
-      description: `${item.brand_name} ${item.variant_name} ${item.variant_type}`,
     });
   };
-  
-  // Remove item from cart
-  const removeFromCart = (variantId: string) => {
-    setCart(cart.filter((item) => item.variant_id !== variantId));
+
+  const openGroup = (group: TLRequestGroup) => {
+    setSelected(group.items[0] ?? null);
+    setViewOpen(true);
   };
-  
-  // Submit requests
-  const handleSubmitRequests = async () => {
-    if (!user?.company_id || !selectedSourceTLId || !selectedManagerId) return;
-    if (cart.length === 0) {
-      toast({
-        title: 'Empty Cart',
-        description: 'Please add items to your cart before submitting',
-        variant: 'destructive',
-      });
-      return;
-    }
-    
-    setSubmitting(true);
-    try {
-      // Submit each item as a separate request
-      const promises = cart.map((item) =>
-        supabase.rpc('submit_tl_stock_request', {
-          p_company_id: user.company_id,
-          p_source_leader_id: selectedSourceTLId,
-          p_variant_id: item.variant_id,
-          p_requested_quantity: item.requested_quantity,
-        })
-      );
-      
-      const results = await Promise.all(promises);
-      
-      // Check for errors
-      const failed = results.filter((r) => !r.data?.success);
-      
-      if (failed.length > 0) {
-        throw new Error(failed[0].data?.error || 'Failed to submit requests');
-      }
-      
-      toast({
-        title: 'Requests Submitted',
-        description: `${cart.length} request(s) submitted successfully`,
-      });
-      
-      // Clear cart and reset selections
-      setCart([]);
-      setSubmitConfirmOpen(false);
-      queryClient.invalidateQueries({ queryKey: ['my-tl-requests'] });
-    } catch (error: any) {
-      console.error('Error submitting requests:', error);
-      toast({
-        title: 'Error',
-        description: error.message || 'Failed to submit requests',
-        variant: 'destructive',
-      });
-    } finally {
-      setSubmitting(false);
-    }
+
+  const openHistory = (group: TLRequestGroup) => {
+    setHistoryLines(group.items);
+    setHistoryOpen(true);
   };
-  
-  // Handle receipt
-  const handleReceiveStock = async () => {
-    if (!requestToReceive || !signatureDataUrl) {
-      toast({
-        title: 'Signature Required',
-        description: 'Please provide your signature',
-        variant: 'destructive',
-      });
-      return;
-    }
-    
-    setReceiving(true);
-    try {
-      // Convert base64 to blob
-      const base64Data = signatureDataUrl.split(',')[1];
-      const byteCharacters = atob(base64Data);
-      const byteNumbers = new Array(byteCharacters.length);
-      for (let i = 0; i < byteCharacters.length; i++) {
-        byteNumbers[i] = byteCharacters.charCodeAt(i);
-      }
-      const byteArray = new Uint8Array(byteNumbers);
-      const blob = new Blob([byteArray], { type: 'image/png' });
-      
-      // Upload signature
-      const timestamp = Date.now();
-      const fileName = `${user?.company_id}/${requestToReceive.request_number}/${timestamp}_receipt.png`;
-      
-      const { error: uploadError } = await supabase.storage
-        .from('tl-stock-request-signatures')
-        .upload(fileName, blob, {
-          contentType: 'image/png',
-          upsert: false,
-        });
-      
-      if (uploadError) throw uploadError;
-      
-      // Get signed URL
-      const { data: urlData, error: urlError } = await supabase.storage
-        .from('tl-stock-request-signatures')
-        .createSignedUrl(fileName, 31536000); // 1 year
-      
-      if (urlError || !urlData?.signedUrl) throw new Error('Failed to generate signed URL');
-      
-      // Call RPC function
-      const { data: result, error: rpcError } = await supabase.rpc('requester_tl_receive_stock', {
-        p_request_id: requestToReceive.id,
-        p_signature_url: urlData.signedUrl,
-        p_signature_path: fileName,
-      });
-      
-      if (rpcError) throw rpcError;
-      if (!result.success) throw new Error(result.error || 'Failed to receive stock');
-      
-      toast({
-        title: 'Stock Received',
-        description: `${result.transferred_quantity} units transferred successfully`,
-      });
-      
-      setReceiptDialogOpen(false);
-      setRequestToReceive(null);
-      queryClient.invalidateQueries({ queryKey: ['my-tl-requests'] });
-    } catch (error: any) {
-      console.error('Error receiving stock:', error);
-      toast({
-        title: 'Error',
-        description: error.message || 'Failed to receive stock',
-        variant: 'destructive',
-      });
-    } finally {
-      setReceiving(false);
-    }
+
+  const receiveGroup = (group: TLRequestGroup) => {
+    const receivable =
+      group.items.find(
+        (item) => item.status === 'pending_receipt' && tlRemainingToReceive(item) > 0
+      ) ?? group.items[0];
+    setSelected(receivable ?? null);
+    setReceiveOpen(true);
   };
-  
-  // Status badge helper
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'pending_admin':
-        return (
-          <Badge variant="secondary" className="bg-yellow-50 text-yellow-700 border-yellow-200">
-            <Clock className="h-3 w-3 mr-1" />
-            Pending Admin
-          </Badge>
-        );
-      case 'admin_approved':
-      case 'pending_source_tl':
-        return (
-          <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200">
-            <Clock className="h-3 w-3 mr-1" />
-            Awaiting Source TL
-          </Badge>
-        );
-      case 'pending_receipt':
-        return (
-          <Badge variant="secondary" className="bg-purple-50 text-purple-700 border-purple-200">
-            <AlertCircle className="h-3 w-3 mr-1" />
-            Ready for Receipt
-          </Badge>
-        );
-      case 'completed':
-        return (
-          <Badge variant="secondary" className="bg-green-50 text-green-700 border-green-200">
-            <CheckCircle2 className="h-3 w-3 mr-1" />
-            Completed
-          </Badge>
-        );
-      case 'admin_rejected':
-      case 'source_tl_rejected':
-        return (
-          <Badge variant="secondary" className="bg-red-50 text-red-700 border-red-200">
-            <XCircle className="h-3 w-3 mr-1" />
-            Rejected
-          </Badge>
-        );
-      default:
-        return <Badge>{status}</Badge>;
-    }
-  };
-  
-  // Stats
-  const stats = useMemo(() => {
-    return {
-      total: myRequests.length,
-      pending: myRequests.filter((r) => r.status === 'pending_admin' || r.status === 'pending_source_tl').length,
-      readyForReceipt: myRequests.filter((r) => r.status === 'pending_receipt').length,
-      completed: myRequests.filter((r) => r.status === 'completed').length,
-      rejected: myRequests.filter((r) => r.status === 'admin_rejected' || r.status === 'source_tl_rejected').length,
-    };
-  }, [myRequests]);
-  
-  if (!user || user.role !== 'team_leader') {
+
+  if (user?.role !== 'team_leader') {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <Card className="w-96">
+      <div className="container mx-auto p-4">
+        <Card>
           <CardHeader>
-            <CardTitle>Access Denied</CardTitle>
-            <CardDescription>Only team leaders can access this page</CardDescription>
+            <CardTitle>Access denied</CardTitle>
+            <CardDescription>Only team leaders can create stock transfers.</CardDescription>
           </CardHeader>
         </Card>
       </div>
     );
   }
-  
+
+  if (hasWarehouseHubLinkLoading) {
+    return (
+      <div className="flex items-center justify-center py-20 text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin mr-2" />
+        Loading...
+      </div>
+    );
+  }
+
+  if (!hasWarehouseHubLink) {
+    return (
+      <div className="container mx-auto p-4">
+        <Card>
+          <CardHeader>
+            <CardTitle>Stock transfers unavailable</CardTitle>
+            <CardDescription>
+              TL-to-TL stock transfers are only available when your company is linked to a warehouse.
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="container mx-auto p-4 space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold">Stock Requests from Team Leaders</h1>
-        <p className="text-muted-foreground">Request stock from another team leader in your company</p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Stock transfers</h1>
+          <p className="text-muted-foreground">
+            Request stock from another team leader. Super Admin approves, they dispatch, then you
+            receive.
+          </p>
+        </div>
+        <Button onClick={() => setCreateOpen(true)}>
+          <Plus className="h-4 w-4 mr-2" />
+          New transfer
+        </Button>
       </div>
-      
-      {/* Statistics */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold">{stats.total}</div>
-            <p className="text-xs text-muted-foreground">Total Requests</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-yellow-600">{stats.pending}</div>
-            <p className="text-xs text-muted-foreground">Pending</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-purple-600">{stats.readyForReceipt}</div>
-            <p className="text-xs text-muted-foreground">Ready for Receipt</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-green-600">{stats.completed}</div>
-            <p className="text-xs text-muted-foreground">Completed</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-red-600">{stats.rejected}</div>
-            <p className="text-xs text-muted-foreground">Rejected</p>
-          </CardContent>
-        </Card>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        {[
+          ['Total', stats.total],
+          ['Pending', stats.pending],
+          ['In transit', stats.inTransit],
+          ['Incomplete', stats.incomplete],
+          ['Completed', stats.completed],
+        ].map(([label, value]) => (
+          <Card key={String(label)}>
+            <CardContent className="pt-5">
+              <div className="text-2xl font-bold tabular-nums">{value}</div>
+              <p className="text-xs text-muted-foreground">{label}</p>
+            </CardContent>
+          </Card>
+        ))}
       </div>
-      
-      {/* Create New Request Section */}
+
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Plus className="h-5 w-5" />
-            Create New Request
-          </CardTitle>
-          <CardDescription>Select a team leader and request stock from their inventory</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {/* Manager Selection */}
-          <div className="space-y-2">
-            <Label htmlFor="manager">Select Manager Team</Label>
-            <Select
-              value={selectedManagerId}
-              onValueChange={(value) => {
-                setSelectedManagerId(value);
-                setSelectedSourceTLId('');
-                setSelectedSourceTL(null);
-                setCart([]);
-              }}
-            >
-              <SelectTrigger id="manager">
-                <SelectValue placeholder="Select any manager team in your company" />
-              </SelectTrigger>
-              <SelectContent>
-                {managersLoading ? (
-                  <SelectItem value="loading" disabled>
-                    Loading...
-                  </SelectItem>
-                ) : managers.length === 0 ? (
-                  <SelectItem value="none" disabled>
-                    No manager teams found
-                  </SelectItem>
-                ) : (
-                  managers.map((manager) => (
-                    <SelectItem key={manager.id} value={manager.id}>
-                      {manager.full_name}'s Team
-                    </SelectItem>
-                  ))
-                )}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              Choose from any manager team in your company ({managers.length} available)
-            </p>
-          </div>
-          
-          {/* Team Leader Selection */}
-          {selectedManagerId && (
-            <div className="space-y-2">
-              <Label htmlFor="source-tl">Select Source Team Leader</Label>
-              <Select
-                value={selectedSourceTLId}
-                onValueChange={(value) => {
-                  setSelectedSourceTLId(value);
-                  const tl = teamLeaders.find((t) => t.id === value);
-                  setSelectedSourceTL(tl || null);
-                  setCart([]);
-                }}
-              >
-                <SelectTrigger id="source-tl">
-                  <SelectValue placeholder="Choose a team leader to request from" />
-                </SelectTrigger>
-                <SelectContent>
-                  {teamLeadersLoading ? (
-                    <SelectItem value="loading" disabled>
-                      Loading...
-                    </SelectItem>
-                  ) : teamLeaders.length === 0 ? (
-                    <SelectItem value="none" disabled>
-                      No team leaders found
-                    </SelectItem>
-                  ) : (
-                    teamLeaders.map((tl) => (
-                      <SelectItem key={tl.id} value={tl.id}>
-                        {tl.full_name} {tl.region ? `(${tl.region})` : ''}
-                      </SelectItem>
-                    ))
-                  )}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                {teamLeaders.length === 0 
-                  ? 'No other team leaders in this manager team'
-                  : `${teamLeaders.length} team leader(s) available (excluding yourself)`
-                }
-              </p>
-            </div>
-          )}
-          
-          {/* Source TL Inventory */}
-          {selectedSourceTLId && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <Label>Available Items from {selectedSourceTL?.full_name}</Label>
-                <div className="relative w-64">
-                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search items..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-8"
-                  />
-                </div>
-              </div>
-              
-              {sourceInventoryLoading ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-                </div>
-              ) : filteredInventory.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                  <p>No items available</p>
-                </div>
-              ) : (
-                <div className="border rounded-lg">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Brand</TableHead>
-                        <TableHead>Variant</TableHead>
-                        <TableHead>Type</TableHead>
-                        <TableHead>Quantity</TableHead>
-                        <TableHead></TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredInventory.map((item) => {
-                        const cartItem = cart.find((c) => c.variant_id === item.variant_id);
-                        return (
-                          <TableRow key={item.variant_id}>
-                            <TableCell className="font-medium">{item.brand_name}</TableCell>
-                            <TableCell>{item.variant_name}</TableCell>
-                            <TableCell>{item.variant_type}</TableCell>
-                            <TableCell>
-                              <Input
-                                type="number"
-                                min="1"
-                                placeholder="Qty"
-                                className="w-20"
-                                defaultValue={cartItem?.requested_quantity || ''}
-                                onChange={(e) => {
-                                  const qty = parseInt(e.target.value);
-                                  if (qty > 0) {
-                                    addToCart(item, qty);
-                                  }
-                                }}
-                              />
-                            </TableCell>
-                            <TableCell>
-                              <Button
-                                size="sm"
-                                variant={cartItem ? 'secondary' : 'default'}
-                                onClick={() => {
-                                  const input = document.querySelector(
-                                    `input[type="number"][placeholder="Qty"]`
-                                  ) as HTMLInputElement;
-                                  const qty = input ? parseInt(input.value) : 1;
-                                  addToCart(item, qty || 1);
-                                }}
-                              >
-                                {cartItem ? 'Update' : 'Add'}
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </div>
-          )}
-          
-          {/* Cart */}
-          {cart.length > 0 && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <Label className="flex items-center gap-2">
-                  <ShoppingCart className="h-4 w-4" />
-                  Request Cart ({cart.length} items)
-                </Label>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCart([])}
+        <CardHeader className="space-y-3">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <CardTitle>Transfers</CardTitle>
+              <CardDescription>
+                Incoming is stock Super Admin approved for you to dispatch. Dispatched is stock you
+                already sent. My transfers are requests you created — receive them when they are in
+                transit. Lost groups SKUs that arrived short or were written off; click an item to
+                see the transfer numbers.{' '}
+                <Link
+                  to="/inventory/tl-transfer-shortages"
+                  className="text-primary underline-offset-4 hover:underline"
                 >
-                  Clear All
-                </Button>
-              </div>
-              
-              <div className="border rounded-lg p-4 space-y-2 max-h-64 overflow-y-auto">
-                {cart.map((item) => (
-                  <div
-                    key={item.variant_id}
-                    className="flex items-center justify-between p-2 bg-secondary rounded"
-                  >
-                    <div className="flex-1">
-                      <p className="font-medium">
-                        {item.brand_name} - {item.variant_name} {item.variant_type}
-                      </p>
-                      <p className="text-sm text-muted-foreground">Quantity: {item.requested_quantity}</p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => removeFromCart(item.variant_id)}
-                    >
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-              
-              <Button
-                className="w-full"
-                size="lg"
-                onClick={() => setSubmitConfirmOpen(true)}
-                disabled={submitting}
-              >
-                {submitting ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Submitting...
-                  </>
-                ) : (
-                  <>
-                    <FileText className="mr-2 h-4 w-4" />
-                    Submit {cart.length} Request{cart.length > 1 ? 's' : ''}
-                  </>
-                )}
-              </Button>
+                  Open investigation queue
+                </Link>{' '}
+                if you dispatched stock that arrived short.
+              </CardDescription>
             </div>
-          )}
-        </CardContent>
-      </Card>
-      
-      {/* My Outgoing Requests */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <FileText className="h-5 w-5" />
-            My Outgoing Requests
-          </CardTitle>
-          <CardDescription>Track the status of your stock requests</CardDescription>
+            <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
+              <div className="relative w-full sm:w-[240px]">
+                <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={
+                    activeTab === 'lost'
+                      ? 'Search SKU, transfer #…'
+                      : 'Search transfer #, TDR, name…'
+                  }
+                  className="h-9 pl-8"
+                />
+              </div>
+              <DateRangeFilterPopover
+                value={dateRangeFilter}
+                onChange={setDateRangeFilter}
+                triggerClassName="w-full sm:w-[220px] justify-between h-9"
+              />
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
-          {requestsLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : myRequests.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
-              <p>No requests yet</p>
-            </div>
-          ) : (
-            <div className="border rounded-lg">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Request #</TableHead>
-                    <TableHead>Source TL</TableHead>
-                    <TableHead>Product</TableHead>
-                    <TableHead>Requested Qty</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {myRequests.map((request) => (
-                    <TableRow key={request.id}>
-                      <TableCell className="font-medium">{request.request_number}</TableCell>
-                      <TableCell>{request.source.full_name}</TableCell>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium">{request.variant.brand_name}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {request.variant.name} {request.variant.type}
-                          </p>
-                        </div>
-                      </TableCell>
-                      <TableCell>{request.requested_quantity}</TableCell>
-                      <TableCell>{getStatusBadge(request.status)}</TableCell>
-                      <TableCell>{new Date(request.created_at).toLocaleDateString()}</TableCell>
-                      <TableCell>
-                        <div className="flex gap-2">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              setSelectedRequest(request);
-                              setViewDialogOpen(true);
-                            }}
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          {request.status === 'pending_receipt' && (
-                            <Button
-                              size="sm"
-                              onClick={() => {
-                                setRequestToReceive(request);
-                                setSignatureDataUrl('');
-                                setReceiptDialogOpen(true);
-                              }}
-                            >
-                              Receive
-                            </Button>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
+          <Tabs value={activeTab} onValueChange={handleTabChange}>
+            <TabsList className="mb-4 grid w-full grid-cols-2 sm:grid-cols-4 sm:w-auto sm:inline-flex">
+              <TabsTrigger value="incoming" className="gap-2">
+                Incoming
+                {incomingCount > 0 ? (
+                  <Badge variant="secondary" className="h-5 min-w-5 px-1.5">
+                    {incomingCount}
+                  </Badge>
+                ) : null}
+              </TabsTrigger>
+              <TabsTrigger value="dispatched" className="gap-2">
+                Dispatched
+                {dispatchedInTransit > 0 ? (
+                  <Badge variant="secondary" className="h-5 min-w-5 px-1.5">
+                    {dispatchedInTransit} in transit
+                  </Badge>
+                ) : dispatchedGroups.length > 0 ? (
+                  <Badge variant="outline" className="h-5 min-w-5 px-1.5">
+                    {dispatchedGroups.length}
+                  </Badge>
+                ) : null}
+              </TabsTrigger>
+              <TabsTrigger value="mine" className="gap-2">
+                My transfers
+                {inTransitCount > 0 ? (
+                  <Badge variant="secondary" className="h-5 min-w-5 px-1.5">
+                    {inTransitCount} in transit
+                  </Badge>
+                ) : myGroups.length > 0 ? (
+                  <Badge variant="outline" className="h-5 min-w-5 px-1.5">
+                    {myGroups.length}
+                  </Badge>
+                ) : null}
+              </TabsTrigger>
+              <TabsTrigger value="lost" className="gap-2">
+                Lost
+                {lostItemCount > 0 ? (
+                  <Badge variant="secondary" className="h-5 min-w-5 px-1.5">
+                    {lostItemCount}
+                  </Badge>
+                ) : null}
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="incoming" className="mt-0">
+              <p className="mb-3 text-sm text-muted-foreground">
+                Dispatch from your stock. You can send less than approved if you give a reason.
+              </p>
+              <IncomingTLRequestsSection embedded listControls={incomingListControls} />
+            </TabsContent>
+
+            <TabsContent value="dispatched" className="mt-0">
+              <p className="mb-3 text-sm text-muted-foreground">
+                Transfers other TLs requested from you that you already sent. Track in transit,
+                received, and shortages.
+              </p>
+              {dispatchedLoading ? (
+                <div className="flex items-center justify-center py-10 text-muted-foreground">
+                  <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                  Loading dispatched transfers...
+                </div>
+              ) : dispatchedGroups.length === 0 ? (
+                <div className="text-center py-10 text-muted-foreground">
+                  <Package className="h-10 w-10 mx-auto mb-2 opacity-40" />
+                  <p>Nothing dispatched yet</p>
+                </div>
+              ) : dispatchedSorted.length === 0 ? (
+                <p className="py-10 text-center text-sm text-muted-foreground">
+                  No dispatched transfers match this search or date range.
+                </p>
+              ) : (
+                <div className="space-y-4">
+                  <TransferGroupsTable
+                    groups={dispatchedPagination.pagedItems}
+                    counterpartLabel="To"
+                    counterpartField="requester"
+                    sortState={sortState}
+                    onSort={handleSort}
+                    onPrint={printGroup}
+                    onView={openGroup}
+                    onHistory={openHistory}
+                  />
+                  <ListPagination
+                    pageSize={pageSize}
+                    safePage={dispatchedPagination.safePage}
+                    pageCount={dispatchedPagination.pageCount}
+                    onPageSizeChange={setPageSize}
+                    onPrevious={() =>
+                      setPage((current) => Math.max(0, dispatchedPagination.safePage - 1))
+                    }
+                    onNext={() =>
+                      setPage((current) =>
+                        Math.min(dispatchedPagination.pageCount - 1, dispatchedPagination.safePage + 1)
+                      )
+                    }
+                  />
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="mine" className="mt-0">
+              <p className="mb-3 text-sm text-muted-foreground">
+                Transfers you requested. Receive when status is in transit.
+              </p>
+              {isLoading ? (
+                <div className="flex items-center justify-center py-10 text-muted-foreground">
+                  <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                  Loading transfers...
+                </div>
+              ) : myRequestsError ? (
+                <p className="py-10 text-center text-sm text-destructive">
+                  {(myRequestsError as Error).message || 'Could not load your transfers.'}
+                </p>
+              ) : myGroups.length === 0 ? (
+                <div className="text-center py-10 text-muted-foreground">
+                  <Package className="h-10 w-10 mx-auto mb-2 opacity-40" />
+                  <p>No transfers yet</p>
+                </div>
+              ) : mySorted.length === 0 ? (
+                <p className="py-10 text-center text-sm text-muted-foreground">
+                  No transfers match this search or date range.
+                </p>
+              ) : (
+                <div className="space-y-4">
+                  <TransferGroupsTable
+                    groups={myPagination.pagedItems}
+                    counterpartLabel="From"
+                    counterpartField="source"
+                    sortState={sortState}
+                    onSort={handleSort}
+                    onPrint={printGroup}
+                    onView={openGroup}
+                    onHistory={openHistory}
+                    onReceive={receiveGroup}
+                  />
+                  <ListPagination
+                    pageSize={pageSize}
+                    safePage={myPagination.safePage}
+                    pageCount={myPagination.pageCount}
+                    onPageSizeChange={setPageSize}
+                    onPrevious={() => setPage((current) => Math.max(0, myPagination.safePage - 1))}
+                    onNext={() =>
+                      setPage((current) =>
+                        Math.min(myPagination.pageCount - 1, myPagination.safePage + 1)
+                      )
+                    }
+                  />
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="lost" className="mt-0">
+              <p className="mb-3 text-sm text-muted-foreground">
+                SKUs that went missing in transit or were written off. Click an item to see which
+                transfer numbers they came from.
+              </p>
+              <TLTransferLostItemsPanel
+                searchQuery={searchQuery}
+                dateRange={dateRange}
+                dateRangeLabel={dateRangeLabel}
+                page={page}
+                pageSize={pageSize}
+                onPageChange={setPage}
+                onPageSizeChange={setPageSize}
+              />
+            </TabsContent>
+          </Tabs>
         </CardContent>
       </Card>
-      
-      {/* View Request Dialog */}
-      <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Request Details</DialogTitle>
-            <DialogDescription>View request information and status</DialogDescription>
-          </DialogHeader>
-          {selectedRequest && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-muted-foreground">Request Number</Label>
-                  <p className="font-medium">{selectedRequest.request_number}</p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground">Status</Label>
-                  <div className="mt-1">{getStatusBadge(selectedRequest.status)}</div>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground">Source Team Leader</Label>
-                  <p className="font-medium">{selectedRequest.source.full_name}</p>
-                  {selectedRequest.source.region && (
-                    <p className="text-sm text-muted-foreground">{selectedRequest.source.region}</p>
-                  )}
-                </div>
-                <div>
-                  <Label className="text-muted-foreground">Product</Label>
-                  <p className="font-medium">{selectedRequest.variant.brand_name}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {selectedRequest.variant.name} {selectedRequest.variant.type}
-                  </p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground">Requested Quantity</Label>
-                  <p className="font-medium">{selectedRequest.requested_quantity}</p>
-                </div>
-                {selectedRequest.admin_approved_quantity && (
-                  <div>
-                    <Label className="text-muted-foreground">Approved Quantity</Label>
-                    <p className="font-medium">{selectedRequest.admin_approved_quantity}</p>
-                  </div>
-                )}
-                <div>
-                  <Label className="text-muted-foreground">Created</Label>
-                  <p className="font-medium">
-                    {new Date(selectedRequest.created_at).toLocaleString()}
-                  </p>
-                </div>
-              </div>
-              
-              {selectedRequest.admin_notes && (
-                <div>
-                  <Label className="text-muted-foreground">Admin Notes</Label>
-                  <p className="text-sm mt-1">{selectedRequest.admin_notes}</p>
-                </div>
-              )}
-              
-              {selectedRequest.source_tl_notes && (
-                <div>
-                  <Label className="text-muted-foreground">Source TL Notes</Label>
-                  <p className="text-sm mt-1">{selectedRequest.source_tl_notes}</p>
-                </div>
-              )}
-              
-              {selectedRequest.rejection_reason && (
-                <div>
-                  <Label className="text-muted-foreground text-destructive">Rejection Reason</Label>
-                  <p className="text-sm mt-1 text-destructive">{selectedRequest.rejection_reason}</p>
-                </div>
-              )}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-      
-      {/* Receipt Dialog */}
-      <Dialog open={receiptDialogOpen} onOpenChange={setReceiptDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Receive Stock</DialogTitle>
-            <DialogDescription>Sign to confirm receipt of stock</DialogDescription>
-          </DialogHeader>
-          {requestToReceive && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-muted-foreground">Request Number</Label>
-                  <p className="font-medium">{requestToReceive.request_number}</p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground">Source Team Leader</Label>
-                  <p className="font-medium">{requestToReceive.source.full_name}</p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground">Product</Label>
-                  <p className="font-medium">{requestToReceive.variant.brand_name}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {requestToReceive.variant.name} {requestToReceive.variant.type}
-                  </p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground">Quantity to Receive</Label>
-                  <p className="font-medium text-2xl text-green-600">
-                    {requestToReceive.admin_approved_quantity}
-                  </p>
-                </div>
-              </div>
-              
-              {!signatureDataUrl ? (
-                <div className="flex justify-end">
-                  <Button
-                    onClick={() => setShowSignatureModal(true)}
-                    disabled={receiving}
-                  >
-                    Add Signature
-                  </Button>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <Label>Your Signature</Label>
-                  <div className="border rounded-lg p-4 bg-secondary">
-                    <img src={signatureDataUrl} alt="Signature" className="max-h-32 mx-auto" />
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setSignatureDataUrl('')}
-                  >
-                    Clear Signature
-                  </Button>
-                  <p className="text-xs text-muted-foreground">
-                    By signing, you confirm receipt of the stock and agree that the quantity has been transferred to your inventory
-                  </p>
-                </div>
-              )}
-              
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  className="flex-1"
-                  onClick={() => {
-                    setReceiptDialogOpen(false);
-                    setRequestToReceive(null);
-                    setSignatureDataUrl('');
-                  }}
-                  disabled={receiving}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  className="flex-1"
-                  onClick={handleReceiveStock}
-                  disabled={receiving || !signatureDataUrl}
-                >
-                  {receiving ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Processing...
-                    </>
-                  ) : (
-                    'Confirm Receipt'
-                  )}
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-      
-      {/* Submit Confirmation Dialog */}
-      <AlertDialog open={submitConfirmOpen} onOpenChange={setSubmitConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Confirm Submission</AlertDialogTitle>
-            <AlertDialogDescription>
-              You are about to submit {cart.length} stock request{cart.length > 1 ? 's' : ''} to{' '}
-              {selectedSourceTL?.full_name}. The requests will be sent to admin for approval.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={submitting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleSubmitRequests} disabled={submitting}>
-              {submitting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Submitting...
-                </>
-              ) : (
-                'Submit Requests'
-              )}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      
-      {/* Signature Modal */}
-      <Dialog open={showSignatureModal} onOpenChange={setShowSignatureModal}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Sign for Receipt</DialogTitle>
-            <DialogDescription>
-              Please sign below to confirm receipt of stock
-            </DialogDescription>
-          </DialogHeader>
-          <SignatureCanvas
-            onSave={(dataUrl) => {
-              setSignatureDataUrl(dataUrl);
-              setShowSignatureModal(false);
-              toast({
-                title: 'Signature Saved',
-                description: 'Your signature has been captured',
-              });
-            }}
-            onCancel={() => setShowSignatureModal(false)}
-          />
-        </DialogContent>
-      </Dialog>
+
+      <CreateTLStockTransferDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        onSubmitted={() => setTab('mine')}
+      />
+      <TLStockReceiveDialog
+        open={receiveOpen}
+        request={selected}
+        allRequests={myRequests}
+        onOpenChange={(open) => {
+          setReceiveOpen(open);
+          if (!open) setSelected(null);
+        }}
+      />
+      <TLTransferDetailsDialog
+        open={viewOpen}
+        request={selected}
+        allRequests={[...myRequests, ...dispatchedRequests]}
+        onOpenChange={(open) => {
+          setViewOpen(open);
+          if (!open && !receiveOpen) setSelected(null);
+        }}
+      />
+      <TLTransferHistoryDialog
+        open={historyOpen}
+        lines={historyLines}
+        onOpenChange={(open) => {
+          setHistoryOpen(open);
+          if (!open) setHistoryLines([]);
+        }}
+      />
     </div>
   );
 }

@@ -60,7 +60,9 @@ export type TransactionType =
   | 'rebate_return_disposed'
   | 'warehouse_stock_receive'
   | 'warehouse_return_in'
-  | 'warehouse_return_disposed';
+  | 'warehouse_return_disposed'
+  | 'tl_stock_transfer_out'
+  | 'tl_stock_transfer_in';
 export type FinancialTransactionType = 'revenue' | 'expense' | 'commission' | 'refund';
 export type FinancialTransactionStatus = 'pending' | 'completed' | 'cancelled';
 export type StockRequestStatus = 'pending' | 'approved_by_leader' | 'approved_by_admin' | 'rejected' | 'fulfilled';

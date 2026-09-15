@@ -67,6 +67,15 @@ export function usePermissions() {
       return user?.role === 'team_leader' && hasWarehouseHubLink === true;
     }
 
+    if (route === '/inventory/tl-stock-requests') {
+      return user?.role === 'team_leader' && hasWarehouseHubLink === true;
+    }
+
+    if (route === '/inventory/tl-transfer-shortages') {
+      if (user?.role === 'admin' || user?.role === 'super_admin') return true;
+      return user?.role === 'team_leader' && hasWarehouseHubLink === true;
+    }
+
     // If impersonating, allow full navigation access to the tenant environment.
     // Read-only restrictions are enforced globally via CSS and checkFeature.
     if (impersonatedCompany) {

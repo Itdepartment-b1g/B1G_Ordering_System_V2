@@ -1,251 +1,426 @@
-import { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Textarea } from '@/components/ui/textarea';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { SignatureCanvas } from '@/components/ui/signature-canvas';
+import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Clock,
-  Loader2,
   AlertCircle,
-  ThumbsUp,
-  ThumbsDown,
-  Package,
   CheckCircle2,
-  User,
+  Loader2,
+  Package,
 } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/lib/supabase';
-import { useQueryClient, useQuery } from '@tanstack/react-query';
-import type { TLRequestWithDetails } from '@/types/tlStockRequests.types';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  getListPaginationSlice,
+  ListPagination,
+  type PageSize,
+} from '@/features/shared/components/ListPagination';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { SignatureCanvas } from '@/components/ui/signature-canvas';
+import {
+  MultiProofPhotoField,
+  revokePackageProofPreviews,
+  type PackageProofPhotoItem,
+} from '@/features/shared/components/MultiProofPhotoField';
+import { uploadPackageProofPhotos } from '@/features/orders/utils/uploadPackageProofPhotos';
+import type { TLDispatchShortfallReason, TLRequestWithDetails } from '@/types/tlStockRequests.types';
+import {
+  TL_DISPATCH_SHORTFALL_LABELS,
+  TL_DISPATCH_SHORTFALL_OPTIONS,
+  groupTlRequests,
+  invalidateTlTransferQueries,
+  tlRemainingToDispatch,
+  type TLRequestGroup,
+} from '../tl-stock-transfer/tlStockTransferShared';
+import { exportTlTdrPdf, printTlStockTransferRequest, tlTdrPdfFromDispatch } from '../tl-stock-transfer/exportTlTransferPdfs';
+import { TLTransferHistoryDialog } from '../tl-stock-transfer/TLTransferHistoryDialog';
+import { TLTransferDetailsDialog } from '../tl-stock-transfer/TLTransferDetailsDialog';
+import { TLTransferRowActionsMenu } from '../tl-stock-transfer/TLTransferRowActionsMenu';
+import { fetchIncomingTlTransfers, useTlTransferRealtime } from '../tl-stock-transfer/useTlTransferRealtime';
+import {
+  DEFAULT_TL_TRANSFER_SORT_DIRECTION,
+  DEFAULT_TL_TRANSFER_SORT_KEY,
+  filterTlTransferGroups,
+  sortTlTransferGroups,
+  type TlTransferDateRange,
+  type TlTransferListSortKey,
+} from '../tl-stock-transfer/tlStockTransferListHelpers';
 
-export default function IncomingTLRequestsSection() {
+type DispatchLine = TLRequestWithDetails & { available: number };
+
+export type IncomingTlListControls = {
+  searchQuery: string;
+  dateRange: TlTransferDateRange;
+  page: number;
+  pageSize: PageSize;
+  sortState: TableSortCycleState<TlTransferListSortKey>;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (size: PageSize) => void;
+  onSort: (key: TlTransferListSortKey) => void;
+};
+
+type Props = {
+  embedded?: boolean;
+  listControls?: IncomingTlListControls;
+};
+
+export default function IncomingTLRequestsSection({ embedded = false, listControls }: Props) {
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  
-  const [approveDialogOpen, setApproveDialogOpen] = useState(false);
-  const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+
+  const [dispatchOpen, setDispatchOpen] = useState(false);
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [showSignatureModal, setShowSignatureModal] = useState(false);
-  const [selectedRequest, setSelectedRequest] = useState<TLRequestWithDetails | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLines, setHistoryLines] = useState<TLRequestWithDetails[]>([]);
+  const [viewOpen, setViewOpen] = useState(false);
+  const [viewRequest, setViewRequest] = useState<TLRequestWithDetails | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState<TLRequestGroup | null>(null);
+  const [dispatchLines, setDispatchLines] = useState<DispatchLine[]>([]);
+  const [qtyById, setQtyById] = useState<Record<string, number>>({});
+  const [reasonById, setReasonById] = useState<Record<string, TLDispatchShortfallReason | ''>>({});
   const [sourceNotes, setSourceNotes] = useState('');
   const [rejectionReason, setRejectionReason] = useState('');
+  const [signatureDataUrl, setSignatureDataUrl] = useState('');
+  const [packagePhotos, setPackagePhotos] = useState<PackageProofPhotoItem[]>([]);
+  const [packagePhotoError, setPackagePhotoError] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
-  const [sourceAvailableQty, setSourceAvailableQty] = useState<number>(0);
-  const [signatureDataUrl, setSignatureDataUrl] = useState<string>('');
-  
-  // Fetch incoming requests
-  const { data: incomingRequests = [], isLoading: requestsLoading } = useQuery({
+
+  const { data: incomingRequests = [], isLoading } = useQuery({
     queryKey: ['incoming-tl-requests', user?.id],
-    queryFn: async () => {
-      if (!user?.id) return [];
-      
-      const { data, error} = await supabase
-        .from('tl_stock_requests')
-        .select(`
-          *,
-          requester:profiles!requester_leader_id(id, full_name, region, email),
-          source:profiles!source_leader_id(id, full_name, region, email),
-          variant:variants(
-            id,
-            name,
-            variant_type,
-            brand_id,
-            brand:brands(name)
-          )
-        `)
-        .eq('source_leader_id', user.id)
-        .eq('status', 'pending_source_tl')
-        .order('created_at', { ascending: false });
-      
-      if (error) throw error;
-      
-      return (data?.map((req: any) => ({
-        ...req,
-        variant: {
-          id: req.variant.id,
-          name: req.variant.name,
-          type: req.variant.variant_type,
-          brand_id: req.variant.brand_id,
-          brand_name: req.variant.brand.name,
-        },
-      })) || []) as TLRequestWithDetails[];
-    },
     enabled: !!user?.id && user?.role === 'team_leader',
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+    queryFn: () => fetchIncomingTlTransfers(user!.id),
   });
-  
-  // Real-time subscription
-  useEffect(() => {
-    if (!user?.id) return;
-    
-    const channel = supabase
-      .channel('incoming_tl_requests_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'tl_stock_requests',
-          filter: `source_leader_id=eq.${user.id}`,
-        },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ['incoming-tl-requests'] });
-        }
-      )
-      .subscribe();
-    
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user?.id, queryClient]);
-  
-  // Open approve dialog
-  const handleOpenApprove = async (request: TLRequestWithDetails) => {
-    // Fetch current available quantity
-    const { data, error } = await supabase
-      .from('agent_inventory')
-      .select('stock')
-      .eq('agent_id', user?.id)
-      .eq('variant_id', request.variant_id)
-      .maybeSingle();
-    
-    const availableQty = data?.stock || 0;
-    setSourceAvailableQty(availableQty);
-    setSelectedRequest(request);
+
+  const incomingGroups = useMemo(() => groupTlRequests(incomingRequests), [incomingRequests]);
+
+  const filteredIncomingGroups = useMemo(() => {
+    if (!listControls) return incomingGroups;
+    return filterTlTransferGroups(
+      incomingGroups,
+      listControls.searchQuery,
+      listControls.dateRange
+    );
+  }, [incomingGroups, listControls]);
+
+  const sortedIncomingGroups = useMemo(() => {
+    if (!listControls) return filteredIncomingGroups;
+    const { key, direction } = resolveTableSortDirection(
+      listControls.sortState,
+      DEFAULT_TL_TRANSFER_SORT_KEY,
+      DEFAULT_TL_TRANSFER_SORT_DIRECTION
+    );
+    return sortTlTransferGroups(filteredIncomingGroups, key, direction);
+  }, [filteredIncomingGroups, listControls]);
+
+  const incomingPagination = useMemo(() => {
+    if (!listControls) {
+      return {
+        pageCount: 1,
+        safePage: 0,
+        pagedItems: sortedIncomingGroups,
+      };
+    }
+    return getListPaginationSlice(
+      sortedIncomingGroups,
+      listControls.page,
+      listControls.pageSize
+    );
+  }, [listControls, sortedIncomingGroups]);
+
+  useTlTransferRealtime({
+    enabled: !!user?.id && user?.role === 'team_leader',
+    companyId: user?.company_id,
+    channelKey: 'incoming',
+  });
+
+  const resetDispatchForm = () => {
+    setQtyById({});
+    setReasonById({});
     setSourceNotes('');
     setSignatureDataUrl('');
-    setApproveDialogOpen(true);
+    setPackagePhotoError(null);
+    setPackagePhotos((prev) => {
+      revokePackageProofPreviews(prev);
+      return [];
+    });
   };
-  
-  // Open reject dialog
-  const handleOpenReject = (request: TLRequestWithDetails) => {
-    setSelectedRequest(request);
-    setRejectionReason('');
-    setRejectDialogOpen(true);
+
+  const openDispatch = async (group: TLRequestGroup) => {
+    const variantIds = [...new Set(group.items.map((item) => item.variant_id).filter(Boolean))];
+    let stockRows: { variant_id: string; stock: number }[] = [];
+    if (user?.id && variantIds.length > 0) {
+      const { data } = await supabase
+        .from('agent_inventory')
+        .select('variant_id, stock')
+        .eq('agent_id', user.id)
+        .in('variant_id', variantIds);
+      stockRows = (data || []) as { variant_id: string; stock: number }[];
+    }
+    const stockByVariant = new Map(stockRows.map((row) => [row.variant_id, Number(row.stock || 0)]));
+    const lines: DispatchLine[] = group.items.map((item) => ({
+      ...item,
+      available: stockByVariant.get(item.variant_id) || 0,
+    }));
+    setSelectedGroup(group);
+    setDispatchLines(lines);
+    setQtyById(
+      Object.fromEntries(
+        lines.map((line) => {
+          const remaining = tlRemainingToDispatch(line);
+          return [line.id, Math.max(0, Math.min(line.available, remaining))];
+        })
+      )
+    );
+    setReasonById({});
+    setSourceNotes('');
+    setSignatureDataUrl('');
+    setPackagePhotos((prev) => {
+      revokePackageProofPreviews(prev);
+      return [];
+    });
+    setPackagePhotoError(null);
+    setDispatchOpen(true);
   };
-  
-  // Approve request
-  const handleApprove = async () => {
-    if (!selectedRequest || !signatureDataUrl) {
+
+  const linesToDispatch = useMemo(
+    () =>
+      dispatchLines
+        .map((line) => {
+          const remaining = tlRemainingToDispatch(line);
+          const qty = Number(qtyById[line.id] || 0);
+          return { line, remaining, qty, short: qty > 0 && qty < remaining };
+        })
+        .filter((row) => row.qty > 0),
+    [dispatchLines, qtyById]
+  );
+
+  const totalDispatchQty = linesToDispatch.reduce((sum, row) => sum + row.qty, 0);
+  const missingReasons = linesToDispatch.filter((row) => row.short && !reasonById[row.line.id]);
+
+  const validateDispatch = () => {
+    if (!selectedGroup) return false;
+    if (packagePhotos.length < 1) {
+      setPackagePhotoError('At least one package photo is required.');
       toast({
-        title: 'Signature Required',
-        description: 'Please provide your signature',
+        title: 'Package photo required',
+        description: 'Upload a photo of the stock you are dispatching.',
         variant: 'destructive',
       });
-      return;
+      return false;
     }
-    
-    // Check if we still have sufficient stock
-    if (sourceAvailableQty < (selectedRequest.admin_approved_quantity || 0)) {
+    if (!signatureDataUrl) {
       toast({
-        title: 'Insufficient Stock',
-        description: `You only have ${sourceAvailableQty} units available, but ${selectedRequest.admin_approved_quantity} were approved`,
+        title: 'Signature required',
+        description: 'Sign to confirm dispatch. Photos alone are not enough.',
         variant: 'destructive',
       });
-      return;
+      return false;
     }
-    
+    if (linesToDispatch.length === 0) {
+      toast({
+        title: 'No quantities',
+        description: 'Enter a dispatch quantity for at least one item.',
+        variant: 'destructive',
+      });
+      return false;
+    }
+    for (const row of linesToDispatch) {
+      if (row.qty > row.remaining || row.qty > row.line.available) {
+        toast({
+          title: 'Invalid quantity',
+          description: `${row.line.variant.brand_name} ${row.line.variant.name} cannot exceed remaining qty or your stock.`,
+          variant: 'destructive',
+        });
+        return false;
+      }
+      if (row.short && !reasonById[row.line.id]) {
+        toast({
+          title: 'Reason required',
+          description: `Say why you are sending less than remaining for ${row.line.variant.name}.`,
+          variant: 'destructive',
+        });
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const openConfirmDispatch = () => {
+    if (!validateDispatch()) return;
+    setConfirmOpen(true);
+  };
+
+  const handleDispatch = async () => {
+    if (!selectedGroup || !validateDispatch()) return;
+
     setProcessing(true);
     try {
-      // Convert base64 to blob
+      const companyId = selectedGroup.items[0]?.company_id || user?.company_id;
+      const storageBase = `${companyId}/tl-transfer/${selectedGroup.request_number}`;
+      const packageUpload = await uploadPackageProofPhotos({
+        photos: packagePhotos,
+        bucket: 'tl-stock-request-signatures',
+        pathPrefix: storageBase,
+        fileStem: `dispatch_${selectedGroup.request_number}`,
+      });
+
       const base64Data = signatureDataUrl.split(',')[1];
       const byteCharacters = atob(base64Data);
       const byteNumbers = new Array(byteCharacters.length);
       for (let i = 0; i < byteCharacters.length; i++) {
         byteNumbers[i] = byteCharacters.charCodeAt(i);
       }
-      const byteArray = new Uint8Array(byteNumbers);
-      const blob = new Blob([byteArray], { type: 'image/png' });
-      
-      // Upload signature
-      const timestamp = Date.now();
-      const fileName = `${user?.company_id}/${selectedRequest.request_number}/${timestamp}_source_approval.png`;
-      
+      const blob = new Blob([new Uint8Array(byteNumbers)], { type: 'image/png' });
+      const fileName = `${storageBase}/dispatch_signature_${Date.now()}.png`;
+
       const { error: uploadError } = await supabase.storage
         .from('tl-stock-request-signatures')
-        .upload(fileName, blob, {
-          contentType: 'image/png',
-          upsert: false,
-        });
-      
+        .upload(fileName, blob, { contentType: 'image/png', upsert: false });
       if (uploadError) throw uploadError;
-      
-      // Get signed URL
+
       const { data: urlData, error: urlError } = await supabase.storage
         .from('tl-stock-request-signatures')
-        .createSignedUrl(fileName, 31536000); // 1 year
-      
+        .createSignedUrl(fileName, 31536000);
       if (urlError || !urlData?.signedUrl) throw new Error('Failed to generate signed URL');
-      
-      // Call RPC function
-      const { data: result, error: rpcError } = await supabase.rpc('source_tl_approve_request', {
-        p_request_id: selectedRequest.id,
-        p_signature_url: urlData.signedUrl,
-        p_signature_path: fileName,
-        p_notes: sourceNotes || null,
-      });
-      
-      if (rpcError) throw rpcError;
-      if (!result.success) throw new Error(result.error || 'Failed to approve request');
-      
+
+      let tdrNumber: string | null = null;
+      let tdrKind: string | null = null;
+      let reuseRedispatchTdr: string | null = null;
+      for (const row of linesToDispatch) {
+        const isRedispatch = row.line.received_quantity != null;
+        const { data: result, error: rpcError } = await supabase.rpc('source_tl_dispatch_stock', {
+          p_request_id: row.line.id,
+          p_dispatched_quantity: row.qty,
+          p_signature_url: urlData.signedUrl,
+          p_signature_path: fileName,
+          p_shortfall_reason: row.short ? reasonById[row.line.id] : null,
+          p_notes: sourceNotes || null,
+          p_proof_urls: packageUpload.urls,
+          p_reuse_tdr: isRedispatch ? reuseRedispatchTdr : null,
+        });
+        if (rpcError) throw rpcError;
+        if (!result?.success) throw new Error(result?.error || 'Failed to dispatch');
+        tdrNumber = result.tdr_number ?? tdrNumber;
+        tdrKind = result.tdr_kind ?? tdrKind;
+        if (isRedispatch && result.tdr_number) reuseRedispatchTdr = result.tdr_number;
+      }
+
+      const skipped = dispatchLines.length - linesToDispatch.length;
+      const isRedispatch = linesToDispatch.some((row) => row.line.received_quantity != null);
       toast({
-        title: 'Request Approved',
-        description: 'Request approved and sent to requester for receipt',
+        title: 'Stock dispatched',
+        description:
+          `${totalDispatchQty} units across ${linesToDispatch.length} item(s) left your inventory.` +
+          (tdrNumber ? ` TDR ${tdrNumber}.` : '') +
+          (skipped > 0 ? ` ${skipped} item(s) with 0 qty were left pending.` : ''),
       });
-      
-      setApproveDialogOpen(false);
-      setSelectedRequest(null);
-      queryClient.invalidateQueries({ queryKey: ['incoming-tl-requests'] });
+      if (tdrNumber && selectedGroup) {
+        try {
+          await exportTlTdrPdf(
+            tlTdrPdfFromDispatch({
+              tdrNumber,
+              kind: tdrKind || (isRedispatch ? 'redeliver' : 'dispatch'),
+              requestNumber: selectedGroup.request_number,
+              requesterName: selectedGroup.requester.full_name,
+              sourceName: selectedGroup.source.full_name,
+              lines: linesToDispatch.map((row) => ({
+                label: `${row.line.variant.brand_name} · ${row.line.variant.name}`,
+                quantity: row.qty,
+              })),
+            })
+          );
+        } catch (printError: any) {
+          toast({
+            title: 'Dispatched, print failed',
+            description: printError?.message || 'Open Transfer details to print this TDR.',
+            variant: 'destructive',
+          });
+        }
+      }
+      resetDispatchForm();
+      setConfirmOpen(false);
+      setDispatchOpen(false);
+      setSelectedGroup(null);
+      setDispatchLines([]);
+      invalidateTlTransferQueries(queryClient);
     } catch (error: any) {
-      console.error('Error approving request:', error);
       toast({
-        title: 'Error',
-        description: error.message || 'Failed to approve request',
+        title: 'Could not dispatch',
+        description: error.message || 'Failed to dispatch stock',
         variant: 'destructive',
       });
     } finally {
       setProcessing(false);
     }
   };
-  
-  // Reject request
+
   const handleReject = async () => {
-    if (!selectedRequest || !rejectionReason.trim()) {
+    if (!selectedGroup || !rejectionReason.trim()) {
       toast({
-        title: 'Rejection Reason Required',
-        description: 'Please provide a reason for rejection',
+        title: 'Rejection reason required',
         variant: 'destructive',
       });
       return;
     }
-    
     setProcessing(true);
     try {
-      const { data: result, error } = await supabase.rpc('source_tl_reject_request', {
-        p_request_id: selectedRequest.id,
-        p_reason: rejectionReason,
-      });
-      
-      if (error) throw error;
-      if (!result.success) throw new Error(result.error || 'Failed to reject request');
-      
-      toast({
-        title: 'Request Rejected',
-        description: 'Request rejected and notifications sent',
-      });
-      
-      setRejectDialogOpen(false);
-      setSelectedRequest(null);
-      queryClient.invalidateQueries({ queryKey: ['incoming-tl-requests'] });
+      for (const item of selectedGroup.items) {
+        const { data: result, error } = await supabase.rpc('source_tl_reject_request', {
+          p_request_id: item.id,
+          p_reason: rejectionReason,
+        });
+        if (error) throw error;
+        if (!result?.success) throw new Error(result?.error || 'Failed to reject request');
+      }
+      toast({ title: 'Request rejected' });
+      setRejectOpen(false);
+      setSelectedGroup(null);
+      invalidateTlTransferQueries(queryClient);
     } catch (error: any) {
-      console.error('Error rejecting request:', error);
       toast({
-        title: 'Error',
+        title: 'Could not reject',
         description: error.message || 'Failed to reject request',
         variant: 'destructive',
       });
@@ -253,272 +428,497 @@ export default function IncomingTLRequestsSection() {
       setProcessing(false);
     }
   };
-  
-  if (user?.role !== 'team_leader') {
-    return null;
-  }
-  
+
+  if (user?.role !== 'team_leader') return null;
+
+  const listBody = isLoading ? (
+    <div className="flex items-center justify-center py-8 text-muted-foreground">
+      <Loader2 className="h-5 w-5 animate-spin mr-2" />
+      Loading...
+    </div>
+  ) : incomingGroups.length === 0 ? (
+    <div className="text-center py-8 text-muted-foreground">
+      <Package className="h-10 w-10 mx-auto mb-2 opacity-40" />
+      <p>No transfers waiting to dispatch</p>
+    </div>
+  ) : sortedIncomingGroups.length === 0 ? (
+    <div className="text-center py-8 text-muted-foreground">
+      <p>No incoming transfers match this search or date range.</p>
+    </div>
+  ) : (
+    <div className="space-y-4">
+      <div className="border rounded-lg overflow-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              {listControls ? (
+                <>
+                  <SortableTableHead
+                    label="Transfer #"
+                    sortKey="request_number"
+                    sortDirection={getTableSortDisplayDirection(listControls.sortState, 'request_number')}
+                    onSort={listControls.onSort}
+                  />
+                  <SortableTableHead
+                    label="Requester"
+                    sortKey="counterpart"
+                    sortDirection={getTableSortDisplayDirection(listControls.sortState, 'counterpart')}
+                    onSort={listControls.onSort}
+                  />
+                  <SortableTableHead
+                    label="Items"
+                    sortKey="item"
+                    sortDirection={getTableSortDisplayDirection(listControls.sortState, 'item')}
+                    onSort={listControls.onSort}
+                  />
+                  <SortableTableHead
+                    label="To dispatch"
+                    sortKey="to_dispatch"
+                    sortDirection={getTableSortDisplayDirection(listControls.sortState, 'to_dispatch')}
+                    onSort={listControls.onSort}
+                    className="text-right"
+                  />
+                  <SortableTableHead
+                    label="Date"
+                    sortKey="created_at"
+                    sortDirection={getTableSortDisplayDirection(listControls.sortState, 'created_at')}
+                    onSort={listControls.onSort}
+                  />
+                </>
+              ) : (
+                <>
+                  <TableHead>Transfer #</TableHead>
+                  <TableHead>Requester</TableHead>
+                  <TableHead>Items</TableHead>
+                  <TableHead className="text-right">To dispatch</TableHead>
+                  <TableHead>Date</TableHead>
+                </>
+              )}
+              <TableHead />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {incomingPagination.pagedItems.map((group) => {
+              const remainingTotal = group.items.reduce(
+                (sum, item) => sum + tlRemainingToDispatch(item),
+                0
+              );
+              const canReject = group.items.every((item) => item.received_quantity == null);
+              return (
+                <TableRow key={group.request_number}>
+                  <TableCell className="font-medium">{group.request_number}</TableCell>
+                  <TableCell>
+                    <p className="font-medium">{group.requester.full_name}</p>
+                    {group.requester.region ? (
+                      <p className="text-sm text-muted-foreground">{group.requester.region}</p>
+                    ) : null}
+                  </TableCell>
+                  <TableCell>
+                    <p className="font-medium">
+                      {group.items[0]?.variant.brand_name} · {group.items[0]?.variant.name}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {group.items.length === 1
+                        ? group.items[0]?.variant.type
+                        : `${group.items.length} items`}
+                    </p>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Badge variant="secondary" className="text-base font-semibold">
+                      {remainingTotal}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>{new Date(group.created_at).toLocaleDateString()}</TableCell>
+                  <TableCell className="text-right">
+                    <TLTransferRowActionsMenu
+                      onView={() => {
+                        setViewRequest(group.items[0] ?? null);
+                        setViewOpen(true);
+                      }}
+                      onHistory={() => {
+                        setHistoryLines(group.items);
+                        setHistoryOpen(true);
+                      }}
+                      onPrint={() => {
+                        void printTlStockTransferRequest(group.items).catch((error: any) => {
+                          toast({
+                            title: 'Could not print transfer',
+                            description: error?.message || 'Failed to open the print view.',
+                            variant: 'destructive',
+                          });
+                        });
+                      }}
+                      onDispatch={() => openDispatch(group)}
+                      onReject={
+                        canReject
+                          ? () => {
+                              setSelectedGroup(group);
+                              setRejectionReason('');
+                              setRejectOpen(true);
+                            }
+                          : undefined
+                      }
+                    />
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
+      {listControls && sortedIncomingGroups.length > 0 ? (
+        <ListPagination
+          pageSize={listControls.pageSize}
+          safePage={incomingPagination.safePage}
+          pageCount={incomingPagination.pageCount}
+          onPageSizeChange={listControls.onPageSizeChange}
+          onPrevious={() => listControls.onPageChange(Math.max(0, incomingPagination.safePage - 1))}
+          onNext={() =>
+            listControls.onPageChange(
+              Math.min(incomingPagination.pageCount - 1, incomingPagination.safePage + 1)
+            )
+          }
+        />
+      ) : null}
+    </div>
+  );
+
   return (
     <>
+      {embedded ? (
+        listBody
+      ) : (
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Package className="h-5 w-5" />
-            Incoming Stock Requests
+            Incoming stock transfers
           </CardTitle>
           <CardDescription>
-            Review and approve stock requests from other team leaders
+            Super Admin already approved these. Dispatch from your stock — you can send less than
+            remaining if you give a reason. After a Found shortage, the missing units are back in
+            your inventory here. Missing arrivals are investigated on{' '}
+            <Link
+              to="/inventory/tl-transfer-shortages"
+              className="text-primary underline-offset-4 hover:underline"
+            >
+              Transfer shortages
+            </Link>
+            .
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {requestsLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : incomingRequests.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
-              <p>No pending requests</p>
-            </div>
-          ) : (
-            <div className="border rounded-lg">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Request #</TableHead>
-                    <TableHead>Requester</TableHead>
-                    <TableHead>Product</TableHead>
-                    <TableHead>Admin Approved Qty</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {incomingRequests.map((request) => (
-                    <TableRow key={request.id}>
-                      <TableCell className="font-medium">{request.request_number}</TableCell>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium">{request.requester.full_name}</p>
-                          {request.requester.region && (
-                            <p className="text-sm text-muted-foreground">{request.requester.region}</p>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium">{request.variant.brand_name}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {request.variant.name} {request.variant.type}
-                          </p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="secondary" className="text-lg font-semibold">
-                          {request.admin_approved_quantity}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>{new Date(request.created_at).toLocaleDateString()}</TableCell>
-                      <TableCell>
-                        <div className="flex gap-2">
-                          <Button size="sm" onClick={() => handleOpenApprove(request)}>
-                            <ThumbsUp className="h-4 w-4 mr-1" />
-                            Approve
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            onClick={() => handleOpenReject(request)}
-                          >
-                            <ThumbsDown className="h-4 w-4 mr-1" />
-                            Reject
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
+          {listBody}
         </CardContent>
       </Card>
-      
-      {/* Approve Dialog */}
-      <Dialog open={approveDialogOpen} onOpenChange={setApproveDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Approve Stock Request</DialogTitle>
-            <DialogDescription>Review and sign to approve this request</DialogDescription>
+      )}
+
+      <Dialog
+        open={dispatchOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            resetDispatchForm();
+            setDispatchLines([]);
+          }
+          setDispatchOpen(open);
+        }}
+      >
+        <DialogContent className="flex max-h-[90vh] w-[95vw] max-w-5xl flex-col gap-0 overflow-hidden p-0">
+          <DialogHeader className="shrink-0 space-y-1 border-b px-6 py-5 pr-12 text-left">
+            <DialogTitle>Dispatch stock</DialogTitle>
+            <DialogDescription>
+              Set a quantity for each item. What you dispatch is deducted from your inventory
+              immediately. Package photos and your signature are required once for this transfer.
+            </DialogDescription>
           </DialogHeader>
-          {selectedRequest && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4 p-4 bg-secondary rounded-lg">
+          {selectedGroup ? (
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5">
+              <div className="grid grid-cols-2 gap-3 rounded-lg bg-muted/40 p-3 text-sm sm:grid-cols-3">
                 <div>
-                  <Label className="text-muted-foreground">Request Number</Label>
-                  <p className="font-medium">{selectedRequest.request_number}</p>
+                  <p className="text-muted-foreground">Transfer #</p>
+                  <p className="font-medium font-mono">{selectedGroup.request_number}</p>
                 </div>
                 <div>
-                  <Label className="text-muted-foreground">Requester</Label>
-                  <p className="font-medium">{selectedRequest.requester.full_name}</p>
-                  {selectedRequest.requester.region && (
-                    <p className="text-sm text-muted-foreground">{selectedRequest.requester.region}</p>
-                  )}
+                  <p className="text-muted-foreground">Requester</p>
+                  <p className="font-medium">{selectedGroup.requester.full_name}</p>
                 </div>
                 <div>
-                  <Label className="text-muted-foreground">Product</Label>
-                  <p className="font-medium">{selectedRequest.variant.brand_name}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {selectedRequest.variant.name} {selectedRequest.variant.type}
+                  <p className="text-muted-foreground">Items</p>
+                  <p className="font-medium">
+                    {dispatchLines.length} · {totalDispatchQty} units to dispatch
                   </p>
                 </div>
-                <div>
-                  <Label className="text-muted-foreground">Admin Approved Quantity</Label>
-                  <p className="text-3xl font-bold text-blue-600">{selectedRequest.admin_approved_quantity}</p>
-                </div>
-              </div>
-              
-              {/* Stock Availability Check */}
-              <div className="grid grid-cols-2 gap-4">
-                <Card>
-                  <CardContent className="pt-6">
-                    <Label className="text-muted-foreground">Your Available Stock</Label>
-                    <p
-                      className={`text-3xl font-bold ${
-                        sourceAvailableQty >= (selectedRequest.admin_approved_quantity || 0)
-                          ? 'text-green-600'
-                          : 'text-red-600'
-                      }`}
-                    >
-                      {sourceAvailableQty}
-                    </p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="pt-6">
-                    <Label className="text-muted-foreground">Status</Label>
-                    {sourceAvailableQty >= (selectedRequest.admin_approved_quantity || 0) ? (
-                      <div className="flex items-center gap-2 text-green-600">
-                        <CheckCircle2 className="h-5 w-5" />
-                        <span className="font-medium">Sufficient Stock</span>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2 text-red-600">
-                        <AlertCircle className="h-5 w-5" />
-                        <span className="font-medium">Insufficient Stock</span>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              </div>
-              
-              {sourceAvailableQty < (selectedRequest.admin_approved_quantity || 0) && (
-                <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-lg">
-                  <AlertCircle className="h-5 w-5 text-red-600 mt-0.5" />
-                  <div className="flex-1">
-                    <p className="font-medium text-red-900">Insufficient Stock</p>
-                    <p className="text-sm text-red-700">
-                      You have only {sourceAvailableQty} units, but {selectedRequest.admin_approved_quantity} units are needed. You cannot approve this request.
-                    </p>
+                {selectedGroup.requester_notes ? (
+                  <div className="col-span-2 sm:col-span-3">
+                    <p className="text-muted-foreground">Notes</p>
+                    <p className="whitespace-pre-wrap font-medium">{selectedGroup.requester_notes}</p>
                   </div>
-                </div>
-              )}
-              
-              {selectedRequest.admin_notes && (
-                <div>
-                  <Label className="text-muted-foreground">Admin Notes</Label>
-                  <p className="text-sm mt-1 p-3 bg-secondary rounded-lg">{selectedRequest.admin_notes}</p>
-                </div>
-              )}
-              
+                ) : null}
+              </div>
+
+              <div className="max-h-[40vh] overflow-auto rounded-lg border">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="min-w-[200px] bg-muted/40">Item</TableHead>
+                      <TableHead className="bg-muted/40 text-right">To dispatch</TableHead>
+                      <TableHead className="bg-muted/40 text-right">Your stock</TableHead>
+                      <TableHead className="w-28 bg-muted/40">Dispatch qty</TableHead>
+                      <TableHead className="min-w-[200px] bg-muted/40">If sending less</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {dispatchLines.map((line) => {
+                      const remaining = tlRemainingToDispatch(line);
+                      const qty = Number(qtyById[line.id] || 0);
+                      const maxQty = Math.max(0, Math.min(remaining, line.available));
+                      const short = qty > 0 && qty < remaining;
+                      const enough = line.available >= remaining;
+                      return (
+                        <TableRow key={line.id}>
+                          <TableCell>
+                            <p className="font-medium">
+                              {line.variant.brand_name} · {line.variant.name}
+                            </p>
+                            <p className="text-xs text-muted-foreground">{line.variant.type}</p>
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums font-medium">
+                            {remaining}
+                          </TableCell>
+                          <TableCell
+                            className={`text-right tabular-nums font-medium ${
+                              enough ? 'text-green-700' : 'text-red-700'
+                            }`}
+                          >
+                            {line.available}
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              min={0}
+                              max={maxQty}
+                              className="h-8"
+                              value={qtyById[line.id] ?? ''}
+                              onChange={(e) => {
+                                const raw = e.target.value;
+                                const next = Math.max(
+                                  0,
+                                  Math.min(maxQty, Math.floor(Number(raw) || 0))
+                                );
+                                setQtyById((prev) => ({ ...prev, [line.id]: next }));
+                              }}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            {short ? (
+                              <Select
+                                value={reasonById[line.id] || ''}
+                                onValueChange={(value) =>
+                                  setReasonById((prev) => ({
+                                    ...prev,
+                                    [line.id]: value as TLDispatchShortfallReason,
+                                  }))
+                                }
+                              >
+                                <SelectTrigger className="h-8">
+                                  <SelectValue placeholder="Reason" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {TL_DISPATCH_SHORTFALL_OPTIONS.map((option) => (
+                                    <SelectItem key={option.value} value={option.value}>
+                                      {option.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            ) : enough ? (
+                              <p className="flex items-center gap-1 text-xs text-green-700">
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                Full qty available
+                              </p>
+                            ) : (
+                              <p className="flex items-center gap-1 text-xs text-amber-700">
+                                <AlertCircle className="h-3.5 w-3.5" />
+                                Short stock
+                              </p>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+
               <div className="space-y-2">
-                <Label>Your Notes (Optional)</Label>
+                <Label>Notes (optional)</Label>
                 <Textarea
-                  placeholder="Add any notes for the requester..."
+                  rows={2}
                   value={sourceNotes}
                   onChange={(e) => setSourceNotes(e.target.value)}
-                  rows={3}
+                  placeholder="Notes for the requester..."
                 />
               </div>
-              
-              {!signatureDataUrl ? (
-                <div className="flex justify-end">
-                  <Button
-                    onClick={() => setShowSignatureModal(true)}
-                    disabled={processing || sourceAvailableQty < (selectedRequest.admin_approved_quantity || 0)}
-                  >
-                    Add Signature
-                  </Button>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <Label>Your Signature</Label>
-                  <div className="border rounded-lg p-4 bg-secondary">
-                    <img src={signatureDataUrl} alt="Signature" className="max-h-32 mx-auto" />
+
+              <MultiProofPhotoField
+                label="Package photos"
+                value={packagePhotos}
+                onChange={(next) => {
+                  setPackagePhotoError(null);
+                  setPackagePhotos(next);
+                }}
+                error={packagePhotoError}
+                emptyTitle="Upload package photo"
+                recommendedHint="Required"
+                disabled={processing}
+              />
+
+              <div className="space-y-2">
+                <Label>Dispatcher e-signature</Label>
+                {signatureDataUrl ? (
+                  <div className="border rounded-md p-3 bg-muted/30 space-y-2">
+                    <img src={signatureDataUrl} alt="Dispatcher signature" className="max-h-20 mx-auto" />
+                    <div className="flex justify-end">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowSignatureModal(true)}
+                      >
+                        Change signature
+                      </Button>
+                    </div>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setSignatureDataUrl('')}
-                  >
-                    Clear Signature
-                  </Button>
-                  <p className="text-xs text-muted-foreground">
-                    By signing, you confirm that you approve this request and the stock will be reserved for transfer
-                  </p>
-                </div>
-              )}
-              
+                ) : (
+                  <div className="border rounded-md p-3 bg-muted/30 flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm text-muted-foreground">
+                      Draw your signature. Photos alone are not enough.
+                    </p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => setShowSignatureModal(true)}
+                      disabled={totalDispatchQty < 1}
+                    >
+                      Add signature
+                    </Button>
+                  </div>
+                )}
+              </div>
+
               <div className="flex gap-2">
                 <Button
                   variant="outline"
                   className="flex-1"
-                  onClick={() => {
-                    setApproveDialogOpen(false);
-                    setSelectedRequest(null);
-                    setSignatureDataUrl('');
-                  }}
+                  onClick={() => setDispatchOpen(false)}
                   disabled={processing}
                 >
                   Cancel
                 </Button>
                 <Button
                   className="flex-1"
-                  onClick={handleApprove}
-                  disabled={processing || !signatureDataUrl || sourceAvailableQty < (selectedRequest.admin_approved_quantity || 0)}
+                  onClick={openConfirmDispatch}
+                  disabled={
+                    processing ||
+                    !signatureDataUrl ||
+                    packagePhotos.length < 1 ||
+                    totalDispatchQty < 1 ||
+                    missingReasons.length > 0
+                  }
                 >
-                  {processing ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Processing...
-                    </>
-                  ) : (
-                    'Approve Request'
-                  )}
+                  {`Dispatch ${totalDispatchQty} units · ${linesToDispatch.length} item(s)`}
                 </Button>
               </div>
             </div>
-          )}
+          ) : null}
         </DialogContent>
       </Dialog>
-      
-      {/* Reject Dialog */}
-      <AlertDialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
+
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent className="max-w-lg">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure you want to dispatch this?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Stock will leave your inventory immediately and move in transit to{' '}
+              {selectedGroup?.requester.full_name || 'the requester'}.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-3 text-sm">
+            <div className="rounded-md bg-muted/50 p-3">
+              <p className="text-muted-foreground">Transfer</p>
+              <p className="font-medium font-mono">{selectedGroup?.request_number}</p>
+            </div>
+            <div className="max-h-56 overflow-auto rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Item</TableHead>
+                    <TableHead className="text-right">To dispatch</TableHead>
+                    <TableHead className="text-right">Dispatch</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {linesToDispatch.map((row) => (
+                    <TableRow key={row.line.id}>
+                      <TableCell>
+                        <p className="font-medium">
+                          {row.line.variant.brand_name} · {row.line.variant.name}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {row.short && reasonById[row.line.id]
+                            ? TL_DISPATCH_SHORTFALL_LABELS[reasonById[row.line.id] as TLDispatchShortfallReason]
+                            : row.line.variant.type}
+                        </p>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{row.remaining}</TableCell>
+                      <TableCell className="text-right tabular-nums font-medium">{row.qty}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+            <p className="text-muted-foreground">
+              {linesToDispatch.length} item{linesToDispatch.length === 1 ? '' : 's'} · {totalDispatchQty}{' '}
+              units total
+            </p>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={processing}>Go back</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void handleDispatch();
+              }}
+              disabled={processing}
+            >
+              {processing ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Dispatching...
+                </>
+              ) : (
+                'Yes, dispatch stock'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={rejectOpen} onOpenChange={setRejectOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Reject Stock Request</AlertDialogTitle>
+            <AlertDialogTitle>Reject transfer</AlertDialogTitle>
             <AlertDialogDescription>
-              Provide a reason for rejecting this request. The requester and admin will be notified.
+              All items on this transfer will be rejected. The requester and admin will be notified.
+              Stock is not deducted.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-2">
-            <Label>Rejection Reason</Label>
+            <Label>Rejection reason</Label>
             <Textarea
-              placeholder="Enter reason for rejection..."
+              rows={4}
               value={rejectionReason}
               onChange={(e) => setRejectionReason(e.target.value)}
-              rows={4}
-              required
             />
           </div>
           <AlertDialogFooter>
@@ -528,41 +928,44 @@ export default function IncomingTLRequestsSection() {
               disabled={processing || !rejectionReason.trim()}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {processing ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Rejecting...
-                </>
-              ) : (
-                'Reject'
-              )}
+              Reject
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      
-      {/* Signature Modal */}
+
       <Dialog open={showSignatureModal} onOpenChange={setShowSignatureModal}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Sign Approval</DialogTitle>
-            <DialogDescription>
-              Please sign below to confirm your approval
-            </DialogDescription>
+            <DialogTitle>Sign dispatch</DialogTitle>
+            <DialogDescription>Sign to confirm you are releasing this stock.</DialogDescription>
           </DialogHeader>
           <SignatureCanvas
             onSave={(dataUrl) => {
               setSignatureDataUrl(dataUrl);
               setShowSignatureModal(false);
-              toast({
-                title: 'Signature Saved',
-                description: 'Your signature has been captured',
-              });
             }}
             onCancel={() => setShowSignatureModal(false)}
           />
         </DialogContent>
       </Dialog>
+      <TLTransferDetailsDialog
+        open={viewOpen}
+        request={viewRequest}
+        allRequests={incomingRequests}
+        onOpenChange={(open) => {
+          setViewOpen(open);
+          if (!open) setViewRequest(null);
+        }}
+      />
+      <TLTransferHistoryDialog
+        open={historyOpen}
+        lines={historyLines}
+        onOpenChange={(open) => {
+          setHistoryOpen(open);
+          if (!open) setHistoryLines([]);
+        }}
+      />
     </>
   );
 }
