@@ -244,9 +244,9 @@ function toSaReturnTimelineInput(sa: DisposalSaReturn): SaReturnTimelineDialogIn
   return {
     requestNumber: sa.request_number,
     createdAt: sa.created_at ?? new Date().toISOString(),
-    createdByName: sa.created_by_user?.full_name,
+    createdByName: sa.source_agent?.full_name ?? sa.created_by_user?.full_name,
     sourceAgentId: sa.source_agent_id,
-    sourceAgentName: sa.source_agent?.full_name,
+    sourceAgentName: sa.source_agent?.full_name ?? sa.created_by_user?.full_name,
     approvedAt: sa.approved_at,
     approvedByName: sa.approved_by_user?.full_name,
     cancelledAt: sa.cancelled_at,
@@ -307,7 +307,9 @@ function DisposalGroupDetails({ rows }: { rows: DisposalRow[] }) {
         </div>
         <div>
           <span className="text-muted-foreground">Where from</span>
-          <p className="font-medium">{sa?.source_agent?.full_name ?? '—'}</p>
+          <p className="font-medium">
+            {sa?.source_agent?.full_name ?? sa?.created_by_user?.full_name ?? '—'}
+          </p>
         </div>
         <div>
           <span className="text-muted-foreground">Status</span>
@@ -322,7 +324,11 @@ function DisposalGroupDetails({ rows }: { rows: DisposalRow[] }) {
         <div>
           <span className="text-muted-foreground">Submitted by</span>
           <p className="font-medium">
-            {formatPersonWithDate(sa?.created_by_user?.full_name, sa?.created_at)}
+            {formatPersonWithDate(
+              // TL-sourced RTs: source_agent is the team leader; otherwise created_by.
+              sa?.source_agent?.full_name ?? sa?.created_by_user?.full_name,
+              sa?.created_at
+            )}
           </p>
         </div>
         <div>

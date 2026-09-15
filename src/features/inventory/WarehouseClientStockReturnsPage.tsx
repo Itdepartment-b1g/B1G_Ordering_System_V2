@@ -74,6 +74,14 @@ import {
   type SaReturnType,
 } from './utils/saReturnDisplay';
 
+/** Team leader on TL-sourced RTs is source_agent; otherwise fall back to created_by. */
+function saReturnTeamLeaderName(row: {
+  source_agent?: { full_name: string } | null;
+  created_by_user?: { full_name: string } | null;
+}): string | null {
+  return row.source_agent?.full_name ?? row.created_by_user?.full_name ?? null;
+}
+
 function toSaReturnTimelineInput(row: {
   request_number: string;
   created_at: string;
@@ -100,12 +108,13 @@ function toSaReturnTimelineInput(row: {
   }>;
 }): SaReturnTimelineDialogInput {
   const dest = row.destination_location;
+  const teamLeaderName = saReturnTeamLeaderName(row);
   return {
     requestNumber: row.request_number,
     createdAt: row.created_at,
-    createdByName: row.created_by_user?.full_name,
+    createdByName: teamLeaderName,
     sourceAgentId: row.source_agent_id,
-    sourceAgentName: row.source_agent?.full_name,
+    sourceAgentName: teamLeaderName,
     approvedAt: row.approved_at,
     approvedByName: row.approved_by_user?.full_name,
     cancelledAt: row.cancelled_at,
@@ -976,7 +985,7 @@ export default function WarehouseClientStockReturnsPage() {
                       </TableCell>
                       <TableCell>{row.client_company?.company_name ?? '—'}</TableCell>
                       <TableCell className="text-sm">
-                        {row.source_agent?.full_name ?? '—'}
+                        {saReturnTeamLeaderName(row) ?? '—'}
                       </TableCell>
                       <TableCell className="text-sm">
                         {row.approved_by_user?.full_name ? (
@@ -1166,8 +1175,8 @@ export default function WarehouseClientStockReturnsPage() {
                   </p>
                 </div>
                 <div>
-                  <span className="text-muted-foreground">From team leader</span>
-                  <p>{detailReturn.source_agent?.full_name ?? '—'}</p>
+                  <span className="text-muted-foreground">Submitted by</span>
+                  <p>{saReturnTeamLeaderName(detailReturn) ?? '—'}</p>
                 </div>
                 <div>
                   <span className="text-muted-foreground">Approved by</span>
@@ -1177,10 +1186,6 @@ export default function WarehouseClientStockReturnsPage() {
                       ? ` · ${format(new Date(detailReturn.approved_at), 'PPp')}`
                       : ''}
                   </p>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Submitted by</span>
-                  <p>{detailReturn.created_by_user?.full_name ?? '—'}</p>
                 </div>
                 <div>
                   <span className="text-muted-foreground">Created</span>
