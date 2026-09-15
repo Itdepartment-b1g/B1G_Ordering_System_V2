@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { AlertCircle, Eye, FileText, Loader2, MoreHorizontal, RotateCcw, Search, SearchCheck, XCircle } from 'lucide-react';
+import { AlertCircle, Eye, FileText, History, Loader2, MoreHorizontal, RotateCcw, Search, SearchCheck, XCircle } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
@@ -9,6 +9,10 @@ import PageManualDialog from '@/features/inventory/warehouse-manual/components/P
 import ClientStockReturnsManual from '@/features/inventory/warehouse-manual/components/ClientStockReturnsManual';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import { WarehouseStockReturnInspectDialog } from './components/WarehouseStockReturnInspectDialog';
+import {
+  SaReturnTimelineDialog,
+  type SaReturnTimelineDialogInput,
+} from './components/SaReturnTimelineDialog';
 import {
   buildInspectPayload,
   createInspectSplit,
@@ -65,12 +69,67 @@ import {
 } from '@/components/ui/alert-dialog';
 
 import {
-  buildSaReturnTimeline,
-  formatSaReturnTimelineAt,
   formatSaReturnType,
   saReturnTypeBadgeClass,
   type SaReturnType,
 } from './utils/saReturnDisplay';
+
+function toSaReturnTimelineInput(row: {
+  request_number: string;
+  created_at: string;
+  created_by_user?: { full_name: string } | null;
+  source_agent_id?: string | null;
+  source_agent?: { full_name: string } | null;
+  approved_at?: string | null;
+  approved_by_user?: { full_name: string } | null;
+  cancelled_at?: string | null;
+  cancelled_by_user?: { full_name: string } | null;
+  status: string;
+  return_type?: SaReturnType | null;
+  destination_location?: { name: string; is_main?: boolean | null } | null;
+  receipts: Array<{
+    id: string;
+    received_at: string;
+    notes?: string | null;
+    receivedByName?: string | null;
+    lines?: Array<{
+      qty_good: number;
+      qty_damaged: number;
+      variant?: { name: string; brand?: { name: string } | null } | null;
+    }>;
+  }>;
+}): SaReturnTimelineDialogInput {
+  const dest = row.destination_location;
+  return {
+    requestNumber: row.request_number,
+    createdAt: row.created_at,
+    createdByName: row.created_by_user?.full_name,
+    sourceAgentId: row.source_agent_id,
+    sourceAgentName: row.source_agent?.full_name,
+    approvedAt: row.approved_at,
+    approvedByName: row.approved_by_user?.full_name,
+    cancelledAt: row.cancelled_at,
+    cancelledByName: row.cancelled_by_user?.full_name,
+    status: row.status,
+    returnType: row.return_type ?? null,
+    destinationLocationName: dest
+      ? `${dest.name}${dest.is_main ? ' (Main)' : ' (Sub)'}`
+      : null,
+    receipts: row.receipts.map((r) => ({
+      id: r.id,
+      received_at: r.received_at,
+      notes: r.notes ?? null,
+      receivedByName: r.receivedByName ?? null,
+      lines: (r.lines ?? []).map((line) => ({
+        qty_good: line.qty_good,
+        qty_damaged: line.qty_damaged,
+        productLabel: line.variant
+          ? [line.variant.brand?.name, line.variant.name].filter(Boolean).join(' · ') || null
+          : null,
+      })),
+    })),
+  };
+}
 
 type ReturnStatus =
   | 'pending_receive'
@@ -101,6 +160,7 @@ type ClientReturnReceipt = {
   id: string;
   received_at: string;
   notes: string | null;
+  receivedByName: string | null;
   lines: ClientReturnReceiptLine[];
 };
 
@@ -267,6 +327,10 @@ function mapRow(raw: Record<string, unknown>): ClientReturnRow {
       id: r.id as string,
       received_at: r.received_at as string,
       notes: (r.notes as string | null) ?? null,
+      receivedByName:
+        firstRelation(
+          r.received_by_user as { full_name: string } | { full_name: string }[] | null
+        )?.full_name ?? null,
       lines,
     } satisfies ClientReturnReceipt;
   });
@@ -344,6 +408,8 @@ export default function WarehouseClientStockReturnsPage() {
   const [detailReturn, setDetailReturn] = useState<ClientReturnRow | null>(null);
   const [detailProofUrl, setDetailProofUrl] = useState<string | null>(null);
   const [detailSignatureUrl, setDetailSignatureUrl] = useState<string | null>(null);
+  const [timelineOpen, setTimelineOpen] = useState(false);
+  const [timelineReturn, setTimelineReturn] = useState<SaReturnTimelineDialogInput | null>(null);
   const [selectedReturn, setSelectedReturn] = useState<ClientReturnRow | null>(null);
   const [inspectItems, setInspectItems] = useState<InspectRequestItem[]>([]);
   const [inspectNotes, setInspectNotes] = useState('');
@@ -430,6 +496,7 @@ export default function WarehouseClientStockReturnsPage() {
             id,
             received_at,
             notes,
+            received_by_user:profiles!received_by ( full_name ),
             lines:standard_account_stock_return_receipt_lines (
               warehouse_variant_id,
               qty_good,
@@ -951,6 +1018,15 @@ export default function WarehouseClientStockReturnsPage() {
                               View
                             </DropdownMenuItem>
                             <DropdownMenuItem
+                              onClick={() => {
+                                setTimelineReturn(toSaReturnTimelineInput(row));
+                                setTimelineOpen(true);
+                              }}
+                            >
+                              <History className="mr-2 h-4 w-4" />
+                              Timeline
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
                               disabled={exportingPdfId === row.id}
                               onClick={() => void handleExportPdf(row)}
                             >
@@ -1020,20 +1096,34 @@ export default function WarehouseClientStockReturnsPage() {
             <div className="flex items-start justify-between gap-3 pr-6">
               <DialogTitle>{detailReturn?.request_number ?? 'Return details'}</DialogTitle>
               {detailReturn && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={exportingPdfId === detailReturn.id}
-                  onClick={() => void handleExportPdf(detailReturn)}
-                >
-                  {exportingPdfId === detailReturn.id ? (
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  ) : (
-                    <FileText className="h-4 w-4 mr-2" />
-                  )}
-                  Print PDF
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setTimelineReturn(toSaReturnTimelineInput(detailReturn));
+                      setTimelineOpen(true);
+                    }}
+                  >
+                    <History className="h-4 w-4 mr-2" />
+                    Timeline
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={exportingPdfId === detailReturn.id}
+                    onClick={() => void handleExportPdf(detailReturn)}
+                  >
+                    {exportingPdfId === detailReturn.id ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : (
+                      <FileText className="h-4 w-4 mr-2" />
+                    )}
+                    Print PDF
+                  </Button>
+                </div>
               )}
             </div>
           </DialogHeader>
@@ -1095,38 +1185,6 @@ export default function WarehouseClientStockReturnsPage() {
                 <div>
                   <span className="text-muted-foreground">Created</span>
                   <p>{format(new Date(detailReturn.created_at), 'PPp')}</p>
-                </div>
-              </div>
-
-              <div>
-                <h4 className="font-medium mb-3">Timeline</h4>
-                <div className="relative ml-2 space-y-4 border-l pl-4">
-                  {buildSaReturnTimeline({
-                    createdAt: detailReturn.created_at,
-                    createdByName: detailReturn.created_by_user?.full_name,
-                    sourceAgentId: detailReturn.source_agent_id,
-                    sourceAgentName: detailReturn.source_agent?.full_name,
-                    approvedAt: detailReturn.approved_at,
-                    approvedByName: detailReturn.approved_by_user?.full_name,
-                    cancelledAt: detailReturn.cancelled_at,
-                    cancelledByName: detailReturn.cancelled_by_user?.full_name,
-                    status: detailReturn.status,
-                    receipts: detailReturn.receipts.map((r) => ({
-                      id: r.id,
-                      received_at: r.received_at,
-                    })),
-                  }).map((event) => (
-                    <div key={event.id} className="relative">
-                      <span className="absolute -left-[1.35rem] top-1.5 h-2.5 w-2.5 rounded-full bg-primary" />
-                      <p className="font-medium text-sm">{event.title}</p>
-                      {event.detail ? (
-                        <p className="text-xs text-muted-foreground">{event.detail}</p>
-                      ) : null}
-                      <p className="text-xs text-muted-foreground">
-                        {formatSaReturnTimelineAt(event.at)}
-                      </p>
-                    </div>
-                  ))}
                 </div>
               </div>
 
@@ -1268,6 +1326,15 @@ export default function WarehouseClientStockReturnsPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      <SaReturnTimelineDialog
+        open={timelineOpen}
+        onOpenChange={(open) => {
+          setTimelineOpen(open);
+          if (!open) setTimelineReturn(null);
+        }}
+        returnRequest={timelineReturn}
+      />
 
       <WarehouseStockReturnInspectDialog
         open={inspectOpen}

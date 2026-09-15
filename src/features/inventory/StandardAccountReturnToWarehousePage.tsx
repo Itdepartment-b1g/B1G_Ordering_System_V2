@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { CheckCircle2, Eye, FileText, Loader2, MoreHorizontal, RotateCcw, Search, XCircle } from 'lucide-react';
+import { CheckCircle2, Eye, FileText, History, Loader2, MoreHorizontal, RotateCcw, Search, XCircle } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useToast } from '@/hooks/use-toast';
 import { StandardAccountReturnToWarehouseDialog } from './components/StandardAccountReturnToWarehouseDialog';
+import {
+  SaReturnTimelineDialog,
+  type SaReturnTimelineDialogInput,
+} from './components/SaReturnTimelineDialog';
 import { getStandardAccountReturnEvidenceSignedUrl } from './utils/uploadStandardAccountReturnEvidence';
 import { exportStandardAccountReturnPdfFromSource } from './utils/exportStandardAccountReturnPdf';
 import {
@@ -57,8 +61,6 @@ import {
 } from '@/components/ui/alert-dialog';
 
 import {
-  buildSaReturnTimeline,
-  formatSaReturnTimelineAt,
   formatSaReturnType,
   saReturnTypeBadgeClass,
   type SaReturnType,
@@ -85,6 +87,8 @@ type SaReturnReceiptLine = {
 type SaReturnReceipt = {
   id: string;
   received_at?: string | null;
+  notes?: string | null;
+  receivedByName?: string | null;
   lines: SaReturnReceiptLine[];
 };
 
@@ -119,6 +123,43 @@ type SaReturnRow = {
   }>;
   receipts: SaReturnReceipt[];
 };
+
+function toSaReturnTimelineInput(row: SaReturnRow): SaReturnTimelineDialogInput {
+  const dest = row.destination_location;
+  return {
+    requestNumber: row.request_number,
+    createdAt: row.created_at,
+    createdByName: row.created_by_user?.full_name,
+    sourceAgentId: row.source_agent_id,
+    sourceAgentName: row.source_agent?.full_name,
+    approvedAt: row.approved_at,
+    approvedByName: row.approved_by_user?.full_name,
+    cancelledAt: row.cancelled_at,
+    cancelledByName: row.cancelled_by_user?.full_name,
+    status: row.status,
+    returnType: row.return_type,
+    destinationLocationName: dest
+      ? `${dest.name}${dest.is_main ? ' (Main)' : ' (Sub)'}`
+      : null,
+    receipts: row.receipts
+      .filter((r): r is SaReturnReceipt & { received_at: string } =>
+        typeof r.received_at === 'string' && r.received_at.length > 0
+      )
+      .map((r) => ({
+        id: r.id,
+        received_at: r.received_at,
+        notes: r.notes ?? null,
+        receivedByName: r.receivedByName ?? null,
+        lines: r.lines.map((line) => ({
+          qty_good: line.qty_good,
+          qty_damaged: line.qty_damaged,
+          productLabel: line.variant
+            ? [line.variant.brand?.name, line.variant.name].filter(Boolean).join(' · ') || null
+            : null,
+        })),
+      })),
+  };
+}
 
 const STATUS_LABELS: Record<ReturnStatus, string> = {
   pending_approval: 'Pending approval',
@@ -220,6 +261,11 @@ function mapRow(raw: Record<string, unknown>): SaReturnRow {
     return {
       id: r.id as string,
       received_at: (r.received_at as string | null) ?? null,
+      notes: (r.notes as string | null) ?? null,
+      receivedByName:
+        firstRelation(
+          r.received_by_user as { full_name: string } | { full_name: string }[] | null
+        )?.full_name ?? null,
       lines,
     } satisfies SaReturnReceipt;
   });
@@ -274,6 +320,8 @@ export default function StandardAccountReturnToWarehousePage() {
   const [detailReturn, setDetailReturn] = useState<SaReturnRow | null>(null);
   const [detailProofUrl, setDetailProofUrl] = useState<string | null>(null);
   const [detailSignatureUrl, setDetailSignatureUrl] = useState<string | null>(null);
+  const [timelineOpen, setTimelineOpen] = useState(false);
+  const [timelineReturn, setTimelineReturn] = useState<SaReturnTimelineDialogInput | null>(null);
   const [cancelTarget, setCancelTarget] = useState<SaReturnRow | null>(null);
   const [cancelSubmitting, setCancelSubmitting] = useState(false);
   const [exportingPdfId, setExportingPdfId] = useState<string | null>(null);
@@ -325,6 +373,8 @@ export default function StandardAccountReturnToWarehousePage() {
           receipts:standard_account_stock_return_receipts (
             id,
             received_at,
+            notes,
+            received_by_user:profiles!received_by ( full_name ),
             lines:standard_account_stock_return_receipt_lines (
               warehouse_variant_id,
               qty_good,
@@ -693,6 +743,15 @@ export default function StandardAccountReturnToWarehousePage() {
                               View
                             </DropdownMenuItem>
                             <DropdownMenuItem
+                              onClick={() => {
+                                setTimelineReturn(toSaReturnTimelineInput(row));
+                                setTimelineOpen(true);
+                              }}
+                            >
+                              <History className="mr-2 h-4 w-4" />
+                              Timeline
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
                               disabled={exportingPdfId === row.id}
                               onClick={() => void handleExportPdf(row)}
                             >
@@ -778,20 +837,34 @@ export default function StandardAccountReturnToWarehousePage() {
             <div className="flex items-start justify-between gap-3 pr-6">
               <DialogTitle>{detailReturn?.request_number ?? 'Return details'}</DialogTitle>
               {detailReturn && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={exportingPdfId === detailReturn.id}
-                  onClick={() => void handleExportPdf(detailReturn)}
-                >
-                  {exportingPdfId === detailReturn.id ? (
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  ) : (
-                    <FileText className="h-4 w-4 mr-2" />
-                  )}
-                  Print PDF
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setTimelineReturn(toSaReturnTimelineInput(detailReturn));
+                      setTimelineOpen(true);
+                    }}
+                  >
+                    <History className="h-4 w-4 mr-2" />
+                    Timeline
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={exportingPdfId === detailReturn.id}
+                    onClick={() => void handleExportPdf(detailReturn)}
+                  >
+                    {exportingPdfId === detailReturn.id ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : (
+                      <FileText className="h-4 w-4 mr-2" />
+                    )}
+                    Print PDF
+                  </Button>
+                </div>
               )}
             </div>
           </DialogHeader>
@@ -847,40 +920,6 @@ export default function StandardAccountReturnToWarehousePage() {
                 <div>
                   <span className="text-muted-foreground">Created</span>
                   <p>{format(new Date(detailReturn.created_at), 'PPp')}</p>
-                </div>
-              </div>
-
-              <div>
-                <h4 className="font-medium mb-3">Timeline</h4>
-                <div className="relative ml-2 space-y-4 border-l pl-4">
-                  {buildSaReturnTimeline({
-                    createdAt: detailReturn.created_at,
-                    createdByName: detailReturn.created_by_user?.full_name,
-                    sourceAgentId: detailReturn.source_agent_id,
-                    sourceAgentName: detailReturn.source_agent?.full_name,
-                    approvedAt: detailReturn.approved_at,
-                    approvedByName: detailReturn.approved_by_user?.full_name,
-                    cancelledAt: detailReturn.cancelled_at,
-                    cancelledByName: detailReturn.cancelled_by_user?.full_name,
-                    status: detailReturn.status,
-                    receipts: detailReturn.receipts
-                      .filter((r) => r.received_at)
-                      .map((r) => ({
-                        id: r.id,
-                        received_at: r.received_at as string,
-                      })),
-                  }).map((event) => (
-                    <div key={event.id} className="relative">
-                      <span className="absolute -left-[1.35rem] top-1.5 h-2.5 w-2.5 rounded-full bg-primary" />
-                      <p className="font-medium text-sm">{event.title}</p>
-                      {event.detail ? (
-                        <p className="text-xs text-muted-foreground">{event.detail}</p>
-                      ) : null}
-                      <p className="text-xs text-muted-foreground">
-                        {formatSaReturnTimelineAt(event.at)}
-                      </p>
-                    </div>
-                  ))}
                 </div>
               </div>
 
@@ -948,6 +987,15 @@ export default function StandardAccountReturnToWarehousePage() {
           )}
         </DialogContent>
       </Dialog>
+
+      <SaReturnTimelineDialog
+        open={timelineOpen}
+        onOpenChange={(open) => {
+          setTimelineOpen(open);
+          if (!open) setTimelineReturn(null);
+        }}
+        returnRequest={timelineReturn}
+      />
 
       <AlertDialog open={!!cancelTarget} onOpenChange={(o) => !o && setCancelTarget(null)}>
         <AlertDialogContent>

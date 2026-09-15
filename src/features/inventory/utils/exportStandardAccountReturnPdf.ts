@@ -506,9 +506,7 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
   </div>
 
   <div class="page">
-    <div class="logo-block">
-      <img class="logo-img" src="${logoUrl}" alt="B1G Corporation" />
-    </div>
+
 
     <div class="doc-title">STOCK RETURN RECEIPT</div>
 

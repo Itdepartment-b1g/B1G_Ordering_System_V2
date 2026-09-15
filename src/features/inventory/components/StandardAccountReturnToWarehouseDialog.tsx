@@ -94,6 +94,7 @@ export function StandardAccountReturnToWarehouseDialog({
   const [stockKind, setStockKind] = useState<ReturnStockKind>('my_inventory');
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [filter, setFilter] = useState('');
+  const [openBrands, setOpenBrands] = useState<string[]>([]);
   const [notes, setNotes] = useState('');
   const [destinationLocationId, setDestinationLocationId] = useState('');
   const [proofImageDataUrl, setProofImageDataUrl] = useState('');
@@ -108,6 +109,7 @@ export function StandardAccountReturnToWarehouseDialog({
       setStockKind('my_inventory');
       setQuantities({});
       setFilter('');
+      setOpenBrands([]);
       setNotes('');
       setDestinationLocationId('');
       setProofImageDataUrl('');
@@ -123,6 +125,7 @@ export function StandardAccountReturnToWarehouseDialog({
     setStockKind(next);
     setQuantities({});
     setFilter('');
+    setOpenBrands([]);
     setFormError(null);
     setStep('form');
   };
@@ -326,11 +329,45 @@ export function StandardAccountReturnToWarehouseDialog({
     return Array.from(m.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [filtered]);
 
+  const brandKeys = useMemo(() => byBrand.map(([brand]) => brand), [byBrand]);
+
+  // Keep brands expanded for quick view; re-open all when the filtered brand set changes.
+  useEffect(() => {
+    setOpenBrands(brandKeys);
+  }, [brandKeys]);
+
   const summary = useMemo(() => {
     const lines = Object.entries(quantities).filter(([, q]) => (q ?? 0) > 0);
     const totalQty = lines.reduce((s, [, q]) => s + (q ?? 0), 0);
     return { lineCount: lines.length, totalQty };
   }, [quantities]);
+
+  const fillAllAvailable = () => {
+    setQuantities((prev) => {
+      const next = { ...prev };
+      for (const row of filtered) {
+        next[row.variant_id] = row.available;
+      }
+      return next;
+    });
+    setFormError(null);
+  };
+
+  const clearAllQuantities = () => {
+    setQuantities({});
+    setFormError(null);
+  };
+
+  const fillBrandAvailable = (brandRows: InventoryReturnRow[]) => {
+    setQuantities((prev) => {
+      const next = { ...prev };
+      for (const row of brandRows) {
+        next[row.variant_id] = row.available;
+      }
+      return next;
+    });
+    setFormError(null);
+  };
 
   const handleProofFileChange = async (file: File | null) => {
     setFormError(null);
@@ -627,19 +664,41 @@ export function StandardAccountReturnToWarehouseDialog({
               </Select>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <Input
                 placeholder="Filter brand or product…"
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
                 className="flex-1"
               />
-              <Badge variant="secondary">
-                {summary.lineCount} lines · {summary.totalQty} units
-              </Badge>
+              <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-9"
+                  disabled={filtered.length === 0}
+                  onClick={fillAllAvailable}
+                >
+                  Fill all
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-9"
+                  disabled={summary.lineCount === 0}
+                  onClick={clearAllQuantities}
+                >
+                  Clear
+                </Button>
+                <Badge variant="secondary" className="h-9 px-3 inline-flex items-center">
+                  {summary.lineCount} lines · {summary.totalQty} units
+                </Badge>
+              </div>
             </div>
 
-            <div className="border rounded-md p-2 min-h-[200px] max-h-[280px] overflow-y-auto">
+            <div className="border rounded-md p-2">
               {isLoading ? (
                 <div className="flex items-center justify-center py-12 text-muted-foreground">
                   <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading inventory…
@@ -655,13 +714,33 @@ export function StandardAccountReturnToWarehouseDialog({
                       : 'No available stock to return.'}
                 </div>
               ) : (
-                <Accordion type="multiple" className="w-full">
+                <Accordion
+                  type="multiple"
+                  value={openBrands}
+                  onValueChange={setOpenBrands}
+                  className="w-full"
+                >
                   {byBrand.map(([brand, brandRows]) => (
                     <AccordionItem key={brand} value={brand}>
-                      <AccordionTrigger className="text-sm font-medium px-2">
-                        {brand}
-                        <span className="ml-2 text-xs font-normal text-muted-foreground">
-                          ({brandRows.length})
+                      <AccordionTrigger className="text-sm font-medium px-2 hover:no-underline">
+                        <span className="flex flex-1 items-center gap-2 text-left min-w-0 pr-2">
+                          <span className="truncate">{brand}</span>
+                          <span className="text-xs font-normal text-muted-foreground shrink-0">
+                            ({brandRows.length})
+                          </span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs shrink-0 ml-auto"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              fillBrandAvailable(brandRows);
+                            }}
+                          >
+                            Fill brand
+                          </Button>
                         </span>
                       </AccordionTrigger>
                       <AccordionContent className="space-y-2 px-2 pb-3">
