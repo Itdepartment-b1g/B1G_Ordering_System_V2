@@ -601,3 +601,186 @@ export function tlTdrPdfFromDispatch(input: {
     })),
   };
 }
+
+export type TlLostItemsPdfLine = {
+  requestNumber: string;
+  tdrNumber: string;
+  quantity: number;
+  statusLabel: string;
+  reason: string;
+  sourceName: string;
+  requesterName: string;
+  createdAt: string;
+};
+
+export type TlLostItemsPdfSku = {
+  label: string;
+  variantType: string;
+  missingQuantity: number;
+  lostQuantity: number;
+  transferCount: number;
+  lastAt: string;
+  lines: TlLostItemsPdfLine[];
+};
+
+export type TlLostItemsPdfOptions = {
+  preparedBy: string;
+  dateRangeLabel: string;
+  dateRangeBounds?: string | null;
+  searchQuery?: string;
+  printedAt: string;
+  skus: TlLostItemsPdfSku[];
+};
+
+function formatPdfDate(value: string | null | undefined): string {
+  if (!value?.trim()) return '—';
+  try {
+    return new Date(value).toLocaleDateString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
+  } catch {
+    return value;
+  }
+}
+
+function buildLostItemsReportHtml(options: TlLostItemsPdfOptions): string {
+  const totalMissing = options.skus.reduce((sum, sku) => sum + sku.missingQuantity, 0);
+  const totalLost = options.skus.reduce((sum, sku) => sum + sku.lostQuantity, 0);
+  const totalTransfers = options.skus.reduce((sum, sku) => sum + sku.transferCount, 0);
+  const rangeText = options.dateRangeBounds
+    ? `${options.dateRangeLabel} (${options.dateRangeBounds})`
+    : options.dateRangeLabel;
+  const searchBit = options.searchQuery?.trim()
+    ? `<div class="delivery-field"><span class="flabel">SEARCH:</span><span class="fvalue">${escapeHtml(options.searchQuery.trim())}</span></div>`
+    : '';
+
+  const summaryRows = options.skus
+    .map(
+      (sku) => `
+      <tr>
+        <td>${escapeHtml(sku.label)}${sku.variantType ? `<div class="line-variance">${escapeHtml(sku.variantType)}</div>` : ''}</td>
+        <td class="col-qty">${sku.missingQuantity > 0 ? fmtQty(sku.missingQuantity) : '—'}</td>
+        <td class="col-qty">${sku.lostQuantity > 0 ? fmtQty(sku.lostQuantity) : '—'}</td>
+        <td class="col-qty">${fmtQty(sku.transferCount)}</td>
+        <td>${escapeHtml(formatPdfDate(sku.lastAt))}</td>
+      </tr>`
+    )
+    .join('');
+
+  const detailRows = options.skus
+    .flatMap((sku) => {
+      const header = `
+      <tr class="group-head">
+        <td colspan="8">${escapeHtml(sku.label)} · Missing ${fmtQty(sku.missingQuantity)} · Lost ${fmtQty(sku.lostQuantity)}</td>
+      </tr>`;
+      const lines = sku.lines.map(
+        (line) => `
+      <tr>
+        <td>${escapeHtml(line.requestNumber || '—')}</td>
+        <td>${escapeHtml(line.tdrNumber || '—')}</td>
+        <td class="col-qty">${fmtQty(line.quantity)}</td>
+        <td>${escapeHtml(line.statusLabel)}</td>
+        <td>${escapeHtml(line.sourceName || '—')}</td>
+        <td>${escapeHtml(line.requesterName || '—')}</td>
+        <td>${escapeHtml(formatPdfDate(line.createdAt))}</td>
+        <td>${escapeHtml(line.reason || '—')}</td>
+      </tr>`
+      );
+      return [header, ...lines];
+    })
+    .join('');
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Missing / Lost Transfer Report</title>
+<style>${sharedStyles()}
+  .meta-grid { margin: 8px 0 4px; }
+  .items-table .group-head td {
+    background: #f3f4f6;
+    font-weight: 800;
+    border-bottom: 1px solid #111;
+  }
+  .detail-table {
+    font-size: 9px;
+  }
+  .detail-table thead th,
+  .detail-table tbody td {
+    padding: 5px 3px;
+    word-break: break-word;
+  }
+  @media print {
+    @page { size: A4 portrait; margin: 8mm; }
+  }
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <div class="toolbar-left">
+      <h1>Missing / Lost Transfer Report
+        <span class="hint">Use <b>Print</b> (Ctrl/⌘ + P), turn off <b>Headers and footers</b>, then save as PDF.</span>
+      </h1>
+    </div>
+    <div class="toolbar-center">
+      <div class="warehouse-badge">Range: <span>${escapeHtml(options.dateRangeLabel)}</span></div>
+    </div>
+    <div class="toolbar-right">
+      <button type="button" onclick="window.print()">Print</button>
+    </div>
+  </div>
+  <div class="page">
+    <div class="doc-title">MISSING / LOST STOCK TRANSFER REPORT</div>
+    <div class="doc-subtitle">Items that arrived short or were written off</div>
+    <div class="meta-grid">
+      <div class="delivery-field"><span class="flabel">PREPARED BY:</span><span class="fvalue">${escapeHtml(options.preparedBy)}</span></div>
+      <div class="delivery-field"><span class="flabel">DATE RANGE:</span><span class="fvalue">${escapeHtml(rangeText)}</span></div>
+      ${searchBit}
+      <div class="delivery-field"><span class="flabel">PRINTED:</span><span class="fvalue">${escapeHtml(options.printedAt)}</span></div>
+    </div>
+    <div class="total-qty-row"><span class="label">SKUs:</span><span class="value">${fmtQty(options.skus.length)}</span></div>
+    <div class="total-qty-row"><span class="label">Missing (under investigation):</span><span class="value">${fmtQty(totalMissing)}</span></div>
+    <div class="total-qty-row"><span class="label">Lost (written off):</span><span class="value">${fmtQty(totalLost)}</span></div>
+    <div class="total-qty-row"><span class="label">Transfers:</span><span class="value">${fmtQty(totalTransfers)}</span></div>
+    <table class="items-table">
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th class="col-qty">Missing</th>
+          <th class="col-qty">Lost</th>
+          <th class="col-qty">Transfers</th>
+          <th>Last reported</th>
+        </tr>
+      </thead>
+      <tbody>${summaryRows}</tbody>
+    </table>
+    <div class="doc-subtitle" style="text-align:left;margin:18px 0 0;">Transfer details</div>
+    <table class="items-table detail-table">
+      <thead>
+        <tr>
+          <th>Transfer #</th>
+          <th>TDR</th>
+          <th class="col-qty">Qty</th>
+          <th>Status</th>
+          <th>From</th>
+          <th>To</th>
+          <th>Date</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody>${detailRows}</tbody>
+    </table>
+    <p class="footer-note">Missing = still under investigation. Lost = written off or written off &amp; replaced. Found items are not included.</p>
+  </div>
+</body>
+</html>`;
+}
+
+export function exportTlLostItemsPdf(options: TlLostItemsPdfOptions): void {
+  if (options.skus.length === 0) {
+    throw new Error('No missing or lost items in this date range.');
+  }
+  openPrintableHtml('Missing / Lost Transfer Report', buildLostItemsReportHtml(options));
+}

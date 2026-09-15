@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Eye, History, Loader2, Package, Plus, Printer, Search } from 'lucide-react';
+import { Loader2, Package, Plus, Search } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -30,7 +30,7 @@ import {
   resolveTableSortDirection,
   type TableSortCycleState,
 } from '@/features/shared/utils/tableSortCycle';
-import { getDateRangeFromPreset } from '@/lib/dateRangePresets';
+import { getDatePresetLabel, getDateRangeFromPreset } from '@/lib/dateRangePresets';
 import type { TLRequestStatus, TLRequestWithDetails } from '@/types/tlStockRequests.types';
 import { CreateTLStockTransferDialog } from './tl-stock-transfer/CreateTLStockTransferDialog';
 import { TLStockReceiveDialog } from './tl-stock-transfer/TLStockReceiveDialog';
@@ -49,6 +49,7 @@ import {
 import { fetchIncomingTlTransfers, useTlTransferRealtime } from './tl-stock-transfer/useTlTransferRealtime';
 import { TLTransferLostItemsPanel } from './tl-stock-transfer/TLTransferLostItemsPanel';
 import { useTlLostItemTabCount } from './tl-stock-transfer/tlTransferLostItems';
+import { TLTransferRowActionsMenu } from './tl-stock-transfer/TLTransferRowActionsMenu';
 import { printTlStockTransferRequest } from './tl-stock-transfer/exportTlTransferPdfs';
 import {
   DEFAULT_TL_TRANSFER_SORT_DIRECTION,
@@ -219,33 +220,13 @@ function TransferGroupsTable({
                   </Badge>
                 </TableCell>
                 <TableCell>{new Date(group.created_at).toLocaleDateString()}</TableCell>
-                <TableCell>
-                  <div className="flex gap-1 justify-end">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      title="Print transfer"
-                      onClick={() => onPrint(group)}
-                    >
-                      <Printer className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      title="History"
-                      onClick={() => onHistory(group)}
-                    >
-                      <History className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="sm" title="Transfer details" onClick={() => onView(group)}>
-                      <Eye className="h-4 w-4" />
-                    </Button>
-                    {canReceive ? (
-                      <Button size="sm" onClick={() => onReceive?.(group)}>
-                        Receive
-                      </Button>
-                    ) : null}
-                  </div>
+                <TableCell className="text-right">
+                  <TLTransferRowActionsMenu
+                    onView={() => onView(group)}
+                    onHistory={() => onHistory(group)}
+                    onPrint={() => onPrint(group)}
+                    onReceive={canReceive ? () => onReceive?.(group) : undefined}
+                  />
                 </TableCell>
               </TableRow>
             );
@@ -370,6 +351,15 @@ export default function TLStockRequestPage() {
   const dateRange = useMemo(
     () =>
       getDateRangeFromPreset(
+        dateRangeFilter.preset,
+        dateRangeFilter.customStart,
+        dateRangeFilter.customEnd
+      ),
+    [dateRangeFilter]
+  );
+  const dateRangeLabel = useMemo(
+    () =>
+      getDatePresetLabel(
         dateRangeFilter.preset,
         dateRangeFilter.customStart,
         dateRangeFilter.customEnd
@@ -748,6 +738,7 @@ export default function TLStockRequestPage() {
               <TLTransferLostItemsPanel
                 searchQuery={searchQuery}
                 dateRange={dateRange}
+                dateRangeLabel={dateRangeLabel}
                 page={page}
                 pageSize={pageSize}
                 onPageChange={setPage}

@@ -66,6 +66,7 @@ import { useTlTransferRealtime } from './tl-stock-transfer/useTlTransferRealtime
 import { printTlStockTransferRequest } from './tl-stock-transfer/exportTlTransferPdfs';
 import { TLTransferDetailsDialog } from './tl-stock-transfer/TLTransferDetailsDialog';
 import { TLTransferHistoryDialog } from './tl-stock-transfer/TLTransferHistoryDialog';
+import { TLTransferRowActionsMenu } from './tl-stock-transfer/TLTransferRowActionsMenu';
 
 type ReviewLine = TLRequestWithDetails & { source_available_quantity: number };
 type SelectedGroup = Omit<TLRequestGroup, 'items'> & { items: ReviewLine[] };
@@ -675,50 +676,25 @@ export default function AdminTLRequestsPage() {
                           <TableCell className="text-right tabular-nums">{group.totalRequested}</TableCell>
                           <TableCell>{getStatusBadge(group.status)}</TableCell>
                           <TableCell>{new Date(group.created_at).toLocaleDateString()}</TableCell>
-                          <TableCell>
-                            <div className="flex justify-end gap-1">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                title="Print transfer"
-                                onClick={() => {
-                                  void printTlStockTransferRequest(group.items).catch((error: any) => {
-                                    toast({
-                                      title: 'Could not print transfer',
-                                      description: error?.message || 'Failed to open the print view.',
-                                      variant: 'destructive',
-                                    });
+                          <TableCell className="text-right">
+                            <TLTransferRowActionsMenu
+                              onView={() => openDetails(group)}
+                              onHistory={() => openHistory(group)}
+                              onPrint={() => {
+                                void printTlStockTransferRequest(group.items).catch((error: any) => {
+                                  toast({
+                                    title: 'Could not print transfer',
+                                    description: error?.message || 'Failed to open the print view.',
+                                    variant: 'destructive',
                                   });
-                                }}
-                              >
-                                <Printer className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                title="History"
-                                onClick={() => openHistory(group)}
-                              >
-                                <History className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                title="Transfer details / TDR"
-                                onClick={() => openDetails(group)}
-                              >
-                                <Eye className="h-4 w-4" />
-                              </Button>
-                              {group.status === 'pending_admin' ? (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => void handleReview(group)}
-                                >
-                                  Review
-                                </Button>
-                              ) : null}
-                            </div>
+                                });
+                              }}
+                              onReview={
+                                group.status === 'pending_admin'
+                                  ? () => void handleReview(group)
+                                  : undefined
+                              }
+                            />
                           </TableCell>
                         </TableRow>
                       ))}

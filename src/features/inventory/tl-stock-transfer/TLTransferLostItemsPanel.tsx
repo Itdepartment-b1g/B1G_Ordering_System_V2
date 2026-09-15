@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { History, Loader2, PackageX } from 'lucide-react';
+import { History, Loader2, PackageX, Printer } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
@@ -24,6 +24,7 @@ import { formatShortfallReasonLabel } from '@/features/orders/deliveryDiscrepanc
 import { TL_REQUEST_SELECT, mapTlTransferRows } from './tlStockTransferShared';
 import type { TlTransferDateRange } from './tlStockTransferListHelpers';
 import { TLTransferHistoryDialog } from './TLTransferHistoryDialog';
+import { exportTlLostItemsPdf } from './exportTlTransferPdfs';
 import {
   fetchTlTransferLostLines,
   filterTlLostItemGroups,
@@ -39,12 +40,44 @@ import type { TLRequestWithDetails } from '@/types/tlStockRequests.types';
 type Props = {
   searchQuery: string;
   dateRange: TlTransferDateRange;
+  dateRangeLabel: string;
   page: number;
   pageSize: PageSize;
   onPageChange: (page: number) => void;
   onPageSizeChange: (size: PageSize) => void;
 };
 
+function dateRangeBoundsLabel(dateRange: TlTransferDateRange): string | null {
+  if (!dateRange.start && !dateRange.end) return null;
+  const start = dateRange.start
+    ? dateRange.start.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+    : '…';
+  const end = dateRange.end
+    ? dateRange.end.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+    : '…';
+  return `${start} – ${end}`;
+}
+
+function toLostItemsPdfSkus(groups: TlLostItemGroup[]) {
+  return groups.map((group) => ({
+    label: lostItemLabel(group),
+    variantType: group.variantType,
+    missingQuantity: group.missingQuantity,
+    lostQuantity: group.lostQuantity,
+    transferCount: group.transferCount,
+    lastAt: group.lastAt,
+    lines: group.transfers.map((line) => ({
+      requestNumber: line.requestNumber,
+      tdrNumber: line.tdrNumber,
+      quantity: line.quantity,
+      statusLabel: lostLineStatusLabel(line.status),
+      reason: formatShortfallReasonLabel(line.reason, line.reporterNotes),
+      sourceName: line.sourceName,
+      requesterName: line.requesterName,
+      createdAt: line.createdAt,
+    })),
+  }));
+}
 function lostStatusBadgeClass(status: string) {
   switch (status) {
     case 'open':
@@ -59,6 +92,7 @@ function lostStatusBadgeClass(status: string) {
 export function TLTransferLostItemsPanel({
   searchQuery,
   dateRange,
+  dateRangeLabel,
   page,
   pageSize,
   onPageChange,
@@ -70,6 +104,31 @@ export function TLTransferLostItemsPanel({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyLines, setHistoryLines] = useState<TLRequestWithDetails[]>([]);
   const [historyLoadingId, setHistoryLoadingId] = useState<string | null>(null);
+
+  const printReport = (groupsToPrint: TlLostItemGroup[]) => {
+    try {
+      exportTlLostItemsPdf({
+        preparedBy: user?.full_name || '—',
+        dateRangeLabel,
+        dateRangeBounds: dateRangeBoundsLabel(dateRange),
+        searchQuery,
+        printedAt: new Date().toLocaleString(undefined, {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+        }),
+        skus: toLostItemsPdfSkus(groupsToPrint),
+      });
+    } catch (err: unknown) {
+      toast({
+        title: 'Could not print report',
+        description: err instanceof Error ? err.message : 'Failed to open the print view.',
+        variant: 'destructive',
+      });
+    }
+  };
 
   const { data: lines = [], isLoading, error } = useQuery({
     queryKey: [TL_LOST_ITEM_QUERY_KEY, user?.company_id, user?.id],
@@ -158,6 +217,15 @@ export function TLTransferLostItemsPanel({
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-xs text-muted-foreground">
+          Report uses the date filter above{searchQuery.trim() ? ' and the current search' : ''}.
+        </p>
+        <Button type="button" variant="outline" size="sm" onClick={() => printReport(filtered)}>
+          <Printer className="mr-2 h-4 w-4" />
+          Print report
+        </Button>
+      </div>
       <div className="border rounded-lg overflow-auto">
         <Table>
           <TableHeader>
@@ -303,6 +371,10 @@ export function TLTransferLostItemsPanel({
             </div>
           ) : null}
           <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => selected && printReport([selected])}>
+              <Printer className="mr-2 h-4 w-4" />
+              Print this item
+            </Button>
             <Button type="button" variant="outline" onClick={() => setSelected(null)}>
               Close
             </Button>

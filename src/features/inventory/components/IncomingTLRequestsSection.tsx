@@ -4,12 +4,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
   CheckCircle2,
-  History,
   Loader2,
   Package,
-  Printer,
-  ThumbsDown,
-  Truck,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
@@ -74,6 +70,8 @@ import {
 } from '../tl-stock-transfer/tlStockTransferShared';
 import { exportTlTdrPdf, printTlStockTransferRequest, tlTdrPdfFromDispatch } from '../tl-stock-transfer/exportTlTransferPdfs';
 import { TLTransferHistoryDialog } from '../tl-stock-transfer/TLTransferHistoryDialog';
+import { TLTransferDetailsDialog } from '../tl-stock-transfer/TLTransferDetailsDialog';
+import { TLTransferRowActionsMenu } from '../tl-stock-transfer/TLTransferRowActionsMenu';
 import { fetchIncomingTlTransfers, useTlTransferRealtime } from '../tl-stock-transfer/useTlTransferRealtime';
 import {
   DEFAULT_TL_TRANSFER_SORT_DIRECTION,
@@ -113,6 +111,8 @@ export default function IncomingTLRequestsSection({ embedded = false, listContro
   const [showSignatureModal, setShowSignatureModal] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyLines, setHistoryLines] = useState<TLRequestWithDetails[]>([]);
+  const [viewOpen, setViewOpen] = useState(false);
+  const [viewRequest, setViewRequest] = useState<TLRequestWithDetails | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<TLRequestGroup | null>(null);
   const [dispatchLines, setDispatchLines] = useState<DispatchLine[]>([]);
   const [qtyById, setQtyById] = useState<Record<string, number>>({});
@@ -529,54 +529,36 @@ export default function IncomingTLRequestsSection({ embedded = false, listContro
                     </Badge>
                   </TableCell>
                   <TableCell>{new Date(group.created_at).toLocaleDateString()}</TableCell>
-                  <TableCell>
-                    <div className="flex gap-2 justify-end">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          setHistoryLines(group.items);
-                          setHistoryOpen(true);
-                        }}
-                      >
-                        <History className="h-4 w-4 mr-1" />
-                        History
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          void printTlStockTransferRequest(group.items).catch((error: any) => {
-                            toast({
-                              title: 'Could not print transfer',
-                              description: error?.message || 'Failed to open the print view.',
-                              variant: 'destructive',
-                            });
+                  <TableCell className="text-right">
+                    <TLTransferRowActionsMenu
+                      onView={() => {
+                        setViewRequest(group.items[0] ?? null);
+                        setViewOpen(true);
+                      }}
+                      onHistory={() => {
+                        setHistoryLines(group.items);
+                        setHistoryOpen(true);
+                      }}
+                      onPrint={() => {
+                        void printTlStockTransferRequest(group.items).catch((error: any) => {
+                          toast({
+                            title: 'Could not print transfer',
+                            description: error?.message || 'Failed to open the print view.',
+                            variant: 'destructive',
                           });
-                        }}
-                      >
-                        <Printer className="h-4 w-4 mr-1" />
-                        Print
-                      </Button>
-                      <Button size="sm" onClick={() => openDispatch(group)}>
-                        <Truck className="h-4 w-4 mr-1" />
-                        Dispatch
-                      </Button>
-                      {canReject ? (
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => {
-                            setSelectedGroup(group);
-                            setRejectionReason('');
-                            setRejectOpen(true);
-                          }}
-                        >
-                          <ThumbsDown className="h-4 w-4 mr-1" />
-                          Reject
-                        </Button>
-                      ) : null}
-                    </div>
+                        });
+                      }}
+                      onDispatch={() => openDispatch(group)}
+                      onReject={
+                        canReject
+                          ? () => {
+                              setSelectedGroup(group);
+                              setRejectionReason('');
+                              setRejectOpen(true);
+                            }
+                          : undefined
+                      }
+                    />
                   </TableCell>
                 </TableRow>
               );
@@ -967,6 +949,15 @@ export default function IncomingTLRequestsSection({ embedded = false, listContro
           />
         </DialogContent>
       </Dialog>
+      <TLTransferDetailsDialog
+        open={viewOpen}
+        request={viewRequest}
+        allRequests={incomingRequests}
+        onOpenChange={(open) => {
+          setViewOpen(open);
+          if (!open) setViewRequest(null);
+        }}
+      />
       <TLTransferHistoryDialog
         open={historyOpen}
         lines={historyLines}
