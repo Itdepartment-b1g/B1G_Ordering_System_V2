@@ -1465,49 +1465,74 @@ export default function MyInventory() {
                       </div>
 
                       <div className="border-t divide-y bg-background">
-                        {variants.map((v: any) => (
-                          <div
-                            key={v.id}
-                            className="flex items-center justify-between gap-2 px-3 py-2.5"
-                          >
-                            <span className="min-w-0 text-sm font-medium leading-snug break-words">
-                              {v.name}
-                            </span>
-                            <div className="text-right shrink-0 space-y-0.5">
-                              <div
-                                className={`text-sm font-semibold tabular-nums ${
-                                  isLowStock(v.stock) ? 'text-amber-600' : ''
-                                }`}
-                              >
-                                {v.stock}
+                        {variants.map((v: any) => {
+                          const returned = showReturnedColumn ? getReturnedStock(v.id) : null;
+                          return (
+                            <div key={v.id} className="px-3 py-2.5 space-y-1.5">
+                              <div className="flex items-start justify-between gap-3">
+                                <p className="min-w-0 flex-1 text-sm font-medium leading-snug break-words">
+                                  {v.name}
+                                </p>
+                                <div
+                                  className={`shrink-0 text-base font-semibold tabular-nums leading-none ${
+                                    isLowStock(v.stock) ? 'text-amber-600' : ''
+                                  }`}
+                                >
+                                  {v.stock}
+                                </div>
                               </div>
-                              <div className="text-[11px] text-muted-foreground">
-                                ₱{v.price.toFixed(2)}
-                                {showReturnedColumn ? (
-                                  <button
-                                    type="button"
-                                    className={`ml-1.5 ${
-                                      getReturnedStock(v.id).qty > 0
-                                        ? 'text-rose-700 font-medium'
-                                        : ''
-                                    }`}
-                                    onClick={() => {
-                                      const stock = getReturnedStock(v.id);
-                                      openReturnedDialog(
-                                        mobileBrandDialog.name,
-                                        v.name,
-                                        stock.qty,
-                                        stock.returns
-                                      );
-                                    }}
-                                  >
-                                    · ret {getReturnedStock(v.id).qty || '—'}
-                                  </button>
-                                ) : null}
+
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                                <span className="tabular-nums">
+                                  Price{' '}
+                                  <span className="font-medium text-foreground">
+                                    ₱{Number(v.price || 0).toFixed(2)}
+                                  </span>
+                                </span>
+                                <span className="tabular-nums">
+                                  DSP{' '}
+                                  <span className="font-medium text-foreground">
+                                    {typeof v.dspPrice === 'number'
+                                      ? `₱${v.dspPrice.toFixed(2)}`
+                                      : '—'}
+                                  </span>
+                                </span>
+                                <span className="tabular-nums">
+                                  RSP{' '}
+                                  <span className="font-medium text-foreground">
+                                    {typeof v.rspPrice === 'number'
+                                      ? `₱${v.rspPrice.toFixed(2)}`
+                                      : '—'}
+                                  </span>
+                                </span>
                               </div>
+
+                              {returned ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className={`h-8 gap-1.5 px-2.5 text-xs ${
+                                    returned.qty > 0
+                                      ? 'border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800'
+                                      : 'text-muted-foreground'
+                                  }`}
+                                  onClick={() =>
+                                    openReturnedDialog(
+                                      mobileBrandDialog.name,
+                                      v.name,
+                                      returned.qty,
+                                      returned.returns
+                                    )
+                                  }
+                                >
+                                  <PackageMinus className="h-3.5 w-3.5" />
+                                  Returned{returned.qty > 0 ? ` · ${returned.qty}` : ''}
+                                </Button>
+                              ) : null}
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   );
