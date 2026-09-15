@@ -451,8 +451,9 @@ export default function ClientOrderReturnsPage() {
     );
     const crByVariant = new Map(crForDetail.map((row) => [row.variantId, row]));
 
-    // Holds ledger is the source of truth for Returned Items (MS → TL transfer on RL confirm).
-    // Do not fall back to CR history when the holds query succeeded (including empty).
+    // Holds ledger is the source of truth for Returned Items. fetchClientReturnStockHolds
+    // already subtracts qty reserved on pending RL (pending_leader / pending_super_admin),
+    // so pending handovers do not duplicate here. Rejected RLs free the qty again.
     if (!holdsError) {
       return holdRows
         .filter((row) => row.qty > 0)

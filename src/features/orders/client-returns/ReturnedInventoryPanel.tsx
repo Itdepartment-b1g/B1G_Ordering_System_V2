@@ -157,7 +157,7 @@ export function ReturnedInventoryPanel({
                   ? 'Try a different brand or variant name.'
                   : isTeamLeader
                     ? 'When you confirm an RL from mobile sales, those brands and variants appear here.'
-                    : 'Posted client returns show here. After TL confirms your RL, they move to the team leader.'}
+                    : 'Only stock not already in a pending Return to TL shows here. Rejected RLs come back; confirmed RLs move to your team leader.'}
               </p>
             </div>
           ) : (

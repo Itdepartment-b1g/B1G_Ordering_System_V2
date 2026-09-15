@@ -185,12 +185,34 @@ const HOLD_SELECT = `
 `;
 
 export async function fetchClientReturnStockHolds(holderId: string): Promise<ReturnedInventoryRow[]> {
-  const { data, error } = await supabase
-    .from('client_return_stock_holds')
-    .select(HOLD_SELECT)
-    .eq('holder_id', holderId)
-    .gt('qty_on_hand', 0);
+  const [{ data, error }, { data: pendingHandovers, error: pendingError }] = await Promise.all([
+    supabase
+      .from('client_return_stock_holds')
+      .select(HOLD_SELECT)
+      .eq('holder_id', holderId)
+      .gt('qty_on_hand', 0),
+    supabase
+      .from('return_leader_handovers')
+      .select('id, items:return_leader_handover_items ( variant_id, quantity )')
+      .eq('from_holder_id', holderId)
+      .in('status', ['pending_leader', 'pending_super_admin']),
+  ]);
   if (error) throw error;
+  if (pendingError) throw pendingError;
+
+  const reservedByVariant = new Map<string, number>();
+  for (const raw of pendingHandovers || []) {
+    const handover = asRecord(raw);
+    const items = Array.isArray(handover.items) ? handover.items : [];
+    for (const itemRaw of items) {
+      const item = asRecord(itemRaw);
+      const variantId = String(item.variant_id || '');
+      if (!variantId) continue;
+      const qty = Number(item.quantity) || 0;
+      if (qty <= 0) continue;
+      reservedByVariant.set(variantId, (reservedByVariant.get(variantId) ?? 0) + qty);
+    }
+  }
 
   const rows: ReturnedInventoryRow[] = [];
   for (const raw of data || []) {
@@ -199,13 +221,18 @@ export async function fetchClientReturnStockHolds(holderId: string): Promise<Ret
     const brand = nestedRecord(variant.brand);
     const variantId = String(row.variant_id || variant.id || '');
     if (!variantId) continue;
+    const onHand = Number(row.qty_on_hand) || 0;
+    const reserved = reservedByVariant.get(variantId) ?? 0;
+    // Match get_client_return_available_qty: hide stock already in a pending RL.
+    const available = Math.max(0, onHand - reserved);
+    if (available <= 0) continue;
     rows.push({
       variantId,
       brandId: row.brand_id ? String(row.brand_id) : brand.id ? String(brand.id) : undefined,
       brandName: String(brand.name || 'Unknown'),
       variantName: String(variant.name || variantId),
       variantType: String(variant.variant_type || 'flavor'),
-      qty: Number(row.qty_on_hand) || 0,
+      qty: available,
       returns: [],
     });
   }
