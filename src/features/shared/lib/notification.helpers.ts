@@ -53,6 +53,9 @@ export function getNotificationHref(
             if (role === 'team_leader') return '/inventory/pending-requests';
             if (role === 'admin' || role === 'super_admin') return '/inventory/admin-requests';
             return '/inventory/request';
+        case 'tl_stock_request':
+            if (role === 'admin' || role === 'super_admin') return '/inventory/admin-tl-requests';
+            return '/inventory/tl-stock-requests';
         case 'client_order':
             return '/orders';
         case 'client':
