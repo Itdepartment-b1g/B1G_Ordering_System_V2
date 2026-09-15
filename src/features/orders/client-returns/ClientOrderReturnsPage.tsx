@@ -703,7 +703,7 @@ export default function ClientOrderReturnsPage() {
         >
           <TabsTrigger value="history" className="gap-1.5 py-2.5 text-xs sm:text-sm">
             <ClipboardList className="h-4 w-4 shrink-0" />
-            Returns
+            Client Returns
           </TabsTrigger>
           {!isSuperAdmin ? (
             <TabsTrigger value="inventory" className="gap-1.5 py-2.5 text-xs sm:text-sm">

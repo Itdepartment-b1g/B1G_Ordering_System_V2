@@ -118,7 +118,7 @@ CREATE OR REPLACE FUNCTION public.add_client_return_stock_hold(
   p_holder_id uuid,
   p_variant_id uuid,
   p_brand_id uuid,
-  p_qty integer
+  p_qty bigint
 )
 RETURNS void
 LANGUAGE plpgsql
@@ -133,7 +133,7 @@ BEGIN
   INSERT INTO public.client_return_stock_holds (
     company_id, holder_id, variant_id, brand_id, qty_on_hand
   ) VALUES (
-    p_company_id, p_holder_id, p_variant_id, p_brand_id, p_qty
+    p_company_id, p_holder_id, p_variant_id, p_brand_id, p_qty::integer
   )
   ON CONFLICT (company_id, holder_id, variant_id)
   DO UPDATE SET
@@ -149,7 +149,7 @@ CREATE OR REPLACE FUNCTION public.transfer_client_return_stock_hold(
   p_to_holder uuid,
   p_variant_id uuid,
   p_brand_id uuid,
-  p_qty integer
+  p_qty bigint
 )
 RETURNS void
 LANGUAGE plpgsql
