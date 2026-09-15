@@ -47,9 +47,9 @@ export const TL_TRANSFER_RESOLUTION_OPTIONS: {
   },
   {
     value: 'write_off_replace',
-    label: 'Lost → write off & dispatch replacement (new TDR)',
+    label: 'Lost → write off & dispatch replacement',
     description:
-      'Confirm the loss, deduct replacement units from your stock, and issue a new TDR. The other TL will receive the replacement.',
+      'Confirm the loss. Stock does not return to you. Dispatch a replacement from Incoming on this same transfer (new TDR). You can send less if you need the units.',
   },
   {
     value: 'write_off',
@@ -292,11 +292,15 @@ export type TLRequestGroup = {
 
 export function invalidateTlTransferQueries(queryClient: {
   invalidateQueries: (opts: { queryKey: unknown[] }) => unknown;
+  refetchQueries?: (opts: { queryKey: unknown[] }) => unknown;
 }) {
   queryClient.invalidateQueries({ queryKey: ['my-tl-requests'] });
   queryClient.invalidateQueries({ queryKey: ['incoming-tl-requests'] });
   queryClient.invalidateQueries({ queryKey: ['dispatched-tl-requests'] });
   queryClient.invalidateQueries({ queryKey: ['admin-tl-requests'] });
+  queryClient.invalidateQueries({ queryKey: ['tl-transfer-shortages'] });
+  queryClient.invalidateQueries({ queryKey: ['tl-transfer-lost-items'] });
+  queryClient.refetchQueries?.({ queryKey: ['incoming-tl-requests'] });
 }
 
 export function groupTlRequests(rows: TLRequestWithDetails[]): TLRequestGroup[] {

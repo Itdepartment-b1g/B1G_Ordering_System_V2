@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Eye, Loader2, Package, Plus, Printer, Search } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { Eye, History, Loader2, Package, Plus, Printer, Search } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -35,17 +35,20 @@ import type { TLRequestStatus, TLRequestWithDetails } from '@/types/tlStockReque
 import { CreateTLStockTransferDialog } from './tl-stock-transfer/CreateTLStockTransferDialog';
 import { TLStockReceiveDialog } from './tl-stock-transfer/TLStockReceiveDialog';
 import { TLTransferDetailsDialog } from './tl-stock-transfer/TLTransferDetailsDialog';
+import { TLTransferHistoryDialog } from './tl-stock-transfer/TLTransferHistoryDialog';
 import IncomingTLRequestsSection from './components/IncomingTLRequestsSection';
 import {
   TL_REQUEST_SELECT,
   groupTlRequests,
-  invalidateTlTransferQueries,
   mapTlTransferRows,
   tlDispatchShortfallSummary,
   tlRemainingToReceive,
   tlStatusLabel,
   type TLRequestGroup,
 } from './tl-stock-transfer/tlStockTransferShared';
+import { fetchIncomingTlTransfers, useTlTransferRealtime } from './tl-stock-transfer/useTlTransferRealtime';
+import { TLTransferLostItemsPanel } from './tl-stock-transfer/TLTransferLostItemsPanel';
+import { useTlLostItemTabCount } from './tl-stock-transfer/tlTransferLostItems';
 import { printTlStockTransferRequest } from './tl-stock-transfer/exportTlTransferPdfs';
 import {
   DEFAULT_TL_TRANSFER_SORT_DIRECTION,
@@ -78,7 +81,7 @@ function statusBadgeClass(status: TLRequestStatus | string) {
   }
 }
 
-type TransferTab = 'incoming' | 'dispatched' | 'mine';
+type TransferTab = 'incoming' | 'dispatched' | 'mine' | 'lost';
 
 function TransferGroupsTable({
   groups,
@@ -88,6 +91,7 @@ function TransferGroupsTable({
   onSort,
   onPrint,
   onView,
+  onHistory,
   onReceive,
 }: {
   groups: TLRequestGroup[];
@@ -97,6 +101,7 @@ function TransferGroupsTable({
   onSort: (key: TlTransferListSortKey) => void;
   onPrint: (group: TLRequestGroup) => void;
   onView: (group: TLRequestGroup) => void;
+  onHistory: (group: TLRequestGroup) => void;
   onReceive?: (group: TLRequestGroup) => void;
 }) {
   return (
@@ -224,7 +229,15 @@ function TransferGroupsTable({
                     >
                       <Printer className="h-4 w-4" />
                     </Button>
-                    <Button variant="ghost" size="sm" onClick={() => onView(group)}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      title="History"
+                      onClick={() => onHistory(group)}
+                    >
+                      <History className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" size="sm" title="Transfer details" onClick={() => onView(group)}>
                       <Eye className="h-4 w-4" />
                     </Button>
                     {canReceive ? (
@@ -247,11 +260,12 @@ export default function TLStockRequestPage() {
   const { user } = useAuth();
   const { hasWarehouseHubLink, hasWarehouseHubLinkLoading } = usePermissions();
   const { toast } = useToast();
-  const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
   const [viewOpen, setViewOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [selected, setSelected] = useState<TLRequestWithDetails | null>(null);
+  const [historyLines, setHistoryLines] = useState<TLRequestWithDetails[]>([]);
   const [tab, setTab] = useState<TransferTab>();
   const [searchQuery, setSearchQuery] = useState('');
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
@@ -281,18 +295,8 @@ export default function TLStockRequestPage() {
     enabled: !!user?.id && hasWarehouseHubLink && user?.role === 'team_leader',
     staleTime: 0,
     refetchOnMount: 'always',
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('tl_stock_requests')
-        .select(TL_REQUEST_SELECT)
-        .eq('source_leader_id', user!.id)
-        .in('status', ['pending_source_tl', 'admin_approved'])
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      return mapTlTransferRows(data || []).filter(
-        (row) => row.status === 'pending_source_tl' || row.status === 'admin_approved'
-      );
-    },
+    refetchOnWindowFocus: true,
+    queryFn: () => fetchIncomingTlTransfers(user!.id),
   });
 
   const { data: dispatchedRequests = [], isLoading: dispatchedLoading } = useQuery({
@@ -326,27 +330,11 @@ export default function TLStockRequestPage() {
     },
   });
 
-  useEffect(() => {
-    if (!user?.company_id) return;
-    const channel = supabase
-      .channel('tl_stock_requests_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'tl_stock_requests',
-          filter: `company_id=eq.${user.company_id}`,
-        },
-        () => {
-          invalidateTlTransferQueries(queryClient);
-        }
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user?.company_id, queryClient]);
+  useTlTransferRealtime({
+    enabled: !!user?.company_id && hasWarehouseHubLink,
+    companyId: user?.company_id,
+    channelKey: 'tl-page',
+  });
 
   const myGroups = useMemo(() => groupTlRequests(myRequests), [myRequests]);
   const dispatchedGroups = useMemo(
@@ -371,6 +359,7 @@ export default function TLStockRequestPage() {
     () => groupTlRequests(incomingRequests).length,
     [incomingRequests]
   );
+  const lostItemCount = useTlLostItemTabCount();
   const dispatchedInTransit = useMemo(
     () => dispatchedGroups.filter((row) => row.status === 'pending_receipt').length,
     [dispatchedGroups]
@@ -474,6 +463,11 @@ export default function TLStockRequestPage() {
     setViewOpen(true);
   };
 
+  const openHistory = (group: TLRequestGroup) => {
+    setHistoryLines(group.items);
+    setHistoryOpen(true);
+  };
+
   const receiveGroup = (group: TLRequestGroup) => {
     const receivable =
       group.items.find(
@@ -561,7 +555,8 @@ export default function TLStockRequestPage() {
               <CardDescription>
                 Incoming is stock Super Admin approved for you to dispatch. Dispatched is stock you
                 already sent. My transfers are requests you created — receive them when they are in
-                transit.{' '}
+                transit. Lost groups SKUs that arrived short or were written off; click an item to
+                see the transfer numbers.{' '}
                 <Link
                   to="/inventory/tl-transfer-shortages"
                   className="text-primary underline-offset-4 hover:underline"
@@ -577,7 +572,11 @@ export default function TLStockRequestPage() {
                 <Input
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search transfer #, TDR, name…"
+                  placeholder={
+                    activeTab === 'lost'
+                      ? 'Search SKU, transfer #…'
+                      : 'Search transfer #, TDR, name…'
+                  }
                   className="h-9 pl-8"
                 />
               </div>
@@ -591,7 +590,7 @@ export default function TLStockRequestPage() {
         </CardHeader>
         <CardContent>
           <Tabs value={activeTab} onValueChange={handleTabChange}>
-            <TabsList className="mb-4 grid w-full grid-cols-3 sm:w-auto sm:inline-flex">
+            <TabsList className="mb-4 grid w-full grid-cols-2 sm:grid-cols-4 sm:w-auto sm:inline-flex">
               <TabsTrigger value="incoming" className="gap-2">
                 Incoming
                 {incomingCount > 0 ? (
@@ -621,6 +620,14 @@ export default function TLStockRequestPage() {
                 ) : myGroups.length > 0 ? (
                   <Badge variant="outline" className="h-5 min-w-5 px-1.5">
                     {myGroups.length}
+                  </Badge>
+                ) : null}
+              </TabsTrigger>
+              <TabsTrigger value="lost" className="gap-2">
+                Lost
+                {lostItemCount > 0 ? (
+                  <Badge variant="secondary" className="h-5 min-w-5 px-1.5">
+                    {lostItemCount}
                   </Badge>
                 ) : null}
               </TabsTrigger>
@@ -662,6 +669,7 @@ export default function TLStockRequestPage() {
                     onSort={handleSort}
                     onPrint={printGroup}
                     onView={openGroup}
+                    onHistory={openHistory}
                   />
                   <ListPagination
                     pageSize={pageSize}
@@ -713,6 +721,7 @@ export default function TLStockRequestPage() {
                     onSort={handleSort}
                     onPrint={printGroup}
                     onView={openGroup}
+                    onHistory={openHistory}
                     onReceive={receiveGroup}
                   />
                   <ListPagination
@@ -729,6 +738,21 @@ export default function TLStockRequestPage() {
                   />
                 </div>
               )}
+            </TabsContent>
+
+            <TabsContent value="lost" className="mt-0">
+              <p className="mb-3 text-sm text-muted-foreground">
+                SKUs that went missing in transit or were written off. Click an item to see which
+                transfer numbers they came from.
+              </p>
+              <TLTransferLostItemsPanel
+                searchQuery={searchQuery}
+                dateRange={dateRange}
+                page={page}
+                pageSize={pageSize}
+                onPageChange={setPage}
+                onPageSizeChange={setPageSize}
+              />
             </TabsContent>
           </Tabs>
         </CardContent>
@@ -755,6 +779,14 @@ export default function TLStockRequestPage() {
         onOpenChange={(open) => {
           setViewOpen(open);
           if (!open && !receiveOpen) setSelected(null);
+        }}
+      />
+      <TLTransferHistoryDialog
+        open={historyOpen}
+        lines={historyLines}
+        onOpenChange={(open) => {
+          setHistoryOpen(open);
+          if (!open) setHistoryLines([]);
         }}
       />
     </div>

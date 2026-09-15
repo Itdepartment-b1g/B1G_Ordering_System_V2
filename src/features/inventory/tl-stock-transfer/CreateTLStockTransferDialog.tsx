@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, Fragment } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, Package, Search } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -35,6 +36,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { exportTlStockTransferRequestPdf } from './exportTlTransferPdfs';
+import { invalidateTlTransferQueries } from './tlStockTransferShared';
 
 type TeamLeaderOption = {
   id: string;
@@ -126,6 +128,24 @@ export function CreateTLStockTransferDialog({ open, onOpenChange, onSubmitted }:
     );
   }, [sourceStock, searchQuery]);
 
+  const stockByBrand = useMemo(() => {
+    const map = new Map<string, SourceStockRow[]>();
+    for (const item of filteredStock) {
+      const brand = item.brand_name.trim() || 'Unbranded';
+      const list = map.get(brand) ?? [];
+      list.push(item);
+      map.set(brand, list);
+    }
+    return [...map.entries()]
+      .sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+      .map(([brand, items]) => ({
+        brand,
+        items: [...items].sort((a, b) =>
+          a.variant_name.localeCompare(b.variant_name, undefined, { sensitivity: 'base' })
+        ),
+      }));
+  }, [filteredStock]);
+
   const selectedLines = useMemo(
     () =>
       sourceStock
@@ -215,7 +235,7 @@ export function CreateTLStockTransferDialog({ open, onOpenChange, onSubmitted }:
           ? `${requestNumber} · ${selectedLines.length} item(s) sent to Super Admin for approval.`
           : `${selectedLines.length} item(s) sent to Super Admin for approval.`,
       });
-      queryClient.invalidateQueries({ queryKey: ['my-tl-requests'] });
+      invalidateTlTransferQueries(queryClient);
       onSubmitted?.();
       handleOpenChange(false);
       if (printOptions) {
@@ -318,7 +338,6 @@ export function CreateTLStockTransferDialog({ open, onOpenChange, onSubmitted }:
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Brand</TableHead>
                         <TableHead>Variant</TableHead>
                         <TableHead>Type</TableHead>
                         <TableHead className="text-right">Available</TableHead>
@@ -326,35 +345,48 @@ export function CreateTLStockTransferDialog({ open, onOpenChange, onSubmitted }:
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredStock.map((item) => (
-                        <TableRow key={item.variant_id}>
-                          <TableCell className="font-medium">{item.brand_name}</TableCell>
-                          <TableCell>{item.variant_name}</TableCell>
-                          <TableCell>{item.variant_type}</TableCell>
-                          <TableCell className="text-right tabular-nums">{item.stock}</TableCell>
-                          <TableCell>
-                            <Input
-                              type="number"
-                              min={0}
-                              max={item.stock}
-                              className="h-8"
-                              value={qtyByVariant[item.variant_id] ?? ''}
-                              onChange={(e) => {
-                                const raw = e.target.value;
-                                if (raw === '') {
-                                  setQtyByVariant((prev) => {
-                                    const next = { ...prev };
-                                    delete next[item.variant_id];
-                                    return next;
-                                  });
-                                  return;
-                                }
-                                const qty = Math.max(0, Math.floor(Number(raw) || 0));
-                                setQtyByVariant((prev) => ({ ...prev, [item.variant_id]: qty }));
-                              }}
-                            />
-                          </TableCell>
-                        </TableRow>
+                      {stockByBrand.map((group) => (
+                        <Fragment key={group.brand}>
+                          <TableRow className="bg-muted/50 hover:bg-muted/50">
+                            <TableCell colSpan={4} className="py-2">
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold">{group.brand}</span>
+                                <Badge variant="outline" className="text-[10px] font-normal">
+                                  {group.items.length} item{group.items.length === 1 ? '' : 's'}
+                                </Badge>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                          {group.items.map((item) => (
+                            <TableRow key={item.variant_id}>
+                              <TableCell>{item.variant_name}</TableCell>
+                              <TableCell>{item.variant_type}</TableCell>
+                              <TableCell className="text-right tabular-nums">{item.stock}</TableCell>
+                              <TableCell>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  max={item.stock}
+                                  className="h-8"
+                                  value={qtyByVariant[item.variant_id] ?? ''}
+                                  onChange={(e) => {
+                                    const raw = e.target.value;
+                                    if (raw === '') {
+                                      setQtyByVariant((prev) => {
+                                        const next = { ...prev };
+                                        delete next[item.variant_id];
+                                        return next;
+                                      });
+                                      return;
+                                    }
+                                    const qty = Math.max(0, Math.floor(Number(raw) || 0));
+                                    setQtyByVariant((prev) => ({ ...prev, [item.variant_id]: qty }));
+                                  }}
+                                />
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </Fragment>
                       ))}
                     </TableBody>
                   </Table>

@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
   CheckCircle2,
+  History,
   Loader2,
   Package,
   Printer,
@@ -66,14 +67,14 @@ import type { TLDispatchShortfallReason, TLRequestWithDetails } from '@/types/tl
 import {
   TL_DISPATCH_SHORTFALL_LABELS,
   TL_DISPATCH_SHORTFALL_OPTIONS,
-  TL_REQUEST_SELECT,
   groupTlRequests,
   invalidateTlTransferQueries,
-  mapTlTransferRows,
   tlRemainingToDispatch,
   type TLRequestGroup,
 } from '../tl-stock-transfer/tlStockTransferShared';
 import { exportTlTdrPdf, printTlStockTransferRequest, tlTdrPdfFromDispatch } from '../tl-stock-transfer/exportTlTransferPdfs';
+import { TLTransferHistoryDialog } from '../tl-stock-transfer/TLTransferHistoryDialog';
+import { fetchIncomingTlTransfers, useTlTransferRealtime } from '../tl-stock-transfer/useTlTransferRealtime';
 import {
   DEFAULT_TL_TRANSFER_SORT_DIRECTION,
   DEFAULT_TL_TRANSFER_SORT_KEY,
@@ -110,6 +111,8 @@ export default function IncomingTLRequestsSection({ embedded = false, listContro
   const [rejectOpen, setRejectOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [showSignatureModal, setShowSignatureModal] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLines, setHistoryLines] = useState<TLRequestWithDetails[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<TLRequestGroup | null>(null);
   const [dispatchLines, setDispatchLines] = useState<DispatchLine[]>([]);
   const [qtyById, setQtyById] = useState<Record<string, number>>({});
@@ -126,18 +129,8 @@ export default function IncomingTLRequestsSection({ embedded = false, listContro
     enabled: !!user?.id && user?.role === 'team_leader',
     staleTime: 0,
     refetchOnMount: 'always',
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('tl_stock_requests')
-        .select(TL_REQUEST_SELECT)
-        .eq('source_leader_id', user!.id)
-        .in('status', ['pending_source_tl', 'admin_approved'])
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      return mapTlTransferRows(data || []).filter(
-        (row) => row.status === 'pending_source_tl' || row.status === 'admin_approved'
-      );
-    },
+    refetchOnWindowFocus: true,
+    queryFn: () => fetchIncomingTlTransfers(user!.id),
   });
 
   const incomingGroups = useMemo(() => groupTlRequests(incomingRequests), [incomingRequests]);
@@ -176,27 +169,11 @@ export default function IncomingTLRequestsSection({ embedded = false, listContro
     );
   }, [listControls, sortedIncomingGroups]);
 
-  useEffect(() => {
-    if (!user?.id) return;
-    const channel = supabase
-      .channel('incoming_tl_requests_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'tl_stock_requests',
-          filter: `source_leader_id=eq.${user.id}`,
-        },
-        () => {
-          invalidateTlTransferQueries(queryClient);
-        }
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user?.id, queryClient]);
+  useTlTransferRealtime({
+    enabled: !!user?.id && user?.role === 'team_leader',
+    companyId: user?.company_id,
+    channelKey: 'incoming',
+  });
 
   const resetDispatchForm = () => {
     setQtyById({});
@@ -349,6 +326,7 @@ export default function IncomingTLRequestsSection({ embedded = false, listContro
       if (urlError || !urlData?.signedUrl) throw new Error('Failed to generate signed URL');
 
       let tdrNumber: string | null = null;
+      let tdrKind: string | null = null;
       let reuseRedispatchTdr: string | null = null;
       for (const row of linesToDispatch) {
         const isRedispatch = row.line.received_quantity != null;
@@ -365,6 +343,7 @@ export default function IncomingTLRequestsSection({ embedded = false, listContro
         if (rpcError) throw rpcError;
         if (!result?.success) throw new Error(result?.error || 'Failed to dispatch');
         tdrNumber = result.tdr_number ?? tdrNumber;
+        tdrKind = result.tdr_kind ?? tdrKind;
         if (isRedispatch && result.tdr_number) reuseRedispatchTdr = result.tdr_number;
       }
 
@@ -382,7 +361,7 @@ export default function IncomingTLRequestsSection({ embedded = false, listContro
           await exportTlTdrPdf(
             tlTdrPdfFromDispatch({
               tdrNumber,
-              kind: isRedispatch ? 'redeliver' : 'dispatch',
+              kind: tdrKind || (isRedispatch ? 'redeliver' : 'dispatch'),
               requestNumber: selectedGroup.request_number,
               requesterName: selectedGroup.requester.full_name,
               sourceName: selectedGroup.source.full_name,
@@ -552,6 +531,17 @@ export default function IncomingTLRequestsSection({ embedded = false, listContro
                   <TableCell>{new Date(group.created_at).toLocaleDateString()}</TableCell>
                   <TableCell>
                     <div className="flex gap-2 justify-end">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setHistoryLines(group.items);
+                          setHistoryOpen(true);
+                        }}
+                      >
+                        <History className="h-4 w-4 mr-1" />
+                        History
+                      </Button>
                       <Button
                         size="sm"
                         variant="outline"
@@ -977,6 +967,14 @@ export default function IncomingTLRequestsSection({ embedded = false, listContro
           />
         </DialogContent>
       </Dialog>
+      <TLTransferHistoryDialog
+        open={historyOpen}
+        lines={historyLines}
+        onOpenChange={(open) => {
+          setHistoryOpen(open);
+          if (!open) setHistoryLines([]);
+        }}
+      />
     </>
   );
 }

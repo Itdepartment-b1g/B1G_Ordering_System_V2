@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Loader2, PackageSearch } from 'lucide-react';
+import { AlertTriangle, Loader2, PackageSearch, Search } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -9,6 +9,18 @@ import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import {
+  DateRangeFilterPopover,
+  type DateRangeFilterValue,
+} from '@/features/shared/components/DateRangeFilterPopover';
+import {
+  DEFAULT_PAGE_SIZE,
+  getListPaginationSlice,
+  ListPagination,
+  type PageSize,
+} from '@/features/shared/components/ListPagination';
+import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import {
   Dialog,
   DialogContent,
@@ -23,8 +35,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { formatShortfallReasonLabel } from '@/features/orders/deliveryDiscrepancyShared';
 import {
   TL_TRANSFER_RESOLUTION_OPTIONS,
+  invalidateTlTransferQueries,
   tlShortageStatusLabel,
 } from './tl-stock-transfer/tlStockTransferShared';
+import { useTlTransferRealtime } from './tl-stock-transfer/useTlTransferRealtime';
 import type {
   TLDiscrepancyResolution,
   TLDiscrepancyStatus,
@@ -54,6 +68,10 @@ export default function TLTransferShortagesPage() {
   const { hasWarehouseHubLink, hasWarehouseHubLinkLoading } = usePermissions();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const [statusFilter, setStatusFilter] = useState<'open' | 'all'>('open');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [resolveTarget, setResolveTarget] = useState<ShortageRow | null>(null);
   const [resolution, setResolution] = useState<TLDiscrepancyResolution | null>(null);
   const [foundChoice, setFoundChoice] = useState(false);
@@ -62,6 +80,12 @@ export default function TLTransferShortagesPage() {
 
   const canUsePage =
     isAdmin || (user?.role === 'team_leader' && hasWarehouseHubLink === true);
+
+  useTlTransferRealtime({
+    enabled: canUsePage && !!user?.company_id,
+    companyId: user?.company_id,
+    channelKey: 'shortages',
+  });
 
   const { data: rows = [], isLoading, error } = useQuery({
     queryKey: ['tl-transfer-shortages', user?.company_id, user?.id, isAdmin],
@@ -115,9 +139,49 @@ export default function TLTransferShortagesPage() {
     },
   });
 
-  const visibleRows = useMemo(
+  const statusRows = useMemo(
     () => (statusFilter === 'open' ? rows.filter((row) => row.status === 'open') : rows),
     [rows, statusFilter]
+  );
+
+  const dateRange = useMemo(
+    () =>
+      getDateRangeFromPreset(
+        dateRangeFilter.preset,
+        dateRangeFilter.customStart,
+        dateRangeFilter.customEnd
+      ),
+    [dateRangeFilter]
+  );
+
+  const filteredRows = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return statusRows.filter((row) => {
+      if (!isDateInRange(row.created_at, dateRange.start, dateRange.end)) return false;
+      if (!q) return true;
+      return [
+        row.request_number,
+        row.tdr_number,
+        row.requester_name,
+        row.brand_name,
+        row.variant_name,
+        formatShortfallReasonLabel(row.reason, row.reporter_notes),
+        tlShortageStatusLabel(row.status),
+        row.status,
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(q);
+    });
+  }, [statusRows, searchQuery, dateRange.start, dateRange.end]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [statusFilter, searchQuery, dateRangeFilter, pageSize]);
+
+  const { pageCount, safePage, pagedItems } = useMemo(
+    () => getListPaginationSlice(filteredRows, page, pageSize),
+    [filteredRows, page, pageSize]
   );
 
   const closeResolve = () => {
@@ -160,16 +224,11 @@ export default function TLTransferShortagesPage() {
             : next === 'found_keep'
               ? 'Stock returned to your inventory. You are keeping it. Transfer stays incomplete.'
               : next === 'redeliver'
-                ? 'Stock returned to your inventory. Dispatch it again from Incoming.'
-                : data?.tdr_number
-                  ? `New TDR ${data.tdr_number}. The requester can receive the replacement.`
-                  : 'The requester can receive the remaining stock.',
+                ? 'Stock returned to your inventory. Dispatch it again from Incoming on this same transfer.'
+                : 'Loss confirmed. Dispatch the replacement from Incoming on this same transfer. You can send less if you need the units.',
       });
       closeResolve();
-      queryClient.invalidateQueries({ queryKey: ['tl-transfer-shortages'] });
-      queryClient.invalidateQueries({ queryKey: ['my-tl-requests'] });
-      queryClient.invalidateQueries({ queryKey: ['incoming-tl-requests'] });
-      queryClient.invalidateQueries({ queryKey: ['dispatched-tl-requests'] });
+      invalidateTlTransferQueries(queryClient);
     } catch (err: any) {
       toast({
         title: 'Could not resolve',
@@ -222,32 +281,52 @@ export default function TLTransferShortagesPage() {
       </div>
 
       <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <PackageSearch className="h-5 w-5" />
-              {isAdmin ? 'Company TL transfer shortages' : 'Shortages you dispatched'}
-            </CardTitle>
-            <CardDescription>
-              Found returns the missing units to your inventory. Then dispatch again from Incoming,
-              or keep them. Write off is for stock that is actually lost.
-            </CardDescription>
-          </div>
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant={statusFilter === 'open' ? 'default' : 'outline'}
-              onClick={() => setStatusFilter('open')}
-            >
-              Open
-            </Button>
-            <Button
-              size="sm"
-              variant={statusFilter === 'all' ? 'default' : 'outline'}
-              onClick={() => setStatusFilter('all')}
-            >
-              All
-            </Button>
+        <CardHeader className="space-y-3">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <PackageSearch className="h-5 w-5" />
+                {isAdmin ? 'Company TL transfer shortages' : 'Shortages you dispatched'}
+              </CardTitle>
+              <CardDescription>
+                Found returns the missing units to your inventory. Then dispatch again from Incoming
+                on the same transfer, or keep them. Replace writes off the loss and also reopens
+                Incoming on that same transfer so you can send a replacement (you may send less).
+                Write off is for stock that is actually lost and will not be replaced.
+              </CardDescription>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
+              <div className="relative w-full sm:w-[240px]">
+                <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search transfer #, TDR, name…"
+                  className="h-9 pl-8"
+                />
+              </div>
+              <DateRangeFilterPopover
+                value={dateRangeFilter}
+                onChange={setDateRangeFilter}
+                triggerClassName="w-full sm:w-[220px] justify-between h-9"
+              />
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant={statusFilter === 'open' ? 'default' : 'outline'}
+                  onClick={() => setStatusFilter('open')}
+                >
+                  Open
+                </Button>
+                <Button
+                  size="sm"
+                  variant={statusFilter === 'all' ? 'default' : 'outline'}
+                  onClick={() => setStatusFilter('all')}
+                >
+                  All
+                </Button>
+              </div>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -265,11 +344,16 @@ export default function TLTransferShortagesPage() {
                   : (error as Error).message}
               </span>
             </div>
-          ) : visibleRows.length === 0 ? (
+          ) : statusRows.length === 0 ? (
             <p className="text-sm text-muted-foreground py-8 text-center">
               {statusFilter === 'open' ? 'No open transfer shortages.' : 'No shortages yet.'}
             </p>
+          ) : filteredRows.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">
+              No shortages match this search or date range.
+            </p>
           ) : (
+            <div className="space-y-4">
             <div className="border rounded-lg overflow-auto">
               <Table>
                 <TableHeader>
@@ -285,7 +369,7 @@ export default function TLTransferShortagesPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {visibleRows.map((row) => (
+                  {pagedItems.map((row) => (
                     <TableRow key={row.id}>
                       <TableCell className="font-medium">{row.request_number}</TableCell>
                       <TableCell className="font-mono text-sm">{row.tdr_number || '—'}</TableCell>
@@ -327,6 +411,15 @@ export default function TLTransferShortagesPage() {
                   ))}
                 </TableBody>
               </Table>
+            </div>
+            <ListPagination
+              pageSize={pageSize}
+              safePage={safePage}
+              pageCount={pageCount}
+              onPageSizeChange={setPageSize}
+              onPrevious={() => setPage(Math.max(0, safePage - 1))}
+              onNext={() => setPage(Math.min(pageCount - 1, safePage + 1))}
+            />
             </div>
           )}
         </CardContent>

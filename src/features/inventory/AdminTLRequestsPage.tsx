@@ -16,6 +16,7 @@ import {
   XCircle,
   Loader2,
   Eye,
+  History,
   AlertCircle,
   ThumbsUp,
   ThumbsDown,
@@ -61,8 +62,10 @@ import {
   sortTlTransferGroups,
   type TlTransferListSortKey,
 } from './tl-stock-transfer/tlStockTransferListHelpers';
+import { useTlTransferRealtime } from './tl-stock-transfer/useTlTransferRealtime';
 import { printTlStockTransferRequest } from './tl-stock-transfer/exportTlTransferPdfs';
 import { TLTransferDetailsDialog } from './tl-stock-transfer/TLTransferDetailsDialog';
+import { TLTransferHistoryDialog } from './tl-stock-transfer/TLTransferHistoryDialog';
 
 type ReviewLine = TLRequestWithDetails & { source_available_quantity: number };
 type SelectedGroup = Omit<TLRequestGroup, 'items'> & { items: ReviewLine[] };
@@ -82,6 +85,8 @@ export default function AdminTLRequestsPage() {
   const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsRequest, setDetailsRequest] = useState<TLRequestWithDetails | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLines, setHistoryLines] = useState<TLRequestWithDetails[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<SelectedGroup | null>(null);
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
@@ -129,30 +134,11 @@ export default function AdminTLRequestsPage() {
     refetchOnMount: 'always',
   });
   
-  // Real-time subscription
-  useEffect(() => {
-    if (!user?.company_id) return;
-    
-    const channel = supabase
-      .channel('admin_tl_stock_requests_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'tl_stock_requests',
-          filter: `company_id=eq.${user.company_id}`,
-        },
-        () => {
-          invalidateTlTransferQueries(queryClient);
-        }
-      )
-      .subscribe();
-    
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user?.company_id, queryClient]);
+  useTlTransferRealtime({
+    enabled: !!user?.company_id && (user?.role === 'admin' || user?.role === 'super_admin'),
+    companyId: user?.company_id,
+    channelKey: 'admin',
+  });
   
   const groupedRequests = useMemo(() => groupTlRequests(requests), [requests]);
 
@@ -245,6 +231,11 @@ export default function AdminTLRequestsPage() {
   const openDetails = (group: TLRequestGroup) => {
     setDetailsRequest(group.items[0] ?? null);
     setDetailsOpen(true);
+  };
+
+  const openHistory = (group: TLRequestGroup) => {
+    setHistoryLines(group.items);
+    setHistoryOpen(true);
   };
 
   const handleReview = async (group: TLRequestGroup) => {
@@ -705,6 +696,14 @@ export default function AdminTLRequestsPage() {
                               <Button
                                 variant="ghost"
                                 size="sm"
+                                title="History"
+                                onClick={() => openHistory(group)}
+                              >
+                                <History className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
                                 title="Transfer details / TDR"
                                 onClick={() => openDetails(group)}
                               >
@@ -756,6 +755,15 @@ export default function AdminTLRequestsPage() {
               </div>
               {selectedGroup ? (
                 <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openHistory(selectedGroup)}
+                  >
+                    <History className="mr-1 h-4 w-4" />
+                    History
+                  </Button>
                   <Button
                     type="button"
                     variant="outline"
@@ -1120,6 +1128,14 @@ export default function AdminTLRequestsPage() {
         onOpenChange={(open) => {
           setDetailsOpen(open);
           if (!open) setDetailsRequest(null);
+        }}
+      />
+      <TLTransferHistoryDialog
+        open={historyOpen}
+        lines={historyLines}
+        onOpenChange={(open) => {
+          setHistoryOpen(open);
+          if (!open) setHistoryLines([]);
         }}
       />
     </div>

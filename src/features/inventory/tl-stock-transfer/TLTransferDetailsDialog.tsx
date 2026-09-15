@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Expand, Loader2, Printer } from 'lucide-react';
+import { Expand, History, Loader2, Printer } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
@@ -32,6 +32,7 @@ import {
   tlTdrKindLabel,
 } from './tlStockTransferShared';
 import { exportTlTdrPdf, printTlStockTransferRequest } from './exportTlTransferPdfs';
+import { TLTransferHistoryDialog } from './TLTransferHistoryDialog';
 
 type Props = {
   open: boolean;
@@ -278,6 +279,7 @@ export function TLTransferDetailsDialog({ open, onOpenChange, request, allReques
   const { toast } = useToast();
   const [fullImage, setFullImage] = useState<{ url: string; title: string } | null>(null);
   const [printing, setPrinting] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const lines = useMemo(() => {
     if (!request) return [];
     const grouped = allRequests.filter((row) => row.request_number === request.request_number);
@@ -519,7 +521,10 @@ export function TLTransferDetailsDialog({ open, onOpenChange, request, allReques
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        if (!next) setFullImage(null);
+        if (!next) {
+          setFullImage(null);
+          setHistoryOpen(false);
+        }
         onOpenChange(next);
       }}
     >
@@ -535,6 +540,15 @@ export function TLTransferDetailsDialog({ open, onOpenChange, request, allReques
               </DialogDescription>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setHistoryOpen(true)}
+              >
+                <History className="mr-1 h-4 w-4" />
+                History
+              </Button>
               <Button
                 type="button"
                 variant="outline"
@@ -810,6 +824,7 @@ export function TLTransferDetailsDialog({ open, onOpenChange, request, allReques
         </div>
       </DialogContent>
     </Dialog>
+    <TLTransferHistoryDialog open={historyOpen} lines={lines} onOpenChange={setHistoryOpen} />
     </>
   );
 }
