@@ -48,13 +48,24 @@ import {
 
 const INVENTORY_PAGE_SIZE: PageSize = 15;
 
-type InventoryBrandSortKey = 'name' | 'variants' | 'stock' | 'returned' | 'status';
+type InventoryBrandSortKey = 'name' | 'variants' | 'stock' | 'lowStock' | 'returned' | 'status';
 
 const DEFAULT_INVENTORY_BRAND_SORT_KEY: InventoryBrandSortKey = 'name';
 const DEFAULT_INVENTORY_BRAND_SORT_DIRECTION = 'asc' as const;
 
 const LOW_STOCK_THRESHOLD = 10;
 const isLowStock = (stock: number) => stock <= LOW_STOCK_THRESHOLD;
+
+function isLowStockVariant(variant: { stock?: number; status?: string }) {
+  const stock = variant.stock ?? 0;
+  return stock > 0 && (variant.status === 'low' || isLowStock(stock));
+}
+
+function countLowStockVariants(
+  variants: Array<{ stock?: number; status?: string }> | undefined
+) {
+  return (variants || []).filter(isLowStockVariant).length;
+}
 
 function brandStatusRank(total: number, hasLow: boolean): number {
   if (total === 0) return 2;
@@ -165,6 +176,18 @@ function formatVariantTypeLabel(type: string, plural = false): string {
   const base = value ? value.charAt(0).toUpperCase() + value.slice(1) : 'Other';
   if (!plural) return base;
   return base.endsWith('s') ? base : `${base}s`;
+}
+
+function formatVariantTypeCountSummary(
+  typeEntries: Array<[string, AgentVariant[]]>,
+  fallbackCount: number
+): string {
+  if (typeEntries.length === 0) {
+    return `${fallbackCount} item${fallbackCount === 1 ? '' : 's'}`;
+  }
+  return typeEntries
+    .map(([type, variants]) => `${formatVariantTypeLabel(type, true)} ${variants.length}`)
+    .join(' • ');
 }
 
 function typeExpandKey(brandId: string, type: string) {
@@ -389,6 +412,9 @@ export default function MyInventory() {
         case 'stock':
           result = aTotal - bTotal;
           break;
+        case 'lowStock':
+          result = countLowStockVariants(a.allVariants) - countLowStockVariants(b.allVariants);
+          break;
         case 'returned':
           result = getBrandReturnedStock(a).qty - getBrandReturnedStock(b).qty;
           break;
@@ -431,11 +457,10 @@ export default function MyInventory() {
   };
 
   const getLowStockCount = () => {
-    let count = 0;
-    activeBrands.forEach(brand => {
-      count += (brand.allVariants || []).filter((v: any) => v.stock > 0 && (v.status === 'low' || isLowStock(v.stock))).length;
-    });
-    return count;
+    return activeBrands.reduce(
+      (sum, brand) => sum + countLowStockVariants(brand.allVariants),
+      0
+    );
   };
 
   // Get items with stock > 0 to remit
@@ -1026,10 +1051,10 @@ export default function MyInventory() {
             ) : (
               pagedBrands.map((brand) => {
                 const brandTotal = getTotalStock(brand);
-                const brandHasLow = (brand.allVariants || []).some(
-                  (v: any) => v.stock > 0 && (v.status === 'low' || isLowStock(v.stock))
-                );
+                const lowStockCount = countLowStockVariants(brand.allVariants);
+                const brandHasLow = lowStockCount > 0;
                 const itemCount = (brand.allVariants || []).length;
+                const typeEntries = sortedVariantTypeEntries(brand.variantsByType);
                 const statusLabel =
                   brandTotal === 0 ? 'Out of Stock' : brandHasLow ? 'Low stock' : 'In Stock';
                 const statusPill =
@@ -1045,8 +1070,8 @@ export default function MyInventory() {
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <h3 className="font-semibold truncate">{brand.name}</h3>
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            {itemCount} item{itemCount === 1 ? '' : 's'}
+                          <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                            {formatVariantTypeCountSummary(typeEntries, itemCount)}
                           </p>
                         </div>
                         <div className="text-right shrink-0 space-y-1">
@@ -1057,6 +1082,11 @@ export default function MyInventory() {
                           >
                             {brandTotal}
                           </div>
+                          {lowStockCount > 0 ? (
+                            <div className="text-[11px] font-medium text-amber-600 tabular-nums">
+                              {lowStockCount} low
+                            </div>
+                          ) : null}
                           <span
                             className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-medium ${statusPill}`}
                           >
@@ -1082,7 +1112,7 @@ export default function MyInventory() {
 
           {/* Desktop: one table — brand accordion rows (CR table pattern) */}
           <div className="hidden md:block rounded-md border overflow-hidden">
-            <Table className="min-w-[720px]">
+            <Table className="min-w-[840px]">
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
                   <TableHead className="w-10 px-2" />
@@ -1097,12 +1127,19 @@ export default function MyInventory() {
                     sortKey="variants"
                     sortDirection={getTableSortDisplayDirection(brandSortState, 'variants')}
                     onSort={handleBrandSort}
-                    className="text-right w-28"
+                    className="text-right whitespace-nowrap"
                   />
                   <SortableTableHead
                     label="Stock"
                     sortKey="stock"
                     sortDirection={getTableSortDisplayDirection(brandSortState, 'stock')}
+                    onSort={handleBrandSort}
+                    className="text-right w-28"
+                  />
+                  <SortableTableHead
+                    label="Low Stocks"
+                    sortKey="lowStock"
+                    sortDirection={getTableSortDisplayDirection(brandSortState, 'lowStock')}
                     onSort={handleBrandSort}
                     className="text-right w-28"
                   />
@@ -1128,7 +1165,7 @@ export default function MyInventory() {
                 {pagedBrands.length === 0 ? (
                   <TableRow>
                     <TableCell
-                      colSpan={showReturnedColumn ? 6 : 5}
+                      colSpan={showReturnedColumn ? 7 : 6}
                       className="text-center py-12 text-muted-foreground"
                     >
                       {searchQuery ? 'No results found' : 'No inventory'}
@@ -1138,11 +1175,11 @@ export default function MyInventory() {
                   pagedBrands.map((brand) => {
                     const brandOpen = expandedBrands.includes(brand.id);
                     const typeEntries = sortedVariantTypeEntries(brand.variantsByType);
-                    const brandHasLow = (brand.allVariants || []).some(
-                      (v: any) => v.stock > 0 && (v.status === 'low' || isLowStock(v.stock))
-                    );
+                    const lowStockCount = countLowStockVariants(brand.allVariants);
+                    const brandHasLow = lowStockCount > 0;
                     const brandTotal = getTotalStock(brand);
                     const itemCount = (brand.allVariants || []).length;
+                    const variantSummary = formatVariantTypeCountSummary(typeEntries, itemCount);
                     const brandReturned = showReturnedColumn
                       ? getBrandReturnedStock(brand)
                       : { qty: 0, returns: [] as MockClientReturn[] };
@@ -1154,7 +1191,7 @@ export default function MyInventory() {
                         : brandHasLow
                           ? 'bg-amber-100 text-amber-700 border-amber-200'
                           : 'bg-emerald-100 text-emerald-700 border-emerald-200';
-                    const colSpan = showReturnedColumn ? 6 : 5;
+                    const colSpan = showReturnedColumn ? 7 : 6;
 
                     return (
                       <React.Fragment key={brand.id}>
@@ -1176,31 +1213,33 @@ export default function MyInventory() {
                               />
                             </button>
                           </TableCell>
-                          <TableCell className="align-top">
+                          <TableCell>
                             <p className="font-semibold truncate" title={brand.name}>
                               {brand.name}
                             </p>
-                            <p className="text-[11px] text-muted-foreground truncate mt-0.5">
-                              {typeEntries
-                                .map(
-                                  ([type, variants]) =>
-                                    `${variants.length} ${formatVariantTypeLabel(type, true)}`
-                                )
-                                .join(' · ') || `${itemCount} item${itemCount === 1 ? '' : 's'}`}
-                            </p>
-                          </TableCell>
-                          <TableCell className="align-top text-right font-semibold tabular-nums">
-                            {itemCount}
                           </TableCell>
                           <TableCell
-                            className={`align-top text-right font-semibold tabular-nums ${
+                            className="text-right text-sm text-gray-500 whitespace-nowrap"
+                            title={variantSummary}
+                          >
+                            <p className="tabular-nums">{variantSummary}</p>
+                          </TableCell>
+                          <TableCell
+                            className={`text-right font-semibold tabular-nums ${
                               brandHasLow && brandTotal > 0 ? 'text-amber-600' : ''
                             }`}
                           >
                             {brandTotal}
                           </TableCell>
+                          <TableCell
+                            className={`text-right font-semibold tabular-nums ${
+                              lowStockCount > 0 ? 'text-amber-600' : 'text-muted-foreground'
+                            }`}
+                          >
+                            {lowStockCount}
+                          </TableCell>
                           {showReturnedColumn ? (
-                            <TableCell className="align-top text-right p-1">
+                            <TableCell className="text-right p-1">
                               <button
                                 type="button"
                                 className={`w-full min-h-9 rounded-md px-2 py-1.5 text-sm font-semibold tabular-nums ${
@@ -1222,7 +1261,7 @@ export default function MyInventory() {
                               </button>
                             </TableCell>
                           ) : null}
-                          <TableCell className="align-top">
+                          <TableCell>
                             <Badge
                               variant="secondary"
                               className={`font-medium border ${statusClass}`}
