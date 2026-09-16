@@ -15,6 +15,7 @@ import {
 import { formatDateForInput } from '@/lib/dateRangePresets';
 import {
   downloadExcelWorkbook,
+  excelWrappedRowHeight,
   EXCEL_EXPORT_HEADER_FILL,
   formatExportGeneratedAt,
   writeExcelExportMetaRow,
@@ -34,6 +35,7 @@ const THIN: Partial<ExcelJS.Borders> = {
   right: { style: 'thin' },
 };
 const PHP = '"₱"#,##0.00';
+const NAME_COL_WIDTH = 28;
 
 const TOP_BRAND_COL = { start: 1, end: 6 };
 const TOP_AGENT_COL = { start: 8, end: 12 };
@@ -650,36 +652,6 @@ function writeTopSummarySection(
   return Math.max(brandEnd, agentEnd);
 }
 
-function writeChangeItemLegend(
-  ws: ExcelJS.Worksheet,
-  startRow: number,
-  lastCol: number
-): number {
-  const row = ws.getRow(startRow);
-  const swatch = row.getCell(1);
-  swatch.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CHANGE_VARIANT_GREEN } };
-  swatch.border = THIN;
-  swatch.value = '';
-
-  const label = row.getCell(2);
-  if (lastCol > 2) {
-    ws.mergeCells(startRow, 2, startRow, lastCol);
-  }
-  label.value = {
-    richText: [
-      { text: 'Changed item', font: { bold: true, italic: true, size: 10, color: { argb: CHANGE_VARIANT_GREEN } } },
-      {
-        text: '  ·  Green Change item / Change Qty columns are the replacement SKU',
-        font: { size: 10, color: { argb: 'FF6B7280' } },
-      },
-    ],
-  };
-  label.alignment = { vertical: 'middle', horizontal: 'left' };
-  label.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GREEN_TINT } };
-  row.height = 20;
-  return startRow + 2;
-}
-
 function writeGlobalHeaders(ws: ExcelJS.Worksheet, startRow: number, layout: ColumnLayout) {
   const { brandStarts, statusCol, lastCol, productsStart, productsEnd, offsets } = layout;
   const subHeaders = getSubHeaders(layout.includeChangeColumns);
@@ -722,10 +694,6 @@ function writeGlobalHeaders(ws: ExcelJS.Worksheet, startRow: number, layout: Col
       const cell = row4.getCell(start + i);
       styleHeaderCell(cell);
       cell.value = label;
-      if (label === 'Change item' || label === 'Change Qty') {
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GREEN_TINT } };
-        cell.font = { bold: true, italic: true, color: { argb: CHANGE_VARIANT_GREEN } };
-      }
     });
   }
 
@@ -787,21 +755,26 @@ function writeOrderBlock(
         row.getCell(start + offsets.qty).value = item.qty;
         row.getCell(start + offsets.qty).alignment = { horizontal: 'center' };
 
+        const wrapTexts = [{ text: item.variant, width: NAME_COL_WIDTH }];
         if (offsets.changeItem != null && offsets.changeQty != null) {
           const changeItemCell = row.getCell(start + offsets.changeItem);
           const changeQtyCell = row.getCell(start + offsets.changeQty);
           if (item.changeVariants && item.changeVariants.length > 0) {
-            changeItemCell.value = item.changeVariants.map((change) => change.variantName).join(', ');
-            changeQtyCell.value = item.changeVariants.map((change) => change.quantity).join(', ');
-            for (const cell of [changeItemCell, changeQtyCell]) {
-              cell.font = { italic: true, color: { argb: CHANGE_VARIANT_GREEN } };
-              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GREEN_TINT } };
-            }
-            row.height = Math.max(row.height ?? 15, 22);
+            const changeItemText = item.changeVariants
+              .map((change) => change.variantName)
+              .join('\n');
+            changeItemCell.value = changeItemText;
+            changeQtyCell.value = item.changeVariants
+              .map((change) => String(change.quantity))
+              .join('\n');
+            changeItemCell.font = { color: { argb: CHANGE_VARIANT_GREEN } };
+            changeQtyCell.font = { color: { argb: CHANGE_VARIANT_GREEN } };
+            wrapTexts.push({ text: changeItemText, width: NAME_COL_WIDTH });
           }
           changeItemCell.alignment = { wrapText: true, vertical: 'middle' };
           changeQtyCell.alignment = { horizontal: 'center', wrapText: true, vertical: 'middle' };
         }
+        row.height = Math.max(row.height ?? 0, excelWrappedRowHeight(wrapTexts));
 
         row.getCell(start + offsets.price).value = item.price;
         row.getCell(start + offsets.price).alignment = { horizontal: 'center' };
@@ -874,10 +847,10 @@ function applyWorksheetColumnWidths(ws: ExcelJS.Worksheet, layout: ColumnLayout)
   ws.getColumn(FIXED_COLS.orderNumber).width = 22;
   ws.getColumn(FIXED_COLS.client).width = 10;
   for (const { start } of layout.brandStarts) {
-    ws.getColumn(start + offsets.variant).width = 22;
+    ws.getColumn(start + offsets.variant).width = NAME_COL_WIDTH;
     ws.getColumn(start + offsets.qty).width = 7;
     if (offsets.changeItem != null && offsets.changeQty != null) {
-      ws.getColumn(start + offsets.changeItem).width = 22;
+      ws.getColumn(start + offsets.changeItem).width = NAME_COL_WIDTH;
       ws.getColumn(start + offsets.changeQty).width = 12;
     }
     ws.getColumn(start + offsets.price).width = 8;
@@ -950,10 +923,6 @@ export async function exportOrderBreakdownExcel(
   divider.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE5E7EB' } };
   ws.getRow(row).height = 20;
   row += 2;
-
-  if (options) {
-    row = writeChangeItemLegend(ws, row, layout.lastCol);
-  }
 
   row = writeGlobalHeaders(ws, row, layout);
   for (const order of wideOrders) {

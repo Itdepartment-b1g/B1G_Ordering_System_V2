@@ -7,6 +7,7 @@ import {
   type MockClientReturnLine,
 } from '@/features/orders/client-returns/clientReturnMock';
 import {
+  excelWrappedRowHeight,
   EXCEL_EXPORT_HEADER_FILL,
   formatExportGeneratedAt,
   writeExcelExportMetaRow,
@@ -23,7 +24,6 @@ type PostedReturnsSheetMeta = {
 
 const YELLOW = 'FFFDE68A';
 const LIGHT_GRAY = 'FFF3F4F6';
-const GREEN_TINT = 'FFDCFCE7';
 const CHANGE_VARIANT_GREEN = 'FF047857';
 const THIN: Partial<ExcelJS.Borders> = {
   top: { style: 'thin' },
@@ -275,24 +275,6 @@ export function writePostedReturnsSheet(
   rowIndex = writeExcelExportMetaRow(ws, rowIndex, 'Change item qty', changeQty);
   rowIndex += 1;
 
-  const legendRow = ws.getRow(rowIndex);
-  const swatch = legendRow.getCell(1);
-  swatch.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CHANGE_VARIANT_GREEN } };
-  swatch.border = THIN;
-  swatch.value = '';
-  ws.mergeCells(rowIndex, 2, rowIndex, COLUMN_COUNT);
-  const legendLabel = legendRow.getCell(2);
-  legendLabel.value = {
-    richText: [
-      { text: 'Changed item', font: { bold: true, italic: true, size: 10, color: { argb: CHANGE_VARIANT_GREEN } } },
-      { text: '  ·  Green cells are the replacement SKU / qty', font: { size: 10, color: { argb: 'FF6B7280' } } },
-    ],
-  };
-  legendLabel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GREEN_TINT } };
-  legendLabel.alignment = { vertical: 'middle', horizontal: 'left' };
-  legendRow.height = 20;
-  rowIndex += 2;
-
   const headerRow = ws.getRow(rowIndex);
   HEADERS.forEach((label, i) => {
     const cell = headerRow.getCell(i + 1);
@@ -325,13 +307,22 @@ export function writePostedReturnsSheet(
     excelRow.getCell(10).value = row.changeVariant;
     excelRow.getCell(11).value = row.changeQty;
     excelRow.getCell(11).alignment = { horizontal: 'center' };
-    for (const changeCol of [9, 10, 11]) {
-      const changeCell = excelRow.getCell(changeCol);
-      changeCell.font = { italic: true, color: { argb: CHANGE_VARIANT_GREEN } };
-      if (row.changeVariant || row.changeQty) {
-        changeCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GREEN_TINT } };
+    for (const nameCol of [2, 4, 6, 7, 9, 10]) {
+      excelRow.getCell(nameCol).alignment = { wrapText: true, vertical: 'middle' };
+    }
+    if (row.changeVariant || row.changeQty) {
+      for (const changeCol of [9, 10, 11]) {
+        excelRow.getCell(changeCol).font = { color: { argb: CHANGE_VARIANT_GREEN } };
       }
     }
+    excelRow.height = excelWrappedRowHeight([
+      { text: row.agent, width: 18 },
+      { text: row.client, width: 18 },
+      { text: row.returnedBrand, width: 16 },
+      { text: row.returnedVariant, width: 22 },
+      { text: row.changeBrand, width: 16 },
+      { text: row.changeVariant, width: 22 },
+    ]);
     for (let c = 1; c <= COLUMN_COUNT; c++) {
       excelRow.getCell(c).border = THIN;
     }
