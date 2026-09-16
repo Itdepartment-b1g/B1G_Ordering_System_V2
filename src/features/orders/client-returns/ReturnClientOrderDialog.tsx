@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Camera, Check, Loader2, PenTool, RotateCcw, X } from 'lucide-react';
+import { ArrowLeftRight, Banknote, Camera, Check, Loader2, PenTool, RotateCcw, X } from 'lucide-react';
 import { format } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/features/auth';
@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -370,6 +371,7 @@ export function ReturnClientOrderDialog({
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const [step, setStep] = useState(0);
   const [returnType, setReturnType] = useState<ClientReturnKind>('change');
+  const [wizardStarted, setWizardStarted] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const [cameraStarting, setCameraStarting] = useState(false);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
@@ -411,6 +413,7 @@ export function ReturnClientOrderDialog({
       stopCamera();
       setStep(0);
       setReturnType('change');
+      setWizardStarted(false);
       setQuantities({});
       setChangeQuantities({});
       setReason('');
@@ -440,6 +443,7 @@ export function ReturnClientOrderDialog({
     setQuantities(initial);
     setChangeQuantities({});
     setReturnType('change');
+    setWizardStarted(false);
     setStep(0);
     setFormError(null);
     setQtyHints({});
@@ -495,7 +499,7 @@ export function ReturnClientOrderDialog({
       user?.company_id,
       orderBrandIds.join('|'),
     ],
-    enabled: open && returnType === 'change' && !!user?.id && !!user?.company_id && orderBrandIds.length > 0,
+    enabled: open && wizardStarted && returnType === 'change' && !!user?.id && !!user?.company_id && orderBrandIds.length > 0,
     staleTime: 0,
     refetchOnMount: 'always',
     queryFn: () => fetchChangeItemCatalog(user!.id, user!.company_id as string, orderBrandIds),
@@ -732,17 +736,15 @@ export function ReturnClientOrderDialog({
     return false;
   });
 
-  const handleReturnTypeChange = (next: ClientReturnKind) => {
-    if (next === returnType) return;
-    setReturnType(next);
+  const startReturnWizard = (kind: ClientReturnKind) => {
+    setReturnType(kind);
     setChangeQuantities({});
     setChangeHints({});
     setStockWarning(null);
     setFormError(null);
     setInvalidField(null);
-    if (next === 'refund' && step === CHANGE_ITEMS_STEP) {
-      setStep(0);
-    }
+    setStep(0);
+    setWizardStarted(true);
   };
 
   const goNext = () => {
@@ -776,6 +778,10 @@ export function ReturnClientOrderDialog({
   const goBack = () => {
     setFormError(null);
     setInvalidField(null);
+    if (step === 0) {
+      setWizardStarted(false);
+      return;
+    }
     setStep((current) => adjacentStep(returnType, current, -1));
   };
 
@@ -1028,43 +1034,85 @@ export function ReturnClientOrderDialog({
       >
         <DialogContent
           className={cn(
-            'max-w-3xl w-[95vw] max-h-[90vh] overflow-hidden flex flex-col',
+            'w-[95vw] max-h-[90vh] overflow-hidden flex flex-col',
+            wizardStarted ? 'max-w-3xl' : 'max-w-lg',
             showCamera &&
               '![transform:none] !left-4 !right-4 !top-8 !w-auto sm:!left-1/2 sm:!right-auto sm:!w-[min(95vw,48rem)] sm:!ml-[calc(min(95vw,48rem)/-2)]'
           )}
         >
+          {!wizardStarted ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Return order</DialogTitle>
+                <DialogDescription>
+                  {orderNumber} · {clientName}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 py-1">
+                <Card
+                  role="button"
+                  tabIndex={0}
+                  className="cursor-pointer transition-all hover:bg-muted/50 hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => startReturnWizard('change')}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      startReturnWizard('change');
+                    }
+                  }}
+                >
+                  <CardContent className="p-4 space-y-2">
+                    <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center">
+                      <ArrowLeftRight className="h-4 w-4 text-primary" />
+                    </div>
+                    <p className="font-semibold">Change item</p>
+                    <p className="text-sm text-muted-foreground">
+                      Swap returned products for other sellable items of the same brand.
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card
+                  role="button"
+                  tabIndex={0}
+                  className="cursor-pointer transition-all hover:bg-muted/50 hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => startReturnWizard('refund')}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      startReturnWizard('refund');
+                    }
+                  }}
+                >
+                  <CardContent className="p-4 space-y-2">
+                    <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center">
+                      <Banknote className="h-4 w-4 text-primary" />
+                    </div>
+                    <p className="font-semibold">Refund</p>
+                    <p className="text-sm text-muted-foreground">
+                      Return the products and refund the original amount. Finance will review it later.
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => onOpenChange(false)}>
+                  Cancel
+                </Button>
+              </DialogFooter>
+            </>
+          ) : (
+            <>
           <DialogHeader>
-            <DialogTitle>Return items</DialogTitle>
+            <DialogTitle className="flex items-center gap-2 flex-wrap">
+              Return items
+              <Badge variant="outline" className="font-normal">
+                {returnType === 'refund' ? 'Refund' : 'Change item'}
+              </Badge>
+            </DialogTitle>
             <DialogDescription>
               {orderNumber} · {clientName}
             </DialogDescription>
           </DialogHeader>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-muted-foreground">Return type</span>
-            <div className="flex flex-wrap gap-1.5">
-              {(
-                [
-                  { id: 'change', label: 'Change item' },
-                  { id: 'refund', label: 'Refund' },
-                ] as const
-              ).map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  onClick={() => handleReturnTypeChange(option.id)}
-                  className={cn(
-                    'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-                    returnType === option.id
-                      ? 'border-primary bg-primary text-primary-foreground'
-                      : 'border-input bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
-                  )}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </div>
 
           <ReturnItemsStepper
             steps={visibleSteps}
@@ -1795,11 +1843,9 @@ export function ReturnClientOrderDialog({
               <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
                 Cancel
               </Button>
-              {step > 0 && (
-                <Button variant="outline" onClick={goBack} disabled={submitting}>
-                  Back
-                </Button>
-              )}
+              <Button variant="outline" onClick={goBack} disabled={submitting}>
+                Back
+              </Button>
               {step < LAST_STEP ? (
                 <Button onClick={goNext} disabled={submitting}>Next</Button>
               ) : (
@@ -1810,6 +1856,8 @@ export function ReturnClientOrderDialog({
               )}
             </div>
           </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
 
