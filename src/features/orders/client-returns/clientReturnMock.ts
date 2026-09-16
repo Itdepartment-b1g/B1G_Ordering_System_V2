@@ -27,6 +27,7 @@ export type MockClientReturnLine = {
   variantId?: string;
   brandId?: string;
   variantTypeId?: string;
+  clientOrderItemId?: string;
 };
 
 export type MockClientReturnStatus = 'pending_leader' | 'posted' | 'rejected' | 'cancelled';
@@ -34,6 +35,7 @@ export type MockClientReturnStatus = 'pending_leader' | 'posted' | 'rejected' | 
 export type MockClientReturn = {
   id: string;
   returnNumber: string;
+  clientOrderId?: string;
   orderNumber: string;
   clientName: string;
   returnedByName: string;

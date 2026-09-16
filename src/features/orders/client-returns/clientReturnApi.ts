@@ -62,6 +62,9 @@ function mapLine(item: Record<string, unknown>): MockClientReturn['lines'][numbe
     variantId,
     brandId,
     variantTypeId,
+    clientOrderItemId: item.client_order_item_id
+      ? String(item.client_order_item_id)
+      : undefined,
   };
 }
 
@@ -81,6 +84,7 @@ function mapReturnRow(row: Record<string, unknown>): MockClientReturn {
   return {
     id: String(row.id),
     returnNumber: String(row.return_number || ''),
+    clientOrderId: row.client_order_id == null ? undefined : String(row.client_order_id),
     orderNumber: String(row.order_number || ''),
     clientName: String(row.client_name || 'Client'),
     returnedByName: String(row.returned_by_name || 'Agent'),
@@ -106,6 +110,7 @@ function mapReturnRow(row: Record<string, unknown>): MockClientReturn {
 const RETURN_SELECT = `
   id,
   return_number,
+  client_order_id,
   order_number,
   client_name,
   returned_by,
@@ -122,6 +127,7 @@ const RETURN_SELECT = `
   rejected_by_name,
   rejected_at,
   items:client_order_return_items (
+    client_order_item_id,
     variant_id,
     brand_id,
     variant_type_id,
@@ -168,6 +174,29 @@ export async function fetchClientOrderReturnsForOrder(orderId: string): Promise<
     .order('created_at', { ascending: false });
   if (error) throw error;
   return (data || []).map((row) => mapReturnRow(asRecord(row)));
+}
+
+const POSTED_RETURNS_ORDER_ID_CHUNK = 100;
+
+export async function fetchPostedClientOrderReturnsForOrders(
+  orderIds: string[]
+): Promise<MockClientReturn[]> {
+  const ids = [...new Set(orderIds.filter(Boolean))];
+  if (ids.length === 0) return [];
+
+  const rows: MockClientReturn[] = [];
+  for (let i = 0; i < ids.length; i += POSTED_RETURNS_ORDER_ID_CHUNK) {
+    const chunk = ids.slice(i, i + POSTED_RETURNS_ORDER_ID_CHUNK);
+    const { data, error } = await supabase
+      .from('client_order_returns')
+      .select(RETURN_SELECT)
+      .in('client_order_id', chunk)
+      .eq('status', 'posted')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    rows.push(...(data || []).map((row) => mapReturnRow(asRecord(row))));
+  }
+  return rows;
 }
 
 export async function fetchPostedReturnedQtyByItemId(

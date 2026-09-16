@@ -16,6 +16,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Search, CheckCircle, XCircle, Eye, Package, ChevronLeft, ChevronRight, CheckSquare, AlertCircle, Filter, Download, Upload, Loader2, RotateCcw, FileDown, Printer } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useOrders, type Order } from './OrderContext';
 import { generateAndOpenOrderReceiptFromOrder } from './generateOrderReceiptPdf';
 import { useAuth } from '@/features/auth';
@@ -56,6 +57,10 @@ import {
   sortClientOrderList,
   type ClientOrderListSortKey,
 } from '@/features/orders/utils/clientOrderListSorting';
+import {
+  canShowClientOrderReturns,
+  fetchPostedClientOrderReturnsForOrders,
+} from '@/features/orders/client-returns/clientReturnApi';
 
 /** Zero-value orders skip deposit/remittance requirements (handles "0.00" strings from Supabase). */
 function isZeroValueOrder(order: {
@@ -395,6 +400,7 @@ export default function OrdersPage() {
   const { getAllOrders, updateOrderStatus } = useOrders();
   const orders = getAllOrders();
   const { user } = useAuth();
+  const { hasWarehouseHubLink } = usePermissions();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>("all");
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
@@ -1113,16 +1119,30 @@ export default function OrdersPage() {
         dateRangeFilter,
         activeOrderTab
       );
-      await exportOrderBreakdownExcel(ordersToExport, filenamePrefix, {
-        dateRangeLabel: dateLabel,
-        periodStart,
-        periodEnd,
-        tabLabel,
-        orderCount: ordersToExport.length,
-      });
+      const includePostedReturns = canShowClientOrderReturns(hasWarehouseHubLink, user?.role);
+      const postedReturns = includePostedReturns
+        ? await fetchPostedClientOrderReturnsForOrders(ordersToExport.map((order) => order.id))
+        : undefined;
+      await exportOrderBreakdownExcel(
+        ordersToExport,
+        filenamePrefix,
+        {
+          dateRangeLabel: dateLabel,
+          periodStart,
+          periodEnd,
+          tabLabel,
+          orderCount: ordersToExport.length,
+        },
+        includePostedReturns ? { postedReturns } : undefined
+      );
+      const postedCrCount = postedReturns
+        ? new Set(postedReturns.map((row) => row.returnNumber).filter(Boolean)).size
+        : 0;
       toast({
         title: 'Order breakdown export successful',
-        description: `Exported ${ordersToExport.length} order(s) · ${tabLabel} · ${dateLabel}.`,
+        description: includePostedReturns
+          ? `Exported ${ordersToExport.length} order(s) · ${postedCrCount} posted return(s) · ${tabLabel} · ${dateLabel}.`
+          : `Exported ${ordersToExport.length} order(s) · ${tabLabel} · ${dateLabel}.`,
       });
     } catch (error) {
       console.error('Order breakdown export failed:', error);
