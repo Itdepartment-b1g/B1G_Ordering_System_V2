@@ -13,8 +13,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Search, CheckCircle, XCircle, Eye, Package, ChevronLeft, ChevronRight, CheckSquare, AlertCircle, Filter, Download, Upload, Loader2, RotateCcw, FileDown, Printer } from 'lucide-react';
+import { Search, CheckCircle, XCircle, Eye, Package, ChevronLeft, ChevronRight, CheckSquare, AlertCircle, Filter, Download, Upload, Loader2, RotateCcw, FileDown, Printer, Clock, MoreVertical } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useOrders, type Order } from './OrderContext';
@@ -58,9 +64,11 @@ import {
   type ClientOrderListSortKey,
 } from '@/features/orders/utils/clientOrderListSorting';
 import {
+  canOpenClientOrderTimeline,
   canShowClientOrderReturns,
   fetchPostedClientOrderReturnsForOrders,
 } from '@/features/orders/client-returns/clientReturnApi';
+import { ClientOrderReturnTimeline } from '@/features/orders/client-returns/ClientOrderReturnTimeline';
 
 /** Zero-value orders skip deposit/remittance requirements (handles "0.00" strings from Supabase). */
 function isZeroValueOrder(order: {
@@ -106,10 +114,61 @@ function formatApprovedAt(approvedAt?: string) {
 type OrderTableProps = {
   orderList: Order[];
   onViewOrder: (order: Order) => void;
+  onOpenTimeline?: (order: Order) => void;
   showApprovedAt?: boolean;
 };
 
-function OrderTable({ orderList, onViewOrder, showApprovedAt = false }: OrderTableProps) {
+function OrderRowActions({
+  order,
+  onViewOrder,
+  onOpenTimeline,
+}: {
+  order: Order;
+  onViewOrder: (order: Order) => void;
+  onOpenTimeline?: (order: Order) => void;
+}) {
+  if (!onOpenTimeline) {
+    return (
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={() => onViewOrder(order)}
+        title="View Order Details"
+        className="hover:bg-gray-100"
+      >
+        <Eye className="h-4 w-4 text-gray-600" />
+      </Button>
+    );
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          aria-label={`Actions for ${order.orderNumber}`}
+        >
+          <MoreVertical className="h-4 w-4 text-gray-600" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuItem onSelect={() => window.setTimeout(() => onViewOrder(order), 0)}>
+          <Eye className="h-4 w-4 mr-2" />
+          View
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => window.setTimeout(() => onOpenTimeline(order), 0)}>
+          <Clock className="h-4 w-4 mr-2" />
+          Order timeline
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function OrderTable({ orderList, onViewOrder, onOpenTimeline, showApprovedAt = false }: OrderTableProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const [sortState, setSortState] =
     useState<TableSortCycleState<ClientOrderListSortKey>>(createInitialTableSortCycle);
@@ -215,10 +274,18 @@ function OrderTable({ orderList, onViewOrder, showApprovedAt = false }: OrderTab
                     <span>₱{order.total.toLocaleString()}</span>
                   </div>
                 </div>
-                <div className="mt-3 flex justify-end">
-                  <Button variant="ghost" size="sm" onClick={() => onViewOrder(order)}>
-                    <Eye className="h-4 w-4 mr-1" /> View
-                  </Button>
+                <div className="mt-3 flex justify-end gap-1">
+                  {onOpenTimeline ? (
+                    <OrderRowActions
+                      order={order}
+                      onViewOrder={onViewOrder}
+                      onOpenTimeline={onOpenTimeline}
+                    />
+                  ) : (
+                    <Button variant="ghost" size="sm" onClick={() => onViewOrder(order)}>
+                      <Eye className="h-4 w-4 mr-1" /> View
+                    </Button>
+                  )}
                 </div>
               </div>
             ))}
@@ -323,15 +390,11 @@ function OrderTable({ orderList, onViewOrder, showApprovedAt = false }: OrderTab
                       </div>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => onViewOrder(order)}
-                        title="View Order Details"
-                        className="hover:bg-gray-100"
-                      >
-                        <Eye className="h-4 w-4 text-gray-600" />
-                      </Button>
+                      <OrderRowActions
+                        order={order}
+                        onViewOrder={onViewOrder}
+                        onOpenTimeline={onOpenTimeline}
+                      />
                     </TableCell>
                   </TableRow>
                 ))}
@@ -421,6 +484,8 @@ export default function OrdersPage() {
   }, [dateRangeFilter]);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [viewingOrder, setViewingOrder] = useState<Order | null>(null);
+  const [timelineDialogOpen, setTimelineDialogOpen] = useState(false);
+  const [timelineOrder, setTimelineOrder] = useState<Order | null>(null);
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [orderToApprove, setOrderToApprove] = useState<Order | null>(null);
@@ -454,6 +519,7 @@ export default function OrdersPage() {
   const isSuperAdmin = user?.role === 'super_admin';
   const isLeader = user?.role === 'team_leader';
   const canPrintOrderReceipt = isSuperAdmin || isLeader;
+  const canOpenTimeline = canOpenClientOrderTimeline(hasWarehouseHubLink, user?.role);
   /** Same order list visibility as tabs/table — export uses `visibleOrders` / `filterOrders`. */
   const canExportOrderList = canViewCompanyOrders || isLeader;
   
@@ -639,6 +705,12 @@ export default function OrdersPage() {
     }
     return list.reduce((sum, o) => sum + o.total, 0);
   }, [approvedOrdersAll, orderDateRange]);
+
+  const handleOpenTimeline = (order: Order) => {
+    setViewDialogOpen(false);
+    setTimelineOrder(order);
+    setTimelineDialogOpen(true);
+  };
 
   const handleViewOrder = async (order: Order) => {
     setViewingOrder(order);
@@ -2098,16 +2170,36 @@ export default function OrdersPage() {
               </TabsTrigger>
             </TabsList>
             <TabsContent value="pending" className="mt-4">
-              <OrderTable orderList={filterOrders('pending')} onViewOrder={handleViewOrder} showApprovedAt={canSeeApprovedAt} />
+              <OrderTable
+                orderList={filterOrders('pending')}
+                onViewOrder={handleViewOrder}
+                onOpenTimeline={canOpenTimeline ? handleOpenTimeline : undefined}
+                showApprovedAt={canSeeApprovedAt}
+              />
             </TabsContent>
             <TabsContent value="approved" className="mt-4">
-              <OrderTable orderList={filterOrders('approved')} onViewOrder={handleViewOrder} showApprovedAt={canSeeApprovedAt} />
+              <OrderTable
+                orderList={filterOrders('approved')}
+                onViewOrder={handleViewOrder}
+                onOpenTimeline={canOpenTimeline ? handleOpenTimeline : undefined}
+                showApprovedAt={canSeeApprovedAt}
+              />
             </TabsContent>
             <TabsContent value="rejected" className="mt-4">
-              <OrderTable orderList={filterOrders('rejected')} onViewOrder={handleViewOrder} showApprovedAt={canSeeApprovedAt} />
+              <OrderTable
+                orderList={filterOrders('rejected')}
+                onViewOrder={handleViewOrder}
+                onOpenTimeline={canOpenTimeline ? handleOpenTimeline : undefined}
+                showApprovedAt={canSeeApprovedAt}
+              />
             </TabsContent>
             <TabsContent value="all" className="mt-4">
-              <OrderTable orderList={filterOrders()} onViewOrder={handleViewOrder} showApprovedAt={canSeeApprovedAt} />
+              <OrderTable
+                orderList={filterOrders()}
+                onViewOrder={handleViewOrder}
+                onOpenTimeline={canOpenTimeline ? handleOpenTimeline : undefined}
+                showApprovedAt={canSeeApprovedAt}
+              />
             </TabsContent>
           </Tabs>
         </CardContent>
@@ -2260,24 +2352,38 @@ export default function OrdersPage() {
       </Dialog>
 
       {/* View Order Dialog */}
-      <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+      <Dialog
+        open={viewDialogOpen}
+        onOpenChange={setViewDialogOpen}
+      >
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
             <div className="space-y-1">
               <DialogTitle>Order Details</DialogTitle>
               <DialogDescription>Review details and take action on this order.</DialogDescription>
             </div>
-            {canPrintOrderReceipt && viewingOrder && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="shrink-0"
-                onClick={() => handlePrintOrderReceipt(viewingOrder)}
-              >
-                <Printer className="h-4 w-4 mr-2" />
-                Print
-              </Button>
-            )}
+            <div className="flex shrink-0 flex-wrap gap-2">
+              {canOpenTimeline && viewingOrder && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleOpenTimeline(viewingOrder)}
+                >
+                  <Clock className="h-4 w-4 mr-2" />
+                  Timeline
+                </Button>
+              )}
+              {canPrintOrderReceipt && viewingOrder && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handlePrintOrderReceipt(viewingOrder)}
+                >
+                  <Printer className="h-4 w-4 mr-2" />
+                  Print
+                </Button>
+              )}
+            </div>
           </DialogHeader>
           {viewingOrder && (
             <div className="space-y-6 py-4">
@@ -3151,6 +3257,17 @@ export default function OrdersPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      {canOpenTimeline ? (
+        <ClientOrderReturnTimeline
+          open={timelineDialogOpen && !!timelineOrder}
+          onOpenChange={(open) => {
+            setTimelineDialogOpen(open);
+            if (!open) setTimelineOrder(null);
+          }}
+          order={timelineOrder}
+        />
+      ) : null}
     </div>
   );
 }

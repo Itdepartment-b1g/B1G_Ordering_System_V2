@@ -1,5 +1,5 @@
 import type { MockClientReturn } from '../clientReturnMock';
-import { getMockReturnLineQty } from '../clientReturnMock';
+import { formatClientReturnType, getMockReturnLineQty } from '../clientReturnMock';
 import type { SortDirection } from '@/features/shared/components/SortableTableHead';
 
 export type ClientReturnHistorySortKey =
@@ -7,6 +7,7 @@ export type ClientReturnHistorySortKey =
   | 'clientName'
   | 'returnedByName'
   | 'returnDate'
+  | 'returnType'
   | 'status'
   | 'approvedByName'
   | 'rejectedByName'
@@ -36,6 +37,9 @@ export function sortClientReturnHistory(
         break;
       case 'returnDate':
         result = new Date(a.returnDate).getTime() - new Date(b.returnDate).getTime();
+        break;
+      case 'returnType':
+        result = formatClientReturnType(a.returnType).localeCompare(formatClientReturnType(b.returnType));
         break;
       case 'status':
         result = a.status.localeCompare(b.status);

@@ -54,6 +54,20 @@ export function usePermissions() {
       return hasWarehouseHubLink === true;
     }
 
+    if (route === '/finance/refunds') {
+      if (
+        !(
+          user?.role === 'finance' ||
+          user?.role === 'accounting' ||
+          user?.role === 'admin' ||
+          user?.role === 'super_admin'
+        )
+      ) {
+        return false;
+      }
+      return hasWarehouseHubLink === true;
+    }
+
     // PO Receiving is only available for team leaders whose tenant is linked to a warehouse hub.
     if (route === '/inventory/po-receive') {
       return user?.role === 'team_leader' && hasWarehouseHubLink === true;

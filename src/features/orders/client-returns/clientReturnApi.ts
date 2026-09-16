@@ -1,9 +1,10 @@
 import { supabase } from '@/lib/supabase';
 import type { PackageProofPhotoItem } from '@/features/shared/components/MultiProofPhotoField';
 import {
+  parseClientReturnStatus,
+  parseClientReturnType,
   type MockChangeItemSku,
   type MockClientReturn,
-  type MockClientReturnStatus,
 } from './clientReturnMock';
 import {
   uploadClientOrderReturnProof,
@@ -59,6 +60,8 @@ function mapLine(item: Record<string, unknown>): MockClientReturn['lines'][numbe
     brandName: String(brand.name || item.brand_name || 'Unknown'),
     variantType: String(variant.variant_type || item.variant_type || 'flavor'),
     quantity: Number(item.quantity) || 0,
+    unitPrice: Number(item.unit_price) || 0,
+    lineTotal: Number(item.line_total) || 0,
     variantId,
     brandId,
     variantTypeId,
@@ -92,12 +95,15 @@ function mapReturnRow(row: Record<string, unknown>): MockClientReturn {
     createdAt: String(row.created_at || ''),
     reason: String(row.reason || ''),
     notes: row.notes == null ? null : String(row.notes),
+    returnType: parseClientReturnType(row.return_type),
     lines: items.map(mapLine),
     changeLines: changeItems.map(mapLine),
     proofLabels: proofPhotos.map((photo) => photo.fileName),
     proofPhotos,
-    status: (String(row.status || 'pending_leader') as MockClientReturnStatus),
+    status: parseClientReturnStatus(row.status),
     rejectionNote: row.rejection_note == null ? null : String(row.rejection_note),
+    saApprovedByName: row.sa_approved_by_name == null ? null : String(row.sa_approved_by_name),
+    saApprovedAt: row.sa_approved_at == null ? null : String(row.sa_approved_at),
     approvedByName: row.approved_by_name == null ? null : String(row.approved_by_name),
     approvedAt: row.approved_at == null ? null : String(row.approved_at),
     rejectedByName: row.rejected_by_name == null ? null : String(row.rejected_by_name),
@@ -121,7 +127,10 @@ const RETURN_SELECT = `
   reason,
   notes,
   status,
+  return_type,
   rejection_note,
+  sa_approved_by_name,
+  sa_approved_at,
   approved_by_name,
   approved_at,
   rejected_by_name,
@@ -132,6 +141,8 @@ const RETURN_SELECT = `
     brand_id,
     variant_type_id,
     quantity,
+    unit_price,
+    line_total,
     variant:variants (
       name,
       variant_type,
@@ -354,6 +365,7 @@ export async function createClientOrderReturn(input: {
   items: Array<{ clientOrderItemId: string; quantity: number }>;
   changeItems: Array<{ variantId: string; quantity: number }>;
   photos: PackageProofPhotoItem[];
+  returnType?: 'change_item' | 'refund';
 }): Promise<{ id: string; returnNumber: string; status: string }> {
   const signature = await uploadClientOrderReturnSignature({
     signatureDataUrl: input.signatureDataUrl,
@@ -404,6 +416,7 @@ export async function createClientOrderReturn(input: {
       quantity: item.quantity,
     })),
     p_attachments: attachments,
+    p_return_type: input.returnType === 'refund' ? 'refund' : 'change_item',
   });
   if (error) throw error;
 
@@ -441,6 +454,14 @@ export async function rejectClientOrderReturn(returnId: string, note?: string): 
 export function canShowClientOrderReturns(hasWarehouseHubLink: boolean, role?: string | null): boolean {
   if (role === 'warehouse') return false;
   return hasWarehouseHubLink;
+}
+
+export function canOpenClientOrderTimeline(
+  hasWarehouseHubLink: boolean,
+  role?: string | null
+): boolean {
+  if (!canShowClientOrderReturns(hasWarehouseHubLink, role)) return false;
+  return role === 'super_admin' || role === 'finance' || role === 'team_leader';
 }
 
 export function canCreateClientOrderReturn(role?: string | null): boolean {

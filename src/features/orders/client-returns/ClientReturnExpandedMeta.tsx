@@ -11,6 +11,9 @@ import {
 import {
   formatClientReturnReason,
   formatClientReturnStatus,
+  formatClientReturnType,
+  formatClientReturnPeso,
+  getClientReturnRefundAmount,
   getReturnActionActor,
   type MockClientReturn,
 } from './clientReturnMock';
@@ -42,15 +45,28 @@ export function ClientReturnExpandedMeta({ row }: { row: MockClientReturn }) {
     <div className="space-y-3 rounded-md border bg-muted/20 p-3">
       <dl className="space-y-1.5">
         <MetaRow label="Client name" value={row.clientName} />
+        <MetaRow label="Type" value={formatClientReturnType(row.returnType)} />
+        {row.returnType === 'refund' ? (
+          <MetaRow label="Refund amount" value={formatClientReturnPeso(getClientReturnRefundAmount(row))} />
+        ) : null}
         <MetaRow label="Agent name" value={row.returnedByName} />
         <MetaRow label="Returned date" value={formatMetaDate(row.returnDate)} />
         <MetaRow label="Created" value={formatMetaDate(row.createdAt, true)} />
         <MetaRow label="Status" value={formatClientReturnStatus(row.status)} />
+        {row.returnType === 'refund' && (row.saApprovedByName || row.saApprovedAt) ? (
+          <>
+            <MetaRow label="SA approved by" value={row.saApprovedByName || '—'} />
+            <MetaRow label="SA approved at" value={formatMetaDate(row.saApprovedAt, true)} />
+          </>
+        ) : null}
         {actor.kind === 'approve' ? (
           <>
-            <MetaRow label="Approved by" value={actor.name || '—'} />
             <MetaRow
-              label="Approved at"
+              label={row.returnType === 'refund' ? 'Finance posted by' : 'Approved by'}
+              value={actor.name || '—'}
+            />
+            <MetaRow
+              label={row.returnType === 'refund' ? 'Finance posted at' : 'Approved at'}
               value={formatMetaDate(actor.at, true)}
             />
           </>

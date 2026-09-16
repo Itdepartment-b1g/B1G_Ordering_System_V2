@@ -24,7 +24,11 @@ import {
 } from '@/components/ui/alert-dialog';
 import {
   clientReturnStatusBadgeClass,
+  clientReturnTypeBadgeClass,
   formatClientReturnStatus,
+  formatClientReturnType,
+  formatClientReturnPeso,
+  getClientReturnRefundAmount,
   getMockReturnLineQty,
   type MockClientReturn,
 } from './clientReturnMock';
@@ -121,6 +125,11 @@ export function ClientReturnViewDialog({
               <RotateCcw className="h-5 w-5 text-rose-600" />
               <span className="font-mono">{row?.returnNumber || 'Return'}</span>
               {row ? (
+                <Badge variant="outline" className={`font-normal ${clientReturnTypeBadgeClass(row.returnType)}`}>
+                  {formatClientReturnType(row.returnType)}
+                </Badge>
+              ) : null}
+              {row ? (
                 <Badge variant="outline" className={`font-normal ${clientReturnStatusBadgeClass(row.status)}`}>
                   {formatClientReturnStatus(row.status)}
                 </Badge>
@@ -141,6 +150,9 @@ export function ClientReturnViewDialog({
                 ) : (
                   <>
                     {row.orderNumber} · {row.clientName} · {qty} unit{qty === 1 ? '' : 's'}
+                    {row.returnType === 'refund'
+                      ? ` · ${formatClientReturnPeso(getClientReturnRefundAmount(row))}`
+                      : ''}
                   </>
                 )
               ) : (

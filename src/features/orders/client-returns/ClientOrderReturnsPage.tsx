@@ -25,11 +25,15 @@ import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/usePermissions';
 import {
+  canReviewClientReturn,
   clientReturnStatusBadgeClass,
+  clientReturnTypeBadgeClass,
   formatClientReturnReason,
   formatClientReturnStatus,
+  formatClientReturnType,
   getMockReturnLineQty,
   getReturnActionActor,
+  type ClientReturnKind,
   type MockClientReturn,
   type MockClientReturnStatus,
 } from './clientReturnMock';
@@ -71,10 +75,17 @@ import {
 
 const HISTORY_PAGE_SIZE: PageSize = 25;
 const VIEW_MODE_KEY = 'client-order-returns-view';
-const TABLE_MIN_WIDTH = 'min-w-[78rem]';
+const TABLE_MIN_WIDTH = 'min-w-[86rem]';
 
 type HistoryViewMode = 'table' | 'cards';
-type StatusFilter = 'all' | 'pending_leader' | 'posted' | 'rejected';
+type StatusFilter =
+  | 'all'
+  | 'pending_leader'
+  | 'pending_super_admin'
+  | 'pending_finance'
+  | 'posted'
+  | 'rejected';
+type TypeFilter = 'all' | ClientReturnKind;
 type PageTab = 'history' | 'inventory' | 'returnToLeader';
 type RlConfirmKind = 'approve' | 'reject' | null;
 
@@ -105,6 +116,14 @@ function ActorNameCell({ name, at }: { name: string | null; at: string | null })
         </p>
       ) : null}
     </div>
+  );
+}
+
+function ReturnTypeBadge({ type }: { type: ClientReturnKind }) {
+  return (
+    <Badge variant="outline" className={`font-normal shrink-0 ${clientReturnTypeBadgeClass(type)}`}>
+      {formatClientReturnType(type)}
+    </Badge>
   );
 }
 
@@ -189,7 +208,7 @@ function ReturnHistoryCard({
   onReject: () => void;
 }) {
   const qty = getMockReturnLineQty(row);
-  const pending = canReview && row.status === 'pending_leader';
+  const pending = canReview;
   return (
     <div
       className={`rounded-2xl border bg-background p-4 shadow-sm ${
@@ -200,7 +219,10 @@ function ReturnHistoryCard({
         <div className="min-w-0 space-y-1">
           <p className="font-mono font-semibold text-sm truncate">{row.returnNumber}</p>
           <p className="font-mono text-xs text-muted-foreground truncate">{row.orderNumber}</p>
-          <ReturnStatusBadge status={row.status} />
+          <div className="flex flex-wrap gap-1.5">
+            <ReturnTypeBadge type={row.returnType} />
+            <ReturnStatusBadge status={row.status} />
+          </div>
         </div>
         <Button
           type="button"
@@ -321,9 +343,48 @@ function StatusFilterChips({
 }) {
   const options: { id: StatusFilter; label: string }[] = [
     { id: 'all', label: 'All' },
-    { id: 'pending_leader', label: 'Pending' },
+    { id: 'pending_leader', label: 'Pending TL' },
+    { id: 'pending_super_admin', label: 'Pending SA' },
+    { id: 'pending_finance', label: 'Pending Finance' },
     { id: 'posted', label: 'Approve' },
     { id: 'rejected', label: 'Reject' },
+  ];
+
+  return (
+    <div className="flex gap-1.5 overflow-x-auto pb-0.5 -mx-1 px-1 scrollbar-thin">
+      {options.map((option) => {
+        const active = value === option.id;
+        return (
+          <Button
+            key={option.id}
+            type="button"
+            variant={active ? 'default' : 'outline'}
+            size="sm"
+            className="h-8 px-3 text-xs rounded-full shrink-0"
+            onClick={() => onChange(option.id)}
+          >
+            {option.label}
+            <span className="ml-1 tabular-nums opacity-80">{counts[option.id]}</span>
+          </Button>
+        );
+      })}
+    </div>
+  );
+}
+
+function TypeFilterChips({
+  value,
+  counts,
+  onChange,
+}: {
+  value: TypeFilter;
+  counts: Record<TypeFilter, number>;
+  onChange: (filter: TypeFilter) => void;
+}) {
+  const options: { id: TypeFilter; label: string }[] = [
+    { id: 'all', label: 'All types' },
+    { id: 'change_item', label: 'Change item' },
+    { id: 'refund', label: 'Refund' },
   ];
 
   return (
@@ -355,7 +416,7 @@ export default function ClientOrderReturnsPage() {
   const { hasWarehouseHubLink } = usePermissions();
   const isLeader = user?.role === 'team_leader';
   const isSuperAdmin = user?.role === 'super_admin';
-  const canReview = isLeader;
+  const showHistoryActions = isLeader || isSuperAdmin;
   const canBulkReturn = canCreateReturnLeader(user?.role);
   const showReturns = canShowClientOrderReturns(hasWarehouseHubLink, user?.role);
 
@@ -374,6 +435,7 @@ export default function ClientOrderReturnsPage() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(HISTORY_PAGE_SIZE);
   const [viewRow, setViewRow] = useState<MockClientReturn | null>(null);
@@ -482,14 +544,14 @@ export default function ClientOrderReturnsPage() {
   );
 
   const startApprove = (row: MockClientReturn) => {
-    if (!canReview) return;
+    if (!canReviewClientReturn(user?.role, row)) return;
     setViewRow(null);
     setActionRow(row);
     setConfirmKind('approve');
   };
 
   const startReject = (row: MockClientReturn) => {
-    if (!canReview) return;
+    if (!canReviewClientReturn(user?.role, row)) return;
     setViewRow(null);
     setActionRow(row);
     setConfirmKind('reject');
@@ -515,8 +577,19 @@ export default function ClientOrderReturnsPage() {
     () => ({
       all: rows.length,
       pending_leader: rows.filter((row) => row.status === 'pending_leader').length,
+      pending_super_admin: rows.filter((row) => row.status === 'pending_super_admin').length,
+      pending_finance: rows.filter((row) => row.status === 'pending_finance').length,
       posted: rows.filter((row) => row.status === 'posted').length,
       rejected: rows.filter((row) => row.status === 'rejected').length,
+    }),
+    [rows]
+  );
+
+  const typeCounts = useMemo<Record<TypeFilter, number>>(
+    () => ({
+      all: rows.length,
+      change_item: rows.filter((row) => row.returnType === 'change_item').length,
+      refund: rows.filter((row) => row.returnType === 'refund').length,
     }),
     [rows]
   );
@@ -525,6 +598,7 @@ export default function ClientOrderReturnsPage() {
     const query = searchQuery.trim().toLowerCase();
     const matched = rows.filter((row) => {
       if (statusFilter !== 'all' && row.status !== statusFilter) return false;
+      if (typeFilter !== 'all' && row.returnType !== typeFilter) return false;
       if (!query) return true;
       const haystack = [
         row.returnNumber,
@@ -534,6 +608,7 @@ export default function ClientOrderReturnsPage() {
         row.reason,
         formatClientReturnReason(row.reason),
         formatClientReturnStatus(row.status),
+        formatClientReturnType(row.returnType),
         row.notes || '',
         row.rejectionNote || '',
         row.approvedByName || '',
@@ -550,11 +625,11 @@ export default function ClientOrderReturnsPage() {
       DEFAULT_CLIENT_RETURN_HISTORY_SORT_DIRECTION
     );
     return sortClientReturnHistory(matched, key, direction);
-  }, [rows, searchQuery, statusFilter, historySortState]);
+  }, [rows, searchQuery, statusFilter, typeFilter, historySortState]);
 
   useEffect(() => {
     setPage(0);
-  }, [searchQuery, pageSize, statusFilter, historySortState]);
+  }, [searchQuery, pageSize, statusFilter, typeFilter, historySortState]);
 
   const { pagedItems, safePage, pageCount } = getListPaginationSlice(filtered, page, pageSize);
 
@@ -563,21 +638,25 @@ export default function ClientOrderReturnsPage() {
   };
 
   const handleApproveConfirm = async () => {
-    if (!canReview || !actionRow || acting) return;
+    if (!actionRow || acting || !canReviewClientReturn(user?.role, actionRow)) return;
+    const isRefund = actionRow.returnType === 'refund';
+    const sendingToFinance = isRefund && actionRow.status === 'pending_super_admin';
     setActing(true);
     try {
       await approveClientOrderReturn(actionRow.id);
       await queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] });
       await queryClient.invalidateQueries({ queryKey: ['inventory'] });
       toast({
-        title: 'Return approved',
-        description: `${actionRow.returnNumber} posted. Returned stock was updated.`,
+        title: sendingToFinance ? 'Refund sent to finance' : isRefund ? 'Refund posted' : 'Return approved',
+        description: sendingToFinance
+          ? `${actionRow.returnNumber} is waiting for finance to post the refund.`
+          : `${actionRow.returnNumber} posted. Returned stock was updated.`,
       });
       setConfirmKind(null);
       setActionRow(null);
     } catch (err) {
       toast({
-        title: 'Could not approve return',
+        title: isRefund ? 'Could not approve refund' : 'Could not approve return',
         description: err instanceof Error ? err.message : 'Failed to approve client return',
         variant: 'destructive',
       });
@@ -587,20 +666,21 @@ export default function ClientOrderReturnsPage() {
   };
 
   const handleRejectConfirm = async (note?: string) => {
-    if (!canReview || !actionRow || acting) return;
+    if (!actionRow || acting || !canReviewClientReturn(user?.role, actionRow)) return;
+    const isRefund = actionRow.returnType === 'refund';
     setActing(true);
     try {
       await rejectClientOrderReturn(actionRow.id, note);
       await queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] });
       toast({
-        title: 'Return rejected',
+        title: isRefund ? 'Refund rejected' : 'Return rejected',
         description: `${actionRow.returnNumber} is closed. Agent can file a new CR on the same ORD.`,
       });
       setConfirmKind(null);
       setActionRow(null);
     } catch (err) {
       toast({
-        title: 'Could not reject return',
+        title: isRefund ? 'Could not reject refund' : 'Could not reject return',
         description: err instanceof Error ? err.message : 'Failed to reject client return',
         variant: 'destructive',
       });
@@ -691,7 +771,7 @@ export default function ClientOrderReturnsPage() {
         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Client Order Returns</h1>
         <p className="text-sm sm:text-base text-muted-foreground mt-1">
           {isSuperAdmin
-            ? 'Confirm team leader return handovers (RL). Super admin does not hold stock.'
+            ? 'CR history, refunds waiting for Super Admin, and team leader return handovers (RL). Super admin does not hold stock.'
             : isLeader
               ? 'CR history, returned items you hold, and RL handovers from your team.'
               : 'CR history, your returned items, and submit RL handovers to your team leader.'}
@@ -741,18 +821,21 @@ export default function ClientOrderReturnsPage() {
                 <ViewModeToggle value={viewMode} onChange={setAndStoreViewMode} />
               </div>
             </div>
-            <div className="flex flex-col md:flex-row md:items-center gap-3">
-              <div className="min-w-0 flex-1">
-                <StatusFilterChips value={statusFilter} counts={counts} onChange={setStatusFilter} />
-              </div>
-              <div className="relative w-full md:max-w-64 md:ml-auto">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search CR, ORD, client..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10"
-                />
+            <div className="flex flex-col gap-2">
+              <TypeFilterChips value={typeFilter} counts={typeCounts} onChange={setTypeFilter} />
+              <div className="flex flex-col md:flex-row md:items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <StatusFilterChips value={statusFilter} counts={counts} onChange={setStatusFilter} />
+                </div>
+                <div className="relative w-full md:max-w-64 md:ml-auto">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search CR, ORD, client..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-10"
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -789,7 +872,7 @@ export default function ClientOrderReturnsPage() {
                     <ReturnHistoryCard
                       key={row.id}
                       row={row}
-                      canReview={canReview}
+                      canReview={canReviewClientReturn(user?.role, row)}
                       onView={() => setViewRow(row)}
                       onApprove={() => startApprove(row)}
                       onReject={() => startReject(row)}
@@ -834,11 +917,18 @@ export default function ClientOrderReturnsPage() {
                         />
                         <TableHead className="w-[9rem]">Brands</TableHead>
                         <SortableTableHead
+                          label="Type"
+                          sortKey="returnType"
+                          sortDirection={getTableSortDisplayDirection(historySortState, 'returnType')}
+                          onSort={handleHistorySort}
+                          className="w-[8rem]"
+                        />
+                        <SortableTableHead
                           label="Status"
                           sortKey="status"
                           sortDirection={getTableSortDisplayDirection(historySortState, 'status')}
                           onSort={handleHistorySort}
-                          className="w-[7rem]"
+                          className="w-[9rem]"
                         />
                         <SortableTableHead
                           label="Approved by"
@@ -861,7 +951,7 @@ export default function ClientOrderReturnsPage() {
                           onSort={handleHistorySort}
                           className="w-16 text-right"
                         />
-                        {canReview ? <TableHead className="w-[12rem] text-right">Action</TableHead> : null}
+                        {showHistoryActions ? <TableHead className="w-[12rem] text-right">Action</TableHead> : null}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -869,7 +959,7 @@ export default function ClientOrderReturnsPage() {
                         const qty = getMockReturnLineQty(row);
                         const actor = getReturnActionActor(row);
                         const isOpen = expandedRows.has(row.id);
-                        const colSpan = canReview ? 11 : 10;
+                        const colSpan = showHistoryActions ? 12 : 11;
                         return (
                           <Fragment key={row.id}>
                             <TableRow className={isOpen ? 'bg-muted/20' : undefined}>
@@ -909,6 +999,9 @@ export default function ClientOrderReturnsPage() {
                                 <ReturnedBrandBadges brands={uniqueReturnBrands(row.lines)} />
                               </TableCell>
                               <TableCell className="align-top">
+                                <ReturnTypeBadge type={row.returnType} />
+                              </TableCell>
+                              <TableCell className="align-top">
                                 <ReturnStatusBadge status={row.status} />
                               </TableCell>
                               <TableCell className="align-top">
@@ -920,9 +1013,9 @@ export default function ClientOrderReturnsPage() {
                               <TableCell className="align-top text-right font-semibold tabular-nums text-rose-700">
                                 {qty}
                               </TableCell>
-                              {canReview ? (
+                              {showHistoryActions ? (
                                 <TableCell className="align-top text-right">
-                                  {row.status === 'pending_leader' ? (
+                                  {canReviewClientReturn(user?.role, row) ? (
                                     <PendingReturnActions
                                       onApprove={() => startApprove(row)}
                                       onReject={() => startReject(row)}

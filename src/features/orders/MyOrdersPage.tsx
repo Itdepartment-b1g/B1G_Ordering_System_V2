@@ -715,24 +715,24 @@ export default function MyOrdersPage() {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48">
-        <DropdownMenuItem onClick={() => handleViewOrder(order)}>
+        <DropdownMenuItem onSelect={() => window.setTimeout(() => handleViewOrder(order), 0)}>
           <Eye className="h-4 w-4 mr-2" />
           View
         </DropdownMenuItem>
         {showClientReturns ? (
-          <DropdownMenuItem onClick={() => openOrderTimeline(order)}>
+          <DropdownMenuItem onSelect={() => window.setTimeout(() => openOrderTimeline(order), 0)}>
             <Clock className="h-4 w-4 mr-2" />
             Order timeline
           </DropdownMenuItem>
         ) : null}
         {canShowClientReturn(order) ? (
-          <DropdownMenuItem onClick={() => openClientReturn(order)}>
+          <DropdownMenuItem onSelect={() => openClientReturn(order)}>
             <RotateCcw className="h-4 w-4 mr-2" />
             Return order
           </DropdownMenuItem>
         ) : null}
         {order.stage === 'needs_revision' ? (
-          <DropdownMenuItem onClick={() => handleEditOrder(order)}>
+          <DropdownMenuItem onSelect={() => handleEditOrder(order)}>
             <Pencil className="h-4 w-4 mr-2" />
             Edit
           </DropdownMenuItem>
@@ -4290,26 +4290,8 @@ export default function MyOrdersPage() {
       </AlertDialog>
 
       {/* View Order Dialog */}
-      <Dialog
-        open={viewDialogOpen}
-        onOpenChange={(nextOpen) => {
-          if (!nextOpen && timelineDialogOpen) return;
-          setViewDialogOpen(nextOpen);
-          if (!nextOpen) {
-            setOrderToView(null);
-            setTimelineDialogOpen(false);
-          }
-        }}
-      >
-        <DialogContent
-          className="max-w-4xl w-[95vw] max-h-[90vh] overflow-y-auto p-4 sm:p-6"
-          onPointerDownOutside={(event) => {
-            if (timelineDialogOpen) event.preventDefault();
-          }}
-          onInteractOutside={(event) => {
-            if (timelineDialogOpen) event.preventDefault();
-          }}
-        >
+      <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+        <DialogContent className="max-w-4xl w-[95vw] max-h-[90vh] overflow-y-auto p-4 sm:p-6">
           <DialogHeader className="space-y-3 sm:space-y-0 sm:flex sm:flex-row sm:items-start sm:justify-between sm:gap-4 pr-8">
             <DialogTitle>Order Details</DialogTitle>
             {orderToView && (
@@ -4319,7 +4301,7 @@ export default function MyOrdersPage() {
                     variant="outline"
                     size="sm"
                     className="w-full sm:w-auto min-h-[44px] sm:min-h-8"
-                    onClick={() => setTimelineDialogOpen(true)}
+                    onClick={() => openOrderTimeline(orderToView)}
                   >
                     <Clock className="h-4 w-4 mr-2" />
                     Timeline

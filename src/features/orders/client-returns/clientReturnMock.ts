@@ -24,13 +24,23 @@ export type MockClientReturnLine = {
   brandName: string;
   variantType: string;
   quantity: number;
+  unitPrice?: number;
+  lineTotal?: number;
   variantId?: string;
   brandId?: string;
   variantTypeId?: string;
   clientOrderItemId?: string;
 };
 
-export type MockClientReturnStatus = 'pending_leader' | 'posted' | 'rejected' | 'cancelled';
+export type ClientReturnKind = 'change_item' | 'refund';
+
+export type MockClientReturnStatus =
+  | 'pending_leader'
+  | 'pending_super_admin'
+  | 'pending_finance'
+  | 'posted'
+  | 'rejected'
+  | 'cancelled';
 
 export type MockClientReturn = {
   id: string;
@@ -43,12 +53,15 @@ export type MockClientReturn = {
   createdAt: string;
   reason: string;
   notes: string | null;
+  returnType: ClientReturnKind;
   lines: MockClientReturnLine[];
   changeLines?: MockClientReturnLine[];
   proofLabels: string[];
   proofPhotos?: ClientReturnProofPhoto[];
   status: MockClientReturnStatus;
   rejectionNote: string | null;
+  saApprovedByName: string | null;
+  saApprovedAt: string | null;
   approvedByName: string | null;
   approvedAt: string | null;
   rejectedByName: string | null;
@@ -73,18 +86,82 @@ export function getReturnActionActor(row: MockClientReturn): {
   return { kind: null, name: null, at: null };
 }
 
+export function parseClientReturnType(value: unknown): ClientReturnKind {
+  return String(value || '').toLowerCase() === 'refund' ? 'refund' : 'change_item';
+}
+
+export function parseClientReturnStatus(value: unknown): MockClientReturnStatus {
+  const raw = String(value || '');
+  if (
+    raw === 'pending_leader' ||
+    raw === 'pending_super_admin' ||
+    raw === 'pending_finance' ||
+    raw === 'posted' ||
+    raw === 'rejected' ||
+    raw === 'cancelled'
+  ) {
+    return raw;
+  }
+  return 'pending_leader';
+}
+
+export function formatClientReturnType(type: ClientReturnKind): string {
+  return type === 'refund' ? 'Refund' : 'Change item';
+}
+
+export function clientReturnTypeBadgeClass(type: ClientReturnKind): string {
+  if (type === 'refund') return 'bg-violet-50 text-violet-700 border-violet-200';
+  return 'bg-sky-50 text-sky-700 border-sky-200';
+}
+
 export function formatClientReturnStatus(status: MockClientReturnStatus): string {
-  if (status === 'pending_leader') return 'Pending';
+  if (status === 'pending_leader') return 'Pending TL';
+  if (status === 'pending_super_admin') return 'Pending SA';
+  if (status === 'pending_finance') return 'Pending Finance';
   if (status === 'posted') return 'Approve';
   if (status === 'rejected') return 'Reject';
   return 'Cancelled';
 }
 
 export function clientReturnStatusBadgeClass(status: MockClientReturnStatus): string {
-  if (status === 'pending_leader') return 'bg-yellow-50 text-yellow-700 border-yellow-200';
+  if (
+    status === 'pending_leader' ||
+    status === 'pending_super_admin' ||
+    status === 'pending_finance'
+  ) {
+    return 'bg-yellow-50 text-yellow-700 border-yellow-200';
+  }
   if (status === 'posted') return 'bg-green-50 text-green-700 border-green-200';
   if (status === 'rejected') return 'bg-red-50 text-red-700 border-red-200';
   return 'bg-slate-50 text-slate-600 border-slate-200';
+}
+
+export function canReviewClientReturn(
+  role: string | null | undefined,
+  row: Pick<MockClientReturn, 'returnType' | 'status'>
+): boolean {
+  if (row.returnType === 'change_item' && row.status === 'pending_leader') {
+    return role === 'team_leader';
+  }
+  if (row.returnType === 'refund' && row.status === 'pending_super_admin') {
+    return role === 'super_admin';
+  }
+  if (row.returnType === 'refund' && row.status === 'pending_finance') {
+    return role === 'finance';
+  }
+  return false;
+}
+
+export function formatClientReturnPeso(amount: number) {
+  return `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+export function getClientReturnRefundAmount(row: MockClientReturn): number {
+  return row.lines.reduce((sum, line) => {
+    const lineTotal = Number(line.lineTotal);
+    if (Number.isFinite(lineTotal) && lineTotal > 0) return sum + lineTotal;
+    return sum + (Number(line.quantity) || 0) * (Number(line.unitPrice) || 0);
+  }, 0);
 }
 
 export function isPostedClientReturn(row: MockClientReturn): boolean {

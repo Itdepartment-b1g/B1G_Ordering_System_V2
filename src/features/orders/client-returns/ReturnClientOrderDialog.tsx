@@ -925,14 +925,6 @@ export function ReturnClientOrderDialog({
       });
       return;
     }
-    if (returnType === 'refund') {
-      toast({
-        title: 'Refund preview only',
-        description: 'Saving and finance approval are not wired yet. You can still walk this flow.',
-      });
-      setClientConfirmOpen(false);
-      return;
-    }
     if (!orderId || !user?.company_id) {
       toast({
         title: 'Cannot save return',
@@ -953,6 +945,7 @@ export function ReturnClientOrderDialog({
 
     setSubmitting(true);
     try {
+      const isRefund = returnType === 'refund';
       const saved = await createClientOrderReturn({
         companyId: user.company_id,
         clientOrderId: orderId,
@@ -964,11 +957,14 @@ export function ReturnClientOrderDialog({
           clientOrderItemId: line.id,
           quantity: quantities[line.id] || 0,
         })),
-        changeItems: selectedChangeSkus.map((sku) => ({
-          variantId: sku.id,
-          quantity: changeQuantities[sku.id] || 0,
-        })),
+        changeItems: isRefund
+          ? []
+          : selectedChangeSkus.map((sku) => ({
+              variantId: sku.id,
+              quantity: changeQuantities[sku.id] || 0,
+            })),
         photos,
+        returnType: isRefund ? 'refund' : 'change_item',
       });
 
       await Promise.all([
@@ -980,11 +976,18 @@ export function ReturnClientOrderDialog({
       onSuccess?.();
 
       toast({
-        title: saved.status === 'posted' ? 'Return posted' : 'Return submitted',
+        title:
+          saved.status === 'posted'
+            ? 'Return posted'
+            : isRefund
+              ? 'Refund submitted'
+              : 'Return submitted',
         description:
           saved.status === 'posted'
             ? `${saved.returnNumber} saved and posted against ${orderNumber}.`
-            : `${saved.returnNumber} saved. Waiting for team leader approval.`,
+            : saved.status === 'pending_super_admin'
+              ? `${saved.returnNumber} saved. Waiting for Super Admin approval.`
+              : `${saved.returnNumber} saved. Waiting for team leader approval.`,
       });
       setClientConfirmOpen(false);
       onOpenChange(false);
@@ -1777,7 +1780,7 @@ export function ReturnClientOrderDialog({
 
                 {returnType === 'refund' ? (
                   <p className="text-sm text-muted-foreground rounded-md border bg-muted/30 p-3">
-                    Finance will review and approve this refund later. Saving is not enabled yet.
+                    Super Admin reviews this first, then Finance posts the refund. Stock updates only after Finance posts it.
                   </p>
                 ) : null}
 
@@ -1908,7 +1911,7 @@ export function ReturnClientOrderDialog({
                   . Type the client name below to avoid posting against the wrong order.
                 </p>
                 {returnType === 'refund' ? (
-                  <p>Saving and finance approval are not wired yet. This step is a preview of the confirm flow.</p>
+                  <p>This refund waits for Super Admin, then Finance. Stock updates only after Finance posts it.</p>
                 ) : null}
                 <div className="space-y-2">
                   <Label htmlFor="client-name-confirm">Client name</Label>
@@ -1939,7 +1942,7 @@ export function ReturnClientOrderDialog({
                   Saving...
                 </>
               ) : returnType === 'refund' ? (
-                'Preview refund'
+                'Submit refund'
               ) : (
                 'Post return'
               )}

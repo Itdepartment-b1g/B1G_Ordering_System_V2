@@ -32,6 +32,7 @@ const adminMenuItems: MenuItem[] = [
   { title: 'Finance', url: '/finance-section', description: 'Finance overview and tools for cash flow and revenue.', hasSubmenu: true, submenu: [
     { title: 'Finance Page', url: '/finance', description: 'Dashboard of revenue, expenses, and key financial metrics.' },
     { title: 'Order List', url: '/orders', description: 'Review and approve customer orders and monitor their status.' },
+    { title: 'Client Refunds', url: '/finance/refunds', description: 'Review and approve client order refunds after Super Admin.' },
     { title: 'Cash Deposits', url: '/inventory/cash-deposits', description: 'Track and verify cash and cheque deposits from team leaders.' },
   ]},
   { title: 'Procurement', url: '/purchase-order-management', description: 'Manage purchasing of goods from suppliers.', hasSubmenu: true, submenu: [
@@ -117,6 +118,7 @@ const financeMenuItems: MenuItem[] = [
   { title: 'Finance', url: '/finance-section', description: 'Access to all finance tools and reports.', hasSubmenu: true, submenu: [
     { title: 'Finance Page', url: '/finance', description: 'Main finance dashboard including charts and KPIs.' },
     { title: 'Order List', url: '/orders', description: 'List of all customer orders for reconciliation and review.' },
+    { title: 'Client Refunds', url: '/finance/refunds', description: 'Review client refunds after Super Admin approval. Approve or reject the refund amount.' },
     { title: 'Cash Deposits', url: '/inventory/cash-deposits', description: 'Verify and track deposits against orders and remittances.' },
     { title: 'Physical Count', url: '/inventory/physical-count', description: 'View warehouse physical count history and variances (view-only).' },
   ]},
@@ -131,6 +133,7 @@ const accountingMenuItems: MenuItem[] = [
   { title: 'Finance', url: '/finance-section', description: 'View finance tools (read-only).', hasSubmenu: true, submenu: [
     { title: 'Finance Page', url: '/finance', description: 'Revenue and deposit summaries.' },
     { title: 'Order List', url: '/orders', description: 'View orders without approval actions.' },
+    { title: 'Client Refunds', url: '/finance/refunds', description: 'View client refunds after Super Admin approval (read-only).' },
     { title: 'Cash Deposits', url: '/inventory/cash-deposits', description: 'Track cash and cheque deposits.' },
     { title: 'Physical Count', url: '/inventory/physical-count', description: 'Count warehouse stock by batch and lot; sign to confirm; records physical vs system qty.' },
   ]},
@@ -163,6 +166,7 @@ const superAdminMenuItems: MenuItem[] = [
   { title: 'Finance', url: '/finance-section', description: 'Finance hub for the entire tenant.', hasSubmenu: true, submenu: [
     { title: 'Finance Page', url: '/finance', description: 'Top-level financial performance overview.' },
     { title: 'Order List', url: '/orders', description: 'Review all orders processed across the tenant.' },
+    { title: 'Client Refunds', url: '/finance/refunds', description: 'Review client refunds after Super Admin approval.' },
     { title: 'Cash Deposits', url: '/inventory/cash-deposits', description: 'Oversee deposit reconciliation across teams and companies.' },
   ]},
   { title: 'Procurement', url: '/purchase-order-management', description: 'Central procurement controls for brands and suppliers.', hasSubmenu: true, submenu: [

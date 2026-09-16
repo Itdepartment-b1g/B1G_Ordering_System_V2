@@ -8,6 +8,7 @@ import {
   ShoppingCart,
   DollarSign,
   UserCircle,
+  Banknote,
   BanknoteIcon,
   ShoppingBag,
   LogOut,
@@ -119,6 +120,7 @@ const adminMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
+      { title: 'Client Refunds', url: '/finance/refunds', icon: Banknote },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
       { title: 'Payment Settings', url: '/finance/payment-settings', icon: CreditCard },
     ]
@@ -432,6 +434,7 @@ const financeMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
+      { title: 'Client Refunds', url: '/finance/refunds', icon: Banknote },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
       { title: 'Payment Settings', url: '/finance/payment-settings', icon: CreditCard },
       { title: 'Physical Count', url: '/inventory/physical-count', icon: ClipboardCheck },
@@ -454,6 +457,7 @@ const accountingMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
+      { title: 'Client Refunds', url: '/finance/refunds', icon: Banknote },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
       { title: 'Physical Count', url: '/inventory/physical-count', icon: ClipboardCheck },
     ]
@@ -513,6 +517,7 @@ const superAdminMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
+      { title: 'Client Refunds', url: '/finance/refunds', icon: Banknote },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
       { title: 'Payment Settings', url: '/finance/payment-settings', icon: CreditCard },
     ]
@@ -586,6 +591,9 @@ export function AppSidebar() {
               if (subItem.url === '/client-order-returns' && !canSeeClientOrderReturns) {
                 return false;
               }
+              if (subItem.url === '/finance/refunds' && !canSeeClientOrderReturns) {
+                return false;
+              }
               return checkPermission(subItem.url);
             });
             // Only show parent if it has at least one accessible submenu item
@@ -603,6 +611,9 @@ export function AppSidebar() {
                   return false;
                 }
                 if (subItem.url === '/client-order-returns' && !canSeeClientOrderReturns) {
+                  return false;
+                }
+                if (subItem.url === '/finance/refunds' && !canSeeClientOrderReturns) {
                   return false;
                 }
                 return checkPermission(subItem.url);
