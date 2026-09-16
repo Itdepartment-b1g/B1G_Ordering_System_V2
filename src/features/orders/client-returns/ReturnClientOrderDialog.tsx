@@ -87,6 +87,8 @@ type StockShortfall = {
   sellable: number;
 };
 
+type ClientReturnKind = 'change' | 'refund';
+
 const RETURN_STEPS = [
   { id: 0, label: 'Return Items' },
   { id: 1, label: 'Change Items' },
@@ -96,7 +98,22 @@ const RETURN_STEPS = [
   { id: 5, label: 'Review' },
 ] as const;
 
-const LAST_STEP = RETURN_STEPS.length - 1;
+const CHANGE_ITEMS_STEP = 1;
+const LAST_STEP = RETURN_STEPS[RETURN_STEPS.length - 1].id;
+
+function stepsForReturnType(kind: ClientReturnKind) {
+  return kind === 'refund' ? RETURN_STEPS.filter((step) => step.id !== CHANGE_ITEMS_STEP) : [...RETURN_STEPS];
+}
+
+function adjacentStep(kind: ClientReturnKind, current: number, direction: 1 | -1) {
+  const steps = stepsForReturnType(kind);
+  const index = Math.max(0, steps.findIndex((step) => step.id === current));
+  return steps[Math.min(steps.length - 1, Math.max(0, index + direction))]?.id ?? current;
+}
+
+function formatReturnPeso(amount: number) {
+  return `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
 
 function isUnusableCameraLabel(label: string) {
   return /ir\b|infrared|windows hello|tof|depth/i.test(label);
@@ -154,23 +171,28 @@ function attachStreamToVideo(video: HTMLVideoElement, stream: MediaStream) {
 }
 
 function ReturnItemsStepper({
+  steps,
   currentStep,
   completedSteps,
   onStepClick,
 }: {
+  steps: { id: number; label: string }[];
   currentStep: number;
   completedSteps: boolean[];
   onStepClick: (step: number) => void;
 }) {
+  const currentIndex = Math.max(0, steps.findIndex((step) => step.id === currentStep));
+  const lastId = steps[steps.length - 1]?.id;
+
   return (
     <ol className="flex w-full max-w-3xl mx-auto items-start" aria-label="Return items progress">
-      {RETURN_STEPS.map((step, index) => {
-        const status = index === currentStep ? 'current' : index < currentStep ? 'completed' : 'upcoming';
+      {steps.map((step, index) => {
+        const status = index === currentIndex ? 'current' : index < currentIndex ? 'completed' : 'upcoming';
         const canClick =
-          index === currentStep ||
-          index < currentStep ||
+          index === currentIndex ||
+          index < currentIndex ||
           completedSteps.slice(0, index).every(Boolean);
-        const isLast = index === LAST_STEP;
+        const isLast = step.id === lastId;
 
         return (
           <li key={step.id} className="relative flex min-w-0 flex-1 flex-col items-center">
@@ -181,7 +203,7 @@ function ReturnItemsStepper({
               type="button"
               disabled={!canClick}
               onClick={() => {
-                if (canClick) onStepClick(index);
+                if (canClick) onStepClick(step.id);
               }}
               aria-current={status === 'current' ? 'step' : undefined}
               className={cn(
@@ -347,6 +369,7 @@ export function ReturnClientOrderDialog({
   const videoRef = useRef<HTMLVideoElement>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const [step, setStep] = useState(0);
+  const [returnType, setReturnType] = useState<ClientReturnKind>('change');
   const [showCamera, setShowCamera] = useState(false);
   const [cameraStarting, setCameraStarting] = useState(false);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
@@ -387,6 +410,7 @@ export function ReturnClientOrderDialog({
     if (!open) {
       stopCamera();
       setStep(0);
+      setReturnType('change');
       setQuantities({});
       setChangeQuantities({});
       setReason('');
@@ -415,6 +439,7 @@ export function ReturnClientOrderDialog({
     }
     setQuantities(initial);
     setChangeQuantities({});
+    setReturnType('change');
     setStep(0);
     setFormError(null);
     setQtyHints({});
@@ -470,7 +495,7 @@ export function ReturnClientOrderDialog({
       user?.company_id,
       orderBrandIds.join('|'),
     ],
-    enabled: open && !!user?.id && !!user?.company_id && orderBrandIds.length > 0,
+    enabled: open && returnType === 'change' && !!user?.id && !!user?.company_id && orderBrandIds.length > 0,
     staleTime: 0,
     refetchOnMount: 'always',
     queryFn: () => fetchChangeItemCatalog(user!.id, user!.company_id as string, orderBrandIds),
@@ -494,6 +519,12 @@ export function ReturnClientOrderDialog({
 
   const selectedLines = lines.filter((line) => (quantities[line.id] || 0) > 0);
   const totalReturning = selectedLines.reduce((sum, line) => sum + (quantities[line.id] || 0), 0);
+  const refundAmount = selectedLines.reduce(
+    (sum, line) => sum + (quantities[line.id] || 0) * (Number(line.unitPrice) || 0),
+    0
+  );
+  const visibleSteps = stepsForReturnType(returnType);
+  const isChangeReturn = returnType === 'change';
 
   const returnedByBrand = useMemo(() => {
     const map = new Map<string, number>();
@@ -507,7 +538,7 @@ export function ReturnClientOrderDialog({
   const changeCatalog = Array.isArray(liveChangeCatalog) ? liveChangeCatalog : [];
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || returnType !== 'change') return;
     setChangeQuantities((prev) => {
       let changed = false;
       const next = { ...prev };
@@ -535,7 +566,7 @@ export function ReturnClientOrderDialog({
       }
       return changed ? next : prev;
     });
-  }, [open, changeCatalog, returnedByBrand]);
+  }, [open, returnType, changeCatalog, returnedByBrand]);
 
   const brandsWithReturns = useMemo(
     () => Array.from(returnedByBrand.entries()).filter(([, qty]) => qty > 0),
@@ -588,6 +619,7 @@ export function ReturnClientOrderDialog({
   };
 
   const changeError = (): string | null => {
+    if (returnType !== 'change') return null;
     if (brandsWithReturns.length === 0) return 'Enter a quantity to return for at least one item.';
     for (const [brand, returned] of brandsWithReturns) {
       const skus = changeCatalog.filter((sku) => sku.brandName === brand);
@@ -684,14 +716,34 @@ export function ReturnClientOrderDialog({
 
   const stepError = (currentStep: number): string | null => {
     if (currentStep === 0) return itemsError();
-    if (currentStep === 1) return changeError();
+    if (currentStep === CHANGE_ITEMS_STEP) return changeError();
     if (currentStep === 2) return reasonError();
     if (currentStep === 3) return proofError();
     if (currentStep === 4) return signatureError();
     return null;
   };
 
-  const completedSteps = [!itemsError(), !changeError(), !reasonError(), !proofError(), !signatureError(), false];
+  const completedSteps = visibleSteps.map((item) => {
+    if (item.id === 0) return !itemsError();
+    if (item.id === CHANGE_ITEMS_STEP) return !changeError();
+    if (item.id === 2) return !reasonError();
+    if (item.id === 3) return !proofError();
+    if (item.id === 4) return !signatureError();
+    return false;
+  });
+
+  const handleReturnTypeChange = (next: ClientReturnKind) => {
+    if (next === returnType) return;
+    setReturnType(next);
+    setChangeQuantities({});
+    setChangeHints({});
+    setStockWarning(null);
+    setFormError(null);
+    setInvalidField(null);
+    if (next === 'refund' && step === CHANGE_ITEMS_STEP) {
+      setStep(0);
+    }
+  };
 
   const goNext = () => {
     if (step === 0) {
@@ -700,12 +752,14 @@ export function ReturnClientOrderDialog({
         revealInvalid(firstInvalidField(0), error);
         return;
       }
-      const shortfalls = stockShortfalls();
-      if (shortfalls.length > 0) {
-        setFormError(null);
-        setInvalidField(null);
-        setStockWarning(shortfalls);
-        return;
+      if (isChangeReturn) {
+        const shortfalls = stockShortfalls();
+        if (shortfalls.length > 0) {
+          setFormError(null);
+          setInvalidField(null);
+          setStockWarning(shortfalls);
+          return;
+        }
       }
     } else {
       const error = stepError(step);
@@ -716,13 +770,13 @@ export function ReturnClientOrderDialog({
     }
     setFormError(null);
     setInvalidField(null);
-    setStep((current) => Math.min(LAST_STEP, current + 1));
+    setStep((current) => adjacentStep(returnType, current, 1));
   };
 
   const goBack = () => {
     setFormError(null);
     setInvalidField(null);
-    setStep((current) => Math.max(0, current - 1));
+    setStep((current) => adjacentStep(returnType, current, -1));
   };
 
   const handleCaptureFile = (file: File | null) => {
@@ -835,11 +889,12 @@ export function ReturnClientOrderDialog({
     clientNameConfirmInput.trim().toLowerCase() === clientName.trim().toLowerCase();
 
   const handleConfirmReturnClick = () => {
-    for (let current = 0; current <= 4; current += 1) {
-      const error = stepError(current);
+    for (const item of visibleSteps) {
+      if (item.id === LAST_STEP) continue;
+      const error = stepError(item.id);
       if (error) {
-        setStep(current);
-        revealInvalid(firstInvalidField(current), error);
+        setStep(item.id);
+        revealInvalid(firstInvalidField(item.id), error);
         return;
       }
     }
@@ -862,6 +917,14 @@ export function ReturnClientOrderDialog({
         description: 'Please type the client name exactly to confirm.',
         variant: 'destructive',
       });
+      return;
+    }
+    if (returnType === 'refund') {
+      toast({
+        title: 'Refund preview only',
+        description: 'Saving and finance approval are not wired yet. You can still walk this flow.',
+      });
+      setClientConfirmOpen(false);
       return;
     }
     if (!orderId || !user?.company_id) {
@@ -977,24 +1040,55 @@ export function ReturnClientOrderDialog({
             </DialogDescription>
           </DialogHeader>
 
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted-foreground">Return type</span>
+            <div className="flex flex-wrap gap-1.5">
+              {(
+                [
+                  { id: 'change', label: 'Change item' },
+                  { id: 'refund', label: 'Refund' },
+                ] as const
+              ).map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => handleReturnTypeChange(option.id)}
+                  className={cn(
+                    'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                    returnType === option.id
+                      ? 'border-primary bg-primary text-primary-foreground'
+                      : 'border-input bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
+                  )}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <ReturnItemsStepper
+            steps={visibleSteps}
             currentStep={step}
             completedSteps={completedSteps}
             onStepClick={(nextStep) => {
-              if (nextStep <= step) {
+              const fromIndex = visibleSteps.findIndex((item) => item.id === step);
+              const toIndex = visibleSteps.findIndex((item) => item.id === nextStep);
+              if (toIndex <= fromIndex) {
                 setFormError(null);
                 setInvalidField(null);
                 setStep(nextStep);
                 return;
               }
-              for (let current = 0; current < nextStep; current += 1) {
-                const error = stepError(current);
+              for (let index = fromIndex; index < toIndex; index += 1) {
+                const currentId = visibleSteps[index]?.id;
+                if (currentId == null) continue;
+                const error = stepError(currentId);
                 if (error) {
-                  setStep(current);
-                  revealInvalid(firstInvalidField(current), error);
+                  setStep(currentId);
+                  revealInvalid(firstInvalidField(currentId), error);
                   return;
                 }
-                if (current === 0) {
+                if (currentId === 0 && isChangeReturn) {
                   const shortfalls = stockShortfalls();
                   if (shortfalls.length > 0) {
                     setFormError(null);
@@ -1013,6 +1107,18 @@ export function ReturnClientOrderDialog({
           <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-1 pt-2">
             {step === 0 && (
               <div className="space-y-3">
+                {returnType === 'refund' ? (
+                  <p className="text-sm text-muted-foreground rounded-md border bg-muted/30 p-3">
+                    Refund amount is calculated from the returned qty and the original unit price.
+                    {totalReturning > 0 ? (
+                      <>
+                        {' '}
+                        Estimated refund:{' '}
+                        <span className="font-semibold text-foreground tabular-nums">{formatReturnPeso(refundAmount)}</span>
+                      </>
+                    ) : null}
+                  </p>
+                ) : null}
                 {remainingTotal <= 0 ? (
                   <p className="text-sm text-muted-foreground rounded-md border bg-muted/30 p-3">
                     Nothing left to return on this order. Posted returns already used the sold qty.
@@ -1128,7 +1234,7 @@ export function ReturnClientOrderDialog({
               </div>
             )}
 
-            {step === 1 && (
+            {step === CHANGE_ITEMS_STEP && isChangeReturn && (
               <div className="space-y-3">
                 <p className="text-sm text-muted-foreground">
                   Pick any SKU of the same brand. Change qty must equal returned qty per brand.
@@ -1514,6 +1620,10 @@ export function ReturnClientOrderDialog({
               <div className="space-y-3">
                 <div className="rounded-md border p-3 text-sm space-y-1">
                   <p>
+                    <span className="text-muted-foreground">Type · </span>
+                    {returnType === 'refund' ? 'Refund' : 'Change item'}
+                  </p>
+                  <p>
                     <span className="text-muted-foreground">Order · </span>
                     <span className="font-mono">{orderNumber}</span>
                   </p>
@@ -1541,6 +1651,12 @@ export function ReturnClientOrderDialog({
                     <span className="text-muted-foreground">Agent signature · </span>
                     {agentSignatureDataUrl ? 'Captured' : 'Missing'}
                   </p>
+                  {returnType === 'refund' ? (
+                    <p>
+                      <span className="text-muted-foreground">Refund amount · </span>
+                      <span className="font-semibold tabular-nums">{formatReturnPeso(refundAmount)}</span>
+                    </p>
+                  ) : null}
                 </div>
                 {agentSignatureDataUrl ? (
                   <div className="rounded-md border p-3 bg-muted/20">
@@ -1565,7 +1681,14 @@ export function ReturnClientOrderDialog({
                               <p className="font-medium text-sm">{line.variantName}</p>
                               <TypeBadge type={line.variantType} />
                             </div>
-                            <p className="font-semibold text-rose-700 tabular-nums">{quantities[line.id]}</p>
+                            <div className="text-right shrink-0">
+                              <p className="font-semibold text-rose-700 tabular-nums">{quantities[line.id]}</p>
+                              {returnType === 'refund' ? (
+                                <p className="text-[11px] text-muted-foreground tabular-nums">
+                                  {formatReturnPeso((quantities[line.id] || 0) * (Number(line.unitPrice) || 0))}
+                                </p>
+                              ) : null}
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -1576,6 +1699,9 @@ export function ReturnClientOrderDialog({
                             <TableHead>Variant</TableHead>
                             <TableHead>Type</TableHead>
                             <TableHead className="text-right">Qty</TableHead>
+                            {returnType === 'refund' ? (
+                              <TableHead className="text-right">Amount</TableHead>
+                            ) : null}
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -1588,6 +1714,11 @@ export function ReturnClientOrderDialog({
                               <TableCell className="text-right font-semibold text-rose-700 tabular-nums">
                                 {quantities[line.id]}
                               </TableCell>
+                              {returnType === 'refund' ? (
+                                <TableCell className="text-right tabular-nums">
+                                  {formatReturnPeso((quantities[line.id] || 0) * (Number(line.unitPrice) || 0))}
+                                </TableCell>
+                              ) : null}
                             </TableRow>
                           ))}
                         </TableBody>
@@ -1596,6 +1727,14 @@ export function ReturnClientOrderDialog({
                   </div>
                 ))}
 
+                {returnType === 'refund' ? (
+                  <p className="text-sm text-muted-foreground rounded-md border bg-muted/30 p-3">
+                    Finance will review and approve this refund later. Saving is not enabled yet.
+                  </p>
+                ) : null}
+
+                {isChangeReturn ? (
+                  <>
                 <p className="text-sm font-semibold pt-1">Change item</p>
                 {reviewChangeByBrand.map(([brand, brandSkus]) => (
                   <div key={`chg-${brand}`} className="rounded-md border overflow-hidden">
@@ -1638,6 +1777,8 @@ export function ReturnClientOrderDialog({
                     )}
                   </div>
                 ))}
+                  </>
+                ) : null}
               </div>
             )}
 
@@ -1646,7 +1787,9 @@ export function ReturnClientOrderDialog({
 
           <DialogFooter className="gap-2 flex-col sm:flex-row sm:justify-between">
             <Badge variant="outline" className="tabular-nums w-fit">
-              Returning {totalReturning} · Changing {totalChanging}
+              {returnType === 'refund'
+                ? `Returning ${totalReturning} · Refund ${formatReturnPeso(refundAmount)}`
+                : `Returning ${totalReturning} · Changing ${totalChanging}`}
             </Badge>
             <div className="flex flex-wrap gap-2 w-full sm:w-auto justify-end">
               <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
@@ -1662,7 +1805,7 @@ export function ReturnClientOrderDialog({
               ) : (
                 <Button onClick={handleConfirmReturnClick} disabled={submitting}>
                   {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RotateCcw className="h-4 w-4 mr-2" />}
-                  Confirm return
+                  {returnType === 'refund' ? 'Confirm refund' : 'Confirm return'}
                 </Button>
               )}
             </div>
@@ -1698,16 +1841,27 @@ export function ReturnClientOrderDialog({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Confirm client return</AlertDialogTitle>
+            <AlertDialogTitle>
+              {returnType === 'refund' ? 'Confirm refund return' : 'Confirm client return'}
+            </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-4 pt-2">
                 <p>
-                  This return is for{' '}
+                  This {returnType === 'refund' ? 'refund' : 'return'} is for{' '}
                   <span className="font-semibold text-foreground">{clientName || 'this client'}</span>
                   {' '}on{' '}
                   <span className="font-mono font-semibold text-foreground">{orderNumber}</span>
+                  {returnType === 'refund' ? (
+                    <>
+                      {' '}for{' '}
+                      <span className="font-semibold text-foreground tabular-nums">{formatReturnPeso(refundAmount)}</span>
+                    </>
+                  ) : null}
                   . Type the client name below to avoid posting against the wrong order.
                 </p>
+                {returnType === 'refund' ? (
+                  <p>Saving and finance approval are not wired yet. This step is a preview of the confirm flow.</p>
+                ) : null}
                 <div className="space-y-2">
                   <Label htmlFor="client-name-confirm">Client name</Label>
                   <Input
@@ -1736,6 +1890,8 @@ export function ReturnClientOrderDialog({
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   Saving...
                 </>
+              ) : returnType === 'refund' ? (
+                'Preview refund'
               ) : (
                 'Post return'
               )}
