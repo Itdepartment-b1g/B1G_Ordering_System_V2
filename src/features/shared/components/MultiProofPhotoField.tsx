@@ -3,9 +3,16 @@
  * Optional camera capture (getUserMedia + file capture fallback).
  */
 import { useEffect, useRef, useState } from 'react';
-import { Camera, ImagePlus, Loader2, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import { Camera, Eye, ImagePlus, Loader2, Plus, RotateCcw, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 export const MAX_PACKAGE_PROOF_PHOTOS = 3;
 export const MAX_PACKAGE_PROOF_BYTES = 5 * 1024 * 1024;
@@ -120,6 +127,8 @@ type MultiProofPhotoFieldProps = {
   disabled?: boolean;
   /** When true, show Take photo (camera) in addition to Choose file. */
   enableCamera?: boolean;
+  /** When false, selected files show the name only — no image thumbnail. */
+  showPreview?: boolean;
 };
 
 export function MultiProofPhotoField({
@@ -132,6 +141,7 @@ export function MultiProofPhotoField({
   recommendedHint = 'Recommended',
   disabled = false,
   enableCamera = false,
+  showPreview = true,
 }: MultiProofPhotoFieldProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const captureInputRef = useRef<HTMLInputElement>(null);
@@ -142,6 +152,7 @@ export function MultiProofPhotoField({
   const [showCamera, setShowCamera] = useState(false);
   const [cameraStarting, setCameraStarting] = useState(false);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
+  const [previewItem, setPreviewItem] = useState<PackageProofPhotoItem | null>(null);
 
   const stopCamera = () => {
     cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
@@ -452,21 +463,42 @@ export function MultiProofPhotoField({
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
-                <img
-                  src={item.previewUrl}
-                  alt={`Package photo ${index + 1}`}
-                  className="max-h-32 w-full object-contain rounded-md bg-muted/30"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="w-full"
-                  disabled={disabled}
-                  onClick={() => openPicker(index)}
-                >
-                  Replace
-                </Button>
+                {showPreview ? (
+                  <button
+                    type="button"
+                    onClick={() => setPreviewItem(item)}
+                    title="View full size"
+                    className="block w-full rounded-md overflow-hidden hover:opacity-90 transition-opacity"
+                  >
+                    <img
+                      src={item.previewUrl}
+                      alt={`Package photo ${index + 1}`}
+                      className="max-h-32 w-full object-contain rounded-md bg-muted/30"
+                    />
+                  </button>
+                ) : null}
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    onClick={() => setPreviewItem(item)}
+                  >
+                    <Eye className="h-4 w-4 mr-1" />
+                    Preview
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    disabled={disabled}
+                    onClick={() => openPicker(index)}
+                  >
+                    Replace
+                  </Button>
+                </div>
               </div>
             ))}
           </div>
@@ -516,6 +548,22 @@ export function MultiProofPhotoField({
       ) : null}
 
       {displayError ? <p className="text-xs text-destructive">{displayError}</p> : null}
+
+      <Dialog open={!!previewItem} onOpenChange={(nextOpen) => !nextOpen && setPreviewItem(null)}>
+        <DialogContent className="max-w-3xl z-[90]">
+          <DialogHeader>
+            <DialogTitle>Photo preview</DialogTitle>
+            <DialogDescription>{previewItem?.fileName || 'Proof photo'}</DialogDescription>
+          </DialogHeader>
+          {previewItem?.previewUrl ? (
+            <img
+              src={previewItem.previewUrl}
+              alt={previewItem.fileName || 'Proof photo'}
+              className="w-full max-h-[75vh] object-contain rounded-md bg-muted"
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

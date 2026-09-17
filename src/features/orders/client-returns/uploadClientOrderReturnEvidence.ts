@@ -77,7 +77,7 @@ export async function uploadClientOrderReturnProof({
   dataUrl?: string;
   companyId: string;
   fileName?: string;
-  kind: 'proof' | 'capture';
+  kind: 'proof' | 'capture' | 'payout';
 }): Promise<{ url: string; path: string; contentType: string }> {
   const blob = file
     ? file

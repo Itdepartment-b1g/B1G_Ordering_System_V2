@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, RotateCcw } from 'lucide-react';
+import { ImagePlus, Loader2, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -23,6 +23,11 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import {
+  MultiProofPhotoField,
+  revokePackageProofPreviews,
+  type PackageProofPhotoItem,
+} from '@/features/shared/components/MultiProofPhotoField';
+import {
   clientReturnStatusBadgeClass,
   clientReturnTypeBadgeClass,
   formatClientReturnStatus,
@@ -41,7 +46,8 @@ type ClientReturnViewDialogProps = {
   row: PreviewClientReturn | null;
   mode?: 'view' | 'approve' | 'reject';
   acting?: boolean;
-  onApprove?: () => void;
+  skipNameConfirm?: boolean;
+  onApprove?: (photos?: PackageProofPhotoItem[]) => void;
   onReject?: (note: string) => void;
 };
 
@@ -55,6 +61,7 @@ export function ClientReturnViewDialog({
   row,
   mode = 'view',
   acting = false,
+  skipNameConfirm = false,
   onApprove,
   onReject,
 }: ClientReturnViewDialogProps) {
@@ -67,7 +74,11 @@ export function ClientReturnViewDialog({
   const [agentNameInput, setAgentNameInput] = useState('');
   const [rejectNote, setRejectNote] = useState('');
   const [nameConfirmOpen, setNameConfirmOpen] = useState(false);
+  const [payoutPhotos, setPayoutPhotos] = useState<PackageProofPhotoItem[]>([]);
+  const [payoutStep, setPayoutStep] = useState(false);
   const openingConfirmRef = useRef(false);
+  const requirePayoutProof =
+    isApprove && row?.returnType === 'refund' && row.status === 'pending_finance';
 
   useEffect(() => {
     if (!open) {
@@ -75,11 +86,21 @@ export function ClientReturnViewDialog({
       setAgentNameInput('');
       setRejectNote('');
       setNameConfirmOpen(false);
+      setPayoutStep(false);
+      setPayoutPhotos((current) => {
+        revokePackageProofPreviews(current);
+        return [];
+      });
       return;
     }
     setAgentNameInput('');
     setRejectNote('');
     setNameConfirmOpen(false);
+    setPayoutStep(false);
+    setPayoutPhotos((current) => {
+      revokePackageProofPreviews(current);
+      return [];
+    });
   }, [open, row?.id, mode]);
 
   const agentName = row?.returnedByName?.trim() || '';
@@ -100,6 +121,10 @@ export function ClientReturnViewDialog({
         open={open}
         onOpenChange={(nextOpen) => {
           if (acting && !nextOpen) return;
+          if (!nextOpen && payoutStep) {
+            setPayoutStep(false);
+            return;
+          }
           if (!nextOpen && (nameConfirmOpen || openingConfirmRef.current)) {
             openingConfirmRef.current = false;
             return;
@@ -111,13 +136,13 @@ export function ClientReturnViewDialog({
         <DialogContent
           className="max-w-3xl w-[95vw] max-h-[90vh] overflow-hidden flex flex-col"
           onPointerDownOutside={(event) => {
-            if (nameConfirmOpen) event.preventDefault();
+            if (nameConfirmOpen || payoutStep) event.preventDefault();
           }}
           onInteractOutside={(event) => {
-            if (nameConfirmOpen) event.preventDefault();
+            if (nameConfirmOpen || payoutStep) event.preventDefault();
           }}
           onFocusOutside={(event) => {
-            if (nameConfirmOpen) event.preventDefault();
+            if (nameConfirmOpen || payoutStep) event.preventDefault();
           }}
         >
           <DialogHeader>
@@ -138,15 +163,28 @@ export function ClientReturnViewDialog({
             <DialogDescription>
               {row ? (
                 isApprove ? (
-                  <>
-                    Review this return, then click Approve and type the mobile sales name to post{' '}
-                    {row.returnNumber} and update returned stock.
-                  </>
+                  skipNameConfirm ? (
+                    <>Review this refund, then click Approve to attach proof that cash was sent.</>
+                  ) : requirePayoutProof ? (
+                    <>
+                      Review this refund, then click Approve to attach proof that cash was sent and
+                      confirm the mobile sales name.
+                    </>
+                  ) : (
+                    <>
+                      Review this return, then click Approve and type the mobile sales name to post{' '}
+                      {row.returnNumber} and update returned stock.
+                    </>
+                  )
                 ) : isReject ? (
-                  <>
-                    Review this return, then click Reject and type the mobile sales name to close{' '}
-                    {row.returnNumber}. The agent can file a new CR on {row.orderNumber}.
-                  </>
+                  skipNameConfirm ? (
+                    <>Review this refund, then reject {row.returnNumber} if cash should not be sent.</>
+                  ) : (
+                    <>
+                      Review this return, then click Reject and type the mobile sales name to close{' '}
+                      {row.returnNumber}. The agent can file a new CR on {row.orderNumber}.
+                    </>
+                  )
                 ) : (
                   <>
                     {row.orderNumber} · {row.clientName} · {qty} unit{qty === 1 ? '' : 's'}
@@ -195,6 +233,19 @@ export function ClientReturnViewDialog({
                     ))}
                   </div>
                 ) : null}
+                {skipNameConfirm && isReject ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="finance-reject-note">Note (optional)</Label>
+                    <Textarea
+                      id="finance-reject-note"
+                      value={rejectNote}
+                      onChange={(event) => setRejectNote(event.target.value)}
+                      placeholder="Why this refund is rejected"
+                      rows={3}
+                      disabled={acting}
+                    />
+                  </div>
+                ) : null}
               </>
             ) : null}
           </div>
@@ -217,6 +268,18 @@ export function ClientReturnViewDialog({
                     : 'bg-emerald-600 hover:bg-emerald-700'
                 }
                 onClick={() => {
+                  if (skipNameConfirm && isReject) {
+                    onReject?.(rejectNote);
+                    return;
+                  }
+                  if (isApprove && requirePayoutProof) {
+                    setPayoutStep(true);
+                    return;
+                  }
+                  if (skipNameConfirm && isApprove) {
+                    onApprove?.(undefined);
+                    return;
+                  }
                   openingConfirmRef.current = true;
                   setAgentNameInput('');
                   setRejectNote('');
@@ -224,6 +287,7 @@ export function ClientReturnViewDialog({
                 }}
                 disabled={acting || !row}
               >
+                {acting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                 {isReject ? 'Reject' : 'Approve'}
               </Button>
             </DialogFooter>
@@ -237,8 +301,71 @@ export function ClientReturnViewDialog({
         </DialogContent>
       </Dialog>
 
+      <Dialog
+        open={Boolean(open && requirePayoutProof && payoutStep && row)}
+        onOpenChange={(nextOpen) => {
+          if (acting && !nextOpen) return;
+          if (!nextOpen) setPayoutStep(false);
+        }}
+      >
+        <DialogContent
+          className="sm:max-w-lg z-[80]"
+          onPointerDownOutside={(event) => event.preventDefault()}
+          onInteractOutside={(event) => event.preventDefault()}
+          onFocusOutside={(event) => event.preventDefault()}
+        >
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ImagePlus className="h-5 w-5" />
+              Proof cash was sent
+            </DialogTitle>
+            <DialogDescription>
+              Attach a photo as proof that cash was sent, then approve {row?.returnNumber}.
+            </DialogDescription>
+          </DialogHeader>
+          <MultiProofPhotoField
+            label="Cash-sent photos"
+            value={payoutPhotos}
+            onChange={setPayoutPhotos}
+            emptyTitle="Add a photo of the cash sent"
+            enableCamera
+            showPreview
+            recommendedHint="Take a photo or choose a file"
+            disabled={acting}
+          />
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPayoutStep(false)}
+              disabled={acting}
+            >
+              Back
+            </Button>
+            <Button
+              type="button"
+              className="bg-emerald-600 hover:bg-emerald-700"
+              onClick={() => {
+                if (skipNameConfirm) {
+                  onApprove?.(payoutPhotos);
+                  return;
+                }
+                openingConfirmRef.current = true;
+                setAgentNameInput('');
+                setRejectNote('');
+                setNameConfirmOpen(true);
+              }}
+              disabled={acting || !row || payoutPhotos.length === 0}
+            >
+              {acting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+              Approve
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <AlertDialog
-        open={Boolean(open && isReview && nameConfirmOpen && row)}
+        open={Boolean(open && isReview && nameConfirmOpen && row && !skipNameConfirm)}
         onOpenChange={(nextOpen) => {
           if (acting && !nextOpen) return;
           if (!nextOpen) closeNameConfirm();
@@ -304,8 +431,8 @@ export function ClientReturnViewDialog({
               <Button
                 type="button"
                 className="bg-emerald-600 hover:bg-emerald-700"
-                onClick={() => onApprove?.()}
-                disabled={!agentNameMatches || acting || !row}
+                onClick={() => onApprove?.(requirePayoutProof ? payoutPhotos : undefined)}
+                disabled={!agentNameMatches || acting || !row || (requirePayoutProof && payoutPhotos.length === 0)}
               >
                 {acting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                 Approve

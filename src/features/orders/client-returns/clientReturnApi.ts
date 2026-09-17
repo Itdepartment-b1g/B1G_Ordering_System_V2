@@ -3,6 +3,7 @@ import type { PackageProofPhotoItem } from '@/features/shared/components/MultiPr
 import {
   parseClientReturnStatus,
   parseClientReturnType,
+  type PayoutAttachmentRevision,
   type PreviewChangeItemSku,
   type PreviewClientReturn,
 } from './clientReturnPreview';
@@ -12,6 +13,7 @@ import {
 } from './uploadClientOrderReturnEvidence';
 
 export const CLIENT_ORDER_RETURNS_QUERY_KEY = 'client-order-returns';
+export const CLIENT_ORDER_RETURN_PAYOUT_REVISIONS_QUERY_KEY = 'client-order-return-payout-revisions';
 export const CLIENT_ORDER_RETURN_POSTED_QTY_QUERY_KEY = 'client-order-return-posted-qty';
 export const CLIENT_ORDER_RETURN_CHANGE_CATALOG_QUERY_KEY = 'client-order-return-change-catalog';
 
@@ -24,6 +26,7 @@ type RpcResult = {
 };
 
 export type ClientReturnProofPhoto = {
+  id?: string;
   fileName: string;
   url: string;
   path: string;
@@ -78,11 +81,21 @@ function mapReturnRow(row: Record<string, unknown>): PreviewClientReturn {
     .slice()
     .sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0));
 
-  const proofPhotos: ClientReturnProofPhoto[] = attachments.map((attachment, index) => ({
-    fileName: String(attachment.file_name || `photo-${index + 1}.jpg`),
-    url: String(attachment.file_url || ''),
-    path: String(attachment.file_path || ''),
-  }));
+  const proofPhotos: ClientReturnProofPhoto[] = [];
+  const payoutPhotos: ClientReturnProofPhoto[] = [];
+  attachments.forEach((attachment, index) => {
+    const photo: ClientReturnProofPhoto = {
+      id: attachment.id == null ? undefined : String(attachment.id),
+      fileName: String(attachment.file_name || `photo-${index + 1}.jpg`),
+      url: String(attachment.file_url || ''),
+      path: String(attachment.file_path || ''),
+    };
+    if (String(attachment.purpose || 'return') === 'finance_payout') {
+      payoutPhotos.push(photo);
+    } else {
+      proofPhotos.push(photo);
+    }
+  });
 
   return {
     id: String(row.id),
@@ -100,6 +113,7 @@ function mapReturnRow(row: Record<string, unknown>): PreviewClientReturn {
     changeLines: changeItems.map(mapLine),
     proofLabels: proofPhotos.map((photo) => photo.fileName),
     proofPhotos,
+    payoutPhotos,
     status: parseClientReturnStatus(row.status),
     rejectionNote: row.rejection_note == null ? null : String(row.rejection_note),
     saApprovedByName: row.sa_approved_by_name == null ? null : String(row.sa_approved_by_name),
@@ -161,10 +175,12 @@ const RETURN_SELECT = `
     )
   ),
   attachments:client_order_return_attachments (
+    id,
     file_url,
     file_path,
     file_name,
-    sort_order
+    sort_order,
+    purpose
   )
 `;
 
@@ -355,6 +371,47 @@ export function buildReturnedInventoryRows(
   });
 }
 
+async function uploadReturnPhotoAttachments(
+  photos: PackageProofPhotoItem[],
+  companyId: string,
+  kind: 'proof' | 'payout'
+) {
+  const attachments = [];
+  for (let index = 0; index < photos.length; index += 1) {
+    const photo = photos[index];
+    const photoKind =
+      kind === 'payout'
+        ? 'payout'
+        : photo.fileName.toLowerCase().startsWith('capture')
+          ? 'capture'
+          : 'proof';
+    let file = photo.file;
+    if (!file && photo.previewUrl.startsWith('blob:')) {
+      const response = await fetch(photo.previewUrl);
+      const blob = await response.blob();
+      file = new File([blob], photo.fileName || `proof-${index + 1}.jpg`, {
+        type: blob.type || 'image/jpeg',
+      });
+    }
+    const uploaded = await uploadClientOrderReturnProof({
+      file,
+      dataUrl: file ? undefined : photo.previewUrl,
+      companyId,
+      fileName: photo.fileName,
+      kind: photoKind,
+    });
+    attachments.push({
+      file_url: uploaded.url,
+      file_path: uploaded.path,
+      file_name: photo.fileName,
+      content_type: uploaded.contentType,
+      source: photoKind === 'capture' ? 'capture' : 'upload',
+      sort_order: index,
+    });
+  }
+  return attachments;
+}
+
 export async function createClientOrderReturn(input: {
   companyId: string;
   clientOrderId: string;
@@ -372,34 +429,7 @@ export async function createClientOrderReturn(input: {
     companyId: input.companyId,
   });
 
-  const attachments = [];
-  for (let index = 0; index < input.photos.length; index += 1) {
-    const photo = input.photos[index];
-    const kind = photo.fileName.toLowerCase().startsWith('capture') ? 'capture' : 'proof';
-    let file = photo.file;
-    if (!file && photo.previewUrl.startsWith('blob:')) {
-      const response = await fetch(photo.previewUrl);
-      const blob = await response.blob();
-      file = new File([blob], photo.fileName || `proof-${index + 1}.jpg`, {
-        type: blob.type || 'image/jpeg',
-      });
-    }
-    const uploaded = await uploadClientOrderReturnProof({
-      file,
-      dataUrl: file ? undefined : photo.previewUrl,
-      companyId: input.companyId,
-      fileName: photo.fileName,
-      kind,
-    });
-    attachments.push({
-      file_url: uploaded.url,
-      file_path: uploaded.path,
-      file_name: photo.fileName,
-      content_type: uploaded.contentType,
-      source: kind === 'capture' ? 'capture' : 'upload',
-      sort_order: index,
-    });
-  }
+  const attachments = await uploadReturnPhotoAttachments(input.photos, input.companyId, 'proof');
 
   const { data, error } = await supabase.rpc('create_client_order_return', {
     p_client_order_id: input.clientOrderId,
@@ -432,13 +462,73 @@ export async function createClientOrderReturn(input: {
   };
 }
 
-export async function approveClientOrderReturn(returnId: string): Promise<void> {
+export async function approveClientOrderReturn(
+  returnId: string,
+  payout?: { companyId: string; photos: PackageProofPhotoItem[] }
+): Promise<void> {
+  let payoutAttachments: Awaited<ReturnType<typeof uploadReturnPhotoAttachments>> | undefined;
+  if (payout) {
+    if (!payout.photos.length) {
+      throw new Error('Attach a photo as proof that cash was sent');
+    }
+    payoutAttachments = await uploadReturnPhotoAttachments(payout.photos, payout.companyId, 'payout');
+  }
+
   const { data, error } = await supabase.rpc('approve_client_order_return', {
     p_return_id: returnId,
+    ...(payoutAttachments ? { p_payout_attachments: payoutAttachments } : {}),
   });
   if (error) throw error;
   const result = parseRpcResult(data, 'Failed to approve client return');
   if (!result.success) throw new Error(result.error || 'Failed to approve client return');
+}
+
+export async function fetchPayoutAttachmentRevisions(returnId: string): Promise<PayoutAttachmentRevision[]> {
+  const { data, error } = await supabase
+    .from('client_order_return_attachment_revisions')
+    .select(
+      'id, attachment_id, previous_file_url, previous_file_name, new_file_url, new_file_name, reason, changed_by_name, created_at'
+    )
+    .eq('return_id', returnId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []).map((row) => {
+    const rec = asRecord(row);
+    return {
+      id: String(rec.id),
+      attachmentId: String(rec.attachment_id),
+      previousFileUrl: String(rec.previous_file_url || ''),
+      previousFileName: rec.previous_file_name == null ? null : String(rec.previous_file_name),
+      newFileUrl: String(rec.new_file_url || ''),
+      newFileName: rec.new_file_name == null ? null : String(rec.new_file_name),
+      reason: String(rec.reason || ''),
+      changedByName: rec.changed_by_name == null ? null : String(rec.changed_by_name),
+      createdAt: String(rec.created_at || ''),
+    };
+  });
+}
+
+export async function replaceClientOrderReturnPayoutAttachment(input: {
+  attachmentId: string;
+  companyId: string;
+  photo: PackageProofPhotoItem;
+  reason: string;
+}): Promise<void> {
+  const uploaded = await uploadReturnPhotoAttachments([input.photo], input.companyId, 'payout');
+  const file = uploaded[0];
+  if (!file) throw new Error('New proof photo is required');
+
+  const { data, error } = await supabase.rpc('replace_client_order_return_payout_attachment', {
+    p_attachment_id: input.attachmentId,
+    p_file_url: file.file_url,
+    p_file_path: file.file_path,
+    p_file_name: file.file_name,
+    p_content_type: file.content_type,
+    p_reason: input.reason.trim(),
+  });
+  if (error) throw error;
+  const result = parseRpcResult(data, 'Failed to replace cash-sent proof');
+  if (!result.success) throw new Error(result.error || 'Failed to replace cash-sent proof');
 }
 
 export async function rejectClientOrderReturn(returnId: string, note?: string): Promise<void> {

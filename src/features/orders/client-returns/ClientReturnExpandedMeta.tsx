@@ -17,6 +17,7 @@ import {
   getReturnActionActor,
   type PreviewClientReturn,
 } from './clientReturnPreview';
+import { ClientReturnPayoutProofButton } from './ClientReturnPayoutProofDialog';
 
 function formatMetaDate(value: string | null | undefined, withTime = false): string {
   if (!value) return '—';
@@ -74,10 +75,7 @@ export function ClientReturnExpandedMeta({ row }: { row: PreviewClientReturn }) 
         {actor.kind === 'reject' ? (
           <>
             <MetaRow label="Rejected by" value={actor.name || '—'} />
-            <MetaRow
-              label="Rejected at"
-              value={formatMetaDate(actor.at, true)}
-            />
+            <MetaRow label="Rejected at" value={formatMetaDate(actor.at, true)} />
             <MetaRow label="Rejection" value={row.rejectionNote?.trim() || '—'} />
           </>
         ) : null}
@@ -109,12 +107,16 @@ export function ClientReturnExpandedMeta({ row }: { row: PreviewClientReturn }) 
                     <ImageIcon className="h-6 w-6" />
                   </div>
                 )}
-                <span className="block text-[10px] px-1.5 py-1 truncate text-muted-foreground">{photo.fileName}</span>
+                <span className="block text-[10px] px-1.5 py-1 truncate text-muted-foreground">
+                  {photo.fileName}
+                </span>
               </button>
             ))}
           </div>
         )}
       </div>
+
+      <ClientReturnPayoutProofButton row={row} />
 
       <Dialog open={!!preview} onOpenChange={(open) => !open && setPreview(null)}>
         <DialogContent className="max-w-3xl">

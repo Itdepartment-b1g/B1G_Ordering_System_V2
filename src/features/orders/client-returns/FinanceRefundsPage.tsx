@@ -1,12 +1,18 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { Banknote, Check, Eye, Loader2, Search, X } from 'lucide-react';
+import { Banknote, ClipboardCheck, Clock, Eye, ImagePlus, Loader2, MoreVertical, Search, X } from 'lucide-react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   getListPaginationSlice,
   ListPagination,
@@ -40,7 +46,11 @@ import {
   fetchClientOrderReturns,
   rejectClientOrderReturn,
 } from './clientReturnApi';
+import type { PackageProofPhotoItem } from '@/features/shared/components/MultiProofPhotoField';
 import { ClientReturnViewDialog } from './ClientReturnViewDialog';
+import { ClientOrderReturnTimeline } from './ClientOrderReturnTimeline';
+import { ClientReturnPayoutProofDialog } from './ClientReturnPayoutProofDialog';
+import { useOrders, type Order } from '../OrderContext';
 import {
   DEFAULT_CLIENT_RETURN_HISTORY_SORT_DIRECTION,
   DEFAULT_CLIENT_RETURN_HISTORY_SORT_KEY,
@@ -60,12 +70,81 @@ function ReturnStatusBadge({ status }: { status: PreviewClientReturnStatus }) {
   );
 }
 
+function orderFromRefund(row: PreviewClientReturn, orders: Order[]): Order | null {
+  if (!row.clientOrderId) return null;
+  const found = orders.find((order) => order.id === row.clientOrderId);
+  if (found) return found;
+  return {
+    id: row.clientOrderId,
+    orderNumber: row.orderNumber,
+    agentId: row.originalAgentId || row.returnedBy || '',
+    agentName: row.returnedByName,
+    clientId: '',
+    clientName: row.clientName,
+    date: row.returnDate,
+    createdAt: row.createdAt,
+    items: [],
+    subtotal: 0,
+    tax: 0,
+    discount: 0,
+    total: 0,
+    notes: '',
+    status: 'approved',
+  };
+}
+
+function RefundRowMenu({
+  row,
+  onView,
+  onOpenTimeline,
+  onOpenPayoutProof,
+}: {
+  row: PreviewClientReturn;
+  onView: () => void;
+  onOpenTimeline?: () => void;
+  onOpenPayoutProof?: () => void;
+}) {
+  return (
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          aria-label={`Actions for ${row.returnNumber}`}
+        >
+          <MoreVertical className="h-4 w-4 text-gray-600" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuItem onSelect={() => window.setTimeout(onView, 0)}>
+          <Eye className="h-4 w-4 mr-2" />
+          View
+        </DropdownMenuItem>
+        {onOpenTimeline ? (
+          <DropdownMenuItem onSelect={() => window.setTimeout(onOpenTimeline, 0)}>
+            <Clock className="h-4 w-4 mr-2" />
+            Order timeline
+          </DropdownMenuItem>
+        ) : null}
+        {onOpenPayoutProof ? (
+          <DropdownMenuItem onSelect={() => window.setTimeout(onOpenPayoutProof, 0)}>
+            <ImagePlus className="h-4 w-4 mr-2" />
+            View cash-sent proof
+          </DropdownMenuItem>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function PendingRefundActions({
-  onApprove,
+  onReview,
   onReject,
   layout = 'row',
 }: {
-  onApprove: () => void;
+  onReview: () => void;
   onReject: () => void;
   layout?: 'row' | 'stack';
 }) {
@@ -93,10 +172,10 @@ function PendingRefundActions({
             ? 'h-10 w-full bg-emerald-600 hover:bg-emerald-700'
             : 'h-8 px-2 bg-emerald-600 hover:bg-emerald-700'
         }
-        onClick={onApprove}
+        onClick={onReview}
       >
-        <Check className="h-3.5 w-3.5" />
-        Approve
+        <ClipboardCheck className="h-3.5 w-3.5" />
+        Review
       </Button>
     </div>
   );
@@ -106,6 +185,7 @@ export default function FinanceRefundsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { orders } = useOrders();
   const { hasWarehouseHubLink } = usePermissions();
   const isFinance = user?.role === 'finance';
   const canSeePage =
@@ -138,6 +218,9 @@ export default function FinanceRefundsPage() {
   const [actionRow, setActionRow] = useState<PreviewClientReturn | null>(null);
   const [confirmKind, setConfirmKind] = useState<'approve' | 'reject' | null>(null);
   const [acting, setActing] = useState(false);
+  const [timelineOrder, setTimelineOrder] = useState<Order | null>(null);
+  const [timelineOpen, setTimelineOpen] = useState(false);
+  const [payoutProofRow, setPayoutProofRow] = useState<PreviewClientReturn | null>(null);
   const [historySortState, setHistorySortState] =
     useState<TableSortCycleState<ClientReturnHistorySortKey>>(createInitialTableSortCycle);
 
@@ -182,11 +265,24 @@ export default function FinanceRefundsPage() {
     setPage(0);
   }, [searchQuery, statusFilter, historySortState, pageSize]);
 
+  useEffect(() => {
+    setViewRow((current) => {
+      if (!current) return current;
+      return refunds.find((row) => row.id === current.id) ?? current;
+    });
+    setPayoutProofRow((current) => {
+      if (!current) return current;
+      return refunds.find((row) => row.id === current.id) ?? current;
+    });
+  }, [refunds]);
+
   const { pagedItems, safePage, pageCount } = getListPaginationSlice(filtered, page, pageSize);
 
-  const startApprove = (row: PreviewClientReturn) => {
+  const startReview = (row: PreviewClientReturn) => {
     if (!canReviewClientReturn(user?.role, row)) return;
     setViewRow(null);
+    setTimelineOpen(false);
+    setPayoutProofRow(null);
     setActionRow(row);
     setConfirmKind('approve');
   };
@@ -194,15 +290,60 @@ export default function FinanceRefundsPage() {
   const startReject = (row: PreviewClientReturn) => {
     if (!canReviewClientReturn(user?.role, row)) return;
     setViewRow(null);
+    setTimelineOpen(false);
+    setPayoutProofRow(null);
     setActionRow(row);
     setConfirmKind('reject');
   };
 
-  const handleApproveConfirm = async () => {
+  const openTimeline = (row: PreviewClientReturn) => {
+    const order = orderFromRefund(row, orders);
+    if (!order) {
+      toast({
+        title: 'Timeline unavailable',
+        description: 'This refund is not linked to an order.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    setViewRow(null);
+    setConfirmKind(null);
+    setActionRow(null);
+    setPayoutProofRow(null);
+    setTimelineOrder(order);
+    setTimelineOpen(true);
+  };
+
+  const openPayoutProof = (row: PreviewClientReturn) => {
+    if ((row.payoutPhotos?.length ?? 0) === 0) {
+      toast({
+        title: 'No cash-sent proof',
+        description: 'Finance has not attached a cash-sent photo for this refund yet.',
+      });
+      return;
+    }
+    setViewRow(null);
+    setConfirmKind(null);
+    setActionRow(null);
+    setTimelineOpen(false);
+    setPayoutProofRow(row);
+  };
+
+  const handleApproveConfirm = async (photos?: PackageProofPhotoItem[]) => {
     if (!actionRow || acting || !canReviewClientReturn(user?.role, actionRow)) return;
+    const companyId = user?.company_id;
+    if (!companyId) return;
+    if (!photos?.length) {
+      toast({
+        title: 'Photo required',
+        description: 'Attach a photo as proof that cash was sent.',
+        variant: 'destructive',
+      });
+      return;
+    }
     setActing(true);
     try {
-      await approveClientOrderReturn(actionRow.id);
+      await approveClientOrderReturn(actionRow.id, { companyId, photos });
       await queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] });
       await queryClient.invalidateQueries({ queryKey: ['inventory'] });
       toast({
@@ -270,7 +411,7 @@ export default function FinanceRefundsPage() {
         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Client Refunds</h1>
         <p className="text-sm sm:text-base text-muted-foreground mt-1">
           {isFinance
-            ? 'Review refunds after Super Admin approval. Approve or reject the refund amount only.'
+            ? 'Review refunds after Super Admin approval. Open Review, then Approve and attach proof that cash was sent.'
             : 'View client refunds. Finance approves after Super Admin.'}
         </p>
       </div>
@@ -359,16 +500,14 @@ export default function FinanceRefundsPage() {
                           <p className="font-mono text-xs text-muted-foreground truncate">{row.orderNumber}</p>
                           <ReturnStatusBadge status={row.status} />
                         </div>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          className="h-10 w-10 shrink-0 rounded-full"
-                          onClick={() => setViewRow(row)}
-                          aria-label={`View ${row.returnNumber}`}
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Button>
+                        <RefundRowMenu
+                          row={row}
+                          onView={() => setViewRow(row)}
+                          onOpenTimeline={() => openTimeline(row)}
+                          onOpenPayoutProof={
+                            (row.payoutPhotos?.length ?? 0) > 0 ? () => openPayoutProof(row) : undefined
+                          }
+                        />
                       </div>
                       <h3 className="text-lg font-bold tracking-tight mt-3 truncate">{row.clientName}</h3>
                       <div className="grid grid-cols-2 gap-3 mt-3">
@@ -393,7 +532,7 @@ export default function FinanceRefundsPage() {
                         <div className="mt-4 pt-3 border-t">
                           <PendingRefundActions
                             layout="stack"
-                            onApprove={() => startApprove(row)}
+                            onReview={() => startReview(row)}
                             onReject={() => startReject(row)}
                           />
                         </div>
@@ -462,7 +601,7 @@ export default function FinanceRefundsPage() {
                         }
                         className="w-16 text-right"
                       />
-                      <TableHead className="w-[12rem] text-right">Action</TableHead>
+                      <TableHead className="w-[14rem] text-right">Action</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -498,19 +637,19 @@ export default function FinanceRefundsPage() {
                             </TableCell>
                             <TableCell className="align-top text-right">
                               <div className="flex items-center justify-end gap-1.5">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="icon"
-                                  className="h-8 w-8"
-                                  onClick={() => setViewRow(row)}
-                                  aria-label={`View ${row.returnNumber}`}
-                                >
-                                  <Eye className="h-4 w-4" />
-                                </Button>
+                                <RefundRowMenu
+                                  row={row}
+                                  onView={() => setViewRow(row)}
+                                  onOpenTimeline={() => openTimeline(row)}
+                                  onOpenPayoutProof={
+                                    (row.payoutPhotos?.length ?? 0) > 0
+                                      ? () => openPayoutProof(row)
+                                      : undefined
+                                  }
+                                />
                                 {canAct ? (
                                   <PendingRefundActions
-                                    onApprove={() => startApprove(row)}
+                                    onReview={() => startReview(row)}
                                     onReject={() => startReject(row)}
                                   />
                                 ) : null}
@@ -555,14 +694,32 @@ export default function FinanceRefundsPage() {
         open={confirmKind === 'approve' || confirmKind === 'reject'}
         row={actionRow}
         acting={acting}
+        skipNameConfirm
         onOpenChange={(nextOpen) => {
           if (!nextOpen && !acting) {
             setConfirmKind(null);
             setActionRow(null);
           }
         }}
-        onApprove={() => void handleApproveConfirm()}
+        onApprove={(photos) => void handleApproveConfirm(photos)}
         onReject={(note) => void handleRejectConfirm(note)}
+      />
+
+      <ClientOrderReturnTimeline
+        open={timelineOpen && !!timelineOrder}
+        onOpenChange={(open) => {
+          setTimelineOpen(open);
+          if (!open) setTimelineOrder(null);
+        }}
+        order={timelineOrder}
+      />
+
+      <ClientReturnPayoutProofDialog
+        open={!!payoutProofRow}
+        onOpenChange={(open) => {
+          if (!open) setPayoutProofRow(null);
+        }}
+        row={payoutProofRow}
       />
     </div>
   );

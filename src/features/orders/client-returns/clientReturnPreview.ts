@@ -14,10 +14,40 @@ export const CLIENT_RETURN_REASON_OPTIONS = [
 export type ClientReturnReasonOption = (typeof CLIENT_RETURN_REASON_OPTIONS)[number]['value'];
 
 export type ClientReturnProofPhoto = {
+  id?: string;
   fileName: string;
   url: string;
   path: string;
 };
+
+export const MAX_PAYOUT_PROOF_EDITS = 2;
+
+export type PayoutAttachmentRevision = {
+  id: string;
+  attachmentId: string;
+  previousFileUrl: string;
+  previousFileName: string | null;
+  newFileUrl: string;
+  newFileName: string | null;
+  reason: string;
+  changedByName: string | null;
+  createdAt: string;
+};
+
+export function getPayoutProofEditCount(
+  attachmentId: string | undefined,
+  revisions: PayoutAttachmentRevision[]
+): number {
+  if (!attachmentId) return 0;
+  return revisions.filter((revision) => revision.attachmentId === attachmentId).length;
+}
+
+export function canReplacePayoutProof(
+  attachmentId: string | undefined,
+  revisions: PayoutAttachmentRevision[]
+): boolean {
+  return getPayoutProofEditCount(attachmentId, revisions) < MAX_PAYOUT_PROOF_EDITS;
+}
 
 export type PreviewClientReturnLine = {
   variantName: string;
@@ -58,6 +88,7 @@ export type PreviewClientReturn = {
   changeLines?: PreviewClientReturnLine[];
   proofLabels: string[];
   proofPhotos?: ClientReturnProofPhoto[];
+  payoutPhotos?: ClientReturnProofPhoto[];
   status: PreviewClientReturnStatus;
   rejectionNote: string | null;
   saApprovedByName: string | null;

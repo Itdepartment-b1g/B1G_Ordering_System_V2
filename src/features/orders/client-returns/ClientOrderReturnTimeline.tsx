@@ -26,6 +26,7 @@ import {
   fetchClientOrderReturnsForOrder,
 } from './clientReturnApi';
 import { BrandReturnedTable, groupLinesByBrand } from './ClientReturnBrandTable';
+import { ClientReturnPayoutProofButton } from './ClientReturnPayoutProofDialog';
 
 type TimelineEvent = {
   id: string;
@@ -38,6 +39,7 @@ type TimelineEvent = {
   actorLabel?: string;
   actorName?: string;
   extras?: string[];
+  showPayoutPhotos?: boolean;
 };
 
 function returnEvent(
@@ -51,6 +53,7 @@ function returnEvent(
     actorLabel?: string;
     actorName?: string;
     extras?: string[];
+    showPayoutPhotos?: boolean;
   }
 ): TimelineEvent {
   return {
@@ -63,6 +66,7 @@ function returnEvent(
     actorLabel: options?.actorLabel,
     actorName: options?.actorName,
     extras: options?.extras,
+    showPayoutPhotos: options?.showPayoutPhotos,
   };
 }
 
@@ -140,6 +144,7 @@ function buildReturnTimelineEvents(cr: PreviewClientReturn): TimelineEvent[] {
           actorLabel: 'Approved by',
           actorName: cr.approvedByName || 'Finance',
           extras: ['Refund amount posted', 'Returned stock recorded'],
+          showPayoutPhotos: true,
         })
       );
     }
@@ -310,6 +315,18 @@ function ReturnEventMeta({
   );
 }
 
+function ReturnEventPayoutPhotos({ cr }: { cr: PreviewClientReturn }) {
+  if ((cr.payoutPhotos?.length ?? 0) === 0) {
+    return <p className="pt-2 text-xs text-muted-foreground">No cash-sent proof attached.</p>;
+  }
+
+  return (
+    <div className="pt-2">
+      <ClientReturnPayoutProofButton row={cr} />
+    </div>
+  );
+}
+
 function ReturnEventItems({ cr }: { cr: PreviewClientReturn }) {
   const returnedGroups = groupLinesByBrand(cr.lines);
   const changeGroups = groupLinesByBrand(cr.changeLines || []);
@@ -421,6 +438,7 @@ export function ClientOrderReturnTimeline({ open, onOpenChange, order }: ClientO
                               extras={event.extras}
                             />
                             {event.showItems ? <ReturnEventItems cr={cr} /> : null}
+                            {event.showPayoutPhotos ? <ReturnEventPayoutPhotos cr={cr} /> : null}
                           </div>
                         </details>
                       ) : event.detail ? (
