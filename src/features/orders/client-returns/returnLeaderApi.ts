@@ -169,7 +169,26 @@ export async function fetchReturnLeaderHandovers(): Promise<ReturnLeaderHandover
     .select(HANDOVER_SELECT)
     .order('created_at', { ascending: false });
   if (error) throw error;
-  return (data || []).map((row) => mapHandover(asRecord(row)));
+  const rows = (data || []).map((row) => mapHandover(asRecord(row)));
+  const holderIds = [
+    ...new Set(rows.flatMap((row) => [row.toHolderId, row.fromHolderId]).filter(Boolean)),
+  ];
+  if (holderIds.length === 0) return rows;
+
+  const { data: profiles, error: profileError } = await supabase
+    .from('profiles')
+    .select('id, full_name')
+    .in('id', holderIds);
+  if (profileError || !profiles) return rows;
+
+  const nameById = new Map(
+    profiles.map((profile) => [String(profile.id), String(profile.full_name || '').trim()])
+  );
+  return rows.map((row) => ({
+    ...row,
+    fromHolderName: nameById.get(row.fromHolderId) || row.submittedByName,
+    toHolderName: nameById.get(row.toHolderId) || undefined,
+  }));
 }
 
 const HOLD_SELECT = `

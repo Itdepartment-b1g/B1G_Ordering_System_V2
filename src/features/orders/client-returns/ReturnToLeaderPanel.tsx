@@ -1,11 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
-import { Check, Eye, Loader2, RotateCcw, Search, X } from 'lucide-react';
+import { Check, Clock, Eye, Loader2, MoreVertical, Printer, RotateCcw, Search, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   getListPaginationSlice,
   ListPagination,
@@ -32,6 +38,8 @@ import {
   sortReturnLeaderHandovers,
   type ReturnLeaderSortKey,
 } from './utils/clientReturnsSorting';
+import { ReturnLeaderTimeline } from './ReturnLeaderTimeline';
+import { generateAndOpenReturnLeaderPdf } from './generateReturnLeaderPdf';
 
 const PAGE_SIZE: PageSize = 25;
 
@@ -49,16 +57,62 @@ type ReturnToLeaderPanelProps = {
   onReject: (row: ReturnLeaderHandover) => void;
 };
 
+function ReturnLeaderRowMenu({
+  row,
+  onView,
+  onOpenTimeline,
+  onPrint,
+}: {
+  row: ReturnLeaderHandover;
+  onView: () => void;
+  onOpenTimeline: () => void;
+  onPrint: () => void;
+}) {
+  return (
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          aria-label={`Actions for ${row.returnNumber}`}
+        >
+          <MoreVertical className="h-4 w-4 text-gray-600" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-52">
+        <DropdownMenuItem onSelect={() => window.setTimeout(onView, 0)}>
+          <Eye className="h-4 w-4 mr-2" />
+          View
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => window.setTimeout(onOpenTimeline, 0)}>
+          <Clock className="h-4 w-4 mr-2" />
+          Returned timeline
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => window.setTimeout(onPrint, 0)}>
+          <Printer className="h-4 w-4 mr-2" />
+          Print
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function ReturnLeaderCard({
   row,
   canReview,
   onView,
+  onOpenTimeline,
+  onPrint,
   onApprove,
   onReject,
 }: {
   row: ReturnLeaderHandover;
   canReview: boolean;
   onView: () => void;
+  onOpenTimeline: () => void;
+  onPrint: () => void;
   onApprove: () => void;
   onReject: () => void;
 }) {
@@ -103,16 +157,12 @@ function ReturnLeaderCard({
             ) : null}
           </p>
         </button>
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          className="h-9 w-9 shrink-0"
-          onClick={onView}
-          aria-label={`View ${row.returnNumber}`}
-        >
-          <Eye className="h-4 w-4" />
-        </Button>
+        <ReturnLeaderRowMenu
+          row={row}
+          onView={onView}
+          onOpenTimeline={onOpenTimeline}
+          onPrint={onPrint}
+        />
       </div>
 
       {previewLines.length > 0 ? (
@@ -136,12 +186,12 @@ function ReturnLeaderCard({
           ))}
           {row.lines.length > previewLines.length ? (
             <p className="px-0.5 text-[11px] text-muted-foreground">
-              +{row.lines.length - previewLines.length} more · tap View
+              +{row.lines.length - previewLines.length} more
             </p>
           ) : null}
         </button>
       ) : skuCount === 0 ? (
-        <p className="mt-3 text-xs text-muted-foreground">Tap View for full details.</p>
+        <p className="mt-3 text-xs text-muted-foreground">Open View for full details.</p>
       ) : null}
 
       {pending ? (
@@ -186,6 +236,7 @@ export function ReturnToLeaderPanel({
   const [pageSize, setPageSize] = useState<PageSize>(PAGE_SIZE);
   const [sortState, setSortState] =
     useState<TableSortCycleState<ReturnLeaderSortKey>>(createInitialTableSortCycle);
+  const [timelineRow, setTimelineRow] = useState<ReturnLeaderHandover | null>(null);
 
   const counts = useMemo(
     () => ({
@@ -309,6 +360,8 @@ export function ReturnToLeaderPanel({
                     row={row}
                     canReview={canReview}
                     onView={() => onView(row)}
+                    onOpenTimeline={() => setTimelineRow(row)}
+                    onPrint={() => generateAndOpenReturnLeaderPdf(row)}
                     onApprove={() => onApprove(row)}
                     onReject={() => onReject(row)}
                   />
@@ -382,17 +435,7 @@ export function ReturnToLeaderPanel({
                           {qty}
                         </TableCell>
                         <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                          <div className="inline-flex items-center gap-1.5">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="h-8"
-                              onClick={() => onView(row)}
-                            >
-                              <Eye className="h-3.5 w-3.5" />
-                              View
-                            </Button>
+                          <div className="inline-flex items-center justify-end gap-1.5">
                             {pending ? (
                               <>
                                 <Button
@@ -416,6 +459,12 @@ export function ReturnToLeaderPanel({
                                 </Button>
                               </>
                             ) : null}
+                            <ReturnLeaderRowMenu
+                              row={row}
+                              onView={() => onView(row)}
+                              onOpenTimeline={() => setTimelineRow(row)}
+                              onPrint={() => generateAndOpenReturnLeaderPdf(row)}
+                            />
                           </div>
                         </TableCell>
                       </TableRow>
@@ -441,6 +490,13 @@ export function ReturnToLeaderPanel({
           </>
         )}
       </CardContent>
+      <ReturnLeaderTimeline
+        open={!!timelineRow}
+        onOpenChange={(open) => {
+          if (!open) setTimelineRow(null);
+        }}
+        row={timelineRow}
+      />
     </Card>
   );
 }
