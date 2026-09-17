@@ -1,11 +1,18 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { Check, ChevronDown, ClipboardList, Clock, Eye, LayoutGrid, List, Loader2, MoreVertical, Package, Printer, RotateCcw, Search, Truck, X } from 'lucide-react';
+import { Check, ChevronDown, ClipboardList, Clock, Eye, FilterX, LayoutGrid, List, Loader2, MoreVertical, Package, Printer, RotateCcw, Search, Truck, X } from 'lucide-react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
@@ -31,6 +38,7 @@ import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/usePermissions';
 import {
+  CLIENT_RETURN_REASON_OPTIONS,
   canReviewClientReturn,
   clientReturnStatusBadgeClass,
   clientReturnTypeBadgeClass,
@@ -75,26 +83,32 @@ import {
   type ReturnLeaderHandover,
 } from './returnLeaderApi';
 import type { PackageProofPhotoItem } from '@/features/shared/components/MultiProofPhotoField';
+import { DateRangeFilterPopover, type DateRangeFilterValue } from '@/features/shared/components/DateRangeFilterPopover';
+import { getDateRangeFromPreset } from '@/lib/dateRangePresets';
 import {
   DEFAULT_CLIENT_RETURN_HISTORY_SORT_DIRECTION,
   DEFAULT_CLIENT_RETURN_HISTORY_SORT_KEY,
   sortClientReturnHistory,
   type ClientReturnHistorySortKey,
 } from './utils/clientReturnsSorting';
+import {
+  clientReturnHistoryStatusLabel,
+  matchesClientReturnHistory,
+  matchesClientReturnHistoryStatus,
+  uniqueDecisionByNames,
+  uniqueReturnedByNames,
+  type ClientReturnDateBasis,
+  type ClientReturnHistoryStatusFilter,
+  type ClientReturnHistoryTypeFilter,
+} from './utils/clientReturnsHistoryFilters';
 
 const HISTORY_PAGE_SIZE: PageSize = 25;
 const VIEW_MODE_KEY = 'client-order-returns-view';
-const TABLE_MIN_WIDTH = 'min-w-[92rem]';
+const TABLE_MIN_WIDTH = 'min-w-[112rem]';
 
 type HistoryViewMode = 'table' | 'cards';
-type StatusFilter =
-  | 'all'
-  | 'pending_leader'
-  | 'pending_super_admin'
-  | 'pending_finance'
-  | 'posted'
-  | 'rejected';
-type TypeFilter = 'all' | ClientReturnKind;
+type StatusFilter = ClientReturnHistoryStatusFilter;
+type TypeFilter = ClientReturnHistoryTypeFilter;
 type PageTab = 'history' | 'inventory' | 'returnToLeader';
 type RlConfirmKind = 'approve' | 'reject' | null;
 
@@ -126,6 +140,53 @@ function ActorNameCell({ name, at }: { name: string | null; at: string | null })
       ) : null}
     </div>
   );
+}
+
+function ApprovalStageCell({
+  name,
+  at,
+  waiting,
+  skip,
+}: {
+  name: string | null;
+  at: string | null;
+  waiting?: string | null;
+  skip?: boolean;
+}) {
+  if (skip) {
+    return <span className="text-xs italic text-muted-foreground">Not required</span>;
+  }
+  if (name) return <ActorNameCell name={name} at={at} />;
+  if (waiting) {
+    return <span className="text-xs text-amber-700">{waiting}</span>;
+  }
+  return <span className="text-xs text-muted-foreground">—</span>;
+}
+
+function isRefundReturn(row: PreviewClientReturn) {
+  return row.returnType === 'refund';
+}
+
+function tlWaiting(row: PreviewClientReturn): string | null {
+  if (isRefundReturn(row)) return null;
+  if (row.approvedByName || row.approvedAt) return null;
+  if (row.status === 'pending_leader') return 'Waiting TL';
+  return null;
+}
+
+function refundSaWaiting(row: PreviewClientReturn): string | null {
+  if (!isRefundReturn(row)) return null;
+  if (row.saApprovedByName || row.saApprovedAt) return null;
+  if (row.status === 'pending_super_admin') return 'Waiting SA';
+  return null;
+}
+
+function refundFinanceWaiting(row: PreviewClientReturn): string | null {
+  if (!isRefundReturn(row)) return null;
+  if (row.approvedByName || row.approvedAt) return null;
+  if (row.status === 'pending_finance') return 'Waiting Finance';
+  if (row.status === 'pending_super_admin') return 'Waiting SA first';
+  return null;
 }
 
 function ReturnTypeBadge({ type }: { type: ClientReturnKind }) {
@@ -331,8 +392,31 @@ function ReturnHistoryCard({
           </div>
         </div>
         <div className="min-w-0">
-          <p className="text-xs text-muted-foreground">Approved by</p>
-          <ActorNameCell name={row.approvedByName} at={row.approvedAt} />
+          <p className="text-xs text-muted-foreground">TL approved</p>
+          <ApprovalStageCell
+            name={isRefundReturn(row) ? null : row.approvedByName}
+            at={isRefundReturn(row) ? null : row.approvedAt}
+            waiting={tlWaiting(row)}
+            skip={isRefundReturn(row)}
+          />
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs text-muted-foreground">SA approved</p>
+          <ApprovalStageCell
+            name={isRefundReturn(row) ? row.saApprovedByName : null}
+            at={isRefundReturn(row) ? row.saApprovedAt : null}
+            waiting={refundSaWaiting(row)}
+            skip={!isRefundReturn(row)}
+          />
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs text-muted-foreground">Finance posted</p>
+          <ApprovalStageCell
+            name={isRefundReturn(row) ? row.approvedByName : null}
+            at={isRefundReturn(row) ? row.approvedAt : null}
+            waiting={refundFinanceWaiting(row)}
+            skip={!isRefundReturn(row)}
+          />
         </div>
         <div className="min-w-0">
           <p className="text-xs text-muted-foreground">Rejected by</p>
@@ -415,12 +499,14 @@ function StatusFilterChips({
   onChange: (filter: StatusFilter) => void;
 }) {
   const options: { id: StatusFilter; label: string }[] = [
-    { id: 'all', label: 'All' },
-    { id: 'pending_leader', label: 'Pending TL' },
-    { id: 'pending_super_admin', label: 'Pending SA' },
-    { id: 'pending_finance', label: 'Pending Finance' },
-    { id: 'posted', label: 'Approve' },
-    { id: 'rejected', label: 'Reject' },
+    { id: 'all', label: clientReturnHistoryStatusLabel('all') },
+    { id: 'open', label: clientReturnHistoryStatusLabel('open') },
+    { id: 'needs_action', label: clientReturnHistoryStatusLabel('needs_action') },
+    { id: 'pending_leader', label: clientReturnHistoryStatusLabel('pending_leader') },
+    { id: 'pending_super_admin', label: clientReturnHistoryStatusLabel('pending_super_admin') },
+    { id: 'pending_finance', label: clientReturnHistoryStatusLabel('pending_finance') },
+    { id: 'posted', label: clientReturnHistoryStatusLabel('posted') },
+    { id: 'rejected', label: clientReturnHistoryStatusLabel('rejected') },
   ];
 
   return (
@@ -445,40 +531,32 @@ function StatusFilterChips({
   );
 }
 
-function TypeFilterChips({
+function CompactSelect({
   value,
-  counts,
   onChange,
+  placeholder,
+  items,
+  className,
 }: {
-  value: TypeFilter;
-  counts: Record<TypeFilter, number>;
-  onChange: (filter: TypeFilter) => void;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  items: Array<{ value: string; label: string }>;
+  className?: string;
 }) {
-  const options: { id: TypeFilter; label: string }[] = [
-    { id: 'all', label: 'All types' },
-    { id: 'change_item', label: 'Change item' },
-    { id: 'refund', label: 'Refund' },
-  ];
-
   return (
-    <div className="flex gap-1.5 overflow-x-auto pb-0.5 -mx-1 px-1 scrollbar-thin">
-      {options.map((option) => {
-        const active = value === option.id;
-        return (
-          <Button
-            key={option.id}
-            type="button"
-            variant={active ? 'default' : 'outline'}
-            size="sm"
-            className="h-8 px-3 text-xs rounded-full shrink-0"
-            onClick={() => onChange(option.id)}
-          >
-            {option.label}
-            <span className="ml-1 tabular-nums opacity-80">{counts[option.id]}</span>
-          </Button>
-        );
-      })}
-    </div>
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className={className ?? 'h-9 w-full sm:w-[11.5rem]'}>
+        <SelectValue placeholder={placeholder} />
+      </SelectTrigger>
+      <SelectContent>
+        {items.map((item) => (
+          <SelectItem key={item.value} value={item.value}>
+            {item.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 
@@ -509,6 +587,11 @@ export default function ClientOrderReturnsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
+  const [reasonFilter, setReasonFilter] = useState('all');
+  const [returnedByFilter, setReturnedByFilter] = useState('all');
+  const [decisionByFilter, setDecisionByFilter] = useState('all');
+  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
+  const [dateBasis, setDateBasis] = useState<ClientReturnDateBasis>('returnDate');
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(HISTORY_PAGE_SIZE);
   const [viewRow, setViewRow] = useState<PreviewClientReturn | null>(null);
@@ -671,63 +754,113 @@ export default function ClientOrderReturnsPage() {
     return () => media.removeEventListener('change', onChange);
   }, []);
 
-  const counts = useMemo<Record<StatusFilter, number>>(
-    () => ({
-      all: rows.length,
-      pending_leader: rows.filter((row) => row.status === 'pending_leader').length,
-      pending_super_admin: rows.filter((row) => row.status === 'pending_super_admin').length,
-      pending_finance: rows.filter((row) => row.status === 'pending_finance').length,
-      posted: rows.filter((row) => row.status === 'posted').length,
-      rejected: rows.filter((row) => row.status === 'rejected').length,
-    }),
-    [rows]
+  const dateRange = useMemo(
+    () =>
+      getDateRangeFromPreset(
+        dateRangeFilter.preset,
+        dateRangeFilter.customStart,
+        dateRangeFilter.customEnd
+      ),
+    [dateRangeFilter]
   );
 
-  const typeCounts = useMemo<Record<TypeFilter, number>>(
+  const historyFilters = useMemo(
     () => ({
-      all: rows.length,
-      change_item: rows.filter((row) => row.returnType === 'change_item').length,
-      refund: rows.filter((row) => row.returnType === 'refund').length,
+      status: statusFilter,
+      type: typeFilter,
+      reason: reasonFilter,
+      returnedBy: returnedByFilter,
+      decisionBy: decisionByFilter,
+      dateStart: dateRange.start,
+      dateEnd: dateRange.end,
+      dateBasis,
+      search: searchQuery,
+      role: user?.role,
     }),
-    [rows]
+    [
+      statusFilter,
+      typeFilter,
+      reasonFilter,
+      returnedByFilter,
+      decisionByFilter,
+      dateRange.start,
+      dateRange.end,
+      dateBasis,
+      searchQuery,
+      user?.role,
+    ]
   );
+
+  const hasActiveHistoryFilters =
+    statusFilter !== 'all' ||
+    typeFilter !== 'all' ||
+    reasonFilter !== 'all' ||
+    returnedByFilter !== 'all' ||
+    decisionByFilter !== 'all' ||
+    dateRangeFilter.preset !== 'all' ||
+    searchQuery.trim().length > 0;
+
+  const clearHistoryFilters = () => {
+    setStatusFilter('all');
+    setTypeFilter('all');
+    setReasonFilter('all');
+    setReturnedByFilter('all');
+    setDecisionByFilter('all');
+    setDateRangeFilter({ preset: 'all' });
+    setDateBasis('returnDate');
+    setSearchQuery('');
+  };
+
+  const returnedByOptions = useMemo(() => uniqueReturnedByNames(rows), [rows]);
+  const decisionByOptions = useMemo(() => uniqueDecisionByNames(rows), [rows]);
+
+  const counts = useMemo<Record<StatusFilter, number>>(() => {
+    const scoped = rows.filter((row) => matchesClientReturnHistory(row, historyFilters, { status: true }));
+    return {
+      all: scoped.length,
+      open: scoped.filter((row) => matchesClientReturnHistoryStatus(row, 'open', user?.role)).length,
+      needs_action: scoped.filter((row) => matchesClientReturnHistoryStatus(row, 'needs_action', user?.role)).length,
+      pending_leader: scoped.filter((row) => row.status === 'pending_leader').length,
+      pending_super_admin: scoped.filter((row) => row.status === 'pending_super_admin').length,
+      pending_finance: scoped.filter((row) => row.status === 'pending_finance').length,
+      posted: scoped.filter((row) => row.status === 'posted').length,
+      rejected: scoped.filter((row) => row.status === 'rejected').length,
+    };
+  }, [rows, historyFilters, user?.role]);
+
+  const typeCounts = useMemo<Record<TypeFilter, number>>(() => {
+    const scoped = rows.filter((row) => matchesClientReturnHistory(row, historyFilters, { type: true }));
+    return {
+      all: scoped.length,
+      change_item: scoped.filter((row) => row.returnType === 'change_item').length,
+      refund: scoped.filter((row) => row.returnType === 'refund').length,
+    };
+  }, [rows, historyFilters]);
 
   const filtered = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    const matched = rows.filter((row) => {
-      if (statusFilter !== 'all' && row.status !== statusFilter) return false;
-      if (typeFilter !== 'all' && row.returnType !== typeFilter) return false;
-      if (!query) return true;
-      const haystack = [
-        row.returnNumber,
-        row.orderNumber,
-        row.clientName,
-        row.returnedByName,
-        row.reason,
-        formatClientReturnReason(row.reason),
-        formatClientReturnStatus(row.status),
-        formatClientReturnType(row.returnType),
-        row.notes || '',
-        row.rejectionNote || '',
-        row.approvedByName || '',
-        row.rejectedByName || '',
-        ...uniqueReturnBrands(row.lines),
-      ]
-        .join(' ')
-        .toLowerCase();
-      return haystack.includes(query);
-    });
+    const matched = rows.filter((row) => matchesClientReturnHistory(row, historyFilters));
     const { key, direction } = resolveTableSortDirection(
       historySortState,
       DEFAULT_CLIENT_RETURN_HISTORY_SORT_KEY,
       DEFAULT_CLIENT_RETURN_HISTORY_SORT_DIRECTION
     );
     return sortClientReturnHistory(matched, key, direction);
-  }, [rows, searchQuery, statusFilter, typeFilter, historySortState]);
+  }, [rows, historyFilters, historySortState]);
 
   useEffect(() => {
     setPage(0);
-  }, [searchQuery, pageSize, statusFilter, typeFilter, historySortState]);
+  }, [
+    searchQuery,
+    pageSize,
+    statusFilter,
+    typeFilter,
+    reasonFilter,
+    returnedByFilter,
+    decisionByFilter,
+    dateRangeFilter,
+    dateBasis,
+    historySortState,
+  ]);
 
   const { pagedItems, safePage, pageCount } = getListPaginationSlice(filtered, page, pageSize);
 
@@ -911,29 +1044,105 @@ export default function ClientOrderReturnsPage() {
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 min-w-0">
                 <RotateCcw className="h-4 w-4 text-rose-600 shrink-0" />
-                <h2 className="font-semibold truncate">
-                  {filtered.length} return{filtered.length === 1 ? '' : 's'}
-                </h2>
+                <div className="min-w-0">
+                  <h2 className="font-semibold truncate">
+                    {filtered.length} return{filtered.length === 1 ? '' : 's'}
+                  </h2>
+                  <p className="text-xs text-muted-foreground">
+                    Audit by date, people, reason, and status
+                  </p>
+                </div>
               </div>
-              <div className="hidden lg:block">
-                <ViewModeToggle value={viewMode} onChange={setAndStoreViewMode} />
+              <div className="flex items-center gap-2 shrink-0">
+                {hasActiveHistoryFilters ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 px-2 text-xs"
+                    onClick={clearHistoryFilters}
+                  >
+                    <FilterX className="h-3.5 w-3.5 mr-1" />
+                    Clear
+                  </Button>
+                ) : null}
+                <div className="hidden lg:block">
+                  <ViewModeToggle value={viewMode} onChange={setAndStoreViewMode} />
+                </div>
               </div>
             </div>
             <div className="flex flex-col gap-2">
-              <TypeFilterChips value={typeFilter} counts={typeCounts} onChange={setTypeFilter} />
-              <div className="flex flex-col md:flex-row md:items-center gap-3">
-                <div className="min-w-0 flex-1">
-                  <StatusFilterChips value={statusFilter} counts={counts} onChange={setStatusFilter} />
-                </div>
-                <div className="relative w-full md:max-w-64 md:ml-auto">
+              <div className="flex flex-col lg:flex-row gap-2">
+                <div className="relative w-full lg:flex-1">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
-                    placeholder="Search CR, ORD, client..."
+                    placeholder="Search CR, order, client, actor..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-10"
+                    className="pl-10 h-9"
                   />
                 </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 lg:w-auto lg:flex">
+                  <CompactSelect
+                    value={dateBasis}
+                    onChange={(value) => setDateBasis(value as ClientReturnDateBasis)}
+                    placeholder="Date field"
+                    className="h-9 w-full sm:w-[11.5rem]"
+                    items={[
+                      { value: 'returnDate', label: 'Returned date' },
+                      { value: 'createdAt', label: 'Filed date' },
+                      { value: 'decisionAt', label: 'Decision date' },
+                    ]}
+                  />
+                  <DateRangeFilterPopover
+                    value={dateRangeFilter}
+                    onChange={setDateRangeFilter}
+                    triggerClassName="w-full sm:w-[220px] justify-between h-9"
+                  />
+                </div>
+              </div>
+              <StatusFilterChips value={statusFilter} counts={counts} onChange={setStatusFilter} />
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+                <CompactSelect
+                  value={typeFilter}
+                  onChange={(value) => setTypeFilter(value as TypeFilter)}
+                  placeholder="Type"
+                  items={[
+                    { value: 'all', label: `All types (${typeCounts.all})` },
+                    { value: 'change_item', label: `Change item (${typeCounts.change_item})` },
+                    { value: 'refund', label: `Refund (${typeCounts.refund})` },
+                  ]}
+                />
+                <CompactSelect
+                  value={reasonFilter}
+                  onChange={setReasonFilter}
+                  placeholder="Reason"
+                  items={[
+                    { value: 'all', label: 'All reasons' },
+                    ...CLIENT_RETURN_REASON_OPTIONS.map((option) => ({
+                      value: option.value,
+                      label: option.label,
+                    })),
+                  ]}
+                />
+                <CompactSelect
+                  value={returnedByFilter}
+                  onChange={setReturnedByFilter}
+                  placeholder="Returned by"
+                  items={[
+                    { value: 'all', label: 'All agents' },
+                    ...returnedByOptions.map((name) => ({ value: name, label: name })),
+                  ]}
+                />
+                <CompactSelect
+                  value={decisionByFilter}
+                  onChange={setDecisionByFilter}
+                  placeholder="Decision by"
+                  items={[
+                    { value: 'all', label: 'All decision-makers' },
+                    ...decisionByOptions.map((name) => ({ value: name, label: name })),
+                  ]}
+                />
               </div>
             </div>
           </div>
@@ -959,7 +1168,7 @@ export default function ClientOrderReturnsPage() {
               <p className="text-sm text-muted-foreground">
                 {rows.length === 0
                   ? 'Returns filed from an approved order will show up here.'
-                  : 'Try another status filter or search.'}
+                  : 'Try another date, person, status, or search.'}
               </p>
             </div>
           ) : (
@@ -1031,7 +1240,21 @@ export default function ClientOrderReturnsPage() {
                           className="w-[9rem]"
                         />
                         <SortableTableHead
-                          label="Approved by"
+                          label="TL approved"
+                          sortKey="tlApprovedByName"
+                          sortDirection={getTableSortDisplayDirection(historySortState, 'tlApprovedByName')}
+                          onSort={handleHistorySort}
+                          className="w-[9rem]"
+                        />
+                        <SortableTableHead
+                          label="SA approved"
+                          sortKey="saApprovedByName"
+                          sortDirection={getTableSortDisplayDirection(historySortState, 'saApprovedByName')}
+                          onSort={handleHistorySort}
+                          className="w-[9rem]"
+                        />
+                        <SortableTableHead
+                          label="Finance posted"
                           sortKey="approvedByName"
                           sortDirection={getTableSortDisplayDirection(historySortState, 'approvedByName')}
                           onSort={handleHistorySort}
@@ -1059,7 +1282,7 @@ export default function ClientOrderReturnsPage() {
                         const qty = getPreviewReturnLineQty(row);
                         const actor = getReturnActionActor(row);
                         const isOpen = expandedRows.has(row.id);
-                        const colSpan = 12;
+                        const colSpan = 14;
                         return (
                           <Fragment key={row.id}>
                             <TableRow className={isOpen ? 'bg-muted/20' : undefined}>
@@ -1105,7 +1328,28 @@ export default function ClientOrderReturnsPage() {
                                 <ReturnStatusBadge status={row.status} />
                               </TableCell>
                               <TableCell className="align-top">
-                                <ActorNameCell name={row.approvedByName} at={row.approvedAt} />
+                                <ApprovalStageCell
+                                  name={isRefundReturn(row) ? null : row.approvedByName}
+                                  at={isRefundReturn(row) ? null : row.approvedAt}
+                                  waiting={tlWaiting(row)}
+                                  skip={isRefundReturn(row)}
+                                />
+                              </TableCell>
+                              <TableCell className="align-top">
+                                <ApprovalStageCell
+                                  name={isRefundReturn(row) ? row.saApprovedByName : null}
+                                  at={isRefundReturn(row) ? row.saApprovedAt : null}
+                                  waiting={refundSaWaiting(row)}
+                                  skip={!isRefundReturn(row)}
+                                />
+                              </TableCell>
+                              <TableCell className="align-top">
+                                <ApprovalStageCell
+                                  name={isRefundReturn(row) ? row.approvedByName : null}
+                                  at={isRefundReturn(row) ? row.approvedAt : null}
+                                  waiting={refundFinanceWaiting(row)}
+                                  skip={!isRefundReturn(row)}
+                                />
                               </TableCell>
                               <TableCell className="align-top">
                                 <ActorNameCell name={row.rejectedByName} at={row.rejectedAt} />
@@ -1153,9 +1397,37 @@ export default function ClientOrderReturnsPage() {
                                           {formatClientReturnReason(row.reason)}
                                         </Badge>
                                       </p>
-                                      {actor.kind ? (
+                                      {isRefundReturn(row) ? (
                                         <p className="sm:col-span-2">
-                                          {actor.kind === 'reject' ? 'Rejected by' : 'Approved by'}{' '}
+                                          TL not required · SA approved by{' '}
+                                          <span className="font-medium text-foreground">
+                                            {row.saApprovedByName || refundSaWaiting(row) || '—'}
+                                          </span>
+                                          {row.saApprovedAt ? (
+                                            <>
+                                              {' · '}
+                                              <span className="font-medium text-foreground">
+                                                {format(new Date(row.saApprovedAt), 'MMM d, yyyy · h:mm a')}
+                                              </span>
+                                            </>
+                                          ) : null}
+                                          {' · '}
+                                          Finance posted by{' '}
+                                          <span className="font-medium text-foreground">
+                                            {row.approvedByName || refundFinanceWaiting(row) || '—'}
+                                          </span>
+                                          {row.approvedAt ? (
+                                            <>
+                                              {' · '}
+                                              <span className="font-medium text-foreground">
+                                                {format(new Date(row.approvedAt), 'MMM d, yyyy · h:mm a')}
+                                              </span>
+                                            </>
+                                          ) : null}
+                                        </p>
+                                      ) : actor.kind ? (
+                                        <p className="sm:col-span-2">
+                                          {actor.kind === 'reject' ? 'Rejected by' : 'TL approved by'}{' '}
                                           <span className="font-medium text-foreground">{actor.name || '—'}</span>
                                           {actor.at ? (
                                             <>
@@ -1165,8 +1437,14 @@ export default function ClientOrderReturnsPage() {
                                               </span>
                                             </>
                                           ) : null}
+                                          {' · '}
+                                          SA / Finance not required
                                         </p>
-                                      ) : null}
+                                      ) : (
+                                        <p className="sm:col-span-2">
+                                          {tlWaiting(row) || 'Waiting TL'} · SA / Finance not required
+                                        </p>
+                                      )}
                                     </div>
                                     <ReturnHistoryDetails row={row} />
                                   </div>

@@ -9,6 +9,8 @@ export type ClientReturnHistorySortKey =
   | 'returnDate'
   | 'returnType'
   | 'status'
+  | 'saApprovedByName'
+  | 'tlApprovedByName'
   | 'approvedByName'
   | 'rejectedByName'
   | 'qty';
@@ -44,8 +46,18 @@ export function sortClientReturnHistory(
       case 'status':
         result = a.status.localeCompare(b.status);
         break;
+      case 'saApprovedByName':
+        result = (a.saApprovedByName || '').localeCompare(b.saApprovedByName || '');
+        break;
+      case 'tlApprovedByName':
+        result = (a.returnType === 'change_item' ? a.approvedByName || '' : '').localeCompare(
+          b.returnType === 'change_item' ? b.approvedByName || '' : ''
+        );
+        break;
       case 'approvedByName':
-        result = (a.approvedByName || '').localeCompare(b.approvedByName || '');
+        result = (a.returnType === 'refund' ? a.approvedByName || '' : '').localeCompare(
+          b.returnType === 'refund' ? b.approvedByName || '' : ''
+        );
         break;
       case 'rejectedByName':
         result = (a.rejectedByName || '').localeCompare(b.rejectedByName || '');
