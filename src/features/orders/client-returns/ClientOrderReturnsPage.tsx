@@ -6,13 +6,6 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
@@ -38,7 +31,6 @@ import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/usePermissions';
 import {
-  CLIENT_RETURN_REASON_OPTIONS,
   canReviewClientReturn,
   clientReturnStatusBadgeClass,
   clientReturnTypeBadgeClass,
@@ -83,8 +75,7 @@ import {
   type ReturnLeaderHandover,
 } from './returnLeaderApi';
 import type { PackageProofPhotoItem } from '@/features/shared/components/MultiProofPhotoField';
-import { DateRangeFilterPopover, type DateRangeFilterValue } from '@/features/shared/components/DateRangeFilterPopover';
-import { getDateRangeFromPreset } from '@/lib/dateRangePresets';
+import { ConditionFilterSheet } from '@/features/shared/components/ConditionFilterSheet';
 import {
   DEFAULT_CLIENT_RETURN_HISTORY_SORT_DIRECTION,
   DEFAULT_CLIENT_RETURN_HISTORY_SORT_KEY,
@@ -92,12 +83,17 @@ import {
   type ClientReturnHistorySortKey,
 } from './utils/clientReturnsSorting';
 import {
-  clientReturnHistoryStatusLabel,
+  buildClientReturnHistoryFilterFields,
   matchesClientReturnHistory,
   matchesClientReturnHistoryStatus,
-  uniqueDecisionByNames,
+  uniqueFinancePostedNames,
+  uniqueOrderNumbers,
+  uniqueRejectedByNames,
   uniqueReturnedByNames,
-  type ClientReturnDateBasis,
+  uniqueReturnNumbers,
+  uniqueSaApprovedNames,
+  uniqueTlApprovedNames,
+  type ClientReturnHistoryCondition,
   type ClientReturnHistoryStatusFilter,
   type ClientReturnHistoryTypeFilter,
 } from './utils/clientReturnsHistoryFilters';
@@ -489,77 +485,6 @@ function ViewModeToggle({
   );
 }
 
-function StatusFilterChips({
-  value,
-  counts,
-  onChange,
-}: {
-  value: StatusFilter;
-  counts: Record<StatusFilter, number>;
-  onChange: (filter: StatusFilter) => void;
-}) {
-  const options: { id: StatusFilter; label: string }[] = [
-    { id: 'all', label: clientReturnHistoryStatusLabel('all') },
-    { id: 'open', label: clientReturnHistoryStatusLabel('open') },
-    { id: 'needs_action', label: clientReturnHistoryStatusLabel('needs_action') },
-    { id: 'pending_leader', label: clientReturnHistoryStatusLabel('pending_leader') },
-    { id: 'pending_super_admin', label: clientReturnHistoryStatusLabel('pending_super_admin') },
-    { id: 'pending_finance', label: clientReturnHistoryStatusLabel('pending_finance') },
-    { id: 'posted', label: clientReturnHistoryStatusLabel('posted') },
-    { id: 'rejected', label: clientReturnHistoryStatusLabel('rejected') },
-  ];
-
-  return (
-    <div className="flex gap-1.5 overflow-x-auto pb-0.5 -mx-1 px-1 scrollbar-thin">
-      {options.map((option) => {
-        const active = value === option.id;
-        return (
-          <Button
-            key={option.id}
-            type="button"
-            variant={active ? 'default' : 'outline'}
-            size="sm"
-            className="h-8 px-3 text-xs rounded-full shrink-0"
-            onClick={() => onChange(option.id)}
-          >
-            {option.label}
-            <span className="ml-1 tabular-nums opacity-80">{counts[option.id]}</span>
-          </Button>
-        );
-      })}
-    </div>
-  );
-}
-
-function CompactSelect({
-  value,
-  onChange,
-  placeholder,
-  items,
-  className,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  placeholder: string;
-  items: Array<{ value: string; label: string }>;
-  className?: string;
-}) {
-  return (
-    <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className={className ?? 'h-9 w-full sm:w-[11.5rem]'}>
-        <SelectValue placeholder={placeholder} />
-      </SelectTrigger>
-      <SelectContent>
-        {items.map((item) => (
-          <SelectItem key={item.value} value={item.value}>
-            {item.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-}
-
 export default function ClientOrderReturnsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -585,13 +510,7 @@ export default function ClientOrderReturnsPage() {
   });
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
-  const [reasonFilter, setReasonFilter] = useState('all');
-  const [returnedByFilter, setReturnedByFilter] = useState('all');
-  const [decisionByFilter, setDecisionByFilter] = useState('all');
-  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
-  const [dateBasis, setDateBasis] = useState<ClientReturnDateBasis>('returnDate');
+  const [conditions, setConditions] = useState<ClientReturnHistoryCondition[]>([]);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(HISTORY_PAGE_SIZE);
   const [viewRow, setViewRow] = useState<PreviewClientReturn | null>(null);
@@ -754,65 +673,35 @@ export default function ClientOrderReturnsPage() {
     return () => media.removeEventListener('change', onChange);
   }, []);
 
-  const dateRange = useMemo(
-    () =>
-      getDateRangeFromPreset(
-        dateRangeFilter.preset,
-        dateRangeFilter.customStart,
-        dateRangeFilter.customEnd
-      ),
-    [dateRangeFilter]
-  );
-
   const historyFilters = useMemo(
     () => ({
-      status: statusFilter,
-      type: typeFilter,
-      reason: reasonFilter,
-      returnedBy: returnedByFilter,
-      decisionBy: decisionByFilter,
-      dateStart: dateRange.start,
-      dateEnd: dateRange.end,
-      dateBasis,
+      conditions,
       search: searchQuery,
       role: user?.role,
     }),
-    [
-      statusFilter,
-      typeFilter,
-      reasonFilter,
-      returnedByFilter,
-      decisionByFilter,
-      dateRange.start,
-      dateRange.end,
-      dateBasis,
-      searchQuery,
-      user?.role,
-    ]
+    [conditions, searchQuery, user?.role]
   );
 
-  const hasActiveHistoryFilters =
-    statusFilter !== 'all' ||
-    typeFilter !== 'all' ||
-    reasonFilter !== 'all' ||
-    returnedByFilter !== 'all' ||
-    decisionByFilter !== 'all' ||
-    dateRangeFilter.preset !== 'all' ||
-    searchQuery.trim().length > 0;
+  const panelFilterCount = conditions.length;
+
+  const hasActiveHistoryFilters = panelFilterCount > 0 || searchQuery.trim().length > 0;
+
+  const clearPanelFilters = () => {
+    setConditions([]);
+  };
 
   const clearHistoryFilters = () => {
-    setStatusFilter('all');
-    setTypeFilter('all');
-    setReasonFilter('all');
-    setReturnedByFilter('all');
-    setDecisionByFilter('all');
-    setDateRangeFilter({ preset: 'all' });
-    setDateBasis('returnDate');
+    clearPanelFilters();
     setSearchQuery('');
   };
 
   const returnedByOptions = useMemo(() => uniqueReturnedByNames(rows), [rows]);
-  const decisionByOptions = useMemo(() => uniqueDecisionByNames(rows), [rows]);
+  const returnNumberOptions = useMemo(() => uniqueReturnNumbers(rows), [rows]);
+  const orderNumberOptions = useMemo(() => uniqueOrderNumbers(rows), [rows]);
+  const tlApprovedOptions = useMemo(() => uniqueTlApprovedNames(rows), [rows]);
+  const saApprovedOptions = useMemo(() => uniqueSaApprovedNames(rows), [rows]);
+  const financePostedOptions = useMemo(() => uniqueFinancePostedNames(rows), [rows]);
+  const rejectedByOptions = useMemo(() => uniqueRejectedByNames(rows), [rows]);
 
   const counts = useMemo<Record<StatusFilter, number>>(() => {
     const scoped = rows.filter((row) => matchesClientReturnHistory(row, historyFilters, { status: true }));
@@ -837,6 +726,32 @@ export default function ClientOrderReturnsPage() {
     };
   }, [rows, historyFilters]);
 
+  const historyFilterFields = useMemo(
+    () =>
+      buildClientReturnHistoryFilterFields({
+        counts,
+        typeCounts,
+        returnNumberOptions,
+        orderNumberOptions,
+        returnedByOptions,
+        tlApprovedOptions,
+        saApprovedOptions,
+        financePostedOptions,
+        rejectedByOptions,
+      }),
+    [
+      counts,
+      typeCounts,
+      returnNumberOptions,
+      orderNumberOptions,
+      returnedByOptions,
+      tlApprovedOptions,
+      saApprovedOptions,
+      financePostedOptions,
+      rejectedByOptions,
+    ]
+  );
+
   const filtered = useMemo(() => {
     const matched = rows.filter((row) => matchesClientReturnHistory(row, historyFilters));
     const { key, direction } = resolveTableSortDirection(
@@ -849,18 +764,7 @@ export default function ClientOrderReturnsPage() {
 
   useEffect(() => {
     setPage(0);
-  }, [
-    searchQuery,
-    pageSize,
-    statusFilter,
-    typeFilter,
-    reasonFilter,
-    returnedByFilter,
-    decisionByFilter,
-    dateRangeFilter,
-    dateBasis,
-    historySortState,
-  ]);
+  }, [searchQuery, pageSize, conditions, historySortState]);
 
   const { pagedItems, safePage, pageCount } = getListPaginationSlice(filtered, page, pageSize);
 
@@ -1072,8 +976,8 @@ export default function ClientOrderReturnsPage() {
               </div>
             </div>
             <div className="flex flex-col gap-2">
-              <div className="flex flex-col lg:flex-row gap-2">
-                <div className="relative w-full lg:flex-1">
+              <div className="flex flex-col sm:flex-row gap-2">
+                <div className="relative w-full sm:flex-1">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
                     placeholder="Search CR, order, client, actor..."
@@ -1082,66 +986,14 @@ export default function ClientOrderReturnsPage() {
                     className="pl-10 h-9"
                   />
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 lg:w-auto lg:flex">
-                  <CompactSelect
-                    value={dateBasis}
-                    onChange={(value) => setDateBasis(value as ClientReturnDateBasis)}
-                    placeholder="Date field"
-                    className="h-9 w-full sm:w-[11.5rem]"
-                    items={[
-                      { value: 'returnDate', label: 'Returned date' },
-                      { value: 'createdAt', label: 'Filed date' },
-                      { value: 'decisionAt', label: 'Decision date' },
-                    ]}
-                  />
-                  <DateRangeFilterPopover
-                    value={dateRangeFilter}
-                    onChange={setDateRangeFilter}
-                    triggerClassName="w-full sm:w-[220px] justify-between h-9"
-                  />
-                </div>
-              </div>
-              <StatusFilterChips value={statusFilter} counts={counts} onChange={setStatusFilter} />
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
-                <CompactSelect
-                  value={typeFilter}
-                  onChange={(value) => setTypeFilter(value as TypeFilter)}
-                  placeholder="Type"
-                  items={[
-                    { value: 'all', label: `All types (${typeCounts.all})` },
-                    { value: 'change_item', label: `Change item (${typeCounts.change_item})` },
-                    { value: 'refund', label: `Refund (${typeCounts.refund})` },
-                  ]}
-                />
-                <CompactSelect
-                  value={reasonFilter}
-                  onChange={setReasonFilter}
-                  placeholder="Reason"
-                  items={[
-                    { value: 'all', label: 'All reasons' },
-                    ...CLIENT_RETURN_REASON_OPTIONS.map((option) => ({
-                      value: option.value,
-                      label: option.label,
-                    })),
-                  ]}
-                />
-                <CompactSelect
-                  value={returnedByFilter}
-                  onChange={setReturnedByFilter}
-                  placeholder="Returned by"
-                  items={[
-                    { value: 'all', label: 'All agents' },
-                    ...returnedByOptions.map((name) => ({ value: name, label: name })),
-                  ]}
-                />
-                <CompactSelect
-                  value={decisionByFilter}
-                  onChange={setDecisionByFilter}
-                  placeholder="Decision by"
-                  items={[
-                    { value: 'all', label: 'All decision-makers' },
-                    ...decisionByOptions.map((name) => ({ value: name, label: name })),
-                  ]}
+                <ConditionFilterSheet
+                  fields={historyFilterFields}
+                  conditions={conditions}
+                  onAddCondition={(condition) => setConditions((current) => [...current, condition])}
+                  onRemoveCondition={(id) =>
+                    setConditions((current) => current.filter((condition) => condition.id !== id))
+                  }
+                  onClear={clearPanelFilters}
                 />
               </div>
             </div>
@@ -1197,7 +1049,7 @@ export default function ClientOrderReturnsPage() {
                       <TableRow className="hover:bg-transparent">
                         <TableHead className="w-10 px-2" />
                         <SortableTableHead
-                          label="Return"
+                          label="Return Number"
                           sortKey="returnNumber"
                           sortDirection={getTableSortDisplayDirection(historySortState, 'returnNumber')}
                           onSort={handleHistorySort}
@@ -1412,7 +1264,7 @@ export default function ClientOrderReturnsPage() {
                                             </>
                                           ) : null}
                                           {' · '}
-                                          Finance posted by{' '}
+                                          Finance Approved by{' '}
                                           <span className="font-medium text-foreground">
                                             {row.approvedByName || refundFinanceWaiting(row) || '—'}
                                           </span>

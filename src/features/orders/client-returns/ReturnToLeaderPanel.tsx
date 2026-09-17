@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
-import { Check, Clock, Eye, Loader2, MoreVertical, Printer, RotateCcw, Search, X } from 'lucide-react';
+import { Check, Clock, Eye, FilterX, Loader2, MoreVertical, Printer, RotateCcw, Search, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -18,6 +18,7 @@ import {
   type PageSize,
 } from '@/features/shared/components/ListPagination';
 import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import { ConditionFilterSheet } from '@/features/shared/components/ConditionFilterSheet';
 import {
   createInitialTableSortCycle,
   getNextTableSortCycleState,
@@ -30,7 +31,6 @@ import {
   returnLeaderStatusBadgeClass,
   returnLeaderStatusLabel,
   type ReturnLeaderHandover,
-  type ReturnLeaderStatus,
 } from './returnLeaderApi';
 import {
   DEFAULT_RETURN_LEADER_SORT_DIRECTION,
@@ -38,12 +38,17 @@ import {
   sortReturnLeaderHandovers,
   type ReturnLeaderSortKey,
 } from './utils/clientReturnsSorting';
+import {
+  buildReturnLeaderFilterFields,
+  matchesReturnLeaderFilters,
+  uniqueReturnNumbers,
+  uniqueSubmittedByNames,
+  type ReturnLeaderFilterCondition,
+} from './utils/returnLeaderFilters';
 import { ReturnLeaderTimeline } from './ReturnLeaderTimeline';
 import { generateAndOpenReturnLeaderPdf } from './generateReturnLeaderPdf';
 
 const PAGE_SIZE: PageSize = 25;
-
-type StatusFilter = 'all' | ReturnLeaderStatus;
 
 type ReturnToLeaderPanelProps = {
   rows: ReturnLeaderHandover[];
@@ -231,66 +236,64 @@ export function ReturnToLeaderPanel({
   onReject,
 }: ReturnToLeaderPanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [conditions, setConditions] = useState<ReturnLeaderFilterCondition[]>([]);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(PAGE_SIZE);
   const [sortState, setSortState] =
     useState<TableSortCycleState<ReturnLeaderSortKey>>(createInitialTableSortCycle);
   const [timelineRow, setTimelineRow] = useState<ReturnLeaderHandover | null>(null);
 
-  const counts = useMemo(
+  const filters = useMemo(
     () => ({
-      all: rows.length,
-      pending_leader: rows.filter((row) => row.status === 'pending_leader').length,
-      pending_super_admin: rows.filter((row) => row.status === 'pending_super_admin').length,
-      received: rows.filter((row) => row.status === 'received').length,
-      rejected: rows.filter((row) => row.status === 'rejected').length,
-      cancelled: rows.filter((row) => row.status === 'cancelled').length,
+      conditions,
+      search: searchQuery,
     }),
-    [rows]
+    [conditions, searchQuery]
+  );
+
+  const counts = useMemo(() => {
+    const scoped = rows.filter((row) => matchesReturnLeaderFilters(row, filters, { status: true }));
+    return {
+      pending_leader: scoped.filter((row) => row.status === 'pending_leader').length,
+      pending_super_admin: scoped.filter((row) => row.status === 'pending_super_admin').length,
+      received: scoped.filter((row) => row.status === 'received').length,
+      rejected: scoped.filter((row) => row.status === 'rejected').length,
+      cancelled: scoped.filter((row) => row.status === 'cancelled').length,
+    };
+  }, [rows, filters]);
+
+  const submittedByOptions = useMemo(() => uniqueSubmittedByNames(rows), [rows]);
+  const returnNumberOptions = useMemo(() => uniqueReturnNumbers(rows), [rows]);
+  const filterFields = useMemo(
+    () => buildReturnLeaderFilterFields({ counts, submittedByOptions, returnNumberOptions }),
+    [counts, submittedByOptions, returnNumberOptions]
   );
 
   const filtered = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    const matched = rows.filter((row) => {
-      if (statusFilter !== 'all' && row.status !== statusFilter) return false;
-      if (!query) return true;
-      const haystack = [
-        row.returnNumber,
-        row.submittedByName,
-        row.notes || '',
-        returnLeaderStatusLabel(row.status),
-        ...row.lines.map((line) => `${line.brandName} ${line.variantName}`),
-      ]
-        .join(' ')
-        .toLowerCase();
-      return haystack.includes(query);
-    });
+    const matched = rows.filter((row) => matchesReturnLeaderFilters(row, filters));
     const { key, direction } = resolveTableSortDirection(
       sortState,
       DEFAULT_RETURN_LEADER_SORT_KEY,
       DEFAULT_RETURN_LEADER_SORT_DIRECTION
     );
     return sortReturnLeaderHandovers(matched, key, direction);
-  }, [rows, searchQuery, statusFilter, sortState]);
+  }, [rows, filters, sortState]);
 
   const { pagedItems, safePage, pageCount } = getListPaginationSlice(filtered, page, pageSize);
+  const hasActiveFilters = conditions.length > 0 || searchQuery.trim().length > 0;
+
+  const clearFilters = () => {
+    setConditions([]);
+    setSearchQuery('');
+  };
 
   useEffect(() => {
     setPage(0);
-  }, [searchQuery, pageSize, statusFilter, sortState]);
+  }, [searchQuery, pageSize, conditions, sortState]);
 
   const handleSort = (key: ReturnLeaderSortKey) => {
     setSortState((current) => getNextTableSortCycleState(current, key));
   };
-
-  const filterOptions: Array<{ id: StatusFilter; label: string; shortLabel: string }> = [
-    { id: 'all', label: 'All', shortLabel: 'All' },
-    { id: 'pending_leader', label: 'Pending TL', shortLabel: 'Pending' },
-    { id: 'pending_super_admin', label: 'Pending SA', shortLabel: 'SA' },
-    { id: 'received', label: 'Received', shortLabel: 'Received' },
-    { id: 'rejected', label: 'Rejected', shortLabel: 'Rejected' },
-  ];
 
   return (
     <Card className="min-w-0 overflow-hidden">
@@ -299,36 +302,35 @@ export function ReturnToLeaderPanel({
           <div className="min-w-0">
             <h2 className="font-semibold">Return to leader</h2>
             <p className="text-sm text-muted-foreground mt-0.5">
-              {rows.length} record{rows.length === 1 ? '' : 's'}
+              {filtered.length} record{filtered.length === 1 ? '' : 's'}
             </p>
           </div>
-          <div className="relative w-full sm:w-64">
+          {hasActiveFilters ? (
+            <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs shrink-0" onClick={clearFilters}>
+              <FilterX className="h-3.5 w-3.5 mr-1" />
+              Clear
+            </Button>
+          ) : null}
+        </div>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <div className="relative w-full sm:flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="Search RL, agent..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10"
+              className="pl-10 h-9"
             />
           </div>
-        </div>
-        <div className="-mx-4 px-4 sm:mx-0 sm:px-0 overflow-x-auto">
-          <div className="flex gap-2 min-w-max pb-0.5">
-            {filterOptions.map((option) => (
-              <Button
-                key={option.id}
-                type="button"
-                size="sm"
-                variant={statusFilter === option.id ? 'default' : 'outline'}
-                className="h-8 shrink-0"
-                onClick={() => setStatusFilter(option.id)}
-              >
-                <span className="sm:hidden">{option.shortLabel}</span>
-                <span className="hidden sm:inline">{option.label}</span>
-                <span className="ml-1 tabular-nums opacity-80">{counts[option.id]}</span>
-              </Button>
-            ))}
-          </div>
+          <ConditionFilterSheet
+            fields={filterFields}
+            conditions={conditions}
+            onAddCondition={(condition) => setConditions((current) => [...current, condition])}
+            onRemoveCondition={(id) =>
+              setConditions((current) => current.filter((condition) => condition.id !== id))
+            }
+            onClear={() => setConditions([])}
+          />
         </div>
       </CardHeader>
       <CardContent>
@@ -348,6 +350,9 @@ export function ReturnToLeaderPanel({
           <div className="text-center py-12 px-4">
             <RotateCcw className="h-8 w-8 mx-auto text-muted-foreground/60 mb-3" />
             <p className="font-medium">{rows.length === 0 ? 'No return to leader yet' : 'No matching records'}</p>
+            {rows.length > 0 ? (
+              <p className="text-sm text-muted-foreground mt-1">Try another status, person, date, or search.</p>
+            ) : null}
           </div>
         ) : (
           <>
@@ -374,7 +379,7 @@ export function ReturnToLeaderPanel({
                 <TableHeader>
                   <TableRow>
                     <SortableTableHead
-                      label="RL #"
+                      label="RL Number"
                       sortKey="returnNumber"
                       sortDirection={getTableSortDisplayDirection(sortState, 'returnNumber')}
                       onSort={handleSort}

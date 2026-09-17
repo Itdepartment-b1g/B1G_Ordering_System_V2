@@ -28,9 +28,9 @@ function formatMetaDate(value: string | null | undefined, withTime = false): str
 
 function MetaRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex flex-col gap-0.5 text-sm sm:grid sm:grid-cols-[7.5rem_1fr] sm:gap-2">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="font-medium break-words">{value}</dd>
+    <div className="min-w-0 space-y-0.5">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="text-sm font-medium break-words">{value}</dd>
     </div>
   );
 }
@@ -44,7 +44,7 @@ export function ClientReturnExpandedMeta({ row }: { row: PreviewClientReturn }) 
 
   return (
     <div className="space-y-3 rounded-md border bg-muted/20 p-3">
-      <dl className="space-y-1.5">
+      <dl className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-3">
         <MetaRow label="Client name" value={row.clientName} />
         <MetaRow label="Type" value={formatClientReturnType(row.returnType)} />
         {row.returnType === 'refund' ? (
@@ -63,11 +63,11 @@ export function ClientReturnExpandedMeta({ row }: { row: PreviewClientReturn }) 
         {actor.kind === 'approve' ? (
           <>
             <MetaRow
-              label={row.returnType === 'refund' ? 'Finance posted by' : 'Approved by'}
+              label={row.returnType === 'refund' ? 'Finance Approved by' : 'Approved by'}
               value={actor.name || '—'}
             />
             <MetaRow
-              label={row.returnType === 'refund' ? 'Finance posted at' : 'Approved at'}
+              label={row.returnType === 'refund' ? 'Finance Approved at' : 'Approved at'}
               value={formatMetaDate(actor.at, true)}
             />
           </>
