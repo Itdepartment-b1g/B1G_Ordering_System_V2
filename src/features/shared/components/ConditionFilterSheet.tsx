@@ -72,6 +72,7 @@ type ConditionFilterSheetProps<TField extends string> = {
   onClear: () => void;
   title?: string;
   description?: string;
+  triggerLabel?: string;
   triggerClassName?: string;
 };
 
@@ -81,8 +82,9 @@ export function ConditionFilterSheet<TField extends string>({
   onAddCondition,
   onRemoveCondition,
   onClear,
-  title = 'Filters',
-  description = 'Pick a field, then an operator, then a value',
+  title = 'Conditioned Filter',
+  description = 'Same-field values use OR. Different fields use AND.',
+  triggerLabel = 'Conditioned Filter',
   triggerClassName,
 }: ConditionFilterSheetProps<TField>) {
   const [open, setOpen] = useState(false);
@@ -149,10 +151,10 @@ export function ConditionFilterSheet<TField extends string>({
           type="button"
           variant={panelCount > 0 ? 'default' : 'outline'}
           size="sm"
-          className={triggerClassName ?? 'h-9 gap-1.5 shrink-0'}
+          className={triggerClassName ?? 'h-9 gap-1.5 shrink-0 flex-1 sm:flex-none'}
         >
           <Filter className="h-4 w-4" />
-          Filters
+          {triggerLabel}
           {panelCount > 0 ? (
             <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-background/20 px-1.5 text-[11px] font-semibold tabular-nums">
               {panelCount}

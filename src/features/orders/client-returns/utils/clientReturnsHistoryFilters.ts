@@ -1,5 +1,7 @@
 import { format, isValid } from 'date-fns';
-import { isDateInRange, parseDateFromInput } from '@/lib/dateRangePresets';
+import { getDateRangeFromPreset, isDateInRange, parseDateFromInput } from '@/lib/dateRangePresets';
+import type { DateRangeFilterValue } from '@/features/shared/components/DateRangeFilterPopover';
+import { matchesQuickFilterAndClauses, type QuickFilterAndClause } from '@/features/shared/components/QuickFilterSheet';
 import {
   createConditionFilterCondition,
   groupedConditionsPass,
@@ -41,13 +43,28 @@ export type ClientReturnHistoryField =
   | 'financePosted'
   | 'rejectedBy'
   | 'date';
+export type ClientReturnHistoryQuickColumn =
+  | 'returnNumber'
+  | 'orderNumber'
+  | 'client'
+  | 'returnedBy'
+  | 'brand'
+  | 'type'
+  | 'reason'
+  | 'tlApproved'
+  | 'saApproved'
+  | 'financePosted'
+  | 'rejectedBy';
 export type ClientReturnHistoryOperator = ConditionFilterOperator;
 export type ClientReturnHistoryCondition = ConditionFilterCondition<ClientReturnHistoryField>;
 
 export type ClientReturnHistoryFilterState = {
   conditions: ClientReturnHistoryCondition[];
   search: string;
+  status?: ClientReturnHistoryStatusFilter;
   role?: string | null;
+  dateRange?: DateRangeFilterValue;
+  columnClauses?: QuickFilterAndClause<ClientReturnHistoryQuickColumn>[];
 };
 
 const PENDING_STATUSES = new Set(['pending_leader', 'pending_super_admin', 'pending_finance']);
@@ -281,6 +298,32 @@ function matchesEqualityField(
   return true;
 }
 
+function matchesDateRange(row: PreviewClientReturn, dateRange?: DateRangeFilterValue): boolean {
+  if (!dateRange || dateRange.preset === 'all') return true;
+  const { start, end } = getDateRangeFromPreset(dateRange.preset, dateRange.customStart, dateRange.customEnd);
+  if (!start && !end) return true;
+  const auditDate = getClientReturnAuditDate(row, 'returnDate');
+  if (!auditDate) return false;
+  return isDateInRange(auditDate, start, end);
+}
+
+function matchesQuickColumn(
+  row: PreviewClientReturn,
+  field?: ClientReturnHistoryQuickColumn | 'all',
+  value?: string,
+  role?: string | null
+): boolean {
+  const selected = (value || '').trim();
+  if (!field || field === 'all' || !selected) return true;
+  if (field === 'client') return nameEquals(row.clientName, selected);
+  if (field === 'brand') return row.lines.some((line) => nameEquals(line.brandName, selected));
+  return matchesEqualityField(
+    row,
+    { id: 'quick', field: field as Exclude<ClientReturnHistoryQuickColumn, 'client' | 'brand'>, operator: 'eq', value: selected },
+    role
+  );
+}
+
 function matchesDateCondition(row: PreviewClientReturn, condition: ClientReturnHistoryCondition): boolean {
   const auditDate = getClientReturnAuditDate(row, (condition.basis as ClientReturnDateBasis) || 'returnDate');
   if (!auditDate) return false;
@@ -331,7 +374,23 @@ export function matchesClientReturnHistory(
     matchDate: (condition) => matchesDateCondition(row, condition),
     matchEquality: (condition) => matchesEqualityField(row, condition, filters.role),
   });
-  return conditionsPass && matchesSearch(row, filters.search);
+  if (!conditionsPass) return false;
+  if (
+    !skip?.status &&
+    filters.status &&
+    !matchesClientReturnHistoryStatus(row, filters.status, filters.role)
+  ) {
+    return false;
+  }
+  if (!matchesDateRange(row, filters.dateRange)) return false;
+  if (
+    !matchesQuickFilterAndClauses(filters.columnClauses, (field, value) =>
+      matchesQuickColumn(row, field, value, filters.role)
+    )
+  ) {
+    return false;
+  }
+  return matchesSearch(row, filters.search);
 }
 
 function uniqueSortedNames(values: Array<string | null | undefined>): string[] {
@@ -346,6 +405,14 @@ function uniqueSortedNames(values: Array<string | null | undefined>): string[] {
 
 export function uniqueReturnNumbers(rows: PreviewClientReturn[]): string[] {
   return uniqueSortedNames(rows.map((row) => row.returnNumber));
+}
+
+export function uniqueClientNames(rows: PreviewClientReturn[]): string[] {
+  return uniqueSortedNames(rows.map((row) => row.clientName));
+}
+
+export function uniqueBrandNames(rows: PreviewClientReturn[]): string[] {
+  return uniqueSortedNames(rows.flatMap((row) => row.lines.map((line) => line.brandName)));
 }
 
 export function uniqueOrderNumbers(rows: PreviewClientReturn[]): string[] {

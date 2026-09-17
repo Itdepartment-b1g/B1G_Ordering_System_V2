@@ -31,6 +31,7 @@ import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/usePermissions';
 import {
+  CLIENT_RETURN_REASON_OPTIONS,
   canReviewClientReturn,
   clientReturnStatusBadgeClass,
   clientReturnTypeBadgeClass,
@@ -75,7 +76,9 @@ import {
   type ReturnLeaderHandover,
 } from './returnLeaderApi';
 import type { PackageProofPhotoItem } from '@/features/shared/components/MultiProofPhotoField';
+import { ALL_TIME_DATE_RANGE } from '@/features/shared/components/DateRangeFilterPopover';
 import { ConditionFilterSheet } from '@/features/shared/components/ConditionFilterSheet';
+import { QuickFilterSheet, createQuickFilterAndClause, countActiveQuickFilterAndClauses, type QuickFilterColumn } from '@/features/shared/components/QuickFilterSheet';
 import {
   DEFAULT_CLIENT_RETURN_HISTORY_SORT_DIRECTION,
   DEFAULT_CLIENT_RETURN_HISTORY_SORT_KEY,
@@ -84,8 +87,11 @@ import {
 } from './utils/clientReturnsSorting';
 import {
   buildClientReturnHistoryFilterFields,
+  clientReturnHistoryStatusLabel,
   matchesClientReturnHistory,
   matchesClientReturnHistoryStatus,
+  uniqueBrandNames,
+  uniqueClientNames,
   uniqueFinancePostedNames,
   uniqueOrderNumbers,
   uniqueRejectedByNames,
@@ -94,6 +100,7 @@ import {
   uniqueSaApprovedNames,
   uniqueTlApprovedNames,
   type ClientReturnHistoryCondition,
+  type ClientReturnHistoryQuickColumn,
   type ClientReturnHistoryStatusFilter,
   type ClientReturnHistoryTypeFilter,
 } from './utils/clientReturnsHistoryFilters';
@@ -107,6 +114,8 @@ type StatusFilter = ClientReturnHistoryStatusFilter;
 type TypeFilter = ClientReturnHistoryTypeFilter;
 type PageTab = 'history' | 'inventory' | 'returnToLeader';
 type RlConfirmKind = 'approve' | 'reject' | null;
+
+const HistoryQuickFilterSheet = QuickFilterSheet<ClientReturnHistoryQuickColumn, StatusFilter>;
 
 function isCompactViewport() {
   return typeof window !== 'undefined' && window.innerWidth < 1024;
@@ -510,6 +519,11 @@ export default function ClientOrderReturnsPage() {
   });
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [dateRangeFilter, setDateRangeFilter] = useState(ALL_TIME_DATE_RANGE);
+  const [columnClauses, setColumnClauses] = useState(() => [
+    createQuickFilterAndClause<ClientReturnHistoryQuickColumn>(),
+  ]);
   const [conditions, setConditions] = useState<ClientReturnHistoryCondition[]>([]);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(HISTORY_PAGE_SIZE);
@@ -677,27 +691,44 @@ export default function ClientOrderReturnsPage() {
     () => ({
       conditions,
       search: searchQuery,
+      status: statusFilter,
       role: user?.role,
+      dateRange: dateRangeFilter,
+      columnClauses,
     }),
-    [conditions, searchQuery, user?.role]
+    [conditions, searchQuery, statusFilter, user?.role, dateRangeFilter, columnClauses]
   );
 
   const panelFilterCount = conditions.length;
 
-  const hasActiveHistoryFilters = panelFilterCount > 0 || searchQuery.trim().length > 0;
+  const hasActiveHistoryFilters =
+    panelFilterCount > 0 ||
+    searchQuery.trim().length > 0 ||
+    statusFilter !== 'all' ||
+    dateRangeFilter.preset !== 'all' ||
+    (countActiveQuickFilterAndClauses(columnClauses) > 0);
 
   const clearPanelFilters = () => {
     setConditions([]);
   };
 
+  const clearQuickFilters = () => {
+    setStatusFilter('all');
+    setDateRangeFilter(ALL_TIME_DATE_RANGE);
+    setColumnClauses([createQuickFilterAndClause<ClientReturnHistoryQuickColumn>()]);
+  };
+
   const clearHistoryFilters = () => {
     clearPanelFilters();
+    clearQuickFilters();
     setSearchQuery('');
   };
 
   const returnedByOptions = useMemo(() => uniqueReturnedByNames(rows), [rows]);
   const returnNumberOptions = useMemo(() => uniqueReturnNumbers(rows), [rows]);
   const orderNumberOptions = useMemo(() => uniqueOrderNumbers(rows), [rows]);
+  const clientNameOptions = useMemo(() => uniqueClientNames(rows), [rows]);
+  const brandNameOptions = useMemo(() => uniqueBrandNames(rows), [rows]);
   const tlApprovedOptions = useMemo(() => uniqueTlApprovedNames(rows), [rows]);
   const saApprovedOptions = useMemo(() => uniqueSaApprovedNames(rows), [rows]);
   const financePostedOptions = useMemo(() => uniqueFinancePostedNames(rows), [rows]);
@@ -752,6 +783,118 @@ export default function ClientOrderReturnsPage() {
     ]
   );
 
+  const historyQuickColumns = useMemo(
+    (): QuickFilterColumn<ClientReturnHistoryQuickColumn>[] => [
+      {
+        key: 'returnNumber',
+        label: 'Return Number',
+        options: returnNumberOptions.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search return number...',
+      },
+      {
+        key: 'orderNumber',
+        label: 'Order Number',
+        options: orderNumberOptions.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search order number...',
+      },
+      {
+        key: 'client',
+        label: 'Client',
+        options: clientNameOptions.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search client...',
+      },
+      {
+        key: 'returnedBy',
+        label: 'Returned by',
+        options: returnedByOptions.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search person...',
+      },
+      {
+        key: 'brand',
+        label: 'Brand',
+        options: brandNameOptions.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search brand...',
+      },
+      {
+        key: 'type',
+        label: 'Type',
+        options: [
+          { value: 'change_item', label: formatClientReturnType('change_item') },
+          { value: 'refund', label: formatClientReturnType('refund') },
+        ],
+        searchPlaceholder: 'Search type...',
+      },
+      {
+        key: 'reason',
+        label: 'Reason',
+        options: CLIENT_RETURN_REASON_OPTIONS.map((option) => ({
+          value: option.value,
+          label: option.label,
+        })),
+        searchPlaceholder: 'Search reason...',
+      },
+      {
+        key: 'tlApproved',
+        label: 'TL approved',
+        options: tlApprovedOptions.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search name...',
+      },
+      {
+        key: 'saApproved',
+        label: 'SA approved',
+        options: saApprovedOptions.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search name...',
+      },
+      {
+        key: 'financePosted',
+        label: 'Finance posted',
+        options: financePostedOptions.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search name...',
+      },
+      {
+        key: 'rejectedBy',
+        label: 'Rejected by',
+        options: rejectedByOptions.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search name...',
+      },
+    ],
+    [
+      returnNumberOptions,
+      orderNumberOptions,
+      clientNameOptions,
+      returnedByOptions,
+      brandNameOptions,
+      tlApprovedOptions,
+      saApprovedOptions,
+      financePostedOptions,
+      rejectedByOptions,
+    ]
+  );
+
+  const historyStatusOptions = useMemo(
+    () =>
+      (
+        [
+          'all',
+          'open',
+          'needs_action',
+          'pending_leader',
+          'pending_super_admin',
+          'pending_finance',
+          'posted',
+          'rejected',
+        ] as StatusFilter[]
+      ).map((status) => ({
+        value: status,
+        label:
+          status === 'all' || status === 'open' || status === 'needs_action'
+            ? clientReturnHistoryStatusLabel(status)
+            : formatClientReturnStatus(status),
+        count: counts[status],
+      })),
+    [counts]
+  );
+
   const filtered = useMemo(() => {
     const matched = rows.filter((row) => matchesClientReturnHistory(row, historyFilters));
     const { key, direction } = resolveTableSortDirection(
@@ -764,7 +907,7 @@ export default function ClientOrderReturnsPage() {
 
   useEffect(() => {
     setPage(0);
-  }, [searchQuery, pageSize, conditions, historySortState]);
+  }, [searchQuery, pageSize, conditions, statusFilter, dateRangeFilter, columnClauses, historySortState]);
 
   const { pagedItems, safePage, pageCount } = getListPaginationSlice(filtered, page, pageSize);
 
@@ -986,15 +1129,28 @@ export default function ClientOrderReturnsPage() {
                     className="pl-10 h-9"
                   />
                 </div>
-                <ConditionFilterSheet
-                  fields={historyFilterFields}
-                  conditions={conditions}
-                  onAddCondition={(condition) => setConditions((current) => [...current, condition])}
-                  onRemoveCondition={(id) =>
-                    setConditions((current) => current.filter((condition) => condition.id !== id))
-                  }
-                  onClear={clearPanelFilters}
-                />
+                <div className="flex w-full gap-2 sm:w-auto shrink-0">
+                  <HistoryQuickFilterSheet
+                    dateRange={dateRangeFilter}
+                    onDateRangeChange={setDateRangeFilter}
+                    columns={historyQuickColumns}
+                    columnClauses={columnClauses}
+                    onColumnClausesChange={setColumnClauses}
+                    status={statusFilter}
+                    statusOptions={historyStatusOptions}
+                    onStatusChange={setStatusFilter}
+                    onClear={clearQuickFilters}
+                  />
+                  <ConditionFilterSheet
+                    fields={historyFilterFields}
+                    conditions={conditions}
+                    onAddCondition={(condition) => setConditions((current) => [...current, condition])}
+                    onRemoveCondition={(id) =>
+                      setConditions((current) => current.filter((condition) => condition.id !== id))
+                    }
+                    onClear={clearPanelFilters}
+                  />
+                </div>
               </div>
             </div>
           </div>

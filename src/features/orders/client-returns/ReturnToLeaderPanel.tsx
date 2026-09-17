@@ -18,7 +18,9 @@ import {
   type PageSize,
 } from '@/features/shared/components/ListPagination';
 import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import { ALL_TIME_DATE_RANGE } from '@/features/shared/components/DateRangeFilterPopover';
 import { ConditionFilterSheet } from '@/features/shared/components/ConditionFilterSheet';
+import { QuickFilterSheet, createQuickFilterAndClause, countActiveQuickFilterAndClauses, type QuickFilterColumn } from '@/features/shared/components/QuickFilterSheet';
 import {
   createInitialTableSortCycle,
   getNextTableSortCycleState,
@@ -31,6 +33,7 @@ import {
   returnLeaderStatusBadgeClass,
   returnLeaderStatusLabel,
   type ReturnLeaderHandover,
+  type ReturnLeaderStatus,
 } from './returnLeaderApi';
 import {
   DEFAULT_RETURN_LEADER_SORT_DIRECTION,
@@ -44,11 +47,16 @@ import {
   uniqueReturnNumbers,
   uniqueSubmittedByNames,
   type ReturnLeaderFilterCondition,
+  type ReturnLeaderQuickColumn,
 } from './utils/returnLeaderFilters';
 import { ReturnLeaderTimeline } from './ReturnLeaderTimeline';
 import { generateAndOpenReturnLeaderPdf } from './generateReturnLeaderPdf';
 
 const PAGE_SIZE: PageSize = 25;
+
+type RlQuickStatus = 'all' | ReturnLeaderStatus;
+
+const LeaderQuickFilterSheet = QuickFilterSheet<ReturnLeaderQuickColumn, RlQuickStatus>;
 
 type ReturnToLeaderPanelProps = {
   rows: ReturnLeaderHandover[];
@@ -236,6 +244,11 @@ export function ReturnToLeaderPanel({
   onReject,
 }: ReturnToLeaderPanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<RlQuickStatus>('all');
+  const [dateRangeFilter, setDateRangeFilter] = useState(ALL_TIME_DATE_RANGE);
+  const [columnClauses, setColumnClauses] = useState(() => [
+    createQuickFilterAndClause<ReturnLeaderQuickColumn>(),
+  ]);
   const [conditions, setConditions] = useState<ReturnLeaderFilterCondition[]>([]);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(PAGE_SIZE);
@@ -247,13 +260,17 @@ export function ReturnToLeaderPanel({
     () => ({
       conditions,
       search: searchQuery,
+      status: statusFilter,
+      dateRange: dateRangeFilter,
+      columnClauses,
     }),
-    [conditions, searchQuery]
+    [conditions, searchQuery, statusFilter, dateRangeFilter, columnClauses]
   );
 
   const counts = useMemo(() => {
     const scoped = rows.filter((row) => matchesReturnLeaderFilters(row, filters, { status: true }));
     return {
+      all: scoped.length,
       pending_leader: scoped.filter((row) => row.status === 'pending_leader').length,
       pending_super_admin: scoped.filter((row) => row.status === 'pending_super_admin').length,
       received: scoped.filter((row) => row.status === 'received').length,
@@ -280,16 +297,65 @@ export function ReturnToLeaderPanel({
   }, [rows, filters, sortState]);
 
   const { pagedItems, safePage, pageCount } = getListPaginationSlice(filtered, page, pageSize);
-  const hasActiveFilters = conditions.length > 0 || searchQuery.trim().length > 0;
+  const hasActiveFilters =
+    conditions.length > 0 ||
+    searchQuery.trim().length > 0 ||
+    statusFilter !== 'all' ||
+    dateRangeFilter.preset !== 'all' ||
+    (countActiveQuickFilterAndClauses(columnClauses) > 0);
+
+  const clearQuickFilters = () => {
+    setStatusFilter('all');
+    setDateRangeFilter(ALL_TIME_DATE_RANGE);
+    setColumnClauses([createQuickFilterAndClause<ReturnLeaderQuickColumn>()]);
+  };
 
   const clearFilters = () => {
     setConditions([]);
     setSearchQuery('');
+    clearQuickFilters();
   };
+
+  const rlQuickColumns = useMemo(
+    (): QuickFilterColumn<ReturnLeaderQuickColumn>[] => [
+      {
+        key: 'returnNumber',
+        label: 'RL Number',
+        options: returnNumberOptions.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search RL number...',
+      },
+      {
+        key: 'submittedBy',
+        label: 'Submitted by',
+        options: submittedByOptions.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search person...',
+      },
+    ],
+    [returnNumberOptions, submittedByOptions]
+  );
+
+  const rlStatusOptions = useMemo(
+    () =>
+      (
+        [
+          'all',
+          'pending_leader',
+          'pending_super_admin',
+          'received',
+          'rejected',
+          'cancelled',
+        ] as const
+      ).map((status) => ({
+        value: status,
+        label: status === 'all' ? 'All' : returnLeaderStatusLabel(status),
+        count: counts[status],
+      })),
+    [counts]
+  );
 
   useEffect(() => {
     setPage(0);
-  }, [searchQuery, pageSize, conditions, sortState]);
+  }, [searchQuery, pageSize, conditions, statusFilter, dateRangeFilter, columnClauses, sortState]);
 
   const handleSort = (key: ReturnLeaderSortKey) => {
     setSortState((current) => getNextTableSortCycleState(current, key));
@@ -322,15 +388,28 @@ export function ReturnToLeaderPanel({
               className="pl-10 h-9"
             />
           </div>
-          <ConditionFilterSheet
-            fields={filterFields}
-            conditions={conditions}
-            onAddCondition={(condition) => setConditions((current) => [...current, condition])}
-            onRemoveCondition={(id) =>
-              setConditions((current) => current.filter((condition) => condition.id !== id))
-            }
-            onClear={() => setConditions([])}
-          />
+          <div className="flex w-full gap-2 sm:w-auto shrink-0">
+            <LeaderQuickFilterSheet
+              dateRange={dateRangeFilter}
+              onDateRangeChange={setDateRangeFilter}
+              columns={rlQuickColumns}
+              columnClauses={columnClauses}
+              onColumnClausesChange={setColumnClauses}
+              status={statusFilter}
+              statusOptions={rlStatusOptions}
+              onStatusChange={setStatusFilter}
+              onClear={clearQuickFilters}
+            />
+            <ConditionFilterSheet
+              fields={filterFields}
+              conditions={conditions}
+              onAddCondition={(condition) => setConditions((current) => [...current, condition])}
+              onRemoveCondition={(id) =>
+                setConditions((current) => current.filter((condition) => condition.id !== id))
+              }
+              onClear={() => setConditions([])}
+            />
+          </div>
         </div>
       </CardHeader>
       <CardContent>

@@ -1,5 +1,7 @@
 import { format, isValid } from 'date-fns';
-import { isDateInRange, parseDateFromInput } from '@/lib/dateRangePresets';
+import { getDateRangeFromPreset, isDateInRange, parseDateFromInput } from '@/lib/dateRangePresets';
+import type { DateRangeFilterValue } from '@/features/shared/components/DateRangeFilterPopover';
+import { matchesQuickFilterAndClauses, type QuickFilterAndClause } from '@/features/shared/components/QuickFilterSheet';
 import {
   groupedConditionsPass,
   type ConditionFilterCondition,
@@ -12,11 +14,15 @@ import {
 } from '../returnLeaderApi';
 
 export type ReturnLeaderFilterField = 'returnNumber' | 'status' | 'submittedBy' | 'date';
+export type ReturnLeaderQuickColumn = 'returnNumber' | 'submittedBy';
 export type ReturnLeaderFilterCondition = ConditionFilterCondition<ReturnLeaderFilterField>;
 
 export type ReturnLeaderFilterState = {
   conditions: ReturnLeaderFilterCondition[];
   search: string;
+  status?: 'all' | ReturnLeaderStatus;
+  dateRange?: DateRangeFilterValue;
+  columnClauses?: QuickFilterAndClause<ReturnLeaderQuickColumn>[];
 };
 
 const STATUS_OPTIONS: ReturnLeaderStatus[] = [
@@ -139,5 +145,31 @@ export function matchesReturnLeaderFilters(
     matchDate: (condition) => matchesDateCondition(row, condition),
     matchEquality: (condition) => matchesEqualityField(row, condition),
   });
-  return conditionsPass && matchesSearch(row, filters.search);
+  if (!conditionsPass) return false;
+  if (!skip?.status && filters.status && filters.status !== 'all' && row.status !== filters.status) {
+    return false;
+  }
+  if (filters.dateRange && filters.dateRange.preset !== 'all') {
+    const { start, end } = getDateRangeFromPreset(
+      filters.dateRange.preset,
+      filters.dateRange.customStart,
+      filters.dateRange.customEnd
+    );
+    if ((start || end) && (!row.createdAt || !isDateInRange(row.createdAt, start, end))) {
+      return false;
+    }
+  }
+  if (
+    !matchesQuickFilterAndClauses(filters.columnClauses, (field, value) =>
+      matchesEqualityField(row, {
+        id: 'quick',
+        field,
+        operator: 'eq',
+        value,
+      })
+    )
+  ) {
+    return false;
+  }
+  return matchesSearch(row, filters.search);
 }

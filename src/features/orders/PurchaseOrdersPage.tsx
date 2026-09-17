@@ -2,9 +2,12 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import {
+  ALL_TIME_DATE_RANGE,
   DateRangeFilterPopover,
   type DateRangeFilterValue,
 } from '@/features/shared/components/DateRangeFilterPopover';
+import { ConditionFilterSheet } from '@/features/shared/components/ConditionFilterSheet';
+import { QuickFilterSheet, createQuickFilterAndClause, countActiveQuickFilterAndClauses, type QuickFilterColumn } from '@/features/shared/components/QuickFilterSheet';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import {
@@ -90,7 +93,15 @@ import {
 import {
   PO_STATUS_FILTER_OPTIONS,
   PO_STATUS_FILTER_LABELS,
+  buildPurchaseOrderFilterFields,
+  matchesPurchaseOrderExtraFilters,
   purchaseOrderMatchesStatusFilter,
+  uniquePoCreatedByNames,
+  uniquePoFromNames,
+  uniquePoNumbers,
+  uniquePoSellerNames,
+  type PurchaseOrderListCondition,
+  type PurchaseOrderQuickColumn,
   type PurchaseOrderStatusFilter,
 } from './utils/purchaseOrderFilters';
 import {
@@ -249,6 +260,8 @@ function RequestedWarehouseSources({
   );
 }
 
+const PurchaseOrderQuickFilterSheet = QuickFilterSheet<PurchaseOrderQuickColumn, PurchaseOrderStatusFilter>;
+
 export default function PurchaseOrdersPage() {
   const { user } = useAuth();
   const {
@@ -270,6 +283,12 @@ export default function PurchaseOrdersPage() {
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'all',
   });
+  const [quickDateRange, setQuickDateRange] = useState(ALL_TIME_DATE_RANGE);
+  const [quickStatus, setQuickStatus] = useState<PurchaseOrderStatusFilter>('all');
+  const [columnClauses, setColumnClauses] = useState(() => [
+    createQuickFilterAndClause<PurchaseOrderQuickColumn>(),
+  ]);
+  const [conditions, setConditions] = useState<PurchaseOrderListCondition[]>([]);
   const [poPage, setPoPage] = useState(1);
   const [sortState, setSortState] =
     useState<TableSortCycleState<PurchaseOrderSortKey>>(createInitialTableSortCycle);
@@ -302,6 +321,10 @@ export default function PurchaseOrdersPage() {
     setSearchQuery(q);
     setStatusFilter('all');
     setDateRangeFilter({ preset: 'all' });
+    setQuickDateRange(ALL_TIME_DATE_RANGE);
+    setQuickStatus('all');
+    setColumnClauses([createQuickFilterAndClause<PurchaseOrderQuickColumn>()]);
+    setConditions([]);
     setPoTab('all');
   }, [searchParams]);
 
@@ -2138,6 +2161,88 @@ export default function PurchaseOrdersPage() {
     });
   }, [purchaseOrders, isTeamLeader, isWarehouse, user?.id, poTab, orderDateRange.end, orderDateRange.start]);
 
+  const extraFilters = useMemo(
+    () => ({
+      conditions,
+      dateRange: quickDateRange,
+      columnClauses,
+      status: quickStatus,
+    }),
+    [conditions, quickDateRange, columnClauses, quickStatus]
+  );
+
+  const poNumbers = useMemo(() => uniquePoNumbers(scopedOrders), [scopedOrders]);
+  const fromNames = useMemo(() => uniquePoFromNames(scopedOrders), [scopedOrders]);
+  const createdByNames = useMemo(() => uniquePoCreatedByNames(scopedOrders), [scopedOrders]);
+  const sellerNames = useMemo(() => uniquePoSellerNames(scopedOrders), [scopedOrders]);
+  const poFilterFields = useMemo(
+    () =>
+      buildPurchaseOrderFilterFields({
+        poNumbers,
+        fromNames,
+        createdByNames,
+        sellerNames,
+        includeFrom: isWarehouse,
+        includeCreatedBy: showCreatedByColumn,
+      }),
+    [poNumbers, fromNames, createdByNames, sellerNames, isWarehouse, showCreatedByColumn]
+  );
+  const poQuickColumns = useMemo((): QuickFilterColumn<PurchaseOrderQuickColumn>[] => {
+    const columns: QuickFilterColumn<PurchaseOrderQuickColumn>[] = [
+      {
+        key: 'poNumber',
+        label: 'PO Number',
+        options: poNumbers.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search PO number...',
+      },
+      {
+        key: 'type',
+        label: 'Type',
+        options: [
+          { value: 'warehouse_transfer', label: 'Internal' },
+          { value: 'supplier', label: 'Supplier' },
+        ],
+        searchPlaceholder: 'Search type...',
+      },
+    ];
+    if (isWarehouse) {
+      columns.push({
+        key: 'from',
+        label: 'From',
+        options: fromNames.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search from...',
+      });
+    }
+    if (showCreatedByColumn) {
+      columns.push({
+        key: 'createdBy',
+        label: 'Created by',
+        options: createdByNames.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search name...',
+      });
+    }
+    columns.push({
+      key: 'seller',
+      label: 'Seller',
+      options: sellerNames.map((value) => ({ value, label: value })),
+      searchPlaceholder: 'Search seller...',
+    });
+    return columns;
+  }, [poNumbers, fromNames, createdByNames, sellerNames, isWarehouse, showCreatedByColumn]);
+  const poStatusOptions = useMemo(
+    () =>
+      PO_STATUS_FILTER_OPTIONS.filter((key) => !isWarehouse || key !== 'draft').map((status) => ({
+        value: status,
+        label: PO_STATUS_FILTER_LABELS[status],
+      })),
+    [isWarehouse]
+  );
+  const clearQuickFilters = () => {
+    setQuickStatus('all');
+    setQuickDateRange(ALL_TIME_DATE_RANGE);
+    setColumnClauses([createQuickFilterAndClause<PurchaseOrderQuickColumn>()]);
+  };
+
   const filteredOrders = useMemo(() => {
     const q = searchQuery.toLowerCase();
     return scopedOrders.filter((order) => {
@@ -2150,8 +2255,8 @@ export default function PurchaseOrdersPage() {
         (order.fulfillment_type === 'warehouse_transfer' &&
           formatPoRequestedWarehouseSummary(order).toLowerCase().includes(q))
       );
-    });
-  }, [scopedOrders, searchQuery, statusFilter]);
+    }).filter((order) => matchesPurchaseOrderExtraFilters(order, extraFilters));
+  }, [scopedOrders, searchQuery, statusFilter, extraFilters]);
 
   const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
     () => resolveTableSortDirection(sortState, DEFAULT_PO_SORT_KEY, DEFAULT_PO_SORT_DIRECTION),
@@ -2171,7 +2276,7 @@ export default function PurchaseOrdersPage() {
 
   useEffect(() => {
     setPoPage(1);
-  }, [searchQuery, poTab, orderDateRange.start, orderDateRange.end, sortState, statusFilter]);
+  }, [searchQuery, poTab, orderDateRange.start, orderDateRange.end, sortState, statusFilter, extraFilters]);
 
   // Pagination: 10 purchase orders per page
   const PO_PER_PAGE = 10;
@@ -2361,6 +2466,28 @@ export default function PurchaseOrdersPage() {
                 align="end"
               />
             )}
+            <PurchaseOrderQuickFilterSheet
+              dateRange={quickDateRange}
+              onDateRangeChange={setQuickDateRange}
+              columns={poQuickColumns}
+              columnClauses={columnClauses}
+              onColumnClausesChange={setColumnClauses}
+              status={quickStatus}
+              statusOptions={poStatusOptions}
+              onStatusChange={setQuickStatus}
+              onClear={clearQuickFilters}
+              triggerClassName="h-10 gap-1.5 shrink-0 flex-1 sm:flex-none"
+            />
+            <ConditionFilterSheet
+              fields={poFilterFields}
+              conditions={conditions}
+              onAddCondition={(condition) => setConditions((current) => [...current, condition])}
+              onRemoveCondition={(id) =>
+                setConditions((current) => current.filter((item) => item.id !== id))
+              }
+              onClear={() => setConditions([])}
+              triggerClassName="h-10 gap-1.5 shrink-0 flex-1 sm:flex-none"
+            />
           </div>
         </CardHeader>
         <CardContent>

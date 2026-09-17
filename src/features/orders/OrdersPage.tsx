@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { getDatePresetLabel, getDateRangeFromPreset, isDateInRange, formatDateForInput } from '@/lib/dateRangePresets';
 import {
+  ALL_TIME_DATE_RANGE,
   DateRangeFilterPopover,
   type DateRangeFilterValue,
 } from '@/features/shared/components/DateRangeFilterPopover';
+import { ConditionFilterSheet } from '@/features/shared/components/ConditionFilterSheet';
+import { QuickFilterSheet, createQuickFilterAndClause, countActiveQuickFilterAndClauses, type QuickFilterColumn } from '@/features/shared/components/QuickFilterSheet';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -38,6 +41,18 @@ import {
   buildOrderBreakdownExportFilename,
   exportOrderBreakdownExcel,
 } from '@/features/orders/utils/exportOrderBreakdownExcel';
+import {
+  buildOrderListFilterFields,
+  matchesOrderListExtraFilters,
+  ORDER_LIST_STATUS_LABELS,
+  ORDER_PAYMENT_METHOD_OPTIONS,
+  uniqueOrderAgentNames,
+  uniqueOrderClientNames,
+  uniqueOrderNumbers,
+  type OrderListCondition,
+  type OrderListQuickColumn,
+  type OrderListQuickStatus,
+} from '@/features/orders/utils/ordersListFilters';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -549,6 +564,8 @@ function OrderTable({
   );
 }
 
+const OrdersQuickFilterSheet = QuickFilterSheet<OrderListQuickColumn, OrderListQuickStatus>;
+
 //orderpage
 export default function OrdersPage() {
   const { getAllOrders, updateOrderStatus } = useOrders();
@@ -560,6 +577,12 @@ export default function OrdersPage() {
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'all',
   });
+  const [quickDateRange, setQuickDateRange] = useState(ALL_TIME_DATE_RANGE);
+  const [quickStatus, setQuickStatus] = useState<OrderListQuickStatus>('all');
+  const [columnClauses, setColumnClauses] = useState(() => [
+    createQuickFilterAndClause<OrderListQuickColumn>(),
+  ]);
+  const [conditions, setConditions] = useState<OrderListCondition[]>([]);
   type OrderListTab = 'pending' | 'approved' | 'rejected' | 'all';
   const [activeOrderTab, setActiveOrderTab] = useState<OrderListTab>('all');
   const [isExportingOrdersFiltered, setIsExportingOrdersFiltered] = useState(false);
@@ -752,6 +775,66 @@ export default function OrdersPage() {
     }
     return [] as Order[];
   }, [orders, canViewCompanyOrders, isLeader, teamMemberIds, user?.id]);
+
+  const extraFilters = useMemo(
+    () => ({
+      conditions,
+      dateRange: quickDateRange,
+      columnClauses,
+      status: quickStatus,
+    }),
+    [conditions, quickDateRange, columnClauses, quickStatus]
+  );
+
+  const orderNumbers = useMemo(() => uniqueOrderNumbers(visibleOrders), [visibleOrders]);
+  const clientNames = useMemo(() => uniqueOrderClientNames(visibleOrders), [visibleOrders]);
+  const agentNames = useMemo(() => uniqueOrderAgentNames(visibleOrders), [visibleOrders]);
+  const orderFilterFields = useMemo(
+    () => buildOrderListFilterFields({ orderNumbers, clientNames, agentNames, includeAgent: true }),
+    [orderNumbers, clientNames, agentNames]
+  );
+  const orderQuickColumns = useMemo(
+    (): QuickFilterColumn<OrderListQuickColumn>[] => [
+      {
+        key: 'orderNumber',
+        label: 'Order Number',
+        options: orderNumbers.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search order number...',
+      },
+      {
+        key: 'client',
+        label: 'Client',
+        options: clientNames.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search client...',
+      },
+      {
+        key: 'agent',
+        label: 'Sales Agent',
+        options: agentNames.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search agent...',
+      },
+      {
+        key: 'paymentMethod',
+        label: 'Payment',
+        options: ORDER_PAYMENT_METHOD_OPTIONS.map((option) => ({ value: option.value, label: option.label })),
+        searchPlaceholder: 'Search payment...',
+      },
+    ],
+    [orderNumbers, clientNames, agentNames]
+  );
+  const orderStatusOptions = useMemo(
+    () =>
+      (['all', 'pending', 'approved', 'rejected', 'needs_revision'] as OrderListQuickStatus[]).map((status) => ({
+        value: status,
+        label: ORDER_LIST_STATUS_LABELS[status],
+      })),
+    []
+  );
+  const clearQuickFilters = () => {
+    setQuickStatus('all');
+    setQuickDateRange(ALL_TIME_DATE_RANGE);
+    setColumnClauses([createQuickFilterAndClause<OrderListQuickColumn>()]);
+  };
 
   // Team summary logic removed
   // Build team agent list (leaders only) from visible orders
@@ -1089,7 +1172,7 @@ export default function OrdersPage() {
         o.agentName.toLowerCase().includes(searchQuery.toLowerCase())
       );
     }
-    return filtered;
+    return filtered.filter((order) => matchesOrderListExtraFilters(order, extraFilters));
   };
 
   // -------------------------
@@ -1134,7 +1217,11 @@ export default function OrdersPage() {
     dateRangeFilter.preset !== 'all' ||
     searchQuery.trim().length > 0 ||
     selectedPaymentMethod !== 'all' ||
-    activeOrderTab !== 'all';
+    activeOrderTab !== 'all' ||
+    quickDateRange.preset !== 'all' ||
+    quickStatus !== 'all' ||
+    countActiveQuickFilterAndClauses(columnClauses) > 0 ||
+    conditions.length > 0;
 
   const filteredOrdersForExport = getFilteredOrdersForExport();
   const canExportFiltered =
@@ -2231,6 +2318,30 @@ export default function OrdersPage() {
                 <SelectItem value="GCASH">GCash</SelectItem>
               </SelectContent>
             </Select>
+            <div className="flex w-full md:w-auto gap-2 shrink-0">
+              <OrdersQuickFilterSheet
+                dateRange={quickDateRange}
+                onDateRangeChange={setQuickDateRange}
+                columns={orderQuickColumns}
+                columnClauses={columnClauses}
+                onColumnClausesChange={setColumnClauses}
+                status={quickStatus}
+                statusOptions={orderStatusOptions}
+                onStatusChange={setQuickStatus}
+                onClear={clearQuickFilters}
+                triggerClassName="h-10 gap-1.5 shrink-0 flex-1 md:flex-none"
+              />
+              <ConditionFilterSheet
+                fields={orderFilterFields}
+                conditions={conditions}
+                onAddCondition={(condition) => setConditions((current) => [...current, condition])}
+                onRemoveCondition={(id) =>
+                  setConditions((current) => current.filter((item) => item.id !== id))
+                }
+                onClear={() => setConditions([])}
+                triggerClassName="h-10 gap-1.5 shrink-0 flex-1 md:flex-none"
+              />
+            </div>
           </div>
         </CardHeader>
         <CardContent>

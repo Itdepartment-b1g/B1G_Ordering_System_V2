@@ -1,4 +1,4 @@
-export type ConditionFilterOperator = 'eq' | 'neq' | 'lt' | 'gt' | 'or';
+export type ConditionFilterOperator = 'eq' | 'neq' | 'lt' | 'gt' | 'or' | 'and';
 export type ConditionFilterValueKind = 'select' | 'date' | 'text';
 
 export type ConditionFilterCondition<TField extends string = string> = {
@@ -30,6 +30,7 @@ export type ConditionFilterFieldConfig<TField extends string = string> = {
 export const SELECT_CONDITION_OPERATORS: Array<{ value: ConditionFilterOperator; label: string }> = [
   { value: 'eq', label: '= (is equal)' },
   { value: 'neq', label: '≠ (is not equal)' },
+  { value: 'and', label: '&& (and)' },
   { value: 'or', label: '|| (or)' },
 ];
 
@@ -44,6 +45,7 @@ export function conditionFilterOperatorLabel(operator: ConditionFilterOperator):
   if (operator === 'neq') return 'is not equal';
   if (operator === 'lt') return 'is less than';
   if (operator === 'gt') return 'is greater than';
+  if (operator === 'and') return 'and';
   return 'or';
 }
 
@@ -102,9 +104,12 @@ export function groupedConditionsPass<TField extends string>(
       if (!fieldConditions.every((condition) => handlers.matchDate(condition))) return false;
       continue;
     }
-    const positive = fieldConditions.filter((condition) => condition.operator === 'eq' || condition.operator === 'or');
+    const includeGroup = fieldConditions.filter(
+      (condition) =>
+        condition.operator === 'eq' || condition.operator === 'or' || condition.operator === 'and'
+    );
     const negative = fieldConditions.filter((condition) => condition.operator === 'neq');
-    if (positive.length > 0 && !positive.some((condition) => handlers.matchEquality(condition))) {
+    if (includeGroup.length > 0 && !includeGroup.some((condition) => handlers.matchEquality(condition))) {
       return false;
     }
     if (negative.length > 0 && !negative.every((condition) => !handlers.matchEquality(condition))) {

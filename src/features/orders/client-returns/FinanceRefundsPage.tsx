@@ -29,7 +29,11 @@ import {
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/usePermissions';
+import { ALL_TIME_DATE_RANGE } from '@/features/shared/components/DateRangeFilterPopover';
+import { ConditionFilterSheet } from '@/features/shared/components/ConditionFilterSheet';
+import { QuickFilterSheet, createQuickFilterAndClause, countActiveQuickFilterAndClauses, type QuickFilterColumn } from '@/features/shared/components/QuickFilterSheet';
 import {
+  CLIENT_RETURN_REASON_OPTIONS,
   canReviewClientReturn,
   clientReturnStatusBadgeClass,
   formatClientReturnPeso,
@@ -57,10 +61,27 @@ import {
   sortClientReturnHistory,
   type ClientReturnHistorySortKey,
 } from './utils/clientReturnsSorting';
+import {
+  buildClientReturnHistoryFilterFields,
+  matchesClientReturnHistory,
+  uniqueBrandNames,
+  uniqueClientNames,
+  uniqueFinancePostedNames,
+  uniqueOrderNumbers,
+  uniqueRejectedByNames,
+  uniqueReturnedByNames,
+  uniqueReturnNumbers,
+  uniqueSaApprovedNames,
+  uniqueTlApprovedNames,
+  type ClientReturnHistoryCondition,
+  type ClientReturnHistoryQuickColumn,
+} from './utils/clientReturnsHistoryFilters';
 
 const PAGE_SIZE: PageSize = 25;
 
 type StatusFilter = 'all' | 'pending_super_admin' | 'pending_finance' | 'posted' | 'rejected';
+
+const FinanceQuickFilterSheet = QuickFilterSheet<ClientReturnHistoryQuickColumn, StatusFilter>;
 
 function ReturnStatusBadge({ status }: { status: PreviewClientReturnStatus }) {
   return (
@@ -212,6 +233,12 @@ export default function FinanceRefundsPage() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('pending_finance');
+  const [quickDateRange, setQuickDateRange] = useState(ALL_TIME_DATE_RANGE);
+  const [quickStatus, setQuickStatus] = useState<StatusFilter>('all');
+  const [columnClauses, setColumnClauses] = useState(() => [
+    createQuickFilterAndClause<ClientReturnHistoryQuickColumn>(),
+  ]);
+  const [conditions, setConditions] = useState<ClientReturnHistoryCondition[]>([]);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(PAGE_SIZE);
   const [viewRow, setViewRow] = useState<PreviewClientReturn | null>(null);
@@ -235,10 +262,146 @@ export default function FinanceRefundsPage() {
     [refunds]
   );
 
+  const extraFilters = useMemo(
+    () => ({
+      conditions,
+      search: '',
+      status: quickStatus,
+      role: user?.role,
+      dateRange: quickDateRange,
+      columnClauses,
+    }),
+    [conditions, quickStatus, user?.role, quickDateRange, columnClauses]
+  );
+
+  const returnedByOptions = useMemo(() => uniqueReturnedByNames(refunds), [refunds]);
+  const returnNumberOptions = useMemo(() => uniqueReturnNumbers(refunds), [refunds]);
+  const orderNumberOptions = useMemo(() => uniqueOrderNumbers(refunds), [refunds]);
+  const clientNameOptions = useMemo(() => uniqueClientNames(refunds), [refunds]);
+  const brandNameOptions = useMemo(() => uniqueBrandNames(refunds), [refunds]);
+  const tlApprovedOptions = useMemo(() => uniqueTlApprovedNames(refunds), [refunds]);
+  const saApprovedOptions = useMemo(() => uniqueSaApprovedNames(refunds), [refunds]);
+  const financePostedOptions = useMemo(() => uniqueFinancePostedNames(refunds), [refunds]);
+  const rejectedByOptions = useMemo(() => uniqueRejectedByNames(refunds), [refunds]);
+
+  const historyFilterFields = useMemo(
+    () =>
+      buildClientReturnHistoryFilterFields({
+        counts: {
+          all: refunds.length,
+          open: 0,
+          needs_action: 0,
+          pending_leader: 0,
+          pending_super_admin: counts.pending_super_admin,
+          pending_finance: counts.pending_finance,
+          posted: counts.posted,
+          rejected: counts.rejected,
+        },
+        typeCounts: { all: refunds.length, change_item: 0, refund: refunds.length },
+        returnNumberOptions,
+        orderNumberOptions,
+        returnedByOptions,
+        tlApprovedOptions,
+        saApprovedOptions,
+        financePostedOptions,
+        rejectedByOptions,
+      }),
+    [
+      refunds.length,
+      counts,
+      returnNumberOptions,
+      orderNumberOptions,
+      returnedByOptions,
+      tlApprovedOptions,
+      saApprovedOptions,
+      financePostedOptions,
+      rejectedByOptions,
+    ]
+  );
+
+  const historyQuickColumns = useMemo(
+    (): QuickFilterColumn<ClientReturnHistoryQuickColumn>[] => [
+      {
+        key: 'returnNumber',
+        label: 'Return Number',
+        options: returnNumberOptions.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search return number...',
+      },
+      {
+        key: 'orderNumber',
+        label: 'Order Number',
+        options: orderNumberOptions.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search order number...',
+      },
+      {
+        key: 'client',
+        label: 'Client',
+        options: clientNameOptions.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search client...',
+      },
+      {
+        key: 'returnedBy',
+        label: 'Returned by',
+        options: returnedByOptions.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search person...',
+      },
+      {
+        key: 'brand',
+        label: 'Brand',
+        options: brandNameOptions.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search brand...',
+      },
+      {
+        key: 'reason',
+        label: 'Reason',
+        options: CLIENT_RETURN_REASON_OPTIONS.map((option) => ({ value: option.value, label: option.label })),
+        searchPlaceholder: 'Search reason...',
+      },
+      {
+        key: 'financePosted',
+        label: 'Finance posted',
+        options: financePostedOptions.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search name...',
+      },
+      {
+        key: 'rejectedBy',
+        label: 'Rejected by',
+        options: rejectedByOptions.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search name...',
+      },
+    ],
+    [
+      returnNumberOptions,
+      orderNumberOptions,
+      clientNameOptions,
+      returnedByOptions,
+      brandNameOptions,
+      financePostedOptions,
+      rejectedByOptions,
+    ]
+  );
+
+  const historyStatusOptions = useMemo(
+    () =>
+      (['all', 'pending_super_admin', 'pending_finance', 'posted', 'rejected'] as StatusFilter[]).map((status) => ({
+        value: status,
+        label: status === 'all' ? 'All' : formatClientReturnStatus(status),
+        count: counts[status],
+      })),
+    [counts]
+  );
+
+  const clearQuickFilters = () => {
+    setQuickStatus('all');
+    setQuickDateRange(ALL_TIME_DATE_RANGE);
+    setColumnClauses([createQuickFilterAndClause<ClientReturnHistoryQuickColumn>()]);
+  };
+
   const filtered = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     const matched = refunds.filter((row) => {
       if (statusFilter !== 'all' && row.status !== statusFilter) return false;
+      if (!matchesClientReturnHistory(row, extraFilters)) return false;
       if (!query) return true;
       const haystack = [
         row.returnNumber,
@@ -259,11 +422,11 @@ export default function FinanceRefundsPage() {
       DEFAULT_CLIENT_RETURN_HISTORY_SORT_DIRECTION
     );
     return sortClientReturnHistory(matched, key, direction);
-  }, [refunds, searchQuery, statusFilter, historySortState]);
+  }, [refunds, searchQuery, statusFilter, extraFilters, historySortState]);
 
   useEffect(() => {
     setPage(0);
-  }, [searchQuery, statusFilter, historySortState, pageSize]);
+  }, [searchQuery, statusFilter, extraFilters, historySortState, pageSize]);
 
   useEffect(() => {
     setViewRow((current) => {
@@ -444,13 +607,35 @@ export default function FinanceRefundsPage() {
                   );
                 })}
               </div>
-              <div className="relative w-full md:max-w-64 md:ml-auto">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search CR, ORD, client..."
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  className="pl-10"
+              <div className="flex w-full md:w-auto md:ml-auto gap-2 shrink-0">
+                <div className="relative w-full md:w-64">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search CR, ORD, client..."
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    className="pl-10"
+                  />
+                </div>
+                <FinanceQuickFilterSheet
+                  dateRange={quickDateRange}
+                  onDateRangeChange={setQuickDateRange}
+                  columns={historyQuickColumns}
+                  columnClauses={columnClauses}
+                  onColumnClausesChange={setColumnClauses}
+                  status={quickStatus}
+                  statusOptions={historyStatusOptions}
+                  onStatusChange={setQuickStatus}
+                  onClear={clearQuickFilters}
+                />
+                <ConditionFilterSheet
+                  fields={historyFilterFields}
+                  conditions={conditions}
+                  onAddCondition={(condition) => setConditions((current) => [...current, condition])}
+                  onRemoveCondition={(id) =>
+                    setConditions((current) => current.filter((item) => item.id !== id))
+                  }
+                  onClear={() => setConditions([])}
                 />
               </div>
             </div>

@@ -17,12 +17,15 @@ export type DateRangeFilterValue = {
   customEnd?: Date;
 };
 
+export const ALL_TIME_DATE_RANGE: DateRangeFilterValue = { preset: 'all' };
+
 type DateRangeFilterPopoverProps = {
   value: DateRangeFilterValue;
   onChange: (value: DateRangeFilterValue) => void;
   className?: string;
   triggerClassName?: string;
   align?: 'start' | 'center' | 'end';
+  modal?: boolean;
 };
 
 export function DateRangeFilterPopover({
@@ -31,6 +34,7 @@ export function DateRangeFilterPopover({
   className,
   triggerClassName,
   align = 'start',
+  modal = false,
 }: DateRangeFilterPopoverProps) {
   const [open, setOpen] = useState(false);
   const { preset, customStart, customEnd } = value;
@@ -47,7 +51,7 @@ export function DateRangeFilterPopover({
   const label = getDatePresetLabel(preset, customStart, customEnd);
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={setOpen} modal={modal}>
       <PopoverTrigger asChild>
         <Button
           variant="outline"
