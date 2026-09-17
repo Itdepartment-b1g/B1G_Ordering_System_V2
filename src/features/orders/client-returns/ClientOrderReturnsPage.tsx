@@ -1,13 +1,19 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { Check, ChevronDown, ClipboardList, Eye, LayoutGrid, List, Loader2, Package, RotateCcw, Search, Truck, X } from 'lucide-react';
+import { Check, ChevronDown, ClipboardList, Clock, Eye, LayoutGrid, List, Loader2, MoreVertical, Package, Printer, RotateCcw, Search, Truck, X } from 'lucide-react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   getListPaginationSlice,
   ListPagination,
@@ -49,7 +55,10 @@ import {
 import { BrandReturnedTable, groupLinesByBrand } from './ClientReturnBrandTable';
 import { ClientReturnExpandedMeta } from './ClientReturnExpandedMeta';
 import { ClientReturnViewDialog } from './ClientReturnViewDialog';
+import { ClientOrderReturnTimeline } from './ClientOrderReturnTimeline';
+import { generateAndOpenClientReturnPdf } from './generateClientReturnPdf';
 import { ReturnedInventoryPanel } from './ReturnedInventoryPanel';
+import { useOrders, type Order } from '../OrderContext';
 import { ReturnedStockDetailDialog } from './ReturnedStockDetailDialog';
 import { ReturnLeaderViewDialog } from './ReturnLeaderViewDialog';
 import { ReturnToLeaderPanel } from './ReturnToLeaderPanel';
@@ -75,7 +84,7 @@ import {
 
 const HISTORY_PAGE_SIZE: PageSize = 25;
 const VIEW_MODE_KEY = 'client-order-returns-view';
-const TABLE_MIN_WIDTH = 'min-w-[86rem]';
+const TABLE_MIN_WIDTH = 'min-w-[92rem]';
 
 type HistoryViewMode = 'table' | 'cards';
 type StatusFilter =
@@ -148,6 +157,75 @@ function ReturnedBrandBadges({ brands }: { brands: string[] }) {
   );
 }
 
+function orderFromReturn(row: PreviewClientReturn, orders: Order[]): Order | null {
+  if (!row.clientOrderId) return null;
+  const found = orders.find((order) => order.id === row.clientOrderId);
+  if (found) return found;
+  return {
+    id: row.clientOrderId,
+    orderNumber: row.orderNumber,
+    agentId: row.originalAgentId || row.returnedBy || '',
+    agentName: row.returnedByName,
+    clientId: '',
+    clientName: row.clientName,
+    date: row.returnDate,
+    createdAt: row.createdAt,
+    items: [],
+    subtotal: 0,
+    tax: 0,
+    discount: 0,
+    total: 0,
+    notes: '',
+    status: 'approved',
+  };
+}
+
+function ReturnRowMenu({
+  row,
+  onView,
+  onOpenTimeline,
+  onPrint,
+}: {
+  row: PreviewClientReturn;
+  onView: () => void;
+  onOpenTimeline?: () => void;
+  onPrint?: () => void;
+}) {
+  return (
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          aria-label={`Actions for ${row.returnNumber}`}
+        >
+          <MoreVertical className="h-4 w-4 text-gray-600" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuItem onSelect={() => window.setTimeout(onView, 0)}>
+          <Eye className="h-4 w-4 mr-2" />
+          View
+        </DropdownMenuItem>
+        {onOpenTimeline ? (
+          <DropdownMenuItem onSelect={() => window.setTimeout(onOpenTimeline, 0)}>
+            <Clock className="h-4 w-4 mr-2" />
+            Order timeline
+          </DropdownMenuItem>
+        ) : null}
+        {onPrint ? (
+          <DropdownMenuItem onSelect={() => window.setTimeout(onPrint, 0)}>
+            <Printer className="h-4 w-4 mr-2" />
+            Print
+          </DropdownMenuItem>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function PendingReturnActions({
   onApprove,
   onReject,
@@ -198,12 +276,16 @@ function ReturnHistoryCard({
   row,
   canReview,
   onView,
+  onOpenTimeline,
+  onPrint,
   onApprove,
   onReject,
 }: {
   row: PreviewClientReturn;
   canReview: boolean;
   onView: () => void;
+  onOpenTimeline: () => void;
+  onPrint: () => void;
   onApprove: () => void;
   onReject: () => void;
 }) {
@@ -224,16 +306,7 @@ function ReturnHistoryCard({
             <ReturnStatusBadge status={row.status} />
           </div>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          className="h-10 w-10 shrink-0 rounded-full"
-          onClick={onView}
-          aria-label={`View ${row.returnNumber}`}
-        >
-          <Eye className="h-4 w-4" />
-        </Button>
+        <ReturnRowMenu row={row} onView={onView} onOpenTimeline={onOpenTimeline} onPrint={onPrint} />
       </div>
 
       <h3 className="text-lg sm:text-xl font-bold tracking-tight mt-3 truncate">{row.clientName}</h3>
@@ -413,10 +486,10 @@ export default function ClientOrderReturnsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { orders } = useOrders();
   const { hasWarehouseHubLink } = usePermissions();
   const isLeader = user?.role === 'team_leader';
   const isSuperAdmin = user?.role === 'super_admin';
-  const showHistoryActions = isLeader || isSuperAdmin;
   const canBulkReturn = canCreateReturnLeader(user?.role);
   const showReturns = canShowClientOrderReturns(hasWarehouseHubLink, user?.role);
 
@@ -443,6 +516,8 @@ export default function ClientOrderReturnsPage() {
   const [actionRow, setActionRow] = useState<PreviewClientReturn | null>(null);
   const [confirmKind, setConfirmKind] = useState<'approve' | 'reject' | null>(null);
   const [acting, setActing] = useState(false);
+  const [timelineOrder, setTimelineOrder] = useState<Order | null>(null);
+  const [timelineOpen, setTimelineOpen] = useState(false);
   const [pageTab, setPageTab] = useState<PageTab>('history');
   const [inventoryRow, setInventoryRow] = useState<ReturnedInventoryRow | null>(null);
   const [rlViewRow, setRlViewRow] = useState<ReturnLeaderHandover | null>(null);
@@ -546,6 +621,7 @@ export default function ClientOrderReturnsPage() {
   const startApprove = (row: PreviewClientReturn) => {
     if (!canReviewClientReturn(user?.role, row)) return;
     setViewRow(null);
+    setTimelineOpen(false);
     setActionRow(row);
     setConfirmKind('approve');
   };
@@ -553,8 +629,30 @@ export default function ClientOrderReturnsPage() {
   const startReject = (row: PreviewClientReturn) => {
     if (!canReviewClientReturn(user?.role, row)) return;
     setViewRow(null);
+    setTimelineOpen(false);
     setActionRow(row);
     setConfirmKind('reject');
+  };
+
+  const openTimeline = (row: PreviewClientReturn) => {
+    const order = orderFromReturn(row, orders);
+    if (!order) {
+      toast({
+        title: 'Timeline unavailable',
+        description: 'This return is not linked to an order.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    setViewRow(null);
+    setConfirmKind(null);
+    setActionRow(null);
+    setTimelineOrder(order);
+    setTimelineOpen(true);
+  };
+
+  const handlePrintReturn = (row: PreviewClientReturn) => {
+    generateAndOpenClientReturnPdf(row);
   };
 
   const setAndStoreViewMode = (mode: HistoryViewMode) => {
@@ -874,6 +972,8 @@ export default function ClientOrderReturnsPage() {
                       row={row}
                       canReview={canReviewClientReturn(user?.role, row)}
                       onView={() => setViewRow(row)}
+                      onOpenTimeline={() => openTimeline(row)}
+                      onPrint={() => handlePrintReturn(row)}
                       onApprove={() => startApprove(row)}
                       onReject={() => startReject(row)}
                     />
@@ -951,7 +1051,7 @@ export default function ClientOrderReturnsPage() {
                           onSort={handleHistorySort}
                           className="w-16 text-right"
                         />
-                        {showHistoryActions ? <TableHead className="w-[12rem] text-right">Action</TableHead> : null}
+                        <TableHead className="w-[14rem] text-right">Action</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -959,7 +1059,7 @@ export default function ClientOrderReturnsPage() {
                         const qty = getPreviewReturnLineQty(row);
                         const actor = getReturnActionActor(row);
                         const isOpen = expandedRows.has(row.id);
-                        const colSpan = showHistoryActions ? 12 : 11;
+                        const colSpan = 12;
                         return (
                           <Fragment key={row.id}>
                             <TableRow className={isOpen ? 'bg-muted/20' : undefined}>
@@ -1013,16 +1113,22 @@ export default function ClientOrderReturnsPage() {
                               <TableCell className="align-top text-right font-semibold tabular-nums text-rose-700">
                                 {qty}
                               </TableCell>
-                              {showHistoryActions ? (
-                                <TableCell className="align-top text-right">
+                              <TableCell className="align-top text-right">
+                                <div className="flex items-center justify-end gap-1.5">
                                   {canReviewClientReturn(user?.role, row) ? (
                                     <PendingReturnActions
                                       onApprove={() => startApprove(row)}
                                       onReject={() => startReject(row)}
                                     />
                                   ) : null}
-                                </TableCell>
-                              ) : null}
+                                  <ReturnRowMenu
+                                    row={row}
+                                    onView={() => setViewRow(row)}
+                                    onOpenTimeline={() => openTimeline(row)}
+                                    onPrint={() => handlePrintReturn(row)}
+                                  />
+                                </div>
+                              </TableCell>
                             </TableRow>
                             {isOpen ? (
                               <TableRow className="hover:bg-transparent">
@@ -1160,6 +1266,15 @@ export default function ClientOrderReturnsPage() {
           if (!open) setViewRow(null);
         }}
         row={viewRow}
+      />
+
+      <ClientOrderReturnTimeline
+        open={timelineOpen && !!timelineOrder}
+        onOpenChange={(open) => {
+          setTimelineOpen(open);
+          if (!open) setTimelineOrder(null);
+        }}
+        order={timelineOrder}
       />
 
       <ClientReturnViewDialog

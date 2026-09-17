@@ -13,7 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Search, CheckCircle, XCircle, Eye, Package, ChevronLeft, ChevronRight, CheckSquare, AlertCircle, Filter, Download, Upload, Loader2, RotateCcw, FileDown, Printer, Clock, MoreVertical } from 'lucide-react';
+import { Search, CheckCircle, ClipboardCheck, XCircle, Eye, Package, ChevronLeft, ChevronRight, CheckSquare, AlertCircle, Filter, Download, Upload, Loader2, RotateCcw, FileDown, Printer, Clock, MoreVertical } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   DropdownMenu,
@@ -111,21 +111,80 @@ function formatApprovedAt(approvedAt?: string) {
   });
 }
 
+function isPendingFinanceReview(order: Order) {
+  return (
+    (order.stage === 'finance_pending' || order.status === 'pending') &&
+    order.stage !== 'needs_revision'
+  );
+}
+
 type OrderTableProps = {
   orderList: Order[];
   onViewOrder: (order: Order) => void;
   onOpenTimeline?: (order: Order) => void;
+  onPrintOrder?: (order: Order) => void;
+  onReviewPending?: (order: Order) => void;
   showApprovedAt?: boolean;
 };
+
+function PendingOrderActions({
+  onReview,
+  onReject,
+  layout = 'row',
+}: {
+  onReview: () => void;
+  onReject: () => void;
+  layout?: 'row' | 'stack';
+}) {
+  return (
+    <div
+      className={
+        layout === 'stack'
+          ? 'grid grid-cols-2 gap-2 w-full'
+          : 'flex items-center justify-end gap-1.5 shrink-0'
+      }
+    >
+      <Button
+        type="button"
+        size="sm"
+        className={
+          layout === 'stack'
+            ? 'h-10 w-full bg-emerald-600 hover:bg-emerald-700'
+            : 'h-8 px-2 bg-emerald-600 hover:bg-emerald-700'
+        }
+        onClick={onReview}
+      >
+        <ClipboardCheck className="h-3.5 w-3.5" />
+        Review
+      </Button>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className={
+          layout === 'stack'
+            ? 'h-10 w-full text-red-700 border-red-200 hover:bg-red-50'
+            : 'h-8 px-2 text-red-700 border-red-200 hover:bg-red-50'
+        }
+        onClick={onReject}
+      >
+        <XCircle className="h-3.5 w-3.5" />
+        Reject
+      </Button>
+    </div>
+  );
+}
 
 function OrderRowActions({
   order,
   onViewOrder,
   onOpenTimeline,
+  onPrintOrder,
 }: {
   order: Order;
   onViewOrder: (order: Order) => void;
   onOpenTimeline?: (order: Order) => void;
+  onPrintOrder?: (order: Order) => void;
 }) {
   if (!onOpenTimeline) {
     return (
@@ -163,12 +222,25 @@ function OrderRowActions({
           <Clock className="h-4 w-4 mr-2" />
           Order timeline
         </DropdownMenuItem>
+        {onPrintOrder ? (
+          <DropdownMenuItem onSelect={() => window.setTimeout(() => onPrintOrder(order), 0)}>
+            <Printer className="h-4 w-4 mr-2" />
+            Print
+          </DropdownMenuItem>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );
 }
 
-function OrderTable({ orderList, onViewOrder, onOpenTimeline, showApprovedAt = false }: OrderTableProps) {
+function OrderTable({
+  orderList,
+  onViewOrder,
+  onOpenTimeline,
+  onPrintOrder,
+  onReviewPending,
+  showApprovedAt = false,
+}: OrderTableProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const [sortState, setSortState] =
     useState<TableSortCycleState<ClientOrderListSortKey>>(createInitialTableSortCycle);
@@ -274,18 +346,28 @@ function OrderTable({ orderList, onViewOrder, onOpenTimeline, showApprovedAt = f
                     <span>₱{order.total.toLocaleString()}</span>
                   </div>
                 </div>
-                <div className="mt-3 flex justify-end gap-1">
-                  {onOpenTimeline ? (
-                    <OrderRowActions
-                      order={order}
-                      onViewOrder={onViewOrder}
-                      onOpenTimeline={onOpenTimeline}
+                <div className="mt-3 space-y-2">
+                  {onReviewPending && isPendingFinanceReview(order) ? (
+                    <PendingOrderActions
+                      layout="stack"
+                      onReview={() => onReviewPending(order)}
+                      onReject={() => onReviewPending(order)}
                     />
-                  ) : (
-                    <Button variant="ghost" size="sm" onClick={() => onViewOrder(order)}>
-                      <Eye className="h-4 w-4 mr-1" /> View
-                    </Button>
-                  )}
+                  ) : null}
+                  <div className="flex justify-end gap-1">
+                    {onOpenTimeline ? (
+                      <OrderRowActions
+                        order={order}
+                        onViewOrder={onViewOrder}
+                        onOpenTimeline={onOpenTimeline}
+                        onPrintOrder={onPrintOrder}
+                      />
+                    ) : (
+                      <Button variant="ghost" size="sm" onClick={() => onViewOrder(order)}>
+                        <Eye className="h-4 w-4 mr-1" /> View
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
@@ -390,11 +472,20 @@ function OrderTable({ orderList, onViewOrder, onOpenTimeline, showApprovedAt = f
                       </div>
                     </TableCell>
                     <TableCell className="text-right">
-                      <OrderRowActions
-                        order={order}
-                        onViewOrder={onViewOrder}
-                        onOpenTimeline={onOpenTimeline}
-                      />
+                      <div className="flex items-center justify-end gap-1.5">
+                        {onReviewPending && isPendingFinanceReview(order) ? (
+                          <PendingOrderActions
+                            onReview={() => onReviewPending(order)}
+                            onReject={() => onReviewPending(order)}
+                          />
+                        ) : null}
+                        <OrderRowActions
+                          order={order}
+                          onViewOrder={onViewOrder}
+                          onOpenTimeline={onOpenTimeline}
+                          onPrintOrder={onPrintOrder}
+                        />
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -2175,6 +2266,8 @@ export default function OrdersPage() {
                 orderList={filterOrders('pending')}
                 onViewOrder={handleViewOrder}
                 onOpenTimeline={canOpenTimeline ? handleOpenTimeline : undefined}
+                onPrintOrder={canPrintOrderReceipt ? handlePrintOrderReceipt : undefined}
+                onReviewPending={isFinance ? handleViewOrder : undefined}
                 showApprovedAt={canSeeApprovedAt}
               />
             </TabsContent>
@@ -2183,6 +2276,8 @@ export default function OrdersPage() {
                 orderList={filterOrders('approved')}
                 onViewOrder={handleViewOrder}
                 onOpenTimeline={canOpenTimeline ? handleOpenTimeline : undefined}
+                onPrintOrder={canPrintOrderReceipt ? handlePrintOrderReceipt : undefined}
+                onReviewPending={isFinance ? handleViewOrder : undefined}
                 showApprovedAt={canSeeApprovedAt}
               />
             </TabsContent>
@@ -2191,6 +2286,8 @@ export default function OrdersPage() {
                 orderList={filterOrders('rejected')}
                 onViewOrder={handleViewOrder}
                 onOpenTimeline={canOpenTimeline ? handleOpenTimeline : undefined}
+                onPrintOrder={canPrintOrderReceipt ? handlePrintOrderReceipt : undefined}
+                onReviewPending={isFinance ? handleViewOrder : undefined}
                 showApprovedAt={canSeeApprovedAt}
               />
             </TabsContent>
@@ -2199,6 +2296,8 @@ export default function OrdersPage() {
                 orderList={filterOrders()}
                 onViewOrder={handleViewOrder}
                 onOpenTimeline={canOpenTimeline ? handleOpenTimeline : undefined}
+                onPrintOrder={canPrintOrderReceipt ? handlePrintOrderReceipt : undefined}
+                onReviewPending={isFinance ? handleViewOrder : undefined}
                 showApprovedAt={canSeeApprovedAt}
               />
             </TabsContent>
@@ -3032,6 +3131,16 @@ export default function OrdersPage() {
                                     <Clock className="h-4 w-4 mr-2" />
                                     Order timeline
                                   </DropdownMenuItem>
+                                  {canPrintOrderReceipt ? (
+                                    <DropdownMenuItem
+                                      onSelect={() =>
+                                        window.setTimeout(() => handlePrintOrderReceipt(order), 0)
+                                      }
+                                    >
+                                      <Printer className="h-4 w-4 mr-2" />
+                                      Print
+                                    </DropdownMenuItem>
+                                  ) : null}
                                 </DropdownMenuContent>
                               </DropdownMenu>
                             ) : (
