@@ -708,6 +708,7 @@ export default function OrdersPage() {
 
   const handleOpenTimeline = (order: Order) => {
     setViewDialogOpen(false);
+    setBulkViewDialogOpen(false);
     setTimelineOrder(order);
     setTimelineDialogOpen(true);
   };
@@ -2362,18 +2363,36 @@ export default function OrdersPage() {
               <DialogTitle>Order Details</DialogTitle>
               <DialogDescription>Review details and take action on this order.</DialogDescription>
             </div>
-            <div className="flex shrink-0 flex-wrap gap-2">
-              {canOpenTimeline && viewingOrder && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleOpenTimeline(viewingOrder)}
-                >
-                  <Clock className="h-4 w-4 mr-2" />
-                  Timeline
-                </Button>
-              )}
-              {canPrintOrderReceipt && viewingOrder && (
+            <div className="flex shrink-0 items-center gap-2">
+              {viewingOrder && canOpenTimeline ? (
+                <DropdownMenu modal={false}>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8 shrink-0"
+                      aria-label="Order actions"
+                    >
+                      <MoreVertical className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48">
+                    <DropdownMenuItem
+                      onSelect={() => window.setTimeout(() => handleOpenTimeline(viewingOrder), 0)}
+                    >
+                      <Clock className="h-4 w-4 mr-2" />
+                      Order timeline
+                    </DropdownMenuItem>
+                    {canPrintOrderReceipt ? (
+                      <DropdownMenuItem onSelect={() => handlePrintOrderReceipt(viewingOrder)}>
+                        <Printer className="h-4 w-4 mr-2" />
+                        Print
+                      </DropdownMenuItem>
+                    ) : null}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : viewingOrder && canPrintOrderReceipt ? (
                 <Button
                   variant="outline"
                   size="sm"
@@ -2382,7 +2401,7 @@ export default function OrdersPage() {
                   <Printer className="h-4 w-4 mr-2" />
                   Print
                 </Button>
-              )}
+              ) : null}
             </div>
           </DialogHeader>
           {viewingOrder && (
@@ -2987,14 +3006,44 @@ export default function OrdersPage() {
                             ₱{order.total.toLocaleString()}
                           </TableCell>
                           <TableCell className="text-right">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleViewOrderInBulk(order)}
-                            >
-                              <Eye className="h-4 w-4 mr-1" />
-                              View
-                            </Button>
+                            {canOpenTimeline ? (
+                              <DropdownMenu modal={false}>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    aria-label={`Actions for ${order.orderNumber}`}
+                                  >
+                                    <MoreVertical className="h-4 w-4 text-gray-600" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-48">
+                                  <DropdownMenuItem
+                                    onSelect={() => window.setTimeout(() => handleViewOrderInBulk(order), 0)}
+                                  >
+                                    <Eye className="h-4 w-4 mr-2" />
+                                    View
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onSelect={() => window.setTimeout(() => handleOpenTimeline(order), 0)}
+                                  >
+                                    <Clock className="h-4 w-4 mr-2" />
+                                    Order timeline
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleViewOrderInBulk(order)}
+                              >
+                                <Eye className="h-4 w-4 mr-1" />
+                                View
+                              </Button>
+                            )}
                           </TableCell>
                         </TableRow>
                       ))}
@@ -3054,7 +3103,35 @@ export default function OrdersPage() {
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
             <DialogTitle>Order Details - {viewingOrderInBulk?.orderNumber}</DialogTitle>
-            {canPrintOrderReceipt && viewingOrderInBulk && (
+            {viewingOrderInBulk && canOpenTimeline ? (
+              <DropdownMenu modal={false}>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8 shrink-0"
+                    aria-label="Order actions"
+                  >
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuItem
+                    onSelect={() => window.setTimeout(() => handleOpenTimeline(viewingOrderInBulk), 0)}
+                  >
+                    <Clock className="h-4 w-4 mr-2" />
+                    Order timeline
+                  </DropdownMenuItem>
+                  {canPrintOrderReceipt ? (
+                    <DropdownMenuItem onSelect={() => handlePrintOrderReceipt(viewingOrderInBulk)}>
+                      <Printer className="h-4 w-4 mr-2" />
+                      Print
+                    </DropdownMenuItem>
+                  ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : viewingOrderInBulk && canPrintOrderReceipt ? (
               <Button
                 variant="outline"
                 size="sm"
@@ -3064,7 +3141,7 @@ export default function OrdersPage() {
                 <Printer className="h-4 w-4 mr-2" />
                 Print
               </Button>
-            )}
+            ) : null}
           </DialogHeader>
 
           {viewingOrderInBulk && (

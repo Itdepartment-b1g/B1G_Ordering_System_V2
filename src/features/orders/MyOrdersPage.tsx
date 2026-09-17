@@ -701,45 +701,74 @@ export default function MyOrdersPage() {
     setTimelineDialogOpen(true);
   };
 
-  const orderActionsMenu = (order: Order) => (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 shrink-0"
-          aria-label={`Actions for ${order.orderNumber}`}
-        >
-          <MoreVertical className="h-4 w-4" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-48">
-        <DropdownMenuItem onSelect={() => window.setTimeout(() => handleViewOrder(order), 0)}>
-          <Eye className="h-4 w-4 mr-2" />
-          View
-        </DropdownMenuItem>
-        {showClientReturns ? (
+  const orderActionsMenu = (order: Order) => {
+    if (!showClientReturns) {
+      return (
+        <div className="flex items-center justify-center gap-0.5">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            title="View Order Details"
+            onClick={() => handleViewOrder(order)}
+          >
+            <Eye className="h-4 w-4" />
+          </Button>
+          {order.stage === 'needs_revision' ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0"
+              title="Edit order"
+              onClick={() => handleEditOrder(order)}
+            >
+              <Pencil className="h-4 w-4" />
+            </Button>
+          ) : null}
+        </div>
+      );
+    }
+
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            aria-label={`Actions for ${order.orderNumber}`}
+          >
+            <MoreVertical className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-48">
+          <DropdownMenuItem onSelect={() => window.setTimeout(() => handleViewOrder(order), 0)}>
+            <Eye className="h-4 w-4 mr-2" />
+            View
+          </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => window.setTimeout(() => openOrderTimeline(order), 0)}>
             <Clock className="h-4 w-4 mr-2" />
             Order timeline
           </DropdownMenuItem>
-        ) : null}
-        {canShowClientReturn(order) ? (
-          <DropdownMenuItem onSelect={() => openClientReturn(order)}>
-            <RotateCcw className="h-4 w-4 mr-2" />
-            Return order
-          </DropdownMenuItem>
-        ) : null}
-        {order.stage === 'needs_revision' ? (
-          <DropdownMenuItem onSelect={() => handleEditOrder(order)}>
-            <Pencil className="h-4 w-4 mr-2" />
-            Edit
-          </DropdownMenuItem>
-        ) : null}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
+          {canShowClientReturn(order) ? (
+            <DropdownMenuItem onSelect={() => openClientReturn(order)}>
+              <RotateCcw className="h-4 w-4 mr-2" />
+              Return order
+            </DropdownMenuItem>
+          ) : null}
+          {order.stage === 'needs_revision' ? (
+            <DropdownMenuItem onSelect={() => handleEditOrder(order)}>
+              <Pencil className="h-4 w-4 mr-2" />
+              Edit
+            </DropdownMenuItem>
+          ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  };
 
   const handlePrintOrderReceipt = (order: Order) => {
     try {
@@ -4294,41 +4323,49 @@ export default function MyOrdersPage() {
         <DialogContent className="max-w-4xl w-[95vw] max-h-[90vh] overflow-y-auto p-4 sm:p-6">
           <DialogHeader className="space-y-3 sm:space-y-0 sm:flex sm:flex-row sm:items-start sm:justify-between sm:gap-4 pr-8">
             <DialogTitle>Order Details</DialogTitle>
-            {orderToView && (
-              <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2 w-full sm:w-auto">
-                {showClientReturns && (
+            {orderToView && showClientReturns ? (
+              <DropdownMenu modal={false}>
+                <DropdownMenuTrigger asChild>
                   <Button
+                    type="button"
                     variant="outline"
-                    size="sm"
-                    className="w-full sm:w-auto min-h-[44px] sm:min-h-8"
-                    onClick={() => openOrderTimeline(orderToView)}
+                    size="icon"
+                    className="h-8 w-8 shrink-0"
+                    aria-label="Order actions"
+                  >
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuItem
+                    onSelect={() => window.setTimeout(() => openOrderTimeline(orderToView), 0)}
                   >
                     <Clock className="h-4 w-4 mr-2" />
-                    Timeline
-                  </Button>
-                )}
-                {canShowClientReturn(orderToView) && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full sm:w-auto min-h-[44px] sm:min-h-8"
-                    onClick={() => openClientReturn(orderToView)}
-                  >
-                    <RotateCcw className="h-4 w-4 mr-2" />
-                    Return items
-                  </Button>
-                )}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full sm:w-auto min-h-[44px] sm:min-h-8"
-                  onClick={() => handlePrintOrderReceipt(orderToView)}
-                >
-                  <Printer className="h-4 w-4 mr-2" />
-                  Print
-                </Button>
-              </div>
-            )}
+                    Order timeline
+                  </DropdownMenuItem>
+                  {canShowClientReturn(orderToView) ? (
+                    <DropdownMenuItem onSelect={() => openClientReturn(orderToView)}>
+                      <RotateCcw className="h-4 w-4 mr-2" />
+                      Return items
+                    </DropdownMenuItem>
+                  ) : null}
+                  <DropdownMenuItem onSelect={() => handlePrintOrderReceipt(orderToView)}>
+                    <Printer className="h-4 w-4 mr-2" />
+                    Print
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : orderToView ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full sm:w-auto min-h-[44px] sm:min-h-8"
+                onClick={() => handlePrintOrderReceipt(orderToView)}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                Print
+              </Button>
+            ) : null}
           </DialogHeader>
           {orderToView && (
             <div className="space-y-6 py-4">
