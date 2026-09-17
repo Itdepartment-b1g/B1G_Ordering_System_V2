@@ -50,8 +50,8 @@ import {
   CLIENT_RETURN_REASON_OPTIONS,
   formatClientReturnReason,
   type ClientReturnReasonOption,
-  type MockChangeItemSku,
-} from './clientReturnMock';
+  type PreviewChangeItemSku,
+} from './clientReturnPreview';
 import {
   CLIENT_ORDER_RETURN_CHANGE_CATALOG_QUERY_KEY,
   CLIENT_ORDER_RETURN_POSTED_QTY_QUERY_KEY,
@@ -1316,7 +1316,7 @@ export function ReturnClientOrderDialog({
                           <AccordionContent>
                             {isMobile ? (
                               <div className="space-y-3 mb-3">
-                                {group.skus.map((sku: MockChangeItemSku) => {
+                                {group.skus.map((sku: PreviewChangeItemSku) => {
                                   const skuMax = changeSkuMax(
                                     sku.id,
                                     sku.sellableQty,
@@ -1365,7 +1365,7 @@ export function ReturnClientOrderDialog({
                                     </TableRow>
                                   </TableHeader>
                                   <TableBody>
-                                    {group.skus.map((sku: MockChangeItemSku) => {
+                                    {group.skus.map((sku: PreviewChangeItemSku) => {
                                       const skuMax = changeSkuMax(
                                         sku.id,
                                         sku.sellableQty,

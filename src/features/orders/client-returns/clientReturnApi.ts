@@ -3,9 +3,9 @@ import type { PackageProofPhotoItem } from '@/features/shared/components/MultiPr
 import {
   parseClientReturnStatus,
   parseClientReturnType,
-  type MockChangeItemSku,
-  type MockClientReturn,
-} from './clientReturnMock';
+  type PreviewChangeItemSku,
+  type PreviewClientReturn,
+} from './clientReturnPreview';
 import {
   uploadClientOrderReturnProof,
   uploadClientOrderReturnSignature,
@@ -49,7 +49,7 @@ function nestedRecord(value: unknown): Record<string, unknown> {
   return asRecord(value);
 }
 
-function mapLine(item: Record<string, unknown>): MockClientReturn['lines'][number] {
+function mapLine(item: Record<string, unknown>): PreviewClientReturn['lines'][number] {
   const variant = nestedRecord(item.variant ?? item.variants);
   const brand = nestedRecord(variant.brand ?? variant.brands);
   const variantId = item.variant_id ? String(item.variant_id) : variant.id ? String(variant.id) : undefined;
@@ -71,7 +71,7 @@ function mapLine(item: Record<string, unknown>): MockClientReturn['lines'][numbe
   };
 }
 
-function mapReturnRow(row: Record<string, unknown>): MockClientReturn {
+function mapReturnRow(row: Record<string, unknown>): PreviewClientReturn {
   const items = nestedRows(row.items ?? row.client_order_return_items);
   const changeItems = nestedRows(row.change_items ?? row.client_order_return_change_items);
   const attachments = nestedRows(row.attachments ?? row.client_order_return_attachments)
@@ -168,7 +168,7 @@ const RETURN_SELECT = `
   )
 `;
 
-export async function fetchClientOrderReturns(): Promise<MockClientReturn[]> {
+export async function fetchClientOrderReturns(): Promise<PreviewClientReturn[]> {
   const { data, error } = await supabase
     .from('client_order_returns')
     .select(RETURN_SELECT)
@@ -177,7 +177,7 @@ export async function fetchClientOrderReturns(): Promise<MockClientReturn[]> {
   return (data || []).map((row) => mapReturnRow(asRecord(row)));
 }
 
-export async function fetchClientOrderReturnsForOrder(orderId: string): Promise<MockClientReturn[]> {
+export async function fetchClientOrderReturnsForOrder(orderId: string): Promise<PreviewClientReturn[]> {
   const { data, error } = await supabase
     .from('client_order_returns')
     .select(RETURN_SELECT)
@@ -191,11 +191,11 @@ const POSTED_RETURNS_ORDER_ID_CHUNK = 100;
 
 export async function fetchPostedClientOrderReturnsForOrders(
   orderIds: string[]
-): Promise<MockClientReturn[]> {
+): Promise<PreviewClientReturn[]> {
   const ids = [...new Set(orderIds.filter(Boolean))];
   if (ids.length === 0) return [];
 
-  const rows: MockClientReturn[] = [];
+  const rows: PreviewClientReturn[] = [];
   for (let i = 0; i < ids.length; i += POSTED_RETURNS_ORDER_ID_CHUNK) {
     const chunk = ids.slice(i, i + POSTED_RETURNS_ORDER_ID_CHUNK);
     const { data, error } = await supabase
@@ -243,7 +243,7 @@ export async function fetchChangeItemCatalog(
   userId: string,
   companyId: string,
   brandIds: string[]
-): Promise<MockChangeItemSku[]> {
+): Promise<PreviewChangeItemSku[]> {
   const wanted = new Set(brandIds.filter(Boolean));
   if (wanted.size === 0) return [];
 
@@ -286,16 +286,16 @@ export async function fetchChangeItemCatalog(
         variantType: String(variantRecord.variant_type || 'flavor'),
         variantTypeId: variantRecord.variant_type_id ? String(variantRecord.variant_type_id) : undefined,
         sellableQty: Math.max(0, Number(record.stock) || 0),
-      } satisfies MockChangeItemSku;
+      } satisfies PreviewChangeItemSku;
     })
-    .filter(Boolean) as MockChangeItemSku[];
+    .filter(Boolean) as PreviewChangeItemSku[];
 }
 
 export function buildReturnedStockByVariantId(
-  returns: MockClientReturn[],
+  returns: PreviewClientReturn[],
   options?: { holderId?: string | null }
-): Map<string, { qty: number; returns: MockClientReturn[] }> {
-  const map = new Map<string, { qty: number; returns: MockClientReturn[] }>();
+): Map<string, { qty: number; returns: PreviewClientReturn[] }> {
+  const map = new Map<string, { qty: number; returns: PreviewClientReturn[] }>();
   for (const cr of returns) {
     if (cr.status !== 'posted') continue;
     if (options?.holderId) {
@@ -321,11 +321,11 @@ export type ReturnedInventoryRow = {
   variantName: string;
   variantType: string;
   qty: number;
-  returns: MockClientReturn[];
+  returns: PreviewClientReturn[];
 };
 
 export function buildReturnedInventoryRows(
-  returns: MockClientReturn[],
+  returns: PreviewClientReturn[],
   options?: { holderId?: string | null }
 ): ReturnedInventoryRow[] {
   const byVariant = buildReturnedStockByVariantId(returns, options);

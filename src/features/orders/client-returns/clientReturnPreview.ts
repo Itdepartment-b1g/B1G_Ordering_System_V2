@@ -1,8 +1,8 @@
 /**
- * Client-order return display helpers and shared row types.
+ * Client-order return preview types and display helpers.
  * Persistence goes through RPCs in clientReturnApi.ts.
  */
-export const SHOW_CLIENT_RETURN_MOCK = true;
+export const SHOW_CLIENT_RETURN_PREVIEW = true;
 
 export const CLIENT_RETURN_REASON_OPTIONS = [
   { value: 'defect', label: 'Defect' },
@@ -19,7 +19,7 @@ export type ClientReturnProofPhoto = {
   path: string;
 };
 
-export type MockClientReturnLine = {
+export type PreviewClientReturnLine = {
   variantName: string;
   brandName: string;
   variantType: string;
@@ -34,7 +34,7 @@ export type MockClientReturnLine = {
 
 export type ClientReturnKind = 'change_item' | 'refund';
 
-export type MockClientReturnStatus =
+export type PreviewClientReturnStatus =
   | 'pending_leader'
   | 'pending_super_admin'
   | 'pending_finance'
@@ -42,7 +42,7 @@ export type MockClientReturnStatus =
   | 'rejected'
   | 'cancelled';
 
-export type MockClientReturn = {
+export type PreviewClientReturn = {
   id: string;
   returnNumber: string;
   clientOrderId?: string;
@@ -54,11 +54,11 @@ export type MockClientReturn = {
   reason: string;
   notes: string | null;
   returnType: ClientReturnKind;
-  lines: MockClientReturnLine[];
-  changeLines?: MockClientReturnLine[];
+  lines: PreviewClientReturnLine[];
+  changeLines?: PreviewClientReturnLine[];
   proofLabels: string[];
   proofPhotos?: ClientReturnProofPhoto[];
-  status: MockClientReturnStatus;
+  status: PreviewClientReturnStatus;
   rejectionNote: string | null;
   saApprovedByName: string | null;
   saApprovedAt: string | null;
@@ -70,9 +70,9 @@ export type MockClientReturn = {
   returnedBy?: string | null;
 };
 
-export const MOCK_CLIENT_RETURNS: MockClientReturn[] = [];
+export const PREVIEW_CLIENT_RETURNS: PreviewClientReturn[] = [];
 
-export function getReturnActionActor(row: MockClientReturn): {
+export function getReturnActionActor(row: PreviewClientReturn): {
   kind: 'approve' | 'reject' | null;
   name: string | null;
   at: string | null;
@@ -90,7 +90,7 @@ export function parseClientReturnType(value: unknown): ClientReturnKind {
   return String(value || '').toLowerCase() === 'refund' ? 'refund' : 'change_item';
 }
 
-export function parseClientReturnStatus(value: unknown): MockClientReturnStatus {
+export function parseClientReturnStatus(value: unknown): PreviewClientReturnStatus {
   const raw = String(value || '');
   if (
     raw === 'pending_leader' ||
@@ -114,7 +114,7 @@ export function clientReturnTypeBadgeClass(type: ClientReturnKind): string {
   return 'bg-sky-50 text-sky-700 border-sky-200';
 }
 
-export function formatClientReturnStatus(status: MockClientReturnStatus): string {
+export function formatClientReturnStatus(status: PreviewClientReturnStatus): string {
   if (status === 'pending_leader') return 'Pending TL';
   if (status === 'pending_super_admin') return 'Pending SA';
   if (status === 'pending_finance') return 'Pending Finance';
@@ -123,7 +123,7 @@ export function formatClientReturnStatus(status: MockClientReturnStatus): string
   return 'Cancelled';
 }
 
-export function clientReturnStatusBadgeClass(status: MockClientReturnStatus): string {
+export function clientReturnStatusBadgeClass(status: PreviewClientReturnStatus): string {
   if (
     status === 'pending_leader' ||
     status === 'pending_super_admin' ||
@@ -138,7 +138,7 @@ export function clientReturnStatusBadgeClass(status: MockClientReturnStatus): st
 
 export function canReviewClientReturn(
   role: string | null | undefined,
-  row: Pick<MockClientReturn, 'returnType' | 'status'>
+  row: Pick<PreviewClientReturn, 'returnType' | 'status'>
 ): boolean {
   if (row.returnType === 'change_item' && row.status === 'pending_leader') {
     return role === 'team_leader';
@@ -156,7 +156,7 @@ export function formatClientReturnPeso(amount: number) {
   return `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-export function getClientReturnRefundAmount(row: MockClientReturn): number {
+export function getClientReturnRefundAmount(row: PreviewClientReturn): number {
   return row.lines.reduce((sum, line) => {
     const lineTotal = Number(line.lineTotal);
     if (Number.isFinite(lineTotal) && lineTotal > 0) return sum + lineTotal;
@@ -164,7 +164,7 @@ export function getClientReturnRefundAmount(row: MockClientReturn): number {
   }, 0);
 }
 
-export function isPostedClientReturn(row: MockClientReturn): boolean {
+export function isPostedClientReturn(row: PreviewClientReturn): boolean {
   return row.status === 'posted';
 }
 
@@ -175,15 +175,15 @@ export function formatClientReturnReason(reason: string): string {
   return reason;
 }
 
-/** Dummy preview URL for mock proof photos. */
-export function getMockProofPhotoUrl(fileName: string): string {
+/** Dummy preview URL for proof photos. */
+export function getPreviewProofPhotoUrl(fileName: string): string {
   const seed = fileName.replace(/\.[^.]+$/, '').replace(/[^a-z0-9-]/gi, '').toLowerCase() || 'proof';
   return `https://picsum.photos/seed/${seed}/800/600`;
 }
 
-export function getMockReturnedQtyForName(variantName: string): number {
+export function getPreviewReturnedQtyForName(variantName: string): number {
   const needle = variantName.trim().toLowerCase();
-  return MOCK_CLIENT_RETURNS.filter(isPostedClientReturn).reduce((sum, cr) => {
+  return PREVIEW_CLIENT_RETURNS.filter(isPostedClientReturn).reduce((sum, cr) => {
     return (
       sum +
       cr.lines
@@ -193,16 +193,16 @@ export function getMockReturnedQtyForName(variantName: string): number {
   }, 0);
 }
 
-export type MockReturnedStock = {
+export type PreviewReturnedStock = {
   qty: number;
-  returns: MockClientReturn[];
+  returns: PreviewClientReturn[];
 };
 
-function addMockReturnedStock(
-  map: Map<string, MockReturnedStock>,
+function addPreviewReturnedStock(
+  map: Map<string, PreviewReturnedStock>,
   variantId: string,
   qty: number,
-  cr: MockClientReturn
+  cr: PreviewClientReturn
 ) {
   const current = map.get(variantId) || { qty: 0, returns: [] };
   current.qty += qty;
@@ -213,10 +213,10 @@ function addMockReturnedStock(
 }
 
 /** Map catalog variants → returned qty and the CRs that make up that qty. */
-export function buildMockReturnedStockByVariantId(
+export function buildPreviewReturnedStockByVariantId(
   variants: Array<{ id: string; name: string }>
-): Map<string, MockReturnedStock> {
-  const map = new Map<string, MockReturnedStock>();
+): Map<string, PreviewReturnedStock> {
+  const map = new Map<string, PreviewReturnedStock>();
   if (variants.length === 0) return map;
 
   const catalogByName = new Map<string, string>();
@@ -224,11 +224,11 @@ export function buildMockReturnedStockByVariantId(
     catalogByName.set(variant.name.trim().toLowerCase(), variant.id);
   }
 
-  for (const cr of MOCK_CLIENT_RETURNS) {
+  for (const cr of PREVIEW_CLIENT_RETURNS) {
     if (!isPostedClientReturn(cr)) continue;
     for (const line of cr.lines) {
       const id = catalogByName.get(line.variantName.trim().toLowerCase());
-      if (id) addMockReturnedStock(map, id, line.quantity, cr);
+      if (id) addPreviewReturnedStock(map, id, line.quantity, cr);
     }
   }
 
@@ -236,37 +236,37 @@ export function buildMockReturnedStockByVariantId(
 }
 
 /** Map catalog variants → returned qty. */
-export function buildMockReturnedQtyByVariantId(
+export function buildPreviewReturnedQtyByVariantId(
   variants: Array<{ id: string; name: string }>
 ): Map<string, number> {
   const qtyMap = new Map<string, number>();
-  for (const [id, stock] of buildMockReturnedStockByVariantId(variants)) {
+  for (const [id, stock] of buildPreviewReturnedStockByVariantId(variants)) {
     qtyMap.set(id, stock.qty);
   }
   return qtyMap;
 }
 
-export function getMockReturnsForVariant(variantName: string): MockClientReturn[] {
+export function getPreviewReturnsForVariant(variantName: string): PreviewClientReturn[] {
   const needle = variantName.trim().toLowerCase();
-  return MOCK_CLIENT_RETURNS.filter(
+  return PREVIEW_CLIENT_RETURNS.filter(
     (cr) =>
       isPostedClientReturn(cr) && cr.lines.some((line) => line.variantName.trim().toLowerCase() === needle)
   );
 }
 
-export function getMockReturnLineQty(row: MockClientReturn): number {
+export function getPreviewReturnLineQty(row: PreviewClientReturn): number {
   return row.lines.reduce((sum, line) => sum + line.quantity, 0);
 }
 
-export function getMockReturnsForOrder(orderNumber: string): MockClientReturn[] {
+export function getPreviewReturnsForOrder(orderNumber: string): PreviewClientReturn[] {
   const needle = orderNumber.trim().toLowerCase();
-  return MOCK_CLIENT_RETURNS.filter((cr) => cr.orderNumber.trim().toLowerCase() === needle);
+  return PREVIEW_CLIENT_RETURNS.filter((cr) => cr.orderNumber.trim().toLowerCase() === needle);
 }
 
-export function getMockAlreadyReturnedQty(orderNumber: string, variantName: string): number {
+export function getPreviewAlreadyReturnedQty(orderNumber: string, variantName: string): number {
   const orderNeedle = orderNumber.trim().toLowerCase();
   const variantNeedle = variantName.trim().toLowerCase();
-  return MOCK_CLIENT_RETURNS.filter(
+  return PREVIEW_CLIENT_RETURNS.filter(
     (cr) => isPostedClientReturn(cr) && cr.orderNumber.trim().toLowerCase() === orderNeedle
   ).reduce(
     (sum, cr) =>
@@ -278,7 +278,7 @@ export function getMockAlreadyReturnedQty(orderNumber: string, variantName: stri
   );
 }
 
-export type MockChangeItemSku = {
+export type PreviewChangeItemSku = {
   id: string;
   brandName: string;
   variantName: string;
@@ -289,10 +289,10 @@ export type MockChangeItemSku = {
 };
 
 /** Dummy sellable SKUs for the change-item step, scoped to brands on the order. */
-export function buildMockChangeItemCatalog(
+export function buildPreviewChangeItemCatalog(
   orderItems: Array<{ brandName: string; variantName: string; variantType?: string }>
-): MockChangeItemSku[] {
-  const byBrand = new Map<string, MockChangeItemSku[]>();
+): PreviewChangeItemSku[] {
+  const byBrand = new Map<string, PreviewChangeItemSku[]>();
 
   for (const item of orderItems) {
     const brand = item.brandName?.trim() || 'Unknown';

@@ -14,7 +14,7 @@ import {
   resolveTableSortDirection,
   type TableSortCycleState,
 } from '@/features/shared/utils/tableSortCycle';
-import type { MockClientReturnLine } from './clientReturnMock';
+import type { PreviewClientReturnLine } from './clientReturnPreview';
 import {
   DEFAULT_BRAND_VARIANT_SORT_DIRECTION,
   DEFAULT_BRAND_VARIANT_SORT_KEY,
@@ -53,8 +53,8 @@ export function variantTypeBadgeClass(type: string): string {
   return 'bg-gray-100 text-gray-700';
 }
 
-export function groupLinesByBrand(lines: MockClientReturnLine[]) {
-  const map = new Map<string, MockClientReturnLine[]>();
+export function groupLinesByBrand(lines: PreviewClientReturnLine[]) {
+  const map = new Map<string, PreviewClientReturnLine[]>();
   for (const line of lines) {
     const brand = line.brandName?.trim() || 'Unknown';
     const list = map.get(brand) || [];
@@ -87,7 +87,7 @@ export function BrandReturnedTable({
   qtyClassName = 'text-rose-700',
 }: {
   brandName: string;
-  variants: MockClientReturnLine[];
+  variants: PreviewClientReturnLine[];
   qtyClassName?: string;
 }) {
   const [page, setPage] = useState(0);

@@ -30,7 +30,7 @@ import {
   canShowClientOrderReturns,
   fetchClientOrderReturns,
 } from '@/features/orders/client-returns/clientReturnApi';
-import type { MockClientReturn } from '@/features/orders/client-returns/clientReturnMock';
+import type { PreviewClientReturn } from '@/features/orders/client-returns/clientReturnPreview';
 import { ReturnedStockDetailDialog } from '@/features/orders/client-returns/ReturnedStockDetailDialog';
 import {
   getListPaginationSlice,
@@ -73,7 +73,7 @@ function brandStatusRank(total: number, hasLow: boolean): number {
   return 0;
 }
 
-type ReturnedStockEntry = { qty: number; returns: MockClientReturn[] };
+type ReturnedStockEntry = { qty: number; returns: PreviewClientReturn[] };
 
 function emptyReturnedStock(): ReturnedStockEntry {
   return { qty: 0, returns: [] };
@@ -124,7 +124,7 @@ function emptyAgentBrand(id: string, name: string): AgentBrand {
 }
 
 function returnedVariantMeta(
-  returns: MockClientReturn[],
+  returns: PreviewClientReturn[],
   variantId: string
 ): { brandId?: string; brandName: string; variantName: string; variantType: string } | null {
   for (const cr of returns) {
@@ -242,7 +242,7 @@ export default function MyInventory() {
     variantName: string;
     brandName: string;
     totalReturned: number;
-    returns: MockClientReturn[];
+    returns: PreviewClientReturn[];
   } | null>(null);
 
   // Confirmation checkboxes for each section
@@ -265,7 +265,7 @@ export default function MyInventory() {
 
   const getTypeReturnedStock = (variants: AgentVariant[]) => {
     let qty = 0;
-    const returns: MockClientReturn[] = [];
+    const returns: PreviewClientReturn[] = [];
     const seen = new Set<string>();
     for (const variant of variants) {
       const stock = getReturnedStock(variant.id);
@@ -296,7 +296,7 @@ export default function MyInventory() {
     brandName: string,
     variantName: string,
     qty: number,
-    returns: MockClientReturn[]
+    returns: PreviewClientReturn[]
   ) => {
     setReturnedDialog({
       brandName,
@@ -310,7 +310,7 @@ export default function MyInventory() {
     returnedStockByVariantId.get(variantId) || emptyReturnedStock();
 
   const getBrandReturnedStock = (brand: { allVariants?: Array<{ id: string }> }) => {
-    const returnsById = new Map<string, MockClientReturn>();
+    const returnsById = new Map<string, PreviewClientReturn>();
     let qty = 0;
     for (const variant of brand.allVariants || []) {
       const stock = getReturnedStock(variant.id);
@@ -1182,7 +1182,7 @@ export default function MyInventory() {
                     const variantSummary = formatVariantTypeCountSummary(typeEntries, itemCount);
                     const brandReturned = showReturnedColumn
                       ? getBrandReturnedStock(brand)
-                      : { qty: 0, returns: [] as MockClientReturn[] };
+                      : { qty: 0, returns: [] as PreviewClientReturn[] };
                     const statusLabel =
                       brandTotal === 0 ? 'Out of Stock' : brandHasLow ? 'Low stock' : 'In Stock';
                     const statusClass =
@@ -1281,7 +1281,7 @@ export default function MyInventory() {
                                   const typeStock = getTypeStock(variants);
                                   const typeReturned = showReturnedColumn
                                     ? getTypeReturnedStock(variants)
-                                    : { qty: 0, returns: [] as MockClientReturn[] };
+                                    : { qty: 0, returns: [] as PreviewClientReturn[] };
                                   const typeHasLow = variants.some(
                                     (v) => isLowStock(v.stock) && v.stock > 0
                                   );

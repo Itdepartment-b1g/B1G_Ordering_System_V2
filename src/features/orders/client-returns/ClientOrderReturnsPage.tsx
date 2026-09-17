@@ -31,12 +31,12 @@ import {
   formatClientReturnReason,
   formatClientReturnStatus,
   formatClientReturnType,
-  getMockReturnLineQty,
+  getPreviewReturnLineQty,
   getReturnActionActor,
   type ClientReturnKind,
-  type MockClientReturn,
-  type MockClientReturnStatus,
-} from './clientReturnMock';
+  type PreviewClientReturn,
+  type PreviewClientReturnStatus,
+} from './clientReturnPreview';
 import {
   CLIENT_ORDER_RETURNS_QUERY_KEY,
   approveClientOrderReturn,
@@ -127,7 +127,7 @@ function ReturnTypeBadge({ type }: { type: ClientReturnKind }) {
   );
 }
 
-function ReturnStatusBadge({ status }: { status: MockClientReturnStatus }) {
+function ReturnStatusBadge({ status }: { status: PreviewClientReturnStatus }) {
   return (
     <Badge variant="outline" className={`font-normal shrink-0 ${clientReturnStatusBadgeClass(status)}`}>
       {formatClientReturnStatus(status)}
@@ -190,7 +190,7 @@ function PendingReturnActions({
   );
 }
 
-function uniqueReturnBrands(lines: MockClientReturn['lines']): string[] {
+function uniqueReturnBrands(lines: PreviewClientReturn['lines']): string[] {
   return groupLinesByBrand(lines).map((group) => group.brandName);
 }
 
@@ -201,13 +201,13 @@ function ReturnHistoryCard({
   onApprove,
   onReject,
 }: {
-  row: MockClientReturn;
+  row: PreviewClientReturn;
   canReview: boolean;
   onView: () => void;
   onApprove: () => void;
   onReject: () => void;
 }) {
-  const qty = getMockReturnLineQty(row);
+  const qty = getPreviewReturnLineQty(row);
   const pending = canReview;
   return (
     <div
@@ -285,7 +285,7 @@ function ReturnHistoryCard({
   );
 }
 
-function ReturnHistoryDetails({ row }: { row: MockClientReturn }) {
+function ReturnHistoryDetails({ row }: { row: PreviewClientReturn }) {
   const brandGroups = groupLinesByBrand(row.lines);
   return (
     <div className="space-y-3 mb-2">
@@ -438,9 +438,9 @@ export default function ClientOrderReturnsPage() {
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(HISTORY_PAGE_SIZE);
-  const [viewRow, setViewRow] = useState<MockClientReturn | null>(null);
+  const [viewRow, setViewRow] = useState<PreviewClientReturn | null>(null);
   const [viewMode, setViewMode] = useState<HistoryViewMode>(readStoredViewMode);
-  const [actionRow, setActionRow] = useState<MockClientReturn | null>(null);
+  const [actionRow, setActionRow] = useState<PreviewClientReturn | null>(null);
   const [confirmKind, setConfirmKind] = useState<'approve' | 'reject' | null>(null);
   const [acting, setActing] = useState(false);
   const [pageTab, setPageTab] = useState<PageTab>('history');
@@ -543,14 +543,14 @@ export default function ClientOrderReturnsPage() {
     [rlRows, user?.id, user?.role]
   );
 
-  const startApprove = (row: MockClientReturn) => {
+  const startApprove = (row: PreviewClientReturn) => {
     if (!canReviewClientReturn(user?.role, row)) return;
     setViewRow(null);
     setActionRow(row);
     setConfirmKind('approve');
   };
 
-  const startReject = (row: MockClientReturn) => {
+  const startReject = (row: PreviewClientReturn) => {
     if (!canReviewClientReturn(user?.role, row)) return;
     setViewRow(null);
     setActionRow(row);
@@ -956,7 +956,7 @@ export default function ClientOrderReturnsPage() {
                     </TableHeader>
                     <TableBody>
                       {pagedItems.map((row) => {
-                        const qty = getMockReturnLineQty(row);
+                        const qty = getPreviewReturnLineQty(row);
                         const actor = getReturnActionActor(row);
                         const isOpen = expandedRows.has(row.id);
                         const colSpan = showHistoryActions ? 12 : 11;

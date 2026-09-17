@@ -3,9 +3,9 @@ import ExcelJS from 'exceljs';
 import type { Order } from '@/features/orders/OrderContext';
 import {
   isPostedClientReturn,
-  type MockClientReturn,
-  type MockClientReturnLine,
-} from '@/features/orders/client-returns/clientReturnMock';
+  type PreviewClientReturn,
+  type PreviewClientReturnLine,
+} from '@/features/orders/client-returns/clientReturnPreview';
 import {
   excelWrappedRowHeight,
   EXCEL_EXPORT_HEADER_FILL,
@@ -81,8 +81,8 @@ function variantNameKey(brandName: string, variantName: string): string {
 
 export function getPostedReturnsForOrder(
   order: Order,
-  returns: MockClientReturn[]
-): MockClientReturn[] {
+  returns: PreviewClientReturn[]
+): PreviewClientReturn[] {
   return returns.filter((cr) => {
     if (!isPostedClientReturn(cr)) return false;
     if (cr.clientOrderId && cr.clientOrderId === order.id) return true;
@@ -91,7 +91,7 @@ export function getPostedReturnsForOrder(
 }
 
 function returnLineMatchesOrderItem(
-  line: MockClientReturnLine,
+  line: PreviewClientReturnLine,
   item: { clientOrderItemId?: string; brandName: string; variantName: string }
 ): boolean {
   if (item.clientOrderItemId && line.clientOrderItemId) {
@@ -102,7 +102,7 @@ function returnLineMatchesOrderItem(
 
 export function getPostedReturnedQtyForOrderItem(
   item: { clientOrderItemId?: string; brandName: string; variantName: string },
-  postedReturns: MockClientReturn[]
+  postedReturns: PreviewClientReturn[]
 ): number {
   let qty = 0;
   for (const cr of postedReturns) {
@@ -114,7 +114,7 @@ export function getPostedReturnedQtyForOrderItem(
 }
 
 export function getPostedChangeLinesForOrder(
-  postedReturns: MockClientReturn[]
+  postedReturns: PreviewClientReturn[]
 ): PostedChangeLine[] {
   const merged = new Map<string, PostedChangeLine>();
   for (const cr of postedReturns) {
@@ -136,7 +136,7 @@ export function getPostedChangeLinesForOrder(
 export type ChangeVariantPool = Map<string, { variantName: string; remaining: number }[]>;
 
 export function buildChangeVariantPoolByBrand(
-  postedReturns: MockClientReturn[]
+  postedReturns: PreviewClientReturn[]
 ): ChangeVariantPool {
   const byBrand: ChangeVariantPool = new Map();
   for (const line of getPostedChangeLinesForOrder(postedReturns)) {
@@ -179,7 +179,7 @@ export function takeChangeVariantsFromPool(
 
 export function buildPostedReturnExportRows(
   orders: Order[],
-  returns: MockClientReturn[]
+  returns: PreviewClientReturn[]
 ): PostedReturnExportRow[] {
   const orderById = new Map(orders.map((order) => [order.id, order]));
   const orderByNumber = new Map(orders.map((order) => [order.orderNumber, order]));

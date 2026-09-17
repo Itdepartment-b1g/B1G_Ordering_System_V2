@@ -1,7 +1,7 @@
 import ExcelJS from 'exceljs';
 
 import type { Order } from '@/features/orders/OrderContext';
-import type { MockClientReturn } from '@/features/orders/client-returns/clientReturnMock';
+import type { PreviewClientReturn } from '@/features/orders/client-returns/clientReturnPreview';
 import { mapOrderToListExportRow } from '@/features/orders/utils/exportOrdersListExcel';
 import {
   buildChangeVariantPoolByBrand,
@@ -144,7 +144,7 @@ export type OrderBreakdownExportMeta = {
 
 export type OrderBreakdownExportOptions = {
   /** Warehouse-linked only. Adds Change item / Change Qty columns and the CR sheet. */
-  postedReturns?: MockClientReturn[];
+  postedReturns?: PreviewClientReturn[];
 };
 
 const PRIMARY_STATUS_TEXT_COLORS = {
@@ -200,7 +200,7 @@ function buildColumnLayout(
 function mapOrderToWideExport(
   order: Order,
   brands: string[],
-  postedReturns?: MockClientReturn[]
+  postedReturns?: PreviewClientReturn[]
 ): WideExportOrder {
   const exportRow = mapOrderToListExportRow(order);
   const brandItems: Record<string, BrandLineItem[]> = Object.fromEntries(

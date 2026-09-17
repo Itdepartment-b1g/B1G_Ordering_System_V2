@@ -15,8 +15,8 @@ import {
   formatClientReturnPeso,
   getClientReturnRefundAmount,
   getReturnActionActor,
-  type MockClientReturn,
-} from './clientReturnMock';
+  type PreviewClientReturn,
+} from './clientReturnPreview';
 
 function formatMetaDate(value: string | null | undefined, withTime = false): string {
   if (!value) return '—';
@@ -34,7 +34,7 @@ function MetaRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function ClientReturnExpandedMeta({ row }: { row: MockClientReturn }) {
+export function ClientReturnExpandedMeta({ row }: { row: PreviewClientReturn }) {
   const photos = row.proofPhotos?.length
     ? row.proofPhotos
     : row.proofLabels.map((fileName) => ({ fileName, url: '', path: '' }));

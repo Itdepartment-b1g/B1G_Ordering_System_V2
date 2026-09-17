@@ -1,5 +1,5 @@
-import type { MockClientReturn } from '../clientReturnMock';
-import { formatClientReturnType, getMockReturnLineQty } from '../clientReturnMock';
+import type { PreviewClientReturn } from '../clientReturnPreview';
+import { formatClientReturnType, getPreviewReturnLineQty } from '../clientReturnPreview';
 import type { SortDirection } from '@/features/shared/components/SortableTableHead';
 
 export type ClientReturnHistorySortKey =
@@ -17,10 +17,10 @@ export const DEFAULT_CLIENT_RETURN_HISTORY_SORT_KEY: ClientReturnHistorySortKey 
 export const DEFAULT_CLIENT_RETURN_HISTORY_SORT_DIRECTION: SortDirection = 'desc';
 
 export function sortClientReturnHistory(
-  rows: MockClientReturn[],
+  rows: PreviewClientReturn[],
   sortKey: ClientReturnHistorySortKey,
   sortDirection: SortDirection
-): MockClientReturn[] {
+): PreviewClientReturn[] {
   const direction = sortDirection === 'asc' ? 1 : -1;
 
   return [...rows].sort((a, b) => {
@@ -51,7 +51,7 @@ export function sortClientReturnHistory(
         result = (a.rejectedByName || '').localeCompare(b.rejectedByName || '');
         break;
       case 'qty':
-        result = getMockReturnLineQty(a) - getMockReturnLineQty(b);
+        result = getPreviewReturnLineQty(a) - getPreviewReturnLineQty(b);
         break;
       default:
         result = 0;
@@ -76,11 +76,11 @@ export const DEFAULT_RETURNED_STOCK_DETAIL_SORT_KEY: ReturnedStockDetailSortKey 
 export const DEFAULT_RETURNED_STOCK_DETAIL_SORT_DIRECTION: SortDirection = 'desc';
 
 export function sortReturnedStockDetailRows(
-  rows: MockClientReturn[],
+  rows: PreviewClientReturn[],
   sortKey: ReturnedStockDetailSortKey,
   sortDirection: SortDirection,
-  qtyForRow: (row: MockClientReturn) => number
-): MockClientReturn[] {
+  qtyForRow: (row: PreviewClientReturn) => number
+): PreviewClientReturn[] {
   const direction = sortDirection === 'asc' ? 1 : -1;
 
   return [...rows].sort((a, b) => {

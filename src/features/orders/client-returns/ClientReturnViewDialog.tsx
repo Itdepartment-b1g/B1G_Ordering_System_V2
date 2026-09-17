@@ -29,16 +29,16 @@ import {
   formatClientReturnType,
   formatClientReturnPeso,
   getClientReturnRefundAmount,
-  getMockReturnLineQty,
-  type MockClientReturn,
-} from './clientReturnMock';
+  getPreviewReturnLineQty,
+  type PreviewClientReturn,
+} from './clientReturnPreview';
 import { BrandReturnedTable, groupLinesByBrand } from './ClientReturnBrandTable';
 import { ClientReturnExpandedMeta } from './ClientReturnExpandedMeta';
 
 type ClientReturnViewDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  row: MockClientReturn | null;
+  row: PreviewClientReturn | null;
   mode?: 'view' | 'approve' | 'reject';
   acting?: boolean;
   onApprove?: () => void;
@@ -61,7 +61,7 @@ export function ClientReturnViewDialog({
   const isApprove = mode === 'approve';
   const isReject = mode === 'reject';
   const isReview = isApprove || isReject;
-  const qty = row ? getMockReturnLineQty(row) : 0;
+  const qty = row ? getPreviewReturnLineQty(row) : 0;
   const brandGroups = row ? groupLinesByBrand(row.lines) : [];
   const changeGroups = row ? groupLinesByBrand(row.changeLines || []) : [];
   const [agentNameInput, setAgentNameInput] = useState('');

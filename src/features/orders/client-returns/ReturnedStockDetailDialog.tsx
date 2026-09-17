@@ -24,7 +24,7 @@ import {
   resolveTableSortDirection,
   type TableSortCycleState,
 } from '@/features/shared/utils/tableSortCycle';
-import { formatClientReturnReason, type MockClientReturn } from './clientReturnMock';
+import { formatClientReturnReason, type PreviewClientReturn } from './clientReturnPreview';
 import {
   BrandReturnedTable,
   formatVariantType,
@@ -49,10 +49,10 @@ type ReturnedStockDetailDialogProps = {
   variantType?: string;
   variantId?: string;
   totalReturned: number;
-  returns: MockClientReturn[];
+  returns: PreviewClientReturn[];
 };
 
-function qtyForVariant(row: MockClientReturn, variantId?: string, variantName?: string): number {
+function qtyForVariant(row: PreviewClientReturn, variantId?: string, variantName?: string): number {
   return row.lines
     .filter((line) =>
       variantId ? line.variantId === variantId : line.variantName === variantName
@@ -75,7 +75,7 @@ function MobileReturnCard({
   variantId,
   variantName,
 }: {
-  row: MockClientReturn;
+  row: PreviewClientReturn;
   qty: number;
   variantId?: string;
   variantName: string;

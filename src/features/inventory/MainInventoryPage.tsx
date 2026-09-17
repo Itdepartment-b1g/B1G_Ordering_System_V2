@@ -46,7 +46,7 @@ import {
   buildReturnedStockByVariantId,
   fetchClientOrderReturns,
 } from '@/features/orders/client-returns/clientReturnApi';
-import type { MockClientReturn } from '@/features/orders/client-returns/clientReturnMock';
+import type { PreviewClientReturn } from '@/features/orders/client-returns/clientReturnPreview';
 import { ReturnedInventoryPanel } from '@/features/orders/client-returns/ReturnedInventoryPanel';
 import { ReturnedStockDetailDialog } from '@/features/orders/client-returns/ReturnedStockDetailDialog';
 
@@ -160,7 +160,7 @@ export default function MainInventoryPage() {
     variantName: string;
     brandName: string;
     totalReturned: number;
-    returns: MockClientReturn[];
+    returns: PreviewClientReturn[];
   } | null>(null);
   const [inventoryTab, setInventoryTab] = useState('stock');
 
@@ -944,7 +944,7 @@ export default function MainInventoryPage() {
   });
 
   const returnedStockByVariantId = useMemo(
-    () => (showReturnedColumn ? buildReturnedStockByVariantId(clientReturns) : new Map<string, { qty: number; returns: MockClientReturn[] }>()),
+    () => (showReturnedColumn ? buildReturnedStockByVariantId(clientReturns) : new Map<string, { qty: number; returns: PreviewClientReturn[] }>()),
     [clientReturns, showReturnedColumn]
   );
 
@@ -962,7 +962,7 @@ export default function MainInventoryPage() {
     brandName: string,
     variantName: string,
     qty: number,
-    returns: MockClientReturn[]
+    returns: PreviewClientReturn[]
   ) => {
     setReturnedDialog({
       brandName,

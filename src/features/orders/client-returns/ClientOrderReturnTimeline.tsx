@@ -18,9 +18,9 @@ import {
   formatClientReturnReason,
   formatClientReturnType,
   getClientReturnRefundAmount,
-  getMockReturnLineQty,
-  type MockClientReturn,
-} from './clientReturnMock';
+  getPreviewReturnLineQty,
+  type PreviewClientReturn,
+} from './clientReturnPreview';
 import {
   CLIENT_ORDER_RETURNS_QUERY_KEY,
   fetchClientOrderReturnsForOrder,
@@ -41,7 +41,7 @@ type TimelineEvent = {
 };
 
 function returnEvent(
-  cr: MockClientReturn,
+  cr: PreviewClientReturn,
   id: string,
   at: string,
   title: string,
@@ -67,7 +67,7 @@ function returnEvent(
 }
 
 function queueEvent(
-  cr: MockClientReturn,
+  cr: PreviewClientReturn,
   id: string,
   at: string,
   waiting: boolean,
@@ -80,7 +80,7 @@ function queueEvent(
   });
 }
 
-function buildReturnTimelineEvents(cr: MockClientReturn): TimelineEvent[] {
+function buildReturnTimelineEvents(cr: PreviewClientReturn): TimelineEvent[] {
   const kind = formatClientReturnType(cr.returnType);
   const events: TimelineEvent[] = [
     returnEvent(cr, 'filed', cr.createdAt, `${kind} filed`, 'return', {
@@ -187,7 +187,7 @@ function formatWhen(value: string | undefined): string {
   return format(parsed, 'MMM d, yyyy h:mm a');
 }
 
-function buildTimelineEvents(order: Order, returns: MockClientReturn[]): TimelineEvent[] {
+function buildTimelineEvents(order: Order, returns: PreviewClientReturn[]): TimelineEvent[] {
   const events: TimelineEvent[] = [
     {
       id: 'created',
@@ -245,7 +245,7 @@ function buildTimelineEvents(order: Order, returns: MockClientReturn[]): Timelin
 function EventIcon({ tone }: { tone: TimelineEvent['tone'] }) {
   if (tone === 'success') return <CheckCircle2 className="h-3.5 w-3.5" />;
   if (tone === 'danger') return <XCircle className="h-3.5 w-3.5" />;
-  if (tone === 'return') return <RotateCcw className="h-3.5 w-3.5" />;
+  if (tone === 'return') return <Clock className="h-3.5 w-3.5" />;
   return <Clock className="h-3.5 w-3.5" />;
 }
 
@@ -253,7 +253,7 @@ const TONE_CLASS: Record<TimelineEvent['tone'], { wrap: string; rail: string }> 
   neutral: { wrap: 'border-muted-foreground/30 bg-muted text-muted-foreground', rail: 'bg-border' },
   success: { wrap: 'border-emerald-200 bg-emerald-50 text-emerald-700', rail: 'bg-emerald-200' },
   danger: { wrap: 'border-red-200 bg-red-50 text-red-700', rail: 'bg-red-200' },
-  return: { wrap: 'border-rose-200 bg-rose-50 text-rose-700', rail: 'bg-rose-200' },
+  return: { wrap: 'border-amber-200 bg-amber-50 text-amber-700', rail: 'bg-amber-200' },
 };
 
 function TimelineMetaRow({ label, value }: { label: string; value: string }) {
@@ -280,12 +280,12 @@ function ReturnEventMeta({
   actorName,
   extras,
 }: {
-  cr: MockClientReturn;
+  cr: PreviewClientReturn;
   actorLabel?: string;
   actorName?: string;
   extras?: string[];
 }) {
-  const qty = getMockReturnLineQty(cr);
+  const qty = getPreviewReturnLineQty(cr);
   const cells = [
     { label: 'Client name', value: cr.clientName || '—' },
     { label: 'Type', value: formatClientReturnType(cr.returnType) },
@@ -310,7 +310,7 @@ function ReturnEventMeta({
   );
 }
 
-function ReturnEventItems({ cr }: { cr: MockClientReturn }) {
+function ReturnEventItems({ cr }: { cr: PreviewClientReturn }) {
   const returnedGroups = groupLinesByBrand(cr.lines);
   const changeGroups = groupLinesByBrand(cr.changeLines || []);
   if (returnedGroups.length === 0 && changeGroups.length === 0) return null;

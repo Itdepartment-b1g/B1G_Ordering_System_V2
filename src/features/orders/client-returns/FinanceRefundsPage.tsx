@@ -30,10 +30,10 @@ import {
   formatClientReturnReason,
   formatClientReturnStatus,
   getClientReturnRefundAmount,
-  getMockReturnLineQty,
-  type MockClientReturn,
-  type MockClientReturnStatus,
-} from './clientReturnMock';
+  getPreviewReturnLineQty,
+  type PreviewClientReturn,
+  type PreviewClientReturnStatus,
+} from './clientReturnPreview';
 import {
   CLIENT_ORDER_RETURNS_QUERY_KEY,
   approveClientOrderReturn,
@@ -52,7 +52,7 @@ const PAGE_SIZE: PageSize = 25;
 
 type StatusFilter = 'all' | 'pending_super_admin' | 'pending_finance' | 'posted' | 'rejected';
 
-function ReturnStatusBadge({ status }: { status: MockClientReturnStatus }) {
+function ReturnStatusBadge({ status }: { status: PreviewClientReturnStatus }) {
   return (
     <Badge variant="outline" className={`font-normal shrink-0 ${clientReturnStatusBadgeClass(status)}`}>
       {formatClientReturnStatus(status)}
@@ -134,8 +134,8 @@ export default function FinanceRefundsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('pending_finance');
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(PAGE_SIZE);
-  const [viewRow, setViewRow] = useState<MockClientReturn | null>(null);
-  const [actionRow, setActionRow] = useState<MockClientReturn | null>(null);
+  const [viewRow, setViewRow] = useState<PreviewClientReturn | null>(null);
+  const [actionRow, setActionRow] = useState<PreviewClientReturn | null>(null);
   const [confirmKind, setConfirmKind] = useState<'approve' | 'reject' | null>(null);
   const [acting, setActing] = useState(false);
   const [historySortState, setHistorySortState] =
@@ -184,14 +184,14 @@ export default function FinanceRefundsPage() {
 
   const { pagedItems, safePage, pageCount } = getListPaginationSlice(filtered, page, pageSize);
 
-  const startApprove = (row: MockClientReturn) => {
+  const startApprove = (row: PreviewClientReturn) => {
     if (!canReviewClientReturn(user?.role, row)) return;
     setViewRow(null);
     setActionRow(row);
     setConfirmKind('approve');
   };
 
-  const startReject = (row: MockClientReturn) => {
+  const startReject = (row: PreviewClientReturn) => {
     if (!canReviewClientReturn(user?.role, row)) return;
     setViewRow(null);
     setActionRow(row);
@@ -344,7 +344,7 @@ export default function FinanceRefundsPage() {
               <div className="space-y-3 lg:hidden">
                 {pagedItems.map((row) => {
                   const canAct = canReviewClientReturn(user?.role, row);
-                  const qty = getMockReturnLineQty(row);
+                  const qty = getPreviewReturnLineQty(row);
                   const amount = getClientReturnRefundAmount(row);
                   return (
                     <div
@@ -468,7 +468,7 @@ export default function FinanceRefundsPage() {
                   <TableBody>
                     {pagedItems.map((row) => {
                       const canAct = canReviewClientReturn(user?.role, row);
-                      const qty = getMockReturnLineQty(row);
+                      const qty = getPreviewReturnLineQty(row);
                       return (
                         <Fragment key={row.id}>
                           <TableRow>
