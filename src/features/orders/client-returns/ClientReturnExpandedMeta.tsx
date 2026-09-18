@@ -8,12 +8,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
 import {
+  clientReturnStockFateBadgeClass,
   formatClientReturnReason,
   formatClientReturnStatus,
   formatClientReturnType,
   formatClientReturnPeso,
   getClientReturnRefundAmount,
+  getClientReturnStockFateQty,
   getReturnActionActor,
   type PreviewClientReturn,
 } from './clientReturnPreview';
@@ -41,6 +44,7 @@ export function ClientReturnExpandedMeta({ row }: { row: PreviewClientReturn }) 
     : row.proofLabels.map((fileName) => ({ fileName, url: '', path: '' }));
   const [preview, setPreview] = useState<(typeof photos)[number] | null>(null);
   const actor = getReturnActionActor(row);
+  const fateQty = getClientReturnStockFateQty(row);
 
   return (
     <div className="space-y-3 rounded-md border bg-muted/20 p-3">
@@ -50,6 +54,30 @@ export function ClientReturnExpandedMeta({ row }: { row: PreviewClientReturn }) 
         {row.returnType === 'refund' ? (
           <MetaRow label="Refund amount" value={formatClientReturnPeso(getClientReturnRefundAmount(row))} />
         ) : null}
+        <div className="min-w-0 space-y-0.5 sm:col-span-3">
+          <dt className="text-xs text-muted-foreground">Stock fate</dt>
+          <dd className="flex flex-wrap gap-1.5">
+            {fateQty.restock > 0 ? (
+              <Badge
+                variant="outline"
+                className={`font-normal ${clientReturnStockFateBadgeClass('restock')}`}
+              >
+                Restock {fateQty.restock}
+              </Badge>
+            ) : null}
+            {fateQty.disposal > 0 ? (
+              <Badge
+                variant="outline"
+                className={`font-normal ${clientReturnStockFateBadgeClass('disposal')}`}
+              >
+                Disposal {fateQty.disposal}
+              </Badge>
+            ) : null}
+            {fateQty.restock <= 0 && fateQty.disposal <= 0 ? (
+              <span className="text-sm font-medium">—</span>
+            ) : null}
+          </dd>
+        </div>
         <MetaRow label="Agent name" value={row.returnedByName} />
         <MetaRow label="Returned date" value={formatMetaDate(row.returnDate)} />
         <MetaRow label="Created" value={formatMetaDate(row.createdAt, true)} />

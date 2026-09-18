@@ -228,6 +228,7 @@ export function ClientReturnViewDialog({
                         key={`ret-${group.brandName}`}
                         brandName={group.brandName}
                         variants={group.variants}
+                        showStockFate
                       />
                     ))}
                   </div>

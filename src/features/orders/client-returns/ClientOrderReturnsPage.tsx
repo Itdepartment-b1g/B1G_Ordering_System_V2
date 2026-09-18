@@ -34,10 +34,12 @@ import {
   CLIENT_RETURN_REASON_OPTIONS,
   canReviewClientReturn,
   clientReturnStatusBadgeClass,
+  clientReturnStockFateBadgeClass,
   clientReturnTypeBadgeClass,
   formatClientReturnReason,
   formatClientReturnStatus,
   formatClientReturnType,
+  getClientReturnStockFateQty,
   getPreviewReturnLineQty,
   getReturnActionActor,
   type ClientReturnKind,
@@ -223,6 +225,33 @@ function ReturnedBrandBadges({ brands }: { brands: string[] }) {
   );
 }
 
+function StockFateBadges({ row }: { row: PreviewClientReturn }) {
+  const { restock, disposal } = getClientReturnStockFateQty(row);
+  if (restock <= 0 && disposal <= 0) {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
+  return (
+    <div className="flex flex-wrap gap-1">
+      {restock > 0 ? (
+        <Badge
+          variant="outline"
+          className={`font-normal text-[11px] px-1.5 py-0 h-5 ${clientReturnStockFateBadgeClass('restock')}`}
+        >
+          Restock {restock}
+        </Badge>
+      ) : null}
+      {disposal > 0 ? (
+        <Badge
+          variant="outline"
+          className={`font-normal text-[11px] px-1.5 py-0 h-5 ${clientReturnStockFateBadgeClass('disposal')}`}
+        >
+          Disposal {disposal}
+        </Badge>
+      ) : null}
+    </div>
+  );
+}
+
 function orderFromReturn(row: PreviewClientReturn, orders: Order[]): Order | null {
   if (!row.clientOrderId) return null;
   const found = orders.find((order) => order.id === row.clientOrderId);
@@ -370,6 +399,7 @@ function ReturnHistoryCard({
           <div className="flex flex-wrap gap-1.5">
             <ReturnTypeBadge type={row.returnType} />
             <ReturnStatusBadge status={row.status} />
+            <StockFateBadges row={row} />
           </div>
         </div>
         <ReturnRowMenu row={row} onView={onView} onOpenTimeline={onOpenTimeline} onPrint={onPrint} />
@@ -453,7 +483,12 @@ function ReturnHistoryDetails({ row }: { row: PreviewClientReturn }) {
     <div className="space-y-3 mb-2">
       <ClientReturnExpandedMeta row={row} />
       {brandGroups.map((group) => (
-        <BrandReturnedTable key={group.brandName} brandName={group.brandName} variants={group.variants} />
+        <BrandReturnedTable
+          key={group.brandName}
+          brandName={group.brandName}
+          variants={group.variants}
+          showStockFate
+        />
       ))}
     </div>
   );
@@ -1330,7 +1365,10 @@ export default function ClientOrderReturnsPage() {
                                 <ReturnedBrandBadges brands={uniqueReturnBrands(row.lines)} />
                               </TableCell>
                               <TableCell className="align-top">
-                                <ReturnTypeBadge type={row.returnType} />
+                                <div className="flex flex-col gap-1.5">
+                                  <ReturnTypeBadge type={row.returnType} />
+                                  <StockFateBadges row={row} />
+                                </div>
                               </TableCell>
                               <TableCell className="align-top">
                                 <ReturnStatusBadge status={row.status} />
