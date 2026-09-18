@@ -49,6 +49,8 @@ export function canReplacePayoutProof(
   return getPayoutProofEditCount(attachmentId, revisions) < MAX_PAYOUT_PROOF_EDITS;
 }
 
+export type ClientReturnStockFate = 'restock' | 'disposal';
+
 export type PreviewClientReturnLine = {
   variantName: string;
   brandName: string;
@@ -60,6 +62,7 @@ export type PreviewClientReturnLine = {
   brandId?: string;
   variantTypeId?: string;
   clientOrderItemId?: string;
+  stockFate?: ClientReturnStockFate;
 };
 
 export type ClientReturnKind = 'change_item' | 'refund';
@@ -134,6 +137,25 @@ export function parseClientReturnStatus(value: unknown): PreviewClientReturnStat
     return raw;
   }
   return 'pending_leader';
+}
+
+export function parseClientReturnStockFate(value: unknown): ClientReturnStockFate | undefined {
+  const raw = String(value || '').toLowerCase();
+  if (raw === 'restock') return 'restock';
+  if (raw === 'disposal') return 'disposal';
+  return undefined;
+}
+
+export function formatClientReturnStockFate(fate: ClientReturnStockFate | undefined): string {
+  if (fate === 'restock') return 'Restock';
+  if (fate === 'disposal') return 'Disposal';
+  return '—';
+}
+
+export function clientReturnStockFateBadgeClass(fate: ClientReturnStockFate | undefined): string {
+  if (fate === 'restock') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  if (fate === 'disposal') return 'bg-rose-50 text-rose-700 border-rose-200';
+  return 'bg-slate-50 text-slate-600 border-slate-200';
 }
 
 export function formatClientReturnType(type: ClientReturnKind): string {

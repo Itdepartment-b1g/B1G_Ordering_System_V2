@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeftRight, Banknote, Camera, Check, Loader2, PenTool, RotateCcw, X } from 'lucide-react';
 import { format } from 'date-fns';
@@ -49,7 +49,9 @@ import {
 import {
   CLIENT_RETURN_REASON_OPTIONS,
   formatClientReturnReason,
+  formatClientReturnStockFate,
   type ClientReturnReasonOption,
+  type ClientReturnStockFate,
   type PreviewChangeItemSku,
 } from './clientReturnPreview';
 import {
@@ -242,6 +244,48 @@ function TypeBadge({ type }: { type?: string }) {
   );
 }
 
+function StockFateToggle({
+  value,
+  invalid,
+  fieldId,
+  disabled,
+  onChange,
+}: {
+  value?: ClientReturnStockFate;
+  invalid?: boolean;
+  fieldId: string;
+  disabled?: boolean;
+  onChange: (next: ClientReturnStockFate) => void;
+}) {
+  return (
+    <div className="space-y-1 w-full" data-field={fieldId}>
+      <div className="grid grid-cols-2 gap-1.5 w-full">
+        <Button
+          type="button"
+          size="sm"
+          variant={value === 'restock' ? 'default' : 'outline'}
+          className={cn('h-8 w-full', value === 'restock' && 'bg-emerald-600 hover:bg-emerald-700')}
+          disabled={disabled}
+          onClick={() => onChange('restock')}
+        >
+          Restock
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant={value === 'disposal' ? 'default' : 'outline'}
+          className={cn('h-8 w-full', value === 'disposal' && 'bg-rose-600 hover:bg-rose-700')}
+          disabled={disabled}
+          onClick={() => onChange('disposal')}
+        >
+          Disposal
+        </Button>
+      </div>
+      {invalid ? <p className="text-[10px] text-destructive leading-tight">Choose Restock or Disposal.</p> : null}
+    </div>
+  );
+}
+
 function inputTintClass(type?: string) {
   const value = (type || 'flavor').trim().toLowerCase();
   if (value === 'flavor') return 'bg-blue-50';
@@ -267,6 +311,7 @@ function QtyInputCard({
   invalid,
   fieldId,
   onValueChange,
+  extra,
 }: {
   title: string;
   type?: string;
@@ -282,6 +327,7 @@ function QtyInputCard({
   invalid?: boolean;
   fieldId: string;
   onValueChange: (next: number) => void;
+  extra?: ReactNode;
 }) {
   return (
     <div className="rounded-xl border bg-background p-4 shadow-sm space-y-3">
@@ -328,6 +374,7 @@ function QtyInputCard({
           <p className="text-xs text-muted-foreground">Max {max}</p>
         )}
       </div>
+      {extra}
     </div>
   );
 }
@@ -376,6 +423,7 @@ export function ReturnClientOrderDialog({
   const [cameraStarting, setCameraStarting] = useState(false);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
   const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const [stockFates, setStockFates] = useState<Record<string, ClientReturnStockFate | ''>>({});
   const [changeQuantities, setChangeQuantities] = useState<Record<string, number>>({});
   const [reason, setReason] = useState<ClientReturnReasonOption | ''>('');
   const [otherReason, setOtherReason] = useState('');
@@ -415,6 +463,7 @@ export function ReturnClientOrderDialog({
       setReturnType('change');
       setWizardStarted(false);
       setQuantities({});
+      setStockFates({});
       setChangeQuantities({});
       setReason('');
       setOtherReason('');
@@ -441,6 +490,7 @@ export function ReturnClientOrderDialog({
       if (item.id) initial[item.id] = 0;
     }
     setQuantities(initial);
+    setStockFates({});
     setChangeQuantities({});
     setReturnType('change');
     setWizardStarted(false);
@@ -618,6 +668,9 @@ export function ReturnClientOrderDialog({
     for (const line of lines) {
       const qty = quantities[line.id] || 0;
       if (qty > line.remaining) return `Cannot return more than remaining qty for ${line.variantName}.`;
+      if (qty > 0 && stockFates[line.id] !== 'restock' && stockFates[line.id] !== 'disposal') {
+        return `Choose Restock or Disposal for ${line.variantName}.`;
+      }
     }
     return null;
   };
@@ -667,7 +720,14 @@ export function ReturnClientOrderDialog({
     if (currentStep === 0) {
       if (totalReturning <= 0) return lines[0] ? `return-${lines[0].id}` : null;
       const over = lines.find((line) => (quantities[line.id] || 0) > line.remaining);
-      return over ? `return-${over.id}` : null;
+      if (over) return `return-${over.id}`;
+      const missingFate = lines.find(
+        (line) =>
+          (quantities[line.id] || 0) > 0 &&
+          stockFates[line.id] !== 'restock' &&
+          stockFates[line.id] !== 'disposal'
+      );
+      return missingFate ? `fate-${missingFate.id}` : null;
     }
     if (currentStep === 1) {
       for (const group of changeSkusByBrand) {
@@ -956,6 +1016,7 @@ export function ReturnClientOrderDialog({
         items: selectedLines.map((line) => ({
           clientOrderItemId: line.id,
           quantity: quantities[line.id] || 0,
+          stockFate: stockFates[line.id] === 'restock' ? 'restock' : 'disposal',
         })),
         changeItems: isRefund
           ? []
@@ -1161,19 +1222,61 @@ export function ReturnClientOrderDialog({
                 {returnType === 'refund' ? (
                   <p className="text-sm text-muted-foreground rounded-md border bg-muted/30 p-3">
                     Refund amount is calculated from the returned qty and the original unit price.
-                    {totalReturning > 0 ? (
-                      <>
-                        {' '}
-                        Estimated refund:{' '}
-                        <span className="font-semibold text-foreground tabular-nums">{formatReturnPeso(refundAmount)}</span>
-                      </>
-                    ) : null}
+                    Estimated refund:{' '}
+                    <span className="font-semibold text-foreground tabular-nums">{formatReturnPeso(refundAmount)}</span>
                   </p>
                 ) : null}
                 {remainingTotal <= 0 ? (
                   <p className="text-sm text-muted-foreground rounded-md border bg-muted/30 p-3">
                     Nothing left to return on this order. Posted returns already used the sold qty.
                   </p>
+                ) : (
+                  <p className="text-sm text-muted-foreground rounded-md border bg-muted/30 p-3">
+                    For each returned variant, choose <span className="font-medium text-foreground">Restock</span>{' '}
+                    (qty goes back to the agent bag) or{' '}
+                    <span className="font-medium text-foreground">Disposal</span> (does not go back to sellable
+                    stock).
+                  </p>
+                )}
+                {remainingTotal > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-8"
+                      onClick={() => {
+                        setInvalidField(null);
+                        setStockFates((prev) => {
+                          const next = { ...prev };
+                          for (const line of lines) {
+                            if (line.remaining > 0) next[line.id] = 'restock';
+                          }
+                          return next;
+                        });
+                      }}
+                    >
+                      Set all Restock
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-8"
+                      onClick={() => {
+                        setInvalidField(null);
+                        setStockFates((prev) => {
+                          const next = { ...prev };
+                          for (const line of lines) {
+                            if (line.remaining > 0) next[line.id] = 'disposal';
+                          }
+                          return next;
+                        });
+                      }}
+                    >
+                      Set all Disposal
+                    </Button>
+                  </div>
                 ) : null}
                 <Accordion
                   type="multiple"
@@ -1183,6 +1286,11 @@ export function ReturnClientOrderDialog({
                 >
                   {itemsByBrand.map(([brand, brandLines]) => {
                     const brandReturning = brandLines.reduce((sum, line) => sum + (quantities[line.id] || 0), 0);
+                    const brandRefund = brandLines.reduce(
+                      (sum, line) =>
+                        sum + (quantities[line.id] || 0) * (Number(line.unitPrice) || 0),
+                      0
+                    );
                     return (
                       <AccordionItem key={brand} value={brand} className="px-3">
                         <AccordionTrigger className="hover:no-underline py-3 justify-start gap-2 [&>svg]:order-first [&>svg]:h-4 [&>svg]:w-4">
@@ -1191,6 +1299,9 @@ export function ReturnClientOrderDialog({
                             <span className="text-xs text-muted-foreground">
                               {brandLines.length} variant{brandLines.length === 1 ? '' : 's'}
                               {brandReturning > 0 ? ` · returning ${brandReturning}` : ''}
+                              {returnType === 'refund' && brandReturning > 0
+                                ? ` · ${formatReturnPeso(brandRefund)}`
+                                : ''}
                             </span>
                           </div>
                         </AccordionTrigger>
@@ -1216,6 +1327,37 @@ export function ReturnClientOrderDialog({
                                   onValueChange={(next) =>
                                     setClampedQty(line.id, next, line.remaining, setQuantities, setQtyHints)
                                   }
+                                  extra={
+                                    <div className="space-y-2">
+                                      <StockFateToggle
+                                        value={stockFates[line.id] || undefined}
+                                        invalid={invalidField === `fate-${line.id}`}
+                                        fieldId={`fate-${line.id}`}
+                                        onChange={(next) => {
+                                          setInvalidField(null);
+                                          setStockFates((prev) => ({ ...prev, [line.id]: next }));
+                                        }}
+                                      />
+                                      {returnType === 'refund' ? (
+                                        <div className="grid grid-cols-2 gap-2 rounded-md border bg-muted/30 p-2.5">
+                                          <div>
+                                            <p className="text-xs text-muted-foreground">Unit price</p>
+                                            <p className="text-sm font-semibold tabular-nums">
+                                              {formatReturnPeso(Number(line.unitPrice) || 0)}
+                                            </p>
+                                          </div>
+                                          <div className="text-right">
+                                            <p className="text-xs text-muted-foreground">Amount</p>
+                                            <p className="text-sm font-semibold tabular-nums">
+                                              {formatReturnPeso(
+                                                (quantities[line.id] || 0) * (Number(line.unitPrice) || 0)
+                                              )}
+                                            </p>
+                                          </div>
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  }
                                 />
                               ))}
                             </div>
@@ -1229,49 +1371,88 @@ export function ReturnClientOrderDialog({
                                     <TableHead className="text-right">Sold</TableHead>
                                     <TableHead className="text-right">Already returned</TableHead>
                                     <TableHead className="text-right w-28">Return now</TableHead>
+                                    {returnType === 'refund' ? (
+                                      <>
+                                        <TableHead className="text-right">Unit price</TableHead>
+                                        <TableHead className="text-right">Amount</TableHead>
+                                      </>
+                                    ) : null}
                                   </TableRow>
                                 </TableHeader>
                                 <TableBody>
                                   {brandLines.map((line) => (
-                                    <TableRow key={line.id}>
-                                      <TableCell className="font-medium">{line.variantName}</TableCell>
-                                      <TableCell>
-                                        <TypeBadge type={line.variantType} />
-                                      </TableCell>
-                                      <TableCell className="text-right tabular-nums">{line.quantity}</TableCell>
-                                      <TableCell className="text-right tabular-nums text-muted-foreground">
-                                        {line.alreadyReturned}
-                                      </TableCell>
-                                      <TableCell className="text-right">
-                                        <Input
-                                          type="number"
-                                          min={0}
-                                          max={line.remaining}
-                                          value={quantities[line.id] ?? 0}
-                                          data-field={`return-${line.id}`}
-                                          aria-invalid={invalidField === `return-${line.id}` || undefined}
-                                          onChange={(e) => {
-                                            const parsed = parseInt(e.target.value, 10);
-                                            const next = Number.isNaN(parsed) ? 0 : parsed;
-                                            setClampedQty(line.id, next, line.remaining, setQuantities, setQtyHints);
-                                          }}
-                                          className={cn(
-                                            'h-8 w-20 ml-auto text-right',
-                                            invalidField === `return-${line.id}` &&
-                                              'border-destructive ring-1 ring-destructive focus-visible:ring-destructive'
-                                          )}
-                                        />
-                                        {qtyHints[line.id] ? (
-                                          <div className="text-[10px] text-destructive mt-0.5 leading-tight">
-                                            {qtyHints[line.id]}
+                                    <Fragment key={line.id}>
+                                      <TableRow className="border-b-0">
+                                        <TableCell className="font-medium">{line.variantName}</TableCell>
+                                        <TableCell>
+                                          <TypeBadge type={line.variantType} />
+                                        </TableCell>
+                                        <TableCell className="text-right tabular-nums">{line.quantity}</TableCell>
+                                        <TableCell className="text-right tabular-nums text-muted-foreground">
+                                          {line.alreadyReturned}
+                                        </TableCell>
+                                        <TableCell className="text-right">
+                                          <div className="relative w-28 ml-auto">
+                                            <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">
+                                              max {line.remaining}
+                                            </span>
+                                            <Input
+                                              type="number"
+                                              min={0}
+                                              max={line.remaining}
+                                              value={quantities[line.id] ?? 0}
+                                              data-field={`return-${line.id}`}
+                                              aria-invalid={invalidField === `return-${line.id}` || undefined}
+                                              onChange={(e) => {
+                                                const parsed = parseInt(e.target.value, 10);
+                                                const next = Number.isNaN(parsed) ? 0 : parsed;
+                                                setClampedQty(line.id, next, line.remaining, setQuantities, setQtyHints);
+                                              }}
+                                              className={cn(
+                                                'h-8 w-28 pl-12 pr-2 text-right',
+                                                invalidField === `return-${line.id}` &&
+                                                  'border-destructive ring-1 ring-destructive focus-visible:ring-destructive'
+                                              )}
+                                            />
                                           </div>
-                                        ) : (
-                                          <div className="text-[10px] text-muted-foreground mt-0.5">
-                                            max {line.remaining}
+                                          {qtyHints[line.id] ? (
+                                            <div className="text-[10px] text-destructive mt-0.5 leading-tight">
+                                              {qtyHints[line.id]}
+                                            </div>
+                                          ) : null}
+                                        </TableCell>
+                                        {returnType === 'refund' ? (
+                                          <>
+                                            <TableCell className="text-right tabular-nums">
+                                              {formatReturnPeso(Number(line.unitPrice) || 0)}
+                                            </TableCell>
+                                            <TableCell className="text-right font-semibold tabular-nums">
+                                              {formatReturnPeso(
+                                                (quantities[line.id] || 0) * (Number(line.unitPrice) || 0)
+                                              )}
+                                            </TableCell>
+                                          </>
+                                        ) : null}
+                                      </TableRow>
+                                      <TableRow>
+                                        <TableCell
+                                          colSpan={returnType === 'refund' ? 7 : 5}
+                                          className="pt-0 pb-3"
+                                        >
+                                          <div className="border-t pt-2 w-full">
+                                            <StockFateToggle
+                                              value={stockFates[line.id] || undefined}
+                                              invalid={invalidField === `fate-${line.id}`}
+                                              fieldId={`fate-${line.id}`}
+                                              onChange={(next) => {
+                                                setInvalidField(null);
+                                                setStockFates((prev) => ({ ...prev, [line.id]: next }));
+                                              }}
+                                            />
                                           </div>
-                                        )}
-                                      </TableCell>
-                                    </TableRow>
+                                        </TableCell>
+                                      </TableRow>
+                                    </Fragment>
                                   ))}
                                 </TableBody>
                               </Table>
@@ -1734,6 +1915,13 @@ export function ReturnClientOrderDialog({
                             </div>
                             <div className="text-right shrink-0">
                               <p className="font-semibold text-rose-700 tabular-nums">{quantities[line.id]}</p>
+                              <p className="text-[11px] text-muted-foreground">
+                                {formatClientReturnStockFate(
+                                  stockFates[line.id] === 'restock' || stockFates[line.id] === 'disposal'
+                                    ? (stockFates[line.id] as ClientReturnStockFate)
+                                    : undefined
+                                )}
+                              </p>
                               {returnType === 'refund' ? (
                                 <p className="text-[11px] text-muted-foreground tabular-nums">
                                   {formatReturnPeso((quantities[line.id] || 0) * (Number(line.unitPrice) || 0))}
@@ -1749,6 +1937,7 @@ export function ReturnClientOrderDialog({
                           <TableRow>
                             <TableHead>Variant</TableHead>
                             <TableHead>Type</TableHead>
+                            <TableHead>Stock</TableHead>
                             <TableHead className="text-right">Qty</TableHead>
                             {returnType === 'refund' ? (
                               <TableHead className="text-right">Amount</TableHead>
@@ -1761,6 +1950,13 @@ export function ReturnClientOrderDialog({
                               <TableCell className="font-medium">{line.variantName}</TableCell>
                               <TableCell>
                                 <TypeBadge type={line.variantType} />
+                              </TableCell>
+                              <TableCell>
+                                {formatClientReturnStockFate(
+                                  stockFates[line.id] === 'restock' || stockFates[line.id] === 'disposal'
+                                    ? (stockFates[line.id] as ClientReturnStockFate)
+                                    : undefined
+                                )}
                               </TableCell>
                               <TableCell className="text-right font-semibold text-rose-700 tabular-nums">
                                 {quantities[line.id]}

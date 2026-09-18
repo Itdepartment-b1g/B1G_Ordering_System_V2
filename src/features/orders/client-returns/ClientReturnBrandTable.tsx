@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
-import { Table, TableBody, TableCell, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   getListPaginationSlice,
   ListPagination,
@@ -14,7 +14,11 @@ import {
   resolveTableSortDirection,
   type TableSortCycleState,
 } from '@/features/shared/utils/tableSortCycle';
-import type { PreviewClientReturnLine } from './clientReturnPreview';
+import {
+  clientReturnStockFateBadgeClass,
+  formatClientReturnStockFate,
+  type PreviewClientReturnLine,
+} from './clientReturnPreview';
 import {
   DEFAULT_BRAND_VARIANT_SORT_DIRECTION,
   DEFAULT_BRAND_VARIANT_SORT_KEY,
@@ -59,7 +63,10 @@ export function groupLinesByBrand(lines: PreviewClientReturnLine[]) {
     const brand = line.brandName?.trim() || 'Unknown';
     const list = map.get(brand) || [];
     const existing = list.find(
-      (item) => item.variantName === line.variantName && item.variantType === line.variantType
+      (item) =>
+        item.variantName === line.variantName &&
+        item.variantType === line.variantType &&
+        item.stockFate === line.stockFate
     );
     if (existing) {
       existing.quantity += line.quantity;
@@ -95,6 +102,7 @@ export function BrandReturnedTable({
   const [sortState, setSortState] =
     useState<TableSortCycleState<BrandVariantSortKey>>(createInitialTableSortCycle);
   const brandQty = variants.reduce((sum, line) => sum + line.quantity, 0);
+  const showStockFate = variants.some((line) => line.stockFate);
 
   const sortedVariants = useMemo(() => {
     const { key, direction } = resolveTableSortDirection(
@@ -138,6 +146,7 @@ export function BrandReturnedTable({
               sortDirection={getTableSortDisplayDirection(sortState, 'variantType')}
               onSort={handleSort}
             />
+            {showStockFate ? <TableHead>Stock</TableHead> : null}
             <SortableTableHead
               label="Qty"
               sortKey="quantity"
@@ -149,7 +158,7 @@ export function BrandReturnedTable({
         </TableHeader>
         <TableBody>
           {pagedItems.map((line) => (
-            <TableRow key={`${brandName}-${line.variantType}-${line.variantName}`}>
+            <TableRow key={`${brandName}-${line.variantType}-${line.variantName}-${line.stockFate || ''}`}>
               <TableCell className="font-medium">{line.variantName}</TableCell>
               <TableCell>
                 <Badge
@@ -159,6 +168,16 @@ export function BrandReturnedTable({
                   {formatVariantType(line.variantType)}
                 </Badge>
               </TableCell>
+              {showStockFate ? (
+                <TableCell>
+                  <Badge
+                    variant="outline"
+                    className={`font-normal ${clientReturnStockFateBadgeClass(line.stockFate)}`}
+                  >
+                    {formatClientReturnStockFate(line.stockFate)}
+                  </Badge>
+                </TableCell>
+              ) : null}
               <TableCell className={`text-right font-semibold tabular-nums ${qtyClassName}`}>
                 {line.quantity}
               </TableCell>

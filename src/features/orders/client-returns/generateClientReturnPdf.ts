@@ -2,6 +2,7 @@ import {
   formatClientReturnPeso,
   formatClientReturnReason,
   formatClientReturnStatus,
+  formatClientReturnStockFate,
   formatClientReturnType,
   getClientReturnRefundAmount,
   type PreviewClientReturn,
@@ -86,7 +87,8 @@ function lineAmount(line: PreviewClientReturnLine): string {
 function lineRowsHtml(
   lines: PreviewClientReturnLine[],
   emptyLabel: string,
-  showAmount: boolean
+  showAmount: boolean,
+  showStockFate: boolean
 ): string {
   const rows = lines.map((line) => {
     return `
@@ -94,6 +96,7 @@ function lineRowsHtml(
         <td class="col-desc">${escapeHtml(lineDescription(line))}</td>
         <td class="col-qty">${fmtQty(line.quantity)}</td>
         <td class="col-qty">${escapeHtml(line.variantType || '—')}</td>
+        ${showStockFate ? `<td class="col-qty">${escapeHtml(formatClientReturnStockFate(line.stockFate))}</td>` : ''}
         ${showAmount ? `<td class="col-qty">${escapeHtml(lineAmount(line))}</td>` : ''}
       </tr>`;
   });
@@ -104,6 +107,7 @@ function lineRowsHtml(
         <td class="col-desc">${escapeHtml(emptyLabel)}</td>
         <td class="col-qty">&nbsp;</td>
         <td class="col-qty">&nbsp;</td>
+        ${showStockFate ? '<td class="col-qty">&nbsp;</td>' : ''}
         ${showAmount ? '<td class="col-qty">&nbsp;</td>' : ''}
       </tr>`);
   }
@@ -117,12 +121,14 @@ function itemsTableHtml({
   lines,
   emptyLabel,
   showAmount = true,
+  showStockFate = false,
 }: {
   title: string;
   qtyLabel: string;
   lines: PreviewClientReturnLine[];
   emptyLabel: string;
   showAmount?: boolean;
+  showStockFate?: boolean;
 }): string {
   return `
     <div class="table-caption">${escapeHtml(title)}</div>
@@ -132,11 +138,12 @@ function itemsTableHtml({
           <th class="col-desc">Description</th>
           <th class="col-qty">${escapeHtml(qtyLabel)}</th>
           <th class="col-qty">Type</th>
+          ${showStockFate ? '<th class="col-qty">Stock</th>' : ''}
           ${showAmount ? '<th class="col-qty">Amount</th>' : ''}
         </tr>
       </thead>
       <tbody>
-        ${lineRowsHtml(lines, emptyLabel, showAmount)}
+        ${lineRowsHtml(lines, emptyLabel, showAmount, showStockFate)}
       </tbody>
     </table>`;
 }
@@ -169,6 +176,7 @@ function buildClientReturnHtml(row: PreviewClientReturn): string {
     qtyLabel: 'Returned',
     lines: returnedLines,
     emptyLabel: 'No returned items',
+    showStockFate: true,
   });
   const changedTable = showChanged
     ? `${itemsTableHtml({

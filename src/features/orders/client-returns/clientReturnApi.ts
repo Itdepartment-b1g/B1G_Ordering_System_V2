@@ -2,7 +2,9 @@ import { supabase } from '@/lib/supabase';
 import type { PackageProofPhotoItem } from '@/features/shared/components/MultiProofPhotoField';
 import {
   parseClientReturnStatus,
+  parseClientReturnStockFate,
   parseClientReturnType,
+  type ClientReturnStockFate,
   type PayoutAttachmentRevision,
   type PreviewChangeItemSku,
   type PreviewClientReturn,
@@ -71,6 +73,7 @@ function mapLine(item: Record<string, unknown>): PreviewClientReturn['lines'][nu
     clientOrderItemId: item.client_order_item_id
       ? String(item.client_order_item_id)
       : undefined,
+    stockFate: parseClientReturnStockFate(item.stock_fate),
   };
 }
 
@@ -157,6 +160,7 @@ const RETURN_SELECT = `
     quantity,
     unit_price,
     line_total,
+    stock_fate,
     variant:variants (
       name,
       variant_type,
@@ -419,7 +423,7 @@ export async function createClientOrderReturn(input: {
   reason: string;
   notes: string;
   signatureDataUrl: string;
-  items: Array<{ clientOrderItemId: string; quantity: number }>;
+  items: Array<{ clientOrderItemId: string; quantity: number; stockFate: ClientReturnStockFate }>;
   changeItems: Array<{ variantId: string; quantity: number }>;
   photos: PackageProofPhotoItem[];
   returnType?: 'change_item' | 'refund';
@@ -440,6 +444,7 @@ export async function createClientOrderReturn(input: {
     p_items: input.items.map((item) => ({
       client_order_item_id: item.clientOrderItemId,
       quantity: item.quantity,
+      stock_fate: item.stockFate,
     })),
     p_change_items: input.changeItems.map((item) => ({
       variant_id: item.variantId,
