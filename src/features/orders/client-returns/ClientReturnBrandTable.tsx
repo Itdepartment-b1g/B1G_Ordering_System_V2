@@ -92,17 +92,19 @@ export function BrandReturnedTable({
   brandName,
   variants,
   qtyClassName = 'text-rose-700',
+  showStockFate,
 }: {
   brandName: string;
   variants: PreviewClientReturnLine[];
   qtyClassName?: string;
+  showStockFate?: boolean;
 }) {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(BRAND_PAGE_SIZE);
   const [sortState, setSortState] =
     useState<TableSortCycleState<BrandVariantSortKey>>(createInitialTableSortCycle);
   const brandQty = variants.reduce((sum, line) => sum + line.quantity, 0);
-  const showStockFate = variants.some((line) => line.stockFate);
+  const includeStockFate = showStockFate ?? variants.some((line) => line.stockFate);
 
   const sortedVariants = useMemo(() => {
     const { key, direction } = resolveTableSortDirection(
@@ -146,7 +148,7 @@ export function BrandReturnedTable({
               sortDirection={getTableSortDisplayDirection(sortState, 'variantType')}
               onSort={handleSort}
             />
-            {showStockFate ? <TableHead>Stock</TableHead> : null}
+            {includeStockFate ? <TableHead>Stock</TableHead> : null}
             <SortableTableHead
               label="Qty"
               sortKey="quantity"
@@ -168,7 +170,7 @@ export function BrandReturnedTable({
                   {formatVariantType(line.variantType)}
                 </Badge>
               </TableCell>
-              {showStockFate ? (
+              {includeStockFate ? (
                 <TableCell>
                   <Badge
                     variant="outline"

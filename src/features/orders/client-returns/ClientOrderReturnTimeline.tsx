@@ -18,6 +18,7 @@ import {
   formatClientReturnReason,
   formatClientReturnType,
   getClientReturnRefundAmount,
+  getClientReturnStockFateQty,
   getPreviewReturnLineQty,
   type PreviewClientReturn,
 } from './clientReturnPreview';
@@ -143,7 +144,7 @@ function buildReturnTimelineEvents(cr: PreviewClientReturn): TimelineEvent[] {
         returnEvent(cr, 'finance', cr.approvedAt || cr.createdAt, 'Refund approved by Finance', 'success', {
           actorLabel: 'Approved by',
           actorName: cr.approvedByName || 'Finance',
-          extras: ['Refund amount posted', 'Returned stock recorded'],
+          extras: ['Refund amount posted', ...stockFateExtras(cr)],
           showPayoutPhotos: true,
         })
       );
@@ -165,6 +166,7 @@ function buildReturnTimelineEvents(cr: PreviewClientReturn): TimelineEvent[] {
           {
             actorLabel: 'Approved by',
             actorName: cr.approvedByName || 'Team leader',
+            extras: stockFateExtras(cr),
           }
         )
       );
@@ -233,11 +235,20 @@ function TimelineMetaRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+function stockFateExtras(cr: PreviewClientReturn): string[] {
+  const { restock, disposal } = getClientReturnStockFateQty(cr);
+  const extras: string[] = [];
+  if (restock > 0) extras.push(`Restock ${restock}`);
+  if (disposal > 0) extras.push(`Disposal ${disposal}`);
+  return extras;
+}
+
 function extraMetaCells(extras?: string[]): Array<{ label: string; value: string }> {
   return (extras || []).filter(Boolean).map((line) => {
     if (line === 'Refund amount posted') return { label: 'Refund', value: 'Posted' };
-    if (line === 'Returned stock recorded') return { label: 'Stock', value: 'Recorded' };
     if (line === 'Waiting for Finance') return { label: 'Status', value: 'Waiting for Finance' };
+    if (line.startsWith('Restock ')) return { label: 'Restock', value: `${line.slice('Restock '.length)} qty` };
+    if (line.startsWith('Disposal ')) return { label: 'Disposal', value: `${line.slice('Disposal '.length)} qty` };
     return { label: 'Detail', value: line };
   });
 }
@@ -254,6 +265,7 @@ function ReturnEventMeta({
   extras?: string[];
 }) {
   const qty = getPreviewReturnLineQty(cr);
+  const fateQty = getClientReturnStockFateQty(cr);
   const cells = [
     { label: 'Client name', value: cr.clientName || '—' },
     { label: 'Type', value: formatClientReturnType(cr.returnType) },
@@ -263,11 +275,13 @@ function ReturnEventMeta({
       value:
         cr.returnType === 'refund' ? formatClientReturnPeso(getClientReturnRefundAmount(cr)) : '—',
     },
+    { label: 'Restock', value: fateQty.restock > 0 ? `${fateQty.restock}` : '—' },
+    { label: 'Disposal', value: fateQty.disposal > 0 ? `${fateQty.disposal}` : '—' },
     { label: actorLabel || 'Approved by', value: actorName || '—' },
     { label: 'Note', value: cr.notes?.trim() || '—' },
     { label: 'Reason', value: formatClientReturnReason(cr.reason) },
     ...extraMetaCells(extras),
-  ].slice(0, 9);
+  ].slice(0, 12);
 
   return (
     <dl className="mt-1.5 grid grid-cols-3 gap-x-3 gap-y-2 text-xs">
@@ -305,6 +319,7 @@ function ReturnEventItems({ cr }: { cr: PreviewClientReturn }) {
               key={`ret-${cr.id}-${group.brandName}`}
               brandName={group.brandName}
               variants={group.variants}
+              showStockFate
             />
           ))}
         </div>

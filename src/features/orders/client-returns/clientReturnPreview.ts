@@ -217,6 +217,21 @@ export function getClientReturnRefundAmount(row: PreviewClientReturn): number {
   }, 0);
 }
 
+export function getClientReturnStockFateQty(row: Pick<PreviewClientReturn, 'lines'>): {
+  restock: number;
+  disposal: number;
+} {
+  return row.lines.reduce(
+    (sum, line) => {
+      const qty = Number(line.quantity) || 0;
+      if (line.stockFate === 'restock') sum.restock += qty;
+      else sum.disposal += qty;
+      return sum;
+    },
+    { restock: 0, disposal: 0 }
+  );
+}
+
 export function isPostedClientReturn(row: PreviewClientReturn): boolean {
   return row.status === 'posted';
 }

@@ -281,7 +281,11 @@ function StockFateToggle({
           Disposal
         </Button>
       </div>
-      {invalid ? <p className="text-[10px] text-destructive leading-tight">Choose Restock or Disposal.</p> : null}
+      {disabled ? (
+        <p className="text-[10px] text-muted-foreground leading-tight">Fully returned</p>
+      ) : invalid ? (
+        <p className="text-[10px] text-destructive leading-tight">Choose Restock or Disposal.</p>
+      ) : null}
     </div>
   );
 }
@@ -310,6 +314,7 @@ function QtyInputCard({
   hint,
   invalid,
   fieldId,
+  disabledHint,
   onValueChange,
   extra,
 }: {
@@ -326,9 +331,11 @@ function QtyInputCard({
   hint?: string;
   invalid?: boolean;
   fieldId: string;
+  disabledHint?: string;
   onValueChange: (next: number) => void;
   extra?: ReactNode;
 }) {
+  const disabled = max <= 0;
   return (
     <div className="rounded-xl border bg-background p-4 shadow-sm space-y-3">
       <div className="flex items-start justify-between gap-2">
@@ -356,7 +363,9 @@ function QtyInputCard({
           type="number"
           min={0}
           max={max}
-          value={value}
+          value={value === 0 ? '' : value}
+          placeholder="0"
+          disabled={disabled}
           data-field={fieldId}
           aria-invalid={invalid || undefined}
           onChange={(e) => {
@@ -370,6 +379,8 @@ function QtyInputCard({
         />
         {hint ? (
           <p className="text-xs text-destructive leading-tight">{hint}</p>
+        ) : disabled && disabledHint ? (
+          <p className="text-xs text-muted-foreground">{disabledHint}</p>
         ) : (
           <p className="text-xs text-muted-foreground">Max {max}</p>
         )}
@@ -664,6 +675,7 @@ export function ReturnClientOrderDialog({
       .filter((row) => row.sellable < row.returned);
 
   const itemsError = (): string | null => {
+    if (remainingTotal <= 0) return 'All items on this order are already returned.';
     if (totalReturning <= 0) return 'Enter a quantity to return for at least one item.';
     for (const line of lines) {
       const qty = quantities[line.id] || 0;
@@ -809,6 +821,13 @@ export function ReturnClientOrderDialog({
 
   const goNext = () => {
     if (step === 0) {
+      if (remainingTotal <= 0) {
+        toast({
+          title: 'Nothing to return',
+          description: 'All items on this order are already returned.',
+        });
+        return;
+      }
       const error = itemsError();
       if (error) {
         revealInvalid(firstInvalidField(0), error);
@@ -820,12 +839,24 @@ export function ReturnClientOrderDialog({
           setFormError(null);
           setInvalidField(null);
           setStockWarning(shortfalls);
+          toast({
+            title: 'Not enough stock',
+            description: 'Agent bag qty is less than the items you are returning.',
+            variant: 'destructive',
+          });
           return;
         }
       }
     } else {
       const error = stepError(step);
       if (error) {
+        if (step === CHANGE_ITEMS_STEP && stockShortfalls().length > 0) {
+          toast({
+            title: 'No stock for this item',
+            description: 'Agent bag has 0 of this SKU. Pick another variant of the same brand.',
+            variant: 'destructive',
+          });
+        }
         revealInvalid(firstInvalidField(step), error);
         return;
       }
@@ -1196,6 +1227,12 @@ export function ReturnClientOrderDialog({
                 if (currentId == null) continue;
                 const error = stepError(currentId);
                 if (error) {
+                  if (currentId === 0 && remainingTotal <= 0) {
+                    toast({
+                      title: 'Nothing to return',
+                      description: 'All items on this order are already returned.',
+                    });
+                  }
                   setStep(currentId);
                   revealInvalid(firstInvalidField(currentId), error);
                   return;
@@ -1206,6 +1243,11 @@ export function ReturnClientOrderDialog({
                     setFormError(null);
                     setInvalidField(null);
                     setStockWarning(shortfalls);
+                    toast({
+                      title: 'Not enough stock',
+                      description: 'Agent bag qty is less than the items you are returning.',
+                      variant: 'destructive',
+                    });
                     return;
                   }
                 }
@@ -1324,6 +1366,7 @@ export function ReturnClientOrderDialog({
                                   hint={qtyHints[line.id]}
                                   invalid={invalidField === `return-${line.id}`}
                                   fieldId={`return-${line.id}`}
+                                  disabledHint="Fully returned"
                                   onValueChange={(next) =>
                                     setClampedQty(line.id, next, line.remaining, setQuantities, setQtyHints)
                                   }
@@ -1333,6 +1376,7 @@ export function ReturnClientOrderDialog({
                                         value={stockFates[line.id] || undefined}
                                         invalid={invalidField === `fate-${line.id}`}
                                         fieldId={`fate-${line.id}`}
+                                        disabled={line.remaining <= 0}
                                         onChange={(next) => {
                                           setInvalidField(null);
                                           setStockFates((prev) => ({ ...prev, [line.id]: next }));
@@ -1400,7 +1444,9 @@ export function ReturnClientOrderDialog({
                                               type="number"
                                               min={0}
                                               max={line.remaining}
-                                              value={quantities[line.id] ?? 0}
+                                              value={(quantities[line.id] || 0) === 0 ? '' : quantities[line.id]}
+                                              placeholder="0"
+                                              disabled={line.remaining <= 0}
                                               data-field={`return-${line.id}`}
                                               aria-invalid={invalidField === `return-${line.id}` || undefined}
                                               onChange={(e) => {
@@ -1418,6 +1464,10 @@ export function ReturnClientOrderDialog({
                                           {qtyHints[line.id] ? (
                                             <div className="text-[10px] text-destructive mt-0.5 leading-tight">
                                               {qtyHints[line.id]}
+                                            </div>
+                                          ) : line.remaining <= 0 ? (
+                                            <div className="text-[10px] text-muted-foreground mt-0.5">
+                                              Fully returned
                                             </div>
                                           ) : null}
                                         </TableCell>
@@ -1444,6 +1494,7 @@ export function ReturnClientOrderDialog({
                                               value={stockFates[line.id] || undefined}
                                               invalid={invalidField === `fate-${line.id}`}
                                               fieldId={`fate-${line.id}`}
+                                              disabled={line.remaining <= 0}
                                               onChange={(next) => {
                                                 setInvalidField(null);
                                                 setStockFates((prev) => ({ ...prev, [line.id]: next }));
@@ -1521,6 +1572,9 @@ export function ReturnClientOrderDialog({
                                       hint={changeHints[sku.id]}
                                       invalid={invalidField === `change-${sku.id}`}
                                       fieldId={`change-${sku.id}`}
+                                      disabledHint={
+                                        sku.sellableQty <= 0 ? 'No stock for this item' : undefined
+                                      }
                                       onValueChange={(next) =>
                                         setClampedQty(
                                           sku.id,
@@ -1566,7 +1620,9 @@ export function ReturnClientOrderDialog({
                                               type="number"
                                               min={0}
                                               max={skuMax}
-                                              value={changeQuantities[sku.id] ?? 0}
+                                              value={(changeQuantities[sku.id] || 0) === 0 ? '' : changeQuantities[sku.id]}
+                                              placeholder="0"
+                                              disabled={skuMax <= 0}
                                               data-field={`change-${sku.id}`}
                                               aria-invalid={invalidField === `change-${sku.id}` || undefined}
                                               onChange={(e) => {
@@ -1589,6 +1645,10 @@ export function ReturnClientOrderDialog({
                                             {changeHints[sku.id] ? (
                                               <div className="text-[10px] text-destructive mt-0.5 leading-tight">
                                                 {changeHints[sku.id]}
+                                              </div>
+                                            ) : sku.sellableQty <= 0 ? (
+                                              <div className="text-[10px] text-muted-foreground mt-0.5">
+                                                No stock for this item
                                               </div>
                                             ) : (
                                               <div className="text-[10px] text-muted-foreground mt-0.5">
