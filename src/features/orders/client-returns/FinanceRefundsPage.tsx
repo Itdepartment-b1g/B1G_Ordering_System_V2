@@ -494,24 +494,32 @@ export default function FinanceRefundsPage() {
 
   const handleApproveConfirm = async (photos?: PackageProofPhotoItem[]) => {
     if (!actionRow || acting || !canReviewClientReturn(user?.role, actionRow)) return;
+    const sendingToFinance = actionRow.status === 'pending_super_admin';
     const companyId = user?.company_id;
-    if (!companyId) return;
-    if (!photos?.length) {
-      toast({
-        title: 'Photo required',
-        description: 'Attach a photo as proof that cash was sent.',
-        variant: 'destructive',
-      });
-      return;
+    if (!sendingToFinance) {
+      if (!companyId) return;
+      if (!photos?.length) {
+        toast({
+          title: 'Photo required',
+          description: 'Attach a photo as proof that cash was sent.',
+          variant: 'destructive',
+        });
+        return;
+      }
     }
     setActing(true);
     try {
-      await approveClientOrderReturn(actionRow.id, { companyId, photos });
+      await approveClientOrderReturn(
+        actionRow.id,
+        sendingToFinance || !companyId ? undefined : { companyId, photos: photos || [] }
+      );
       await queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] });
       await queryClient.invalidateQueries({ queryKey: ['inventory'] });
       toast({
-        title: 'Refund posted',
-        description: `${actionRow.returnNumber} posted. Returned stock was updated.`,
+        title: sendingToFinance ? 'Refund sent to finance' : 'Refund posted',
+        description: sendingToFinance
+          ? `${actionRow.returnNumber} is waiting for finance to post the refund.`
+          : `${actionRow.returnNumber} posted. Returned stock was updated.`,
       });
       setConfirmKind(null);
       setActionRow(null);
@@ -575,7 +583,9 @@ export default function FinanceRefundsPage() {
         <p className="text-sm sm:text-base text-muted-foreground mt-1">
           {isFinance
             ? 'Review refunds after Super Admin approval. Open Review, then Approve and attach proof that cash was sent.'
-            : 'View client refunds. Finance approves after Super Admin.'}
+            : user?.role === 'super_admin'
+              ? 'Review pending refunds, then Approve and type the mobile sales name to send them to finance.'
+              : 'View client refunds. Super Admin approves first, then Finance posts the refund.'}
         </p>
       </div>
 
@@ -879,7 +889,7 @@ export default function FinanceRefundsPage() {
         open={confirmKind === 'approve' || confirmKind === 'reject'}
         row={actionRow}
         acting={acting}
-        skipNameConfirm
+        skipNameConfirm={actionRow?.status === 'pending_finance'}
         onOpenChange={(nextOpen) => {
           if (!nextOpen && !acting) {
             setConfirmKind(null);

@@ -68,6 +68,7 @@ export function ClientReturnViewDialog({
   const isApprove = mode === 'approve';
   const isReject = mode === 'reject';
   const isReview = isApprove || isReject;
+  const isSaRefund = row?.returnType === 'refund' && row.status === 'pending_super_admin';
   const qty = row ? getPreviewReturnLineQty(row) : 0;
   const brandGroups = row ? groupLinesByBrand(row.lines) : [];
   const changeGroups = row ? groupLinesByBrand(row.changeLines || []) : [];
@@ -170,6 +171,12 @@ export function ClientReturnViewDialog({
                       Review this refund, then click Approve to attach proof that cash was sent and
                       confirm the mobile sales name.
                     </>
+                  ) : isSaRefund ? (
+                    <>
+                      Review this refund, then click Approve and type the mobile sales name to send{' '}
+                      {row.returnNumber} to finance. No cash-sent photo is needed here — Finance
+                      attaches that when they approve.
+                    </>
                   ) : (
                     <>
                       Review this return, then click Approve and type the mobile sales name to post{' '}
@@ -179,6 +186,11 @@ export function ClientReturnViewDialog({
                 ) : isReject ? (
                   skipNameConfirm ? (
                     <>Review this refund, then reject {row.returnNumber} if cash should not be sent.</>
+                  ) : isSaRefund ? (
+                    <>
+                      Review this refund, then click Reject and type the mobile sales name to close{' '}
+                      {row.returnNumber}. The agent can file a new CR on {row.orderNumber}.
+                    </>
                   ) : (
                     <>
                       Review this return, then click Reject and type the mobile sales name to close{' '}
@@ -272,11 +284,11 @@ export function ClientReturnViewDialog({
                     onReject?.(rejectNote);
                     return;
                   }
-                  if (isApprove && requirePayoutProof) {
+                  if (isApprove && requirePayoutProof && !isSaRefund) {
                     setPayoutStep(true);
                     return;
                   }
-                  if (skipNameConfirm && isApprove) {
+                  if (skipNameConfirm && isApprove && !isSaRefund) {
                     onApprove?.(undefined);
                     return;
                   }
@@ -379,7 +391,9 @@ export function ClientReturnViewDialog({
                 <p>
                   This return was filed by{' '}
                   <span className="font-semibold text-foreground">{agentName || 'this agent'}</span>.
-                  Type that name to confirm {isReject ? 'reject' : 'approve'}.
+                  {isSaRefund && isApprove
+                    ? ' Type that name to send this refund to finance. No photo is required — Finance will attach cash-sent proof when they approve.'
+                    : ` Type that name to confirm ${isReject ? 'reject' : 'approve'}.`}
                 </p>
                 <div className="space-y-2">
                   <Label htmlFor="review-agent-name">Mobile sales name</Label>
@@ -435,7 +449,7 @@ export function ClientReturnViewDialog({
                 disabled={!agentNameMatches || acting || !row || (requirePayoutProof && payoutPhotos.length === 0)}
               >
                 {acting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                Approve
+                {isSaRefund ? 'Send to finance' : 'Approve'}
               </Button>
             )}
           </AlertDialogFooter>
