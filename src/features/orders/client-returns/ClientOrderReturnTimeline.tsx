@@ -203,43 +203,6 @@ function buildTimelineEvents(order: Order, returns: PreviewClientReturn[]): Time
     },
   ];
 
-  if (order.stage === 'finance_pending' || order.stage === 'agent_pending') {
-    events.push({
-      id: 'pending',
-      at: order.createdAt || order.date,
-      title: order.stage === 'finance_pending' ? 'Pending finance review' : 'Pending approval',
-      tone: 'neutral',
-    });
-  }
-
-  if (order.stage === 'needs_revision') {
-    events.push({
-      id: 'revision',
-      at: order.createdAt || order.date,
-      title: 'Returned for revision',
-      tone: 'neutral',
-    });
-  }
-
-  if (order.status === 'approved' || order.stage === 'admin_approved') {
-    events.push({
-      id: 'approved',
-      at: order.approvedAt || order.createdAt || order.date,
-      title: 'Order approved',
-      detail: order.approvedByName ? `Approved by ${order.approvedByName}` : undefined,
-      tone: 'success',
-    });
-  }
-
-  if (order.status === 'rejected' || order.stage === 'admin_rejected' || order.stage === 'leader_rejected') {
-    events.push({
-      id: 'rejected',
-      at: order.createdAt || order.date,
-      title: 'Order rejected',
-      tone: 'danger',
-    });
-  }
-
   for (const cr of returns) {
     events.push(...buildReturnTimelineEvents(cr));
   }
