@@ -35,6 +35,7 @@ import {
   Link,
   Network,
   FileUp,
+  FileSpreadsheet,
   Plus,
   Package2Icon,
   PackageCheck,
@@ -177,6 +178,7 @@ const salesAdminMenuItems: MenuItem[] = [
       { title: 'Create Purchase Order', url: '/key-accounts/create-order', icon: Plus },
       { title: 'Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
       { title: 'Historical Import', url: '/key-accounts/historical-import', icon: FileUp },
+      { title: 'Sales Record Import', url: '/key-accounts/sales-record-import', icon: FileSpreadsheet },
       // { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
     ]
   },
@@ -217,6 +219,7 @@ const salesHeadMenuItems: MenuItem[] = [
       { title: 'Create Purchase Order', url: '/key-accounts/create-order', icon: Plus },
       { title: 'Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
       { title: 'Historical Import', url: '/key-accounts/historical-import', icon: FileUp },
+      { title: 'Sales Record Import', url: '/key-accounts/sales-record-import', icon: FileSpreadsheet },
       // { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
     ]
   },

@@ -93,7 +93,8 @@ export function localApiRoutes(): Plugin {
           if (!res.headersSent) {
             res.statusCode = 500;
             res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ error: 'Internal server error' }));
+            const message = error instanceof Error ? error.message : 'Internal server error';
+            res.end(JSON.stringify({ error: message || 'Internal server error' }));
           }
         }
       });
