@@ -39,6 +39,7 @@ import {
   formatClientReturnPeso,
   formatClientReturnReason,
   formatClientReturnStatus,
+  formatClientReturnStockFate,
   getClientReturnRefundAmount,
   getPreviewReturnLineQty,
   type PreviewClientReturn,
@@ -64,6 +65,7 @@ import {
 import {
   buildClientReturnHistoryFilterFields,
   matchesClientReturnHistory,
+  matchesClientReturnHistoryStock,
   uniqueBrandNames,
   uniqueClientNames,
   uniqueFinancePostedNames,
@@ -75,6 +77,7 @@ import {
   uniqueTlApprovedNames,
   type ClientReturnHistoryCondition,
   type ClientReturnHistoryQuickColumn,
+  type ClientReturnHistoryStockFilter,
 } from './utils/clientReturnsHistoryFilters';
 
 const PAGE_SIZE: PageSize = 25;
@@ -235,6 +238,7 @@ export default function FinanceRefundsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('pending_finance');
   const [quickDateRange, setQuickDateRange] = useState(ALL_TIME_DATE_RANGE);
   const [quickStatus, setQuickStatus] = useState<StatusFilter>('all');
+  const [stockFilter, setStockFilter] = useState<ClientReturnHistoryStockFilter>('all');
   const [columnClauses, setColumnClauses] = useState(() => [
     createQuickFilterAndClause<ClientReturnHistoryQuickColumn>(),
   ]);
@@ -267,11 +271,12 @@ export default function FinanceRefundsPage() {
       conditions,
       search: '',
       status: quickStatus,
+      stock: stockFilter,
       role: user?.role,
       dateRange: quickDateRange,
       columnClauses,
     }),
-    [conditions, quickStatus, user?.role, quickDateRange, columnClauses]
+    [conditions, quickStatus, stockFilter, user?.role, quickDateRange, columnClauses]
   );
 
   const returnedByOptions = useMemo(() => uniqueReturnedByNames(refunds), [refunds]);
@@ -283,6 +288,15 @@ export default function FinanceRefundsPage() {
   const saApprovedOptions = useMemo(() => uniqueSaApprovedNames(refunds), [refunds]);
   const financePostedOptions = useMemo(() => uniqueFinancePostedNames(refunds), [refunds]);
   const rejectedByOptions = useMemo(() => uniqueRejectedByNames(refunds), [refunds]);
+
+  const stockCounts = useMemo<Record<ClientReturnHistoryStockFilter, number>>(() => {
+    const scoped = refunds.filter((row) => matchesClientReturnHistory(row, extraFilters, { stock: true }));
+    return {
+      all: scoped.length,
+      restock: scoped.filter((row) => matchesClientReturnHistoryStock(row, 'restock')).length,
+      disposal: scoped.filter((row) => matchesClientReturnHistoryStock(row, 'disposal')).length,
+    };
+  }, [refunds, extraFilters]);
 
   const historyFilterFields = useMemo(
     () =>
@@ -298,6 +312,7 @@ export default function FinanceRefundsPage() {
           rejected: counts.rejected,
         },
         typeCounts: { all: refunds.length, change_item: 0, refund: refunds.length },
+        stockCounts,
         returnNumberOptions,
         orderNumberOptions,
         returnedByOptions,
@@ -309,6 +324,7 @@ export default function FinanceRefundsPage() {
     [
       refunds.length,
       counts,
+      stockCounts,
       returnNumberOptions,
       orderNumberOptions,
       returnedByOptions,
@@ -352,6 +368,15 @@ export default function FinanceRefundsPage() {
         searchPlaceholder: 'Search brand...',
       },
       {
+        key: 'stock',
+        label: 'Stock',
+        options: [
+          { value: 'restock', label: formatClientReturnStockFate('restock') },
+          { value: 'disposal', label: formatClientReturnStockFate('disposal') },
+        ],
+        searchPlaceholder: 'Search stock fate...',
+      },
+      {
         key: 'reason',
         label: 'Reason',
         options: CLIENT_RETURN_REASON_OPTIONS.map((option) => ({ value: option.value, label: option.label })),
@@ -393,6 +418,7 @@ export default function FinanceRefundsPage() {
 
   const clearQuickFilters = () => {
     setQuickStatus('all');
+    setStockFilter('all');
     setQuickDateRange(ALL_TIME_DATE_RANGE);
     setColumnClauses([createQuickFilterAndClause<ClientReturnHistoryQuickColumn>()]);
   };
@@ -636,6 +662,18 @@ export default function FinanceRefundsPage() {
                   status={quickStatus}
                   statusOptions={historyStatusOptions}
                   onStatusChange={setQuickStatus}
+                  extraSelects={[
+                    {
+                      title: 'Stock',
+                      value: stockFilter,
+                      options: [
+                        { value: 'all', label: 'All stock', count: stockCounts.all },
+                        { value: 'restock', label: formatClientReturnStockFate('restock'), count: stockCounts.restock },
+                        { value: 'disposal', label: formatClientReturnStockFate('disposal'), count: stockCounts.disposal },
+                      ],
+                      onChange: (value) => setStockFilter(value as ClientReturnHistoryStockFilter),
+                    },
+                  ]}
                   onClear={clearQuickFilters}
                 />
                 <ConditionFilterSheet

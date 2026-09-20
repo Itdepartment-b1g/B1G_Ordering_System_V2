@@ -359,7 +359,10 @@ export function ClientOrderReturnTimeline({ open, onOpenChange, order }: ClientO
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl w-[95vw] max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent
+        overlayClassName="z-[70]"
+        className="max-w-2xl w-[95vw] max-h-[90vh] overflow-hidden flex flex-col z-[70]"
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 flex-wrap">
             <ShoppingCart className="h-5 w-5 text-muted-foreground" />

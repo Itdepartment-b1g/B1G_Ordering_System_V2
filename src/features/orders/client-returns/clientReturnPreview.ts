@@ -232,6 +232,31 @@ export function getClientReturnStockFateQty(row: Pick<PreviewClientReturn, 'line
   );
 }
 
+export function lineMatchesReturnedVariant(
+  line: Pick<PreviewClientReturnLine, 'variantId' | 'variantName'>,
+  variantId?: string,
+  variantName?: string
+): boolean {
+  return variantId ? line.variantId === variantId : line.variantName === variantName;
+}
+
+/** Stock fates for one SKU inside a CR. Missing fate is treated as disposal. */
+export function getReturnedVariantStockFates(
+  row: Pick<PreviewClientReturn, 'lines'>,
+  variantId?: string,
+  variantName?: string
+): ClientReturnStockFate[] {
+  const fates = new Set<ClientReturnStockFate>();
+  for (const line of row.lines) {
+    if (!lineMatchesReturnedVariant(line, variantId, variantName)) continue;
+    fates.add(line.stockFate === 'restock' ? 'restock' : 'disposal');
+  }
+  if (fates.has('restock') && fates.has('disposal')) return ['restock', 'disposal'];
+  if (fates.has('restock')) return ['restock'];
+  if (fates.has('disposal')) return ['disposal'];
+  return [];
+}
+
 export function isPostedClientReturn(row: PreviewClientReturn): boolean {
   return row.status === 'posted';
 }

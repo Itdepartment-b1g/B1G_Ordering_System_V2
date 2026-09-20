@@ -1,5 +1,9 @@
 import type { PreviewClientReturn } from '../clientReturnPreview';
-import { formatClientReturnType, getPreviewReturnLineQty } from '../clientReturnPreview';
+import {
+  formatClientReturnType,
+  getPreviewReturnLineQty,
+  getReturnedVariantStockFates,
+} from '../clientReturnPreview';
 import type { SortDirection } from '@/features/shared/components/SortableTableHead';
 
 export type ClientReturnHistorySortKey =
@@ -82,6 +86,8 @@ export type ReturnedStockDetailSortKey =
   | 'returnDate'
   | 'createdAt'
   | 'reason'
+  | 'returnType'
+  | 'stockFate'
   | 'qty';
 
 export const DEFAULT_RETURNED_STOCK_DETAIL_SORT_KEY: ReturnedStockDetailSortKey = 'createdAt';
@@ -91,7 +97,9 @@ export function sortReturnedStockDetailRows(
   rows: PreviewClientReturn[],
   sortKey: ReturnedStockDetailSortKey,
   sortDirection: SortDirection,
-  qtyForRow: (row: PreviewClientReturn) => number
+  qtyForRow: (row: PreviewClientReturn) => number,
+  variantId?: string,
+  variantName?: string
 ): PreviewClientReturn[] {
   const direction = sortDirection === 'asc' ? 1 : -1;
 
@@ -116,6 +124,20 @@ export function sortReturnedStockDetailRows(
       case 'reason':
         result = a.reason.localeCompare(b.reason);
         break;
+      case 'returnType':
+        result = formatClientReturnType(a.returnType).localeCompare(formatClientReturnType(b.returnType));
+        break;
+      case 'stockFate': {
+        const rank = (row: PreviewClientReturn) => {
+          const fates = getReturnedVariantStockFates(row, variantId, variantName);
+          if (fates.length === 2) return 1;
+          if (fates[0] === 'restock') return 0;
+          if (fates[0] === 'disposal') return 2;
+          return 3;
+        };
+        result = rank(a) - rank(b);
+        break;
+      }
       case 'qty':
         result = qtyForRow(a) - qtyForRow(b);
         break;

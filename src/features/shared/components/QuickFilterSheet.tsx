@@ -170,6 +170,13 @@ function SearchableSelect({
   );
 }
 
+export type QuickFilterExtraSelect = {
+  title: string;
+  value: string;
+  options: Array<{ value: string; label: string; count?: number }>;
+  onChange: (value: string) => void;
+};
+
 type QuickFilterSheetProps<TColumn extends string, TStatus extends string> = {
   dateRange: DateRangeFilterValue;
   onDateRangeChange: (value: DateRangeFilterValue) => void;
@@ -179,6 +186,7 @@ type QuickFilterSheetProps<TColumn extends string, TStatus extends string> = {
   status: TStatus;
   statusOptions: Array<{ value: TStatus; label: string; count?: number }>;
   onStatusChange: (value: NoInfer<TStatus>) => void;
+  extraSelects?: QuickFilterExtraSelect[];
   onClear: () => void;
   title?: string;
   description?: string;
@@ -195,6 +203,7 @@ export function QuickFilterSheet<TColumn extends string, TStatus extends string>
   status,
   statusOptions,
   onStatusChange,
+  extraSelects = [],
   onClear,
   title = 'Quick Filter',
   description = 'Same-column values use OR. Different columns use AND.',
@@ -207,7 +216,11 @@ export function QuickFilterSheet<TColumn extends string, TStatus extends string>
   const columnActiveCount = countActiveQuickFilterAndClauses(rows);
   const idleStatus = statusOptions[0]?.value;
   const statusActive = Boolean(idleStatus && status !== idleStatus);
-  const activeCount = Number(dateActive) + columnActiveCount + Number(statusActive);
+  const extraActiveCount = extraSelects.filter((select) => {
+    const idle = select.options[0]?.value;
+    return Boolean(idle && select.value !== idle);
+  }).length;
+  const activeCount = Number(dateActive) + columnActiveCount + Number(statusActive) + extraActiveCount;
   const canAddAnd = isQuickFilterAndClauseActive(rows[rows.length - 1]);
 
   const updateClause = (id: string, patch: Partial<QuickFilterAndClause<TColumn>>) => {
@@ -362,6 +375,23 @@ export function QuickFilterSheet<TColumn extends string, TStatus extends string>
               </SelectContent>
             </Select>
           </FilterSection>
+          {extraSelects.map((select) => (
+            <FilterSection key={select.title} title={select.title}>
+              <Select value={select.value} onValueChange={select.onChange}>
+                <SelectTrigger className="h-9 w-full">
+                  <SelectValue placeholder={`Select ${select.title.toLowerCase()}`} />
+                </SelectTrigger>
+                <SelectContent className="z-[80]">
+                  {select.options.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                      {option.count != null ? ` (${option.count})` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FilterSection>
+          ))}
         </div>
         <div className="flex shrink-0 items-center justify-end gap-2 border-t bg-background px-4 py-3">
           <Button type="button" size="sm" className="h-8" onClick={() => setOpen(false)}>

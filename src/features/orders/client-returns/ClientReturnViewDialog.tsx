@@ -135,7 +135,8 @@ export function ClientReturnViewDialog({
         }}
       >
         <DialogContent
-          className="max-w-3xl w-[95vw] max-h-[90vh] overflow-hidden flex flex-col"
+          overlayClassName="z-[70]"
+          className="max-w-3xl w-[95vw] max-h-[90vh] overflow-hidden flex flex-col z-[70]"
           onPointerDownOutside={(event) => {
             if (nameConfirmOpen || payoutStep) event.preventDefault();
           }}

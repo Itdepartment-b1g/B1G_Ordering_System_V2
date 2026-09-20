@@ -14,8 +14,11 @@ import {
   canReviewClientReturn,
   formatClientReturnReason,
   formatClientReturnStatus,
+  formatClientReturnStockFate,
   formatClientReturnType,
+  getClientReturnStockFateQty,
   type ClientReturnKind,
+  type ClientReturnStockFate,
   type PreviewClientReturn,
 } from '../clientReturnPreview';
 
@@ -30,12 +33,14 @@ export type ClientReturnHistoryStatusFilter =
   | 'rejected';
 
 export type ClientReturnHistoryTypeFilter = 'all' | ClientReturnKind;
+export type ClientReturnHistoryStockFilter = 'all' | ClientReturnStockFate;
 export type ClientReturnDateBasis = 'returnDate' | 'createdAt' | 'decisionAt';
 export type ClientReturnHistoryField =
   | 'returnNumber'
   | 'orderNumber'
   | 'status'
   | 'type'
+  | 'stock'
   | 'reason'
   | 'returnedBy'
   | 'tlApproved'
@@ -50,6 +55,7 @@ export type ClientReturnHistoryQuickColumn =
   | 'returnedBy'
   | 'brand'
   | 'type'
+  | 'stock'
   | 'reason'
   | 'tlApproved'
   | 'saApproved'
@@ -62,6 +68,7 @@ export type ClientReturnHistoryFilterState = {
   conditions: ClientReturnHistoryCondition[];
   search: string;
   status?: ClientReturnHistoryStatusFilter;
+  stock?: ClientReturnHistoryStockFilter;
   role?: string | null;
   dateRange?: DateRangeFilterValue;
   columnClauses?: QuickFilterAndClause<ClientReturnHistoryQuickColumn>[];
@@ -92,6 +99,17 @@ export function matchesClientReturnHistoryStatus(
   if (status === 'open') return PENDING_STATUSES.has(row.status);
   if (status === 'needs_action') return canReviewClientReturn(role, row);
   return row.status === status;
+}
+
+export function matchesClientReturnHistoryStock(
+  row: PreviewClientReturn,
+  stock: ClientReturnHistoryStockFilter
+): boolean {
+  if (stock === 'all') return true;
+  const { restock, disposal } = getClientReturnStockFateQty(row);
+  if (stock === 'restock') return restock > 0;
+  if (stock === 'disposal') return disposal > 0;
+  return false;
 }
 
 function matchesReason(row: PreviewClientReturn, reason: string): boolean {
@@ -149,6 +167,7 @@ function dateBasisLabel(basis?: string): string {
 export function buildClientReturnHistoryFilterFields(args: {
   counts: Record<ClientReturnHistoryStatusFilter, number>;
   typeCounts: Record<ClientReturnHistoryTypeFilter, number>;
+  stockCounts?: Record<ClientReturnHistoryStockFilter, number>;
   returnNumberOptions: string[];
   orderNumberOptions: string[];
   returnedByOptions: string[];
@@ -160,6 +179,7 @@ export function buildClientReturnHistoryFilterFields(args: {
   const {
     counts,
     typeCounts,
+    stockCounts,
     returnNumberOptions,
     orderNumberOptions,
     returnedByOptions,
@@ -213,6 +233,26 @@ export function buildClientReturnHistoryFilterFields(args: {
         { value: 'refund', label: `Refund (${typeCounts.refund})` },
       ],
       formatValue: (value) => formatClientReturnType(value as ClientReturnKind),
+    },
+    {
+      key: 'stock',
+      label: 'Stock',
+      valueKind: 'select',
+      getOptions: () => [
+        {
+          value: 'restock',
+          label: stockCounts
+            ? `Restock (${stockCounts.restock})`
+            : formatClientReturnStockFate('restock'),
+        },
+        {
+          value: 'disposal',
+          label: stockCounts
+            ? `Disposal (${stockCounts.disposal})`
+            : formatClientReturnStockFate('disposal'),
+        },
+      ],
+      formatValue: (value) => formatClientReturnStockFate(value as ClientReturnStockFate),
     },
     {
       key: 'reason',
@@ -289,6 +329,9 @@ function matchesEqualityField(
     );
   }
   if (condition.field === 'type') return row.returnType === condition.value;
+  if (condition.field === 'stock') {
+    return matchesClientReturnHistoryStock(row, condition.value as ClientReturnHistoryStockFilter);
+  }
   if (condition.field === 'reason') return matchesReason(row, condition.value);
   if (condition.field === 'returnedBy') return row.returnedByName.trim() === condition.value;
   if (condition.field === 'tlApproved') return matchesTlApproved(row, condition.value);
@@ -341,6 +384,7 @@ function matchesDateCondition(row: PreviewClientReturn, condition: ClientReturnH
 function matchesSearch(row: PreviewClientReturn, search: string): boolean {
   const query = search.trim().toLowerCase();
   if (!query) return true;
+  const fateQty = getClientReturnStockFateQty(row);
   const haystack = [
     row.returnNumber,
     row.orderNumber,
@@ -350,12 +394,14 @@ function matchesSearch(row: PreviewClientReturn, search: string): boolean {
     formatClientReturnReason(row.reason),
     formatClientReturnStatus(row.status),
     formatClientReturnType(row.returnType),
+    fateQty.restock > 0 ? formatClientReturnStockFate('restock') : '',
+    fateQty.disposal > 0 ? formatClientReturnStockFate('disposal') : '',
     row.notes || '',
     row.rejectionNote || '',
     row.approvedByName || '',
     row.rejectedByName || '',
     row.saApprovedByName || '',
-    ...row.lines.map((line) => `${line.brandName} ${line.variantName}`),
+    ...row.lines.map((line) => `${line.brandName} ${line.variantName} ${line.stockFate || ''}`),
   ]
     .join(' ')
     .toLowerCase();
@@ -365,11 +411,15 @@ function matchesSearch(row: PreviewClientReturn, search: string): boolean {
 export function matchesClientReturnHistory(
   row: PreviewClientReturn,
   filters: ClientReturnHistoryFilterState,
-  skip?: { status?: boolean; type?: boolean }
+  skip?: { status?: boolean; type?: boolean; stock?: boolean }
 ): boolean {
   const conditionsPass = groupedConditionsPass(filters.conditions, {
     skip: (condition) =>
-      Boolean((skip?.status && condition.field === 'status') || (skip?.type && condition.field === 'type')),
+      Boolean(
+        (skip?.status && condition.field === 'status') ||
+          (skip?.type && condition.field === 'type') ||
+          (skip?.stock && condition.field === 'stock')
+      ),
     isDateField: (field) => field === 'date',
     matchDate: (condition) => matchesDateCondition(row, condition),
     matchEquality: (condition) => matchesEqualityField(row, condition, filters.role),
@@ -380,6 +430,9 @@ export function matchesClientReturnHistory(
     filters.status &&
     !matchesClientReturnHistoryStatus(row, filters.status, filters.role)
   ) {
+    return false;
+  }
+  if (!skip?.stock && filters.stock && !matchesClientReturnHistoryStock(row, filters.stock)) {
     return false;
   }
   if (!matchesDateRange(row, filters.dateRange)) return false;

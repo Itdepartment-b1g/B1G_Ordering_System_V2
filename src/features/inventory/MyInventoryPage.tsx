@@ -1145,7 +1145,7 @@ export default function MyInventory() {
                   />
                   {showReturnedColumn ? (
                     <SortableTableHead
-                      label="Returned(For Disposal)"
+                      label="Returned Items"
                       sortKey="returned"
                       sortDirection={getTableSortDisplayDirection(brandSortState, 'returned')}
                       onSort={handleBrandSort}
