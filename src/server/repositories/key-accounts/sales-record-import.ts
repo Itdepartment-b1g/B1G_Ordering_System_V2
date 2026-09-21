@@ -118,7 +118,14 @@ type CatalogClient = {
   payment_terms: string | null;
 };
 type CatalogShop = { id: string; client_id: string; shop_name: string; shop_code: string; is_active: boolean };
-type CatalogAddr = { id: string; shop_id: string; address_label: string; is_default: boolean; is_active: boolean };
+type CatalogAddr = {
+  id: string;
+  shop_id: string;
+  address_label: string;
+  full_address: string;
+  is_default: boolean;
+  is_active: boolean;
+};
 type CatalogKam = { id: string; email: string; role: string; status: string };
 type CatalogBrand = { id: string; name: string; is_active: boolean };
 type CatalogVariant = { id: string; name: string; sku: string | null; brand_id: string; is_active: boolean };
@@ -223,7 +230,7 @@ async function loadCatalog(companyId: string): Promise<Catalog> {
     const rows = await fetchAllPaginated<CatalogAddr>(async (from, to) => {
       const { data, error } = await sb
         .from('key_account_delivery_addresses')
-        .select('id, shop_id, address_label, is_default, is_active')
+        .select('id, shop_id, address_label, full_address, is_default, is_active')
         .in('shop_id', ids)
         .range(from, to);
       return { data: (data as CatalogAddr[] | null) ?? null, error };
@@ -294,6 +301,42 @@ function pickByName<T>(
   return uniqueOr(fuzzy, noneMsg, manyMsg(fuzzy));
 }
 
+function pickAddress(shopAddrs: CatalogAddr[], wanted: string): CatalogPick<CatalogAddr> {
+  const none = wanted ? `address not found: ${wanted}` : 'no address for shop';
+  const many = (hits: CatalogAddr[]) =>
+    `address ambiguous: ${hits.map((a) => a.address_label).join(', ')}`;
+  const want = n(wanted);
+  if (!want) {
+    const defaults = shopAddrs.filter((a) => a.is_default);
+    return uniqueOr(defaults.length === 1 ? defaults : shopAddrs, none, many(shopAddrs));
+  }
+  const exactLabel = shopAddrs.filter((a) => n(a.address_label) === want);
+  if (exactLabel.length) return uniqueOr(exactLabel, none, many(exactLabel));
+  const exactFull = shopAddrs.filter((a) => n(a.full_address) === want);
+  if (exactFull.length) return uniqueOr(exactFull, none, many(exactFull));
+  const fuzzy = shopAddrs.filter((a) => {
+    const label = n(a.address_label);
+    const full = n(a.full_address);
+    if (label.length >= 8 && (label.includes(want) || want.includes(label))) return true;
+    if (full.length >= 12 && (full.includes(want) || want.includes(full))) return true;
+    return false;
+  });
+  return uniqueOr(fuzzy, none, many(fuzzy));
+}
+
+function uniqueAddressLabel(existing: string[], desired: string) {
+  const base = String(desired || '')
+    .replace(/\s+/g, ' ')
+    .trim() || 'Main';
+  const taken = new Set(existing.map((label) => n(label)));
+  if (!taken.has(n(base))) return base;
+  for (let i = 2; i < 100; i++) {
+    const next = `${base} (${i})`;
+    if (!taken.has(n(next))) return next;
+  }
+  return `${base} ${Date.now()}`;
+}
+
 const MASTER_NOTE = 'Created from sales record import';
 
 function shopNameOf(row: KASalesRecordLineInput) {
@@ -316,7 +359,12 @@ function addressFields(row: KASalesRecordLineInput, shopName: string) {
   const raw = String(row.address_label || '').trim();
   if (!raw) return { label: 'Main', full: shopName || 'Main', raw: '' };
   const looksFull = raw.length >= 12 || raw.includes(',') || /\d/.test(raw);
-  if (looksFull) return { label: 'Main', full: raw, raw };
+  if (looksFull) {
+    const paren = raw.match(/^\(([^)]+)\)/);
+    const fromParen = paren?.[1]?.replace(/\s+/g, ' ').trim();
+    const label = (fromParen || raw.replace(/\s+/g, ' ').trim()).slice(0, 80);
+    return { label, full: raw, raw };
+  }
   return { label: raw, full: shopName || raw, raw };
 }
 
@@ -410,29 +458,14 @@ function resolveLine(
     wouldCreateAddress = true;
   } else if (shop) {
     const shopAddrs = catalog.addresses.filter((a) => a.shop_id === shop!.id && a.is_active !== false);
-    const label = String(row.address_label || '').trim();
-    if (!label) {
-      const defaults = shopAddrs.filter((a) => a.is_default);
-      const pick = uniqueOr(
-        defaults.length === 1 ? defaults : shopAddrs,
-        'no address for shop',
-        `address ambiguous: ${shopAddrs.map((a) => a.address_label).join(', ')}`
-      );
-      if (pick.ok) address = pick.row;
-      else if (options.createMissing && pickError(pick) === 'no address for shop') wouldCreateAddress = true;
-      else errors.push(pickError(pick));
-    } else {
-      const pick = pickByName(
-        shopAddrs,
-        (a) => a.address_label,
-        label,
-        `address not found: ${label}`,
-        (hits) => `address ambiguous: ${hits.map((a) => a.address_label).join(', ')}`
-      );
-      if (pick.ok) address = pick.row;
-      else if (options.createMissing && isMissingPick(pickError(pick), 'address not found:')) wouldCreateAddress = true;
-      else errors.push(pickError(pick));
-    }
+    const pick = pickAddress(shopAddrs, String(row.address_label || '').trim());
+    if (pick.ok) address = pick.row;
+    else if (
+      options.createMissing &&
+      (isMissingPick(pickError(pick), 'address not found:') || pickError(pick) === 'no address for shop')
+    ) {
+      wouldCreateAddress = true;
+    } else errors.push(pickError(pick));
   }
 
   const kamEmail = String(row.kam_email || '').trim();
@@ -447,21 +480,14 @@ function resolveLine(
 
   if (!catalog.hubId) errors.push('no linked warehouse hub for this Key Account company');
 
-  let location = catalog.locations.find((l) => l.is_main) || catalog.locations[0];
-  const locName = String(row.warehouse_location_name || '').trim();
-  if (locName) {
-    const pick = pickByName(
-      catalog.locations,
-      (l) => l.name,
-      locName,
-      `warehouse location not found: ${locName}`,
-      () => 'warehouse location ambiguous'
-    );
-    if (pick.ok) location = pick.row;
-    else errors.push(pickError(pick));
-  } else if (!location) {
-    errors.push('linked main warehouse location not found');
-  }
+  const mains = catalog.locations.filter((l) => l.is_main);
+  const locationPick = uniqueOr(
+    mains.length ? mains : catalog.locations.length === 1 ? catalog.locations : [],
+    'linked main warehouse location not found',
+    'linked main warehouse location ambiguous'
+  );
+  if (!locationPick.ok) errors.push(pickError(locationPick));
+  const location = locationPick.ok ? locationPick.row : undefined;
 
   let brand: CatalogBrand | undefined;
   let variant: CatalogVariant | undefined;
@@ -699,7 +725,7 @@ function collectPendingMaster(resolved: ResolvedLine[]): KASalesRecordPendingMas
   for (const line of resolved) {
     const pending = pendingFromLine(line);
     if (!pending) continue;
-    const key = `${n(pending.clientName)}|${n(pending.shopName)}|${n(pending.addressLabel)}`;
+    const key = `${n(pending.clientName)}|${n(pending.shopName)}|${n(pending.fullAddress)}`;
     const prev = map.get(key);
     if (!prev) map.set(key, pending);
     else {
@@ -746,7 +772,7 @@ async function ensureMissingMaster(
   for (const row of rows) {
     const pending = pendingFromLine(resolveLine(row, catalog, { createMissing: true }));
     if (!pending) continue;
-    const key = `${n(pending.clientName)}|${n(pending.shopName)}|${n(pending.addressLabel)}`;
+    const key = `${n(pending.clientName)}|${n(pending.shopName)}|${n(pending.fullAddress)}`;
     const prev = pendingMap.get(key);
     if (!prev) pendingMap.set(key, pending);
     else {
@@ -814,25 +840,25 @@ async function ensureMissingMaster(
       client &&
       catalog.shops.find((s) => s.client_id === client.id && n(s.shop_name) === n(pending.shopName));
     if (!shop) continue;
-    if (
-      catalog.addresses.some(
-        (a) => a.shop_id === shop.id && n(a.address_label) === n(pending.addressLabel) && a.is_active !== false
-      )
-    ) {
-      continue;
-    }
+    const existing = catalog.addresses.filter((a) => a.shop_id === shop.id && a.is_active !== false);
+    if (existing.some((a) => n(a.full_address) === n(pending.fullAddress))) continue;
+    const addressLabel = uniqueAddressLabel(
+      existing.map((a) => a.address_label),
+      pending.addressLabel
+    );
     const { address } = await createKAAddress(ctx, shop.id, {
-      address_label: pending.addressLabel,
+      address_label: addressLabel,
       full_address: pending.fullAddress,
       city: pending.city || null,
       province: pending.province || null,
       contact_phone: pending.contactPhone || null,
-      is_default: true,
+      is_default: existing.every((a) => !a.is_default),
     });
     catalog.addresses.push({
       id: address.id,
       shop_id: address.shop_id,
       address_label: address.address_label,
+      full_address: address.full_address,
       is_default: address.is_default,
       is_active: address.is_active,
     });
@@ -866,8 +892,9 @@ export async function dryRunKASalesRecordImport(
       const dupes = await alreadyImported(ctx.companyId, displayRef);
       if (dupes.length) issues.push(`already in OMS: ${dupes.map((d) => d.po_number).join(', ')}`);
     }
-    if (issues.length) blocking += 1;
-    purchase_orders.push(previewFromGroup(ref, lines, resolved, issues, pay));
+    const uniqueIssues = [...new Set(issues)];
+    if (uniqueIssues.length) blocking += 1;
+    purchase_orders.push(previewFromGroup(ref, lines, resolved, uniqueIssues, pay));
   }
 
   return {
@@ -921,8 +948,9 @@ async function importOne(
     const dupes = await alreadyImported(ctx.companyId, displayRef);
     if (dupes.length) previewIssues.push(`already imported: ${dupes.map((d) => d.po_number).join(', ')}`);
   }
-  if (previewIssues.length || !first) {
-    return { ok: false, external_po_ref: displayRef, issues: previewIssues };
+  const uniqueIssues = [...new Set(previewIssues)];
+  if (uniqueIssues.length || !first) {
+    return { ok: false, external_po_ref: displayRef, issues: uniqueIssues };
   }
 
   const pay = summarizePayment(lines);

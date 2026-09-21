@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FileSpreadsheet, Loader2, Upload } from 'lucide-react';
+import { ClipboardCheck, Loader2, Upload } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -17,6 +17,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import {
@@ -111,7 +112,6 @@ const IDENTITY_FIELDS: { id: SalesRecordIdentityField; label: string }[] = [
   { id: 'contact_phone', label: 'Contact' },
   { id: 'province', label: 'Province' },
   { id: 'city', label: 'City' },
-  { id: 'warehouse_location_name', label: 'Warehouse' },
   { id: 'payment_amount', label: 'Amount paid' },
   { id: 'payment_date', label: 'Payment date' },
   { id: 'payment_method', label: 'Payment method' },
@@ -125,6 +125,16 @@ const IDENTITY_FIELDS: { id: SalesRecordIdentityField; label: string }[] = [
 
 function peso(value: number) {
   return `₱${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+}
+
+function PoMasterBadges({ po }: { po: PreviewPo }) {
+  return (
+    <>
+      {po.will_create_client ? <Badge className="ml-1" variant="outline">new client</Badge> : null}
+      {po.will_create_shop ? <Badge className="ml-1" variant="outline">new shop</Badge> : null}
+      {po.will_create_address ? <Badge className="ml-1" variant="outline">new address</Badge> : null}
+    </>
+  );
 }
 
 function loadAliases(): SalesRecordAliases {
@@ -192,6 +202,8 @@ export function KeyAccountSalesRecordImportPage() {
   const [linesPo, setLinesPo] = useState<PreviewPo | null>(null);
   const [productDrafts, setProductDrafts] = useState<Record<string, { brand_name: string; variant_name: string; sku: string }>>({});
   const [createMissing, setCreateMissing] = useState(true);
+  const [softChecked, setSoftChecked] = useState(false);
+  const softCheckRef = useRef<HTMLDivElement>(null);
 
   const rows = useMemo(
     () => (parsed ? applySalesRecordAliases(parsed.rows, aliases) : []),
@@ -246,6 +258,7 @@ export function KeyAccountSalesRecordImportPage() {
     setImportResults([]);
     setImportProgress('');
     setLinesPo(null);
+    setSoftChecked(false);
   };
 
   const persistAliases = (next: SalesRecordAliases) => {
@@ -297,12 +310,13 @@ export function KeyAccountSalesRecordImportPage() {
     if (!rows.length) return;
     setBusy('dry');
     setImportResults([]);
+    setSoftChecked(false);
     try {
       const result = await kaPost<DryRunResult>('dry-run', rows, createMissing);
       setDryRun(result);
       toast({
         title: result.ready_to_import ? 'Dry-run passed' : 'Dry-run found issues',
-        description: `${result.po_count} PO(s), ${result.blocking_pos} blocked. Nothing was inserted.`,
+        description: `${result.po_count} PO(s), ${result.blocking_pos} blocked. Open Soft Check to review. Nothing was inserted.`,
       });
     } catch (error) {
       toast({
@@ -313,6 +327,14 @@ export function KeyAccountSalesRecordImportPage() {
     } finally {
       setBusy(null);
     }
+  };
+
+  const openSoftCheck = () => {
+    if (!dryRun) return;
+    setSoftChecked(true);
+    window.setTimeout(() => {
+      softCheckRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
   };
 
   const applyProductMaps = () => {
@@ -357,6 +379,7 @@ export function KeyAccountSalesRecordImportPage() {
       });
       if (imported) {
         setDryRun(null);
+        setSoftChecked(false);
       }
     } catch (error) {
       toast({
@@ -377,11 +400,12 @@ export function KeyAccountSalesRecordImportPage() {
         <p className="text-sm text-muted-foreground mt-1 max-w-3xl">
           Upload a Client Sales Record workbook. Flavor columns become PO lines, grouped by RFPF.
           Existing sales are imported as delivered. Paid / unpaid / partial and consignment follow the Excel.
-          Missing clients and shops (trade name) are created on import. Warehouse brands/variants are not.
+          Missing clients, shops (trade name), and delivery addresses can be created on import. Warehouse brands/variants are not.
+          Ship-from uses this company’s linked hub warehouse, not the Excel Warehouse column.
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base">1. Upload workbook</CardTitle>
@@ -408,7 +432,7 @@ export function KeyAccountSalesRecordImportPage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-base">2. Dry-run</CardTitle>
             <CardDescription>
-              Validates KAMs and hub brands/variants. Missing clients/shops are listed as would-create when enabled.
+              Validates lookups only. Nothing is written. Then use Soft Check to see what can import.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -422,7 +446,7 @@ export function KeyAccountSalesRecordImportPage() {
                 }}
               />
               <Label htmlFor="create-missing" className="text-sm font-normal leading-snug">
-                Create missing clients, shops (trade name), and a default address on import
+                Create missing clients, shops (trade name), and delivery addresses from Excel
               </Label>
             </div>
             <Button onClick={() => void runDryRun()} disabled={!rows.length || !!busy || Boolean(parsed?.needs_column_map)}>
@@ -431,21 +455,54 @@ export function KeyAccountSalesRecordImportPage() {
             </Button>
             {parsed?.needs_column_map ? (
               <p className="text-sm text-destructive">Map required columns first.</p>
+            ) : dryRun ? (
+              <p className="text-sm text-muted-foreground">
+                {dryRun.po_count} PO(s) · {readyPos.length} can import · {blockedPos.length} cannot
+              </p>
             ) : null}
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">3. Import ready POs</CardTitle>
+            <CardTitle className="text-base">3. Soft Check</CardTitle>
             <CardDescription>
-              Creates delivered POs after creating any missing clients/shops. Payments follow Excel. No warehouse queue.
+              Review ready vs blocked RFPFs and the exact errors before anything is imported.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              {dryRun ? `${readyPos.length} ready · ${blockedPos.length} blocked` : 'Run a dry-run first'}
+              {dryRun
+                ? softChecked
+                  ? `Reviewed · ${readyPos.length} ready · ${blockedPos.length} blocked`
+                  : 'Dry-run complete. Open Soft Check to inspect errors.'
+                : 'Run a dry-run first'}
             </p>
-            <Button onClick={() => void runImport()} disabled={!readyPos.length || !!busy}>
+            <Button
+              variant={softChecked ? 'secondary' : 'default'}
+              onClick={openSoftCheck}
+              disabled={!dryRun || !!busy}
+            >
+              <ClipboardCheck className="mr-2 h-4 w-4" />
+              {softChecked ? 'View Soft Check' : 'Soft Check'}
+            </Button>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">4. Import ready POs</CardTitle>
+            <CardDescription>
+              Creates delivered POs after creating any missing clients/shops/addresses. No warehouse queue.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              {!dryRun
+                ? 'Run a dry-run first'
+                : !softChecked
+                  ? 'Open Soft Check first to review errors'
+                  : `${readyPos.length} ready · ${blockedPos.length} skipped`}
+            </p>
+            <Button onClick={() => void runImport()} disabled={!softChecked || !readyPos.length || !!busy}>
               {busy === 'import' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Import {readyPos.length || ''} ready PO{readyPos.length === 1 ? '' : 's'}
             </Button>
@@ -594,15 +651,15 @@ export function KeyAccountSalesRecordImportPage() {
         </Card>
       ) : null}
 
-      {dryRun ? (
-        <Card>
+      {softChecked && dryRun ? (
+        <Card ref={softCheckRef}>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <FileSpreadsheet className="h-5 w-5" />
-              Dry-run result
+              <ClipboardCheck className="h-5 w-5" />
+              Soft Check
             </CardTitle>
             <CardDescription>
-              Nothing was written. Fix blocked POs, then dry-run again. Click Lines to inspect flavors.
+              Nothing has been written. Ready POs can be imported. Blocked POs stay out until you fix the errors and dry-run again.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -611,6 +668,7 @@ export function KeyAccountSalesRecordImportPage() {
                 <h3 className="font-medium">Will create on import</h3>
                 <p className="text-sm text-muted-foreground">
                   Trade name is used as the shop name. Category defaults to retail unless the Excel has distributor.
+                  Excel Delivery Address is created on the shop when that street is not already in OMS.
                   Warehouse brands and variants are never created here.
                 </p>
                 <Table>
@@ -625,7 +683,7 @@ export function KeyAccountSalesRecordImportPage() {
                   </TableHeader>
                   <TableBody>
                     {pendingMaster.map((row) => (
-                      <TableRow key={`${row.client_name}|${row.shop_name}|${row.address_label}`}>
+                      <TableRow key={`${row.client_name}|${row.shop_name}|${row.address_label}|${row.full_address}`}>
                         <TableCell>{row.client_name}</TableCell>
                         <TableCell>{row.shop_name}</TableCell>
                         <TableCell className="text-sm">
@@ -646,78 +704,98 @@ export function KeyAccountSalesRecordImportPage() {
                 </Table>
               </div>
             ) : null}
-            {blockedPos.length > 0 ? (
-              <div className="space-y-2">
-                <h3 className="font-medium">Blocked</h3>
+
+            <Tabs defaultValue={blockedPos.length ? 'blocked' : 'ready'}>
+              <TabsList>
+                <TabsTrigger value="blocked">Cannot import ({blockedPos.length})</TabsTrigger>
+                <TabsTrigger value="ready">Can import ({readyPos.length})</TabsTrigger>
+              </TabsList>
+              <TabsContent value="blocked" className="space-y-2">
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>RFPF</TableHead>
                       <TableHead>Client</TableHead>
+                      <TableHead>Lines</TableHead>
                       <TableHead>Issues</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {blockedPos.map((po) => (
                       <TableRow key={po.external_po_ref}>
-                        <TableCell className="font-mono text-sm">{po.external_po_ref}</TableCell>
-                        <TableCell>
+                        <TableCell className="font-mono text-sm align-top">{po.external_po_ref}</TableCell>
+                        <TableCell className="align-top">
                           {po.client}
-                          {po.will_create_client ? <Badge className="ml-1" variant="outline">new client</Badge> : null}
-                          {po.will_create_shop ? <Badge className="ml-1" variant="outline">new shop</Badge> : null}
+                          <PoMasterBadges po={po} />
                         </TableCell>
-                        <TableCell className="text-destructive text-sm">{po.issues.join(' · ')}</TableCell>
+                        <TableCell className="align-top">
+                          <Button type="button" variant="link" className="h-auto p-0 font-medium tabular-nums" onClick={() => setLinesPo(po)}>
+                            {po.line_count}
+                          </Button>
+                        </TableCell>
+                        <TableCell className="text-destructive text-sm">
+                          {po.issues.length ? (
+                            <ul className="list-disc space-y-1 pl-4">
+                              {po.issues.map((issue) => (
+                                <li key={issue}>{issue}</li>
+                              ))}
+                            </ul>
+                          ) : '—'}
+                        </TableCell>
                       </TableRow>
                     ))}
+                    {!blockedPos.length ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="text-muted-foreground">All POs can be imported.</TableCell>
+                      </TableRow>
+                    ) : null}
                   </TableBody>
                 </Table>
-              </div>
-            ) : null}
-            <div className="space-y-2">
-              <h3 className="font-medium">Ready</h3>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>RFPF</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Client</TableHead>
-                    <TableHead>Kind</TableHead>
-                    <TableHead>Payment</TableHead>
-                    <TableHead>Lines</TableHead>
-                    <TableHead className="text-right">Total</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {readyPos.map((po) => (
-                    <TableRow key={po.external_po_ref}>
-                      <TableCell className="font-mono text-sm">{po.external_po_ref}</TableCell>
-                      <TableCell>{po.order_date}</TableCell>
-                      <TableCell>
-                        {po.client}
-                        {po.will_create_client ? <Badge className="ml-1" variant="outline">new client</Badge> : null}
-                        {po.will_create_shop ? <Badge className="ml-1" variant="outline">new shop</Badge> : null}
-                      </TableCell>
-                      <TableCell>{po.po_order_kind}</TableCell>
-                      <TableCell>
-                        <Badge variant="secondary">{po.payment_status}</Badge>
-                        {po.commissioned ? <Badge className="ml-1" variant="outline">commissioned</Badge> : null}
-                      </TableCell>
-                      <TableCell>
-                        <Button type="button" variant="link" className="h-auto p-0 font-medium tabular-nums" onClick={() => setLinesPo(po)}>
-                          {po.line_count}
-                        </Button>
-                      </TableCell>
-                      <TableCell className="text-right">{peso(po.total_amount)}</TableCell>
-                    </TableRow>
-                  ))}
-                  {!readyPos.length ? (
+              </TabsContent>
+              <TabsContent value="ready" className="space-y-2">
+                <Table>
+                  <TableHeader>
                     <TableRow>
-                      <TableCell colSpan={7} className="text-muted-foreground">No POs are ready to import.</TableCell>
+                      <TableHead>RFPF</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Client</TableHead>
+                      <TableHead>Kind</TableHead>
+                      <TableHead>Payment</TableHead>
+                      <TableHead>Lines</TableHead>
+                      <TableHead className="text-right">Total</TableHead>
                     </TableRow>
-                  ) : null}
-                </TableBody>
-              </Table>
-            </div>
+                  </TableHeader>
+                  <TableBody>
+                    {readyPos.map((po) => (
+                      <TableRow key={po.external_po_ref}>
+                        <TableCell className="font-mono text-sm">{po.external_po_ref}</TableCell>
+                        <TableCell>{po.order_date}</TableCell>
+                        <TableCell>
+                          {po.client}
+                          <PoMasterBadges po={po} />
+                        </TableCell>
+                        <TableCell>{po.po_order_kind}</TableCell>
+                        <TableCell>
+                          <Badge variant="secondary">{po.payment_status}</Badge>
+                          {po.commissioned ? <Badge className="ml-1" variant="outline">commissioned</Badge> : null}
+                        </TableCell>
+                        <TableCell>
+                          <Button type="button" variant="link" className="h-auto p-0 font-medium tabular-nums" onClick={() => setLinesPo(po)}>
+                            {po.line_count}
+                          </Button>
+                        </TableCell>
+                        <TableCell className="text-right">{peso(po.total_amount)}</TableCell>
+                      </TableRow>
+                    ))}
+                    {!readyPos.length ? (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-muted-foreground">No POs are ready to import.</TableCell>
+                      </TableRow>
+                    ) : null}
+                  </TableBody>
+                </Table>
+              </TabsContent>
+            </Tabs>
           </CardContent>
         </Card>
       ) : null}

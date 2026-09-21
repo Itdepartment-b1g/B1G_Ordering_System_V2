@@ -356,21 +356,14 @@ function resolveLine(row: KAHistoricalLineInput, catalog: Catalog): ResolvedLine
 
   if (!catalog.hubId) errors.push('no linked warehouse hub for this Key Account company');
 
-  let location = catalog.locations.find((l) => l.is_main) || catalog.locations[0];
-  const locName = String(row.warehouse_location_name || '').trim();
-  if (locName) {
-    const pick = pickByName(
-      catalog.locations,
-      (l) => l.name,
-      locName,
-      `warehouse location not found: ${locName}`,
-      () => 'warehouse location ambiguous'
-    );
-    if (pick.ok) location = pick.row;
-    else errors.push(pick.error);
-  } else if (!location) {
-    errors.push('linked main warehouse location not found');
-  }
+  const mains = catalog.locations.filter((l) => l.is_main);
+  const locationPick = uniqueOr(
+    mains.length ? mains : catalog.locations.length === 1 ? catalog.locations : [],
+    'linked main warehouse location not found',
+    'linked main warehouse location ambiguous'
+  );
+  if (!locationPick.ok) errors.push(locationPick.error);
+  const location = locationPick.ok ? locationPick.row : undefined;
 
   let brand: CatalogBrand | undefined;
   let variant: CatalogVariant | undefined;

@@ -37,7 +37,6 @@ const IDENTITY_BY_HEADER: Record<string, SalesRecordIdentityField> = {
   contactnumber: 'contact_phone',
   province: 'province',
   city: 'city',
-  warehouse: 'warehouse_location_name',
   discount: 'discount',
   remarks: 'notes',
   remarkss: 'notes',
@@ -70,6 +69,7 @@ const IGNORE_HEADERS = new Set([
   'batchno',
   'product',
   'pods',
+  'warehouse',
   'year',
   'month',
   'week',
@@ -419,7 +419,6 @@ function unpivotSheet(
     const status = String(identityValue(row.cells, columns, 'excel_status') || '').trim();
     const comm = parseBool(identityValue(row.cells, columns, 'comm_released'));
     const discount = parseNumber(identityValue(row.cells, columns, 'discount'));
-    const warehouse = String(identityValue(row.cells, columns, 'warehouse_location_name') || '').trim();
     const address = String(identityValue(row.cells, columns, 'address_label') || '').trim();
     const category = String(identityValue(row.cells, columns, 'client_category') || '').trim();
     const contact = String(identityValue(row.cells, columns, 'contact_phone') || '').trim();
@@ -469,7 +468,6 @@ function unpivotSheet(
           line_total: Math.round(qty * unit * 100) / 100,
           agent_name: agent || undefined,
           kam_email: agent && isEmail(agent) ? agent.trim() : undefined,
-          warehouse_location_name: warehouse || undefined,
           discount: discount ?? track?.discount,
           notes: [notes, proof ? `Proof: ${proof}` : ''].filter(Boolean).join('\n') || undefined,
           inventory_kind: kind,

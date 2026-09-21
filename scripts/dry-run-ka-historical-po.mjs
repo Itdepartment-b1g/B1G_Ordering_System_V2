@@ -189,19 +189,8 @@ async function resolveLine(row) {
 
   let brand = null;
   let variant = null;
-  let location = hub.location;
-  if (row.warehouse_location_name && hub.locations?.length) {
-    const locHits = hub.locations.filter(
-      (l) => n(l.name) === n(row.warehouse_location_name)
-    );
-    const locPick = uniqueOr(
-      locHits,
-      `warehouse location not found: ${row.warehouse_location_name}`,
-      'warehouse location ambiguous'
-    );
-    if (!locPick.ok) errors.push(locPick.error);
-    else location = locPick.row;
-  }
+  const location = hub.location;
+  if (hub.hubId && !location) errors.push('linked main warehouse location not found');
 
   if (hub.hubId) {
     const { data: brands } = await sb
