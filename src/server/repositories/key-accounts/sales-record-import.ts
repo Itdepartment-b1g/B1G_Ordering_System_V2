@@ -4,6 +4,7 @@ import { getSupabaseAdmin, getSupabaseUser } from '../../db/supabaseAdmin';
 import { insertPaymentAllocations } from './payment-allocations';
 import type { UserContext } from './purchase-order';
 import { createKAAddress, createKAClient, createKAShop } from './client-hierarchy';
+import { collectPaymentProofLinks } from '../../../lib/parsePaymentProofLinks';
 
 export const SALES_RECORD_IMPORT_ROLES = ['sales_admin', 'sales_head'] as const;
 export const SALES_RECORD_IMPORT_PO_CHUNK = 20;
@@ -42,6 +43,7 @@ export type KASalesRecordLineInput = {
   bank_type?: string | null;
   remaining_balance?: number | string;
   comm_released?: boolean;
+  proof_url?: string;
 };
 
 export type KASalesRecordPreviewItem = {
@@ -581,7 +583,8 @@ function summarizePayment(lines: KASalesRecordLineInput[]) {
     if (String(line.inventory_kind || '').toLowerCase() === 'consignment') kind = 'consignment';
     if (line.excel_status) excelStatus = String(line.excel_status);
   }
-  return { paid: money(paid), paymentDate, method, bank, comm, kind, excelStatus };
+  const proofUrls = collectPaymentProofLinks(lines.map((line) => line.proof_url));
+  return { paid: money(paid), paymentDate, method, bank, comm, kind, excelStatus, proofUrls };
 }
 
 function paymentStatus(total: number, paid: number, excelStatus: string): 'unpaid' | 'partial' | 'paid' {
@@ -1050,6 +1053,17 @@ async function importOne(
         .select('id')
         .single();
       if (payErr) throw payErr;
+      if (payment?.id && pay.proofUrls.length) {
+        const { error: linkErr } = await sb.from('purchase_order_key_account_payment_proof_links').insert(
+          pay.proofUrls.map((url, index) => ({
+            payment_id: payment.id,
+            company_id: ctx.companyId,
+            external_url: url,
+            sort_order: index,
+          }))
+        );
+        if (linkErr) throw linkErr;
+      }
       const splits = spreadPay((insertedItems || []) as { id: string; total_price: number }[], pay.paid);
       if (payment?.id && splits.length) {
         await insertPaymentAllocations(ctx.companyId, payment.id, splits, { includeDiscount: true });

@@ -19,6 +19,23 @@ export async function parseClientSalesRecordExcel(
   return parseClientSalesRecordBuffer(buffer, overrides);
 }
 
+function applySheetHyperlinks(sheet: XLSX.WorkSheet, matrix: unknown[][]) {
+  const ref = sheet['!ref'];
+  if (!ref) return;
+  const range = XLSX.utils.decode_range(ref);
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = sheet[XLSX.utils.encode_cell({ r, c })] as { l?: { Target?: string } } | undefined;
+      const target = String(cell?.l?.Target || '').trim();
+      if (!target) continue;
+      if (!matrix[r]) matrix[r] = [];
+      const current = String(matrix[r][c] ?? '').trim();
+      if (current.includes(target)) continue;
+      matrix[r][c] = [current, target].filter(Boolean).join('\n');
+    }
+  }
+}
+
 export function parseClientSalesRecordBuffer(
   buffer: ArrayBuffer,
   overrides?: Record<string, Record<number, SalesRecordColumnOverride>>
@@ -32,6 +49,7 @@ export function parseClientSalesRecordBuffer(
       defval: '',
       raw: true,
     });
+    applySheetHyperlinks(sheet, matrix);
     return { name, matrix };
   });
   const model = buildSalesRecordModel(sheets);

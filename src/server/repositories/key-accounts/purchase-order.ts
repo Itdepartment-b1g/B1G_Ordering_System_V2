@@ -1209,6 +1209,7 @@ export async function getKAPoPayments(ctx: UserContext, poId: string) {
   const withAllocations = `
       *,
       recorder:profiles!purchase_order_key_account_payments_recorded_by_fkey(full_name,email),
+      proof_links:purchase_order_key_account_payment_proof_links!payment_id(id, external_url, sort_order),
       allocations:purchase_order_key_account_payment_allocations(
         allocated_amount,
         allocated_discount,
@@ -1227,6 +1228,19 @@ export async function getKAPoPayments(ctx: UserContext, poId: string) {
     .eq('purchase_order_id', poId)
     .order('created_at', { ascending: true });
   if (!error) return { payments: data || [] };
+
+  const { data: withLinks, error: linksError } = await sb
+    .from('purchase_order_key_account_payments')
+    .select(
+      `
+      *,
+      recorder:profiles!purchase_order_key_account_payments_recorded_by_fkey(full_name,email),
+      proof_links:purchase_order_key_account_payment_proof_links!payment_id(id, external_url, sort_order)
+    `
+    )
+    .eq('purchase_order_id', poId)
+    .order('created_at', { ascending: true });
+  if (!linksError) return { payments: withLinks || [] };
 
   const { data: fallback, error: fallbackError } = await sb
     .from('purchase_order_key_account_payments')

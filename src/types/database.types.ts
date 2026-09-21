@@ -442,6 +442,7 @@ export interface PurchaseOrderKeyAccountPayment {
   payment_method: "GCASH" | "BANK_TRANSFER" | "CASH" | "CHEQUE";
   bank_type?: string | null;
   proof_storage_path?: string | null;
+  proof_links?: Array<{ id: string; external_url: string; sort_order?: number | null }>;
   recorded_by?: string | null;
   created_at: string;
   allocations?: Array<{

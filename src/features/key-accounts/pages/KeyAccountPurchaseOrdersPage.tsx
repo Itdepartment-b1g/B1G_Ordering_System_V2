@@ -84,6 +84,7 @@ import {
   MoreVertical,
   BadgeCheck,
   Pin,
+  ExternalLink,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -491,6 +492,17 @@ function formatPaymentAllocationSummary(
     byBrand.set(name, current);
   }
   return [...byBrand.entries()].map(([brand, amounts]) => ({ brand, ...amounts }));
+}
+
+function paymentProofLinks(payment: PurchaseOrderKeyAccountPayment) {
+  const rows = Array.isArray(payment.proof_links) ? [...payment.proof_links] : [];
+  rows.sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0));
+  return rows
+    .map((row, index) => ({
+      id: row.id || `${row.external_url}-${index}`,
+      url: String(row.external_url || '').trim(),
+    }))
+    .filter((row) => /^https?:\/\//i.test(row.url));
 }
 
 function notificationOptionLabel(option: string | null | undefined): string {
@@ -2953,7 +2965,9 @@ export function KeyAccountPurchaseOrdersPage() {
                             <p className="text-sm text-muted-foreground">No payment rows yet.</p>
                           ) : (
                             <div className="space-y-3">
-                              {payments.map((p) => (
+                              {payments.map((p) => {
+                                const links = paymentProofLinks(p);
+                                return (
                                 <div key={p.id} className="rounded-md border p-3 space-y-3">
                                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
                                     <div>
@@ -3025,15 +3039,36 @@ export function KeyAccountPurchaseOrdersPage() {
                                       label="Payment proof"
                                       showViewFull
                                     />
-                                  ) : (
+                                  ) : null}
+                                  {links.length > 0 ? (
+                                    <div className="space-y-1">
+                                      <span className="text-xs text-muted-foreground">Proof of payment links</span>
+                                      <div className="space-y-1">
+                                        {links.map((link, index) => (
+                                          <a
+                                            key={link.id}
+                                            href={link.url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="flex items-center gap-1.5 text-sm text-blue-600 hover:underline break-all"
+                                          >
+                                            <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                                            Open proof {index + 1}
+                                          </a>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                  {!p.proof_storage_path && links.length === 0 ? (
                                     <p className="text-xs text-muted-foreground">No proof attached.</p>
-                                  )}
+                                  ) : null}
                                 </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           )}
                           <p className="text-[11px] text-muted-foreground">
-                            Payment proofs are shown inline using a short-lived signed URL.
+                            Uploaded proofs use a short-lived signed URL. Excel Drive links open in a new tab.
                           </p>
                         </CollapsibleContent>
                       </Collapsible>

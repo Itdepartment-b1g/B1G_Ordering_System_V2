@@ -469,7 +469,7 @@ function unpivotSheet(
           agent_name: agent || undefined,
           kam_email: agent && isEmail(agent) ? agent.trim() : undefined,
           discount: discount ?? track?.discount,
-          notes: [notes, proof ? `Proof: ${proof}` : ''].filter(Boolean).join('\n') || undefined,
+          notes: notes || undefined,
           inventory_kind: kind,
           excel_status: status || track?.status,
           payment_amount: paid,
