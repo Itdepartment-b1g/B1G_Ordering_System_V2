@@ -125,8 +125,15 @@ export default function PriceAgreementPage() {
                       {batch.created_at
                         ? new Date(batch.created_at).toLocaleString()
                         : ''}
-                      {batch.note ? ` · Note: ${batch.note}` : ''}
                     </CardDescription>
+                    {batch.note?.trim() && (
+                      <p className="text-sm mt-2 rounded-md border bg-muted/40 px-3 py-2">
+                        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide block mb-0.5">
+                          Change note
+                        </span>
+                        {batch.note}
+                      </p>
+                    )}
                   </div>
                   <Badge variant="outline">{progress.label}</Badge>
                 </div>

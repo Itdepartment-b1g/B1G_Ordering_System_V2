@@ -525,6 +525,14 @@ export default function MainInventoryPage() {
         rspPrice !== (editingVariant.originalRspPrice ?? editingVariant.rspPrice ?? 0);
 
       if (!isWarehouse && hasWarehouseHubLink && pricesChanged) {
+        if (!priceChangeNote.trim()) {
+          toast({
+            title: 'Note required',
+            description: 'Add a short reason for this price change before submitting.',
+            variant: 'destructive',
+          });
+          return;
+        }
         const result = await createCompanyPriceChangeBatch(
           [
             {
@@ -534,7 +542,7 @@ export default function MainInventoryPage() {
               new_rsp_price: rspPrice,
             },
           ],
-          priceChangeNote
+          priceChangeNote.trim()
         );
         await refreshInventory();
         void queryClient.invalidateQueries({ queryKey: ['price-history'] });
@@ -683,6 +691,14 @@ export default function MainInventoryPage() {
             : brand.posms || [];
 
       if (hasWarehouseHubLink) {
+        if (!bulkPriceNote.trim()) {
+          toast({
+            title: 'Note required',
+            description: 'Add a short reason for this price change before submitting.',
+            variant: 'destructive',
+          });
+          return;
+        }
         const result = await createCompanyPriceChangeBatch(
           variants.map((variant) => ({
             variant_id: variant.id,
@@ -690,7 +706,7 @@ export default function MainInventoryPage() {
             new_dsp_price: dspPrice,
             new_rsp_price: rspPrice,
           })),
-          bulkPriceNote
+          bulkPriceNote.trim()
         );
         await refreshInventory();
         void queryClient.invalidateQueries({ queryKey: ['price-history'] });
@@ -2497,15 +2513,19 @@ export default function MainInventoryPage() {
               </div>
               {hasWarehouseHubLink && (
                 <div>
-                  <Label htmlFor="price_change_note">Note (optional)</Label>
+                  <Label htmlFor="price_change_note">
+                    Note <span className="text-destructive">*</span>
+                  </Label>
                   <Textarea
                     id="price_change_note"
                     value={priceChangeNote}
                     onChange={(e) => setPriceChangeNote(e.target.value)}
                     placeholder="e.g. supplier increase, promo"
+                    required
                   />
                   <p className="text-xs text-muted-foreground mt-1">
-                    Main Inventory updates now. Team Leaders and Mobile Sales must confirm before bags use the new price.
+                    Required. Main Inventory updates now. Team Leaders and Mobile Sales must confirm
+                    before bags use the new price.
                   </p>
                 </div>
               )}
@@ -2617,14 +2637,20 @@ export default function MainInventoryPage() {
               </div>
               {hasWarehouseHubLink && (
                 <div>
-                  <Label htmlFor="bulkNote">Note (optional)</Label>
+                  <Label htmlFor="bulkNote">
+                    Note <span className="text-destructive">*</span>
+                  </Label>
                   <Textarea
                     id="bulkNote"
                     value={bulkPriceNote}
                     onChange={(e) => setBulkPriceNote(e.target.value)}
                     placeholder="e.g. supplier increase"
                     disabled={updatingBulkPrice}
+                    required
                   />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Required. Explain why these prices are changing.
+                  </p>
                 </div>
               )}
               <p className="text-sm text-muted-foreground">
@@ -2648,7 +2674,10 @@ export default function MainInventoryPage() {
                 </Button>
                 <Button
                   onClick={handleConfirmBulkPriceUpdate}
-                  disabled={updatingBulkPrice}
+                  disabled={
+                    updatingBulkPrice ||
+                    (hasWarehouseHubLink && !bulkPriceNote.trim())
+                  }
                 >
                   {updatingBulkPrice
                     ? 'Updating...'

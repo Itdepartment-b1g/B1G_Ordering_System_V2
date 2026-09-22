@@ -122,9 +122,14 @@ function BatchDetail({
 
   return (
     <div className="space-y-4 pb-2">
-      {batch.note && (
-        <p className="text-sm text-muted-foreground">Note: {batch.note}</p>
-      )}
+      <div className="rounded-md border bg-muted/30 px-3 py-2 space-y-0.5">
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          Change note
+        </p>
+        <p className="text-sm text-foreground whitespace-pre-wrap">
+          {batch.note?.trim() ? batch.note : '—'}
+        </p>
+      </div>
       {showCompanyProgress && progress.total > 0 && (
         <Badge variant="outline">{progress.label}</Badge>
       )}
@@ -358,6 +363,11 @@ export default function PriceHistoryPage() {
                   <Badge variant="outline" className={statusBadge(batch.status)}>
                     {statusLabel(batch.status)}
                   </Badge>
+                  {batch.note?.trim() && (
+                    <span className="text-sm text-muted-foreground truncate max-w-[220px]">
+                      Note: {batch.note}
+                    </span>
+                  )}
                   {showProgressBadge && (
                     <Badge variant="outline" className="font-normal">
                       {progress.label}

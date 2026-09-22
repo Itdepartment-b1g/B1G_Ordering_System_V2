@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CheckCircle2, LayoutGrid, Loader2, Table2 } from 'lucide-react';
 import { useAuth } from '@/features/auth';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useToast } from '@/hooks/use-toast';
 import { useAgentInventory } from '@/features/inventory/hooks';
+import { supabase } from '@/lib/supabase';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -77,11 +78,84 @@ export function PriceChangeConfirmGate() {
     queryKey: ['price-agreements', user?.company_id, user?.id],
     queryFn: () => fetchMyPendingPriceAgreements(user!.company_id!, user!.id),
     enabled: eligible && !hasWarehouseHubLinkLoading,
-    refetchInterval: eligible ? 60_000 : false,
+    // Backup while waiting; realtime is primary for SA appends
+    refetchInterval: eligible ? 5_000 : false,
+    refetchOnWindowFocus: true,
   });
 
   const current = batches[0] ?? null;
   const open = eligible && !isLoading && !!current;
+
+  // Live updates when Super Admin creates/appends price rows or resets agreements
+  useEffect(() => {
+    if (!eligible || !user?.company_id || !user?.id) return;
+
+    const companyId = user.company_id;
+    const refresh = () => {
+      void qc.invalidateQueries({ queryKey: ['price-agreements', companyId, user.id] });
+    };
+
+    const channel = supabase
+      .channel(`cpc-confirm-gate-${companyId}-${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'company_price_change_items',
+          filter: `company_id=eq.${companyId}`,
+        },
+        refresh
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'company_price_change_agreements',
+          filter: `company_id=eq.${companyId}`,
+        },
+        refresh
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'company_price_change_batches',
+          filter: `company_id=eq.${companyId}`,
+        },
+        refresh
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [eligible, user?.company_id, user?.id, qc]);
+
+  // If SA adds/changes prices while dialog is open, force re-ack
+  const itemsFingerprint = useMemo(() => {
+    if (!current) return '';
+    return `${current.id}:${(current.items ?? [])
+      .map(
+        (i) =>
+          `${i.id}:${i.updated_at ?? i.created_at}:${i.new_selling_price}:${i.new_dsp_price}:${i.new_rsp_price}`
+      )
+      .join('|')}`;
+  }, [current]);
+
+  const prevFingerprintRef = useRef<string>('');
+  useEffect(() => {
+    if (!itemsFingerprint) {
+      prevFingerprintRef.current = '';
+      return;
+    }
+    if (prevFingerprintRef.current && prevFingerprintRef.current !== itemsFingerprint) {
+      setAcked(false);
+    }
+    prevFingerprintRef.current = itemsFingerprint;
+  }, [itemsFingerprint]);
 
   const confirmMutation = useMutation({
     mutationFn: (batchId: string) => confirmCompanyPriceChange(batchId),
@@ -96,6 +170,7 @@ export function PriceChangeConfirmGate() {
           : 'Everyone confirmed. Agent bags use the new prices.',
       });
       setAcked(false);
+      prevFingerprintRef.current = '';
       qc.invalidateQueries({ queryKey: ['price-agreements'] });
       qc.invalidateQueries({ queryKey: ['price-history'] });
       qc.invalidateQueries({ queryKey: ['inventory'] });
@@ -110,6 +185,7 @@ export function PriceChangeConfirmGate() {
 
   const remaining = batches.length;
   const myAgreement = (current.agreements ?? []).find((a) => a.profile_id === user?.id);
+  const skuCount = current.items?.length ?? 0;
 
   return (
     <AlertDialog open>
@@ -172,11 +248,18 @@ export function PriceChangeConfirmGate() {
                 {current.created_at
                   ? ` · ${new Date(current.created_at).toLocaleString()}`
                   : ''}
-                {current.note ? ` · ${current.note}` : ''}
               </p>
+              <div className="rounded-md border bg-muted/40 px-3 py-2 space-y-0.5">
+                <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+                  Change note
+                </p>
+                <p className="text-sm text-foreground whitespace-pre-wrap">
+                  {current.note?.trim() ? current.note : '—'}
+                </p>
+              </div>
               <div className="flex flex-wrap gap-2 pt-0.5">
                 <Badge variant="outline" className="font-normal">
-                  Awaiting your confirm
+                  Awaiting your confirm · {skuCount} SKU{skuCount === 1 ? '' : 's'}
                 </Badge>
                 {remaining > 1 && (
                   <Badge variant="secondary">{remaining} batches waiting</Badge>
