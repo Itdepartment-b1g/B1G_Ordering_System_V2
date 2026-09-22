@@ -23,6 +23,7 @@ const adminMenuItems: MenuItem[] = [
     { title: 'Team Remittances', url: '/inventory/admin-team-remittances', description: 'Review remitted stocks and reconcile team inventory.' },
     { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', description: 'Return stock to your linked warehouse for inspection (good/damaged + batch).' },
     { title: 'Client Order Returns', url: '/client-order-returns', description: 'History of client returns posted against ORD numbers (CR-…).' },
+    { title: 'Price History', url: '/inventory/price-history', description: 'Flattened Selling / DSP / RSP change history per SKU (warehouse-linked companies).' },
   ]},
   { title: 'Clients', url: '/clients', description: 'Admin-level management of all customer records.', hasSubmenu: true, submenu: [
     { title: 'Clients Database', url: '/clients', description: 'Search, filter, and manage all active clients.' },
@@ -52,6 +53,8 @@ const agentMenuItems: MenuItem[] = [
   { title: 'My Inventory', url: '/my-inventory', description: 'View stock currently assigned to you and its status.' },
   { title: 'Request Inventory', url: '/inventory/request', description: 'Submit stock requests to your team leader for approval.' },
   { title: 'Mobile Sales Stock', url: '/inventory/mobile-request', description: 'Request stock specifically for mobile sales inventory.' },
+  { title: 'Price Agreements', url: '/inventory/price-agreements', description: 'Confirm company Selling / DSP / RSP changes before your bag prices update.' },
+  { title: 'Price History', url: '/inventory/price-history', description: 'Flattened company price change history per SKU.' },
   { title: 'My Clients', url: '/my-clients', description: 'Manage your assigned clients, visit history, and details.' },
   { title: 'My Orders', url: '/my-orders', description: 'Create and track orders you have placed for clients.' },
   { title: 'Client Order Returns', url: '/client-order-returns', description: 'History of items returned against your client orders.' },
@@ -76,6 +79,8 @@ const leaderMenuItems: MenuItem[] = [
     { title: 'Transfer Shortages', url: '/inventory/tl-transfer-shortages', description: 'Investigate TL-to-TL stock that was dispatched but arrived short.' },
     { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', description: 'Return your allocated stock to the linked warehouse for inspection (good/damaged + batch).' },
     { title: 'Client Order Returns', url: '/client-order-returns', description: 'History of client returns posted against ORD numbers (CR-…).' },
+    { title: 'Price Agreements', url: '/inventory/price-agreements', description: 'Confirm company Selling / DSP / RSP changes before bags update.' },
+    { title: 'Price History', url: '/inventory/price-history', description: 'Flattened company price change history per SKU.' },
     { title: 'How to use?', url: '/leader-manual', description: 'Open the team leader manual and usage guides.' },
   ]},
   { title: 'Tasks', url: '/tasks', description: 'Assign and monitor daily tasks for your team.', hasSubmenu: true, submenu: [
@@ -157,6 +162,7 @@ const superAdminMenuItems: MenuItem[] = [
     { title: 'Team Remittances', url: '/inventory/admin-team-remittances', description: 'Audit remittances from teams for compliance.' },
     { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', description: 'Return stock to your linked warehouse for inspection (good/damaged + batch).' },
     { title: 'Client Order Returns', url: '/client-order-returns', description: 'History of client returns posted against ORD numbers (CR-…).' },
+    { title: 'Price History', url: '/inventory/price-history', description: 'Flattened Selling / DSP / RSP change history per SKU (warehouse-linked companies).' },
   ]},
   { title: 'Clients', url: '/clients', description: 'High-level client management and quality control.', hasSubmenu: true, submenu: [
     { title: 'Clients Database', url: '/clients', description: 'View all clients registered under this tenant.' },

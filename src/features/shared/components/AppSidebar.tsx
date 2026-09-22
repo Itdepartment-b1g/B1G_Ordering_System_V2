@@ -48,6 +48,7 @@ import {
   ClipboardCheck,
   Book,
   Target,
+  CheckCircle2,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -100,6 +101,7 @@ const adminMenuItems: MenuItem[] = [
       { title: 'Team Remittances', url: '/inventory/admin-team-remittances', icon: Users },
       { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
       { title: 'Client Order Returns', url: '/client-order-returns', icon: RotateCcw },
+      { title: 'Price History', url: '/inventory/price-history', icon: History },
     ]
   },
   {
@@ -290,6 +292,8 @@ const agentMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
   { title: 'My Inventory', url: '/my-inventory', icon: Package },
   { title: 'Request Inventory', url: '/inventory/mobile-request', icon: Send },
+  { title: 'Price Agreements', url: '/inventory/price-agreements', icon: CheckCircle2 },
+  { title: 'Price History', url: '/inventory/price-history', icon: History },
   { title: 'My Clients', url: '/my-clients', icon: ShoppingBag },
   { title: 'My Orders', url: '/my-orders', icon: ShoppingCart },
   { title: 'Client Order Returns', url: '/client-order-returns', icon: RotateCcw },
@@ -325,6 +329,8 @@ const leaderMenuItems: MenuItem[] = [
       { title: 'Transfer Shortages', url: '/inventory/tl-transfer-shortages', icon: PackageSearch },
       { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
       { title: 'Client Order Returns', url: '/client-order-returns', icon: RotateCcw },
+      { title: 'Price Agreements', url: '/inventory/price-agreements', icon: CheckCircle2 },
+      { title: 'Price History', url: '/inventory/price-history', icon: History },
     ]
   },
   {
@@ -499,6 +505,7 @@ const superAdminMenuItems: MenuItem[] = [
       { title: 'Team Remittances', url: '/inventory/admin-team-remittances', icon: Users },
       { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
       { title: 'Client Order Returns', url: '/client-order-returns', icon: RotateCcw },
+      { title: 'Price History', url: '/inventory/price-history', icon: History },
     ]
   },
   {
@@ -576,11 +583,18 @@ export function AppSidebar() {
   const menuItems = useMemo(() => {
     const canSeeReturnToWarehouse = hasWarehouseHubLink === true;
     const canSeeClientOrderReturns = hasWarehouseHubLink === true && user?.role !== 'warehouse';
+    const canSeePriceChangePages = hasWarehouseHubLink === true;
+
+    const isPriceChangeRoute = (url: string) =>
+      url === '/inventory/price-history' || url === '/inventory/price-agreements';
 
     // Filter menu items based on permissions
     const filterMenuItems = (items: MenuItem[]): MenuItem[] => {
       return items
         .filter(item => {
+          if (isPriceChangeRoute(item.url) && !canSeePriceChangePages) {
+            return false;
+          }
           // Check if user has permission for this route
           if (!checkPermission(item.url)) {
             return false;
@@ -595,6 +609,9 @@ export function AppSidebar() {
                 return false;
               }
               if (subItem.url === '/finance/refunds' && !canSeeClientOrderReturns) {
+                return false;
+              }
+              if (isPriceChangeRoute(subItem.url) && !canSeePriceChangePages) {
                 return false;
               }
               return checkPermission(subItem.url);
@@ -617,6 +634,9 @@ export function AppSidebar() {
                   return false;
                 }
                 if (subItem.url === '/finance/refunds' && !canSeeClientOrderReturns) {
+                  return false;
+                }
+                if (isPriceChangeRoute(subItem.url) && !canSeePriceChangePages) {
                   return false;
                 }
                 return checkPermission(subItem.url);

@@ -16,7 +16,7 @@ import { OrdersPage, PurchaseOrdersPage, MyOrdersPage, ClientOrderReturnsPage, F
 import BrandsPage from "@/features/orders/BrandsPage";
 import VariantTypesPage from "@/features/orders/VariantTypesPage";
 import SuppliersPage from "@/features/orders/SuppliersPage";
-import {WarehouseDeliveryShortagesPage, MainInventoryPage, WarehouseInventoryDashboardPage, SubWarehousesPage, SubWarehouseStockRequestPage, MainWarehouseSubStockRequestsPage, WarehouseDisposalsPage, WarehouseStockRequestsPage, WarehouseStockReturnsPage, WarehouseClientStockReturnsPage, StandardAccountReturnToWarehousePage, WarehouseStockAdjustmentsPage, WarehouseAllocationHistoryPage, BatchViewPage, PhysicalCountPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, RemittedStocksPage, AdminTeamRemittancesPage, LeaderRemittancePage, LeaderCashDepositsPage, PendingRequestsPage, AdminRequestsPage, LeaderStockRequestPage, MobileSalesStockRequestPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
+import {WarehouseDeliveryShortagesPage, MainInventoryPage, WarehouseInventoryDashboardPage, SubWarehousesPage, SubWarehouseStockRequestPage, MainWarehouseSubStockRequestsPage, WarehouseDisposalsPage, WarehouseStockRequestsPage, WarehouseStockReturnsPage, WarehouseClientStockReturnsPage, StandardAccountReturnToWarehousePage, WarehouseStockAdjustmentsPage, WarehouseAllocationHistoryPage, BatchViewPage, PhysicalCountPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, RemittedStocksPage, AdminTeamRemittancesPage, LeaderRemittancePage, LeaderCashDepositsPage, PendingRequestsPage, AdminRequestsPage, LeaderStockRequestPage, MobileSalesStockRequestPage, PriceAgreementPage, PriceHistoryPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
 import TLStockRequestPage from "@/features/inventory/TLStockRequestPage";
 import TLTransferShortagesPage from "@/features/inventory/TLTransferShortagesPage";
 import AdminTLRequestsPage from "@/features/inventory/AdminTLRequestsPage";
@@ -43,6 +43,7 @@ import { WarRoomPage } from "@/features/war-room";
 import { KeyAccountsDashboardWrapper, ClientHierarchyPage, ClientAssignmentPage, KeyAccountTeamPage, KeyAccountUserManagementPage, KeyAccountPurchaseOrderPage, KeyAccountPurchaseOrdersPage, KeyAccountAnalyticsPage, KeyAccountClientAnalyticsPage, KeyAccountRebatesPage, KeyAccountCreateRebatePage, KeyAccountPaymentSettingsPage, KeyAccountPaymentTermsPage, KeyAccountHistoricalImportPage, KeyAccountSalesRecordImportPage, KeyAccountSalesTargetsPage} from "@/features/key-accounts";
 import NotFound from "@/features/shared/NotFound";
 import { AgentRemittanceReminder } from "@/features/shared/components/AgentRemittanceReminder";
+import { PriceChangeConfirmGate } from "@/features/inventory/PriceChangeConfirmGate";
 import { SupportWidget } from "@/components/SupportWidget";
 
 import { PrefetchController } from "@/features/core/PrefetchController";
@@ -79,6 +80,7 @@ const App = () => (
                 <Toaster />
                 <Sonner />
                 <AgentRemittanceReminder />
+                <PriceChangeConfirmGate />
                 <SupportWidget />
                 <BrowserRouter>
                   <Routes>
@@ -107,6 +109,15 @@ const App = () => (
                     <Route path="/agent-attendance-overview" element={<ProtectedRoute><AgentAttendanceOverviewPage /></ProtectedRoute>} />
                     <Route path="/inventory" element={<ProtectedRoute><MainInventoryPage /></ProtectedRoute>} />
                     <Route path="/inventory/main" element={<ProtectedRoute><MainInventoryPage /></ProtectedRoute>} />
+                    <Route path="/inventory/price-history" element={<ProtectedRoute><PriceHistoryPage /></ProtectedRoute>} />
+                    <Route
+                      path="/inventory/price-agreements"
+                      element={
+                        <ProtectedRoute allowedRoles={['team_leader', 'mobile_sales']}>
+                          <PriceAgreementPage />
+                        </ProtectedRoute>
+                      }
+                    />
                     <Route
                       path="/inventory/board"
                       element={

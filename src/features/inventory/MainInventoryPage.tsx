@@ -10,13 +10,16 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, Edit, Package, ChevronRight, Users, TrendingUp, Eye, RefreshCw, Filter, Download, BarChart3, TrendingDown, AlertTriangle, CheckCircle, Trash2, RotateCcw, Loader2, Calendar, Plus, Unlink, Building2, Clock, ClipboardList, Scale } from 'lucide-react';
+import { Search, Edit, Package, ChevronRight, Users, TrendingUp, Eye, RefreshCw, Filter, Download, BarChart3, TrendingDown, AlertTriangle, CheckCircle, Trash2, RotateCcw, Loader2, Calendar, Plus, Unlink, Building2, Clock, ClipboardList, Scale, History } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/usePermissions';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useInventory, type Variant, type Brand } from './InventoryContext';
+import { createCompanyPriceChangeBatch } from './companyPriceChangeApi';
+import { BrandPriceHistoryDialog } from './BrandPriceHistoryDialog';
 import { supabase } from '@/lib/supabase';
+import { Textarea } from '@/components/ui/textarea';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import { InventoryImportExport } from './components/InventoryImportExport';
 import { format } from 'date-fns';
@@ -117,11 +120,13 @@ export default function MainInventoryPage() {
 
   // Bulk price update states
   const [bulkPriceDialogOpen, setBulkPriceDialogOpen] = useState(false);
-  const [bulkPriceType, setBulkPriceType] = useState<'flavors' | 'batteries' | null>(null);
+  const [bulkPriceType, setBulkPriceType] = useState<'flavors' | 'batteries' | 'posms' | null>(null);
   const [bulkPriceBrandId, setBulkPriceBrandId] = useState<string | null>(null);
   const [bulkPriceValue, setBulkPriceValue] = useState<string>('');
   const [bulkDspValue, setBulkDspValue] = useState<string>('');
   const [bulkRspValue, setBulkRspValue] = useState<string>('');
+  const [bulkPriceNote, setBulkPriceNote] = useState<string>('');
+  const [priceChangeNote, setPriceChangeNote] = useState<string>('');
   const [updatingBulkPrice, setUpdatingBulkPrice] = useState(false);
 
   // Bulk stock edit states
@@ -163,6 +168,11 @@ export default function MainInventoryPage() {
     returns: PreviewClientReturn[];
   } | null>(null);
   const [inventoryTab, setInventoryTab] = useState('stock');
+
+  const [brandPriceHistory, setBrandPriceHistory] = useState<{
+    brandId: string;
+    brandName: string;
+  } | null>(null);
 
   const [batchViewTarget, setBatchViewTarget] = useState<{
     variantId: string;
@@ -481,6 +491,7 @@ export default function MainInventoryPage() {
     setSellingPriceInputValue('');
     setDspPriceInputValue('');
     setRspPriceInputValue('');
+    setPriceChangeNote('');
     setEditVariantOpen(true);
   };
 
@@ -500,6 +511,54 @@ export default function MainInventoryPage() {
       const sellingPrice = sellingPriceInputValue === '' ? editingVariant.sellingPrice : Number(sellingPriceInputValue);
       const dspPrice = dspPriceInputValue === '' ? editingVariant.dspPrice : Number(dspPriceInputValue);
       const rspPrice = rspPriceInputValue === '' ? editingVariant.rspPrice : Number(rspPriceInputValue);
+
+      const pricesChanged =
+        sellingPrice !== (editingVariant.sellingPrice ?? 0) ||
+        dspPrice !== (editingVariant.dspPrice ?? 0) ||
+        rspPrice !== (editingVariant.rspPrice ?? 0);
+
+      if (!isWarehouse && hasWarehouseHubLink && pricesChanged) {
+        const result = await createCompanyPriceChangeBatch(
+          [
+            {
+              variant_id: editingVariant.variantId,
+              new_selling_price: sellingPrice,
+              new_dsp_price: dspPrice,
+              new_rsp_price: rspPrice,
+            },
+          ],
+          priceChangeNote
+        );
+        await refreshInventory();
+        void queryClient.invalidateQueries({ queryKey: ['price-history'] });
+        void queryClient.invalidateQueries({ queryKey: ['price-history-detail'] });
+        void queryClient.invalidateQueries({ queryKey: ['price-agreements'] });
+        void queryClient.invalidateQueries({ queryKey: ['brand-price-history'] });
+        toast({
+          title: result.auto_applied
+            ? 'Prices applied'
+            : result.appended
+              ? 'Added to open price batch'
+              : 'Price change submitted',
+          description: result.auto_applied
+            ? `Batch ${result.batch_number}: main and agent bags updated (no TL/MS to confirm).`
+            : result.appended
+              ? `Batch ${result.batch_number}: main updated. Appended to the open agreement list${
+                  (result.reset_confirmed_count ?? 0) > 0
+                    ? ` — ${result.reset_confirmed_count} confirmer(s) must confirm again`
+                    : ''
+                }.`
+              : `Batch ${result.batch_number}: main inventory updated. Team Leaders and Mobile Sales must confirm before bags use the new price.`,
+        });
+        setEditVariantOpen(false);
+        setEditingVariant(null);
+        setPriceInputValue('');
+        setSellingPriceInputValue('');
+        setDspPriceInputValue('');
+        setRspPriceInputValue('');
+        setPriceChangeNote('');
+        return;
+      }
 
       await updateVariant(
         editingVariant.variantId,
@@ -525,10 +584,11 @@ export default function MainInventoryPage() {
       setSellingPriceInputValue('');
       setDspPriceInputValue('');
       setRspPriceInputValue('');
+      setPriceChangeNote('');
     } catch (error) {
       toast({
         title: "Error",
-        description: "Failed to update variant",
+        description: error instanceof Error ? error.message : "Failed to update variant",
         variant: "destructive",
       });
     }
@@ -556,12 +616,13 @@ export default function MainInventoryPage() {
     }
   };
 
-  const handleOpenBulkPriceDialog = (brandId: string, type: 'flavors' | 'batteries') => {
+  const handleOpenBulkPriceDialog = (brandId: string, type: 'flavors' | 'batteries' | 'posms') => {
     setBulkPriceBrandId(brandId);
     setBulkPriceType(type);
     setBulkPriceValue('');
     setBulkDspValue('');
     setBulkRspValue('');
+    setBulkPriceNote('');
     setBulkPriceDialogOpen(true);
   };
 
@@ -580,6 +641,9 @@ export default function MainInventoryPage() {
     setBulkStockVariants(allVariants);
     setBulkStockDialogOpen(true);
   };
+
+  const bulkPriceTypeLabel =
+    bulkPriceType === 'flavors' ? 'flavors' : bulkPriceType === 'batteries' ? 'batteries' : 'POSM';
 
   const handleConfirmBulkPriceUpdate = async () => {
     if (!bulkPriceBrandId || !bulkPriceType) return;
@@ -604,7 +668,51 @@ export default function MainInventoryPage() {
         throw new Error('Brand not found');
       }
 
-      const variants = bulkPriceType === 'flavors' ? brand.flavors : brand.batteries;
+      const variants =
+        bulkPriceType === 'flavors'
+          ? brand.flavors
+          : bulkPriceType === 'batteries'
+            ? brand.batteries
+            : brand.posms || [];
+
+      if (hasWarehouseHubLink) {
+        const result = await createCompanyPriceChangeBatch(
+          variants.map((variant) => ({
+            variant_id: variant.id,
+            new_selling_price: sellingPrice,
+            new_dsp_price: dspPrice,
+            new_rsp_price: rspPrice,
+          })),
+          bulkPriceNote
+        );
+        await refreshInventory();
+        void queryClient.invalidateQueries({ queryKey: ['price-history'] });
+        void queryClient.invalidateQueries({ queryKey: ['price-history-detail'] });
+        void queryClient.invalidateQueries({ queryKey: ['price-agreements'] });
+        void queryClient.invalidateQueries({ queryKey: ['brand-price-history'] });
+        toast({
+          title: result.auto_applied
+            ? 'Prices applied'
+            : result.appended
+              ? 'Added to open price batch'
+              : 'Price change submitted',
+          description: result.auto_applied
+            ? `Batch ${result.batch_number}: updated ${result.item_count} SKU(s); bags applied (no TL/MS).`
+            : result.appended
+              ? `Batch ${result.batch_number}: main updated for ${result.item_count} SKU(s). Appended to the open agreement list${
+                  (result.reset_confirmed_count ?? 0) > 0
+                    ? ` — ${result.reset_confirmed_count} confirmer(s) must confirm again`
+                    : ''
+                }.`
+              : `Batch ${result.batch_number}: main updated for ${result.item_count} SKU(s). TL and Mobile Sales must confirm before bags update.`,
+        });
+        setBulkPriceDialogOpen(false);
+        setBulkPriceValue('');
+        setBulkDspValue('');
+        setBulkRspValue('');
+        setBulkPriceNote('');
+        return;
+      }
 
       // Update all variants in parallel (skip individual refreshes for performance)
       const updatePromises = variants.map(variant =>
@@ -1220,6 +1328,14 @@ export default function MainInventoryPage() {
               View Returns
             </Button>
           )}
+          {!isWarehouse && hasWarehouseHubLink && (
+            <Button variant="outline" asChild>
+              <Link to="/inventory/price-history">
+                <History className="mr-2 h-4 w-4" />
+                Price History
+              </Link>
+            </Button>
+          )}
           {!isWarehouse && <InventoryImportExport brands={brands} />}
           <Button
             onClick={refreshInventory}
@@ -1243,7 +1359,12 @@ export default function MainInventoryPage() {
         <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-4 py-3 text-sm text-amber-950">
           This company is linked to a warehouse. <strong>Stock counts are read-only</strong> here
           and update when you receive inventory through <strong>purchase orders to the warehouse</strong>.
-          You can still edit pricing on each variant. To send stock back, use{' '}
+          Price edits update Main Inventory now; <strong>Team Leaders and Mobile Sales must confirm</strong>{' '}
+          before agent bags use the new prices. See{' '}
+          <Link to="/inventory/price-history" className="underline font-medium">
+            Price History
+          </Link>
+          . To send stock back, use{' '}
           <Link to="/inventory/return-to-warehouse" className="underline font-medium">
             Return to Warehouse
           </Link>
@@ -1450,7 +1571,26 @@ export default function MainInventoryPage() {
                           <AlertTriangle className="h-5 w-5 text-yellow-600 flex-shrink-0" />
                         )}
                       <div>
-                        <h3 className="font-semibold text-lg">{brand.name}</h3>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="font-semibold text-lg">{brand.name}</h3>
+                          {!isWarehouse && hasWarehouseHubLink && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setBrandPriceHistory({
+                                  brandId: brand.id,
+                                  brandName: brand.name,
+                                });
+                              }}
+                            >
+                              <History className="h-3 w-3 mr-1" />
+                              Show price history
+                            </Button>
+                          )}
+                        </div>
                         <div className="text-sm text-muted-foreground">
                           {getVariantsByTypeEntries(brand).map(([type, variants], idx) => (
                             <span key={type}>
@@ -1844,9 +1984,22 @@ export default function MainInventoryPage() {
                     {(brand as any).posms && (brand as any).posms.length > 0 && (
                       <div className="bg-purple-50/20">
                         <div className="px-4 py-3 border-b border-purple-200">
-                          <div className="flex items-center gap-2">
-                            <div className="h-2 w-2 rounded-full bg-purple-500"></div>
-                            <h4 className="font-semibold text-purple-800">POSM ({(brand as any).posms.length})</h4>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <div className="h-2 w-2 rounded-full bg-purple-500"></div>
+                              <h4 className="font-semibold text-purple-800">POSM ({(brand as any).posms.length})</h4>
+                            </div>
+                            {!isWarehouse && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleOpenBulkPriceDialog(brand.id, 'posms')}
+                                className="text-purple-700 border-purple-300 hover:bg-purple-100"
+                              >
+                                <Edit className="h-3 w-3 mr-1" />
+                                Set Price for All POSM
+                              </Button>
+                            )}
                           </div>
                         </div>
                         <Table>
@@ -2335,6 +2488,20 @@ export default function MainInventoryPage() {
                   }}
                 />
               </div>
+              {hasWarehouseHubLink && (
+                <div>
+                  <Label htmlFor="price_change_note">Note (optional)</Label>
+                  <Textarea
+                    id="price_change_note"
+                    value={priceChangeNote}
+                    onChange={(e) => setPriceChangeNote(e.target.value)}
+                    placeholder="e.g. supplier increase, promo"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Main Inventory updates now. Team Leaders and Mobile Sales must confirm before bags use the new price.
+                  </p>
+                </div>
+              )}
                 </>
               )}
               <div className="flex justify-end space-x-2">
@@ -2389,13 +2556,16 @@ export default function MainInventoryPage() {
       <Dialog open={bulkPriceDialogOpen} onOpenChange={setBulkPriceDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Set Prices for All {bulkPriceType === 'flavors' ? 'Flavors' : 'Batteries'}</DialogTitle>
+            <DialogTitle>
+              Set Prices for All{' '}
+              {bulkPriceType === 'flavors' ? 'Flavors' : bulkPriceType === 'batteries' ? 'Batteries' : 'POSM'}
+            </DialogTitle>
           </DialogHeader>
           {bulkPriceBrandId && bulkPriceType && (
             <div className="space-y-4">
               <div>
                 <Label htmlFor="bulkPrice">
-                  Selling Price (₱) for all {bulkPriceType === 'flavors' ? 'flavors' : 'batteries'} in this brand
+                  Selling Price (₱) for all {bulkPriceTypeLabel} in this brand
                 </Label>
                 <Input
                   id="bulkPrice"
@@ -2410,7 +2580,7 @@ export default function MainInventoryPage() {
               </div>
               <div>
                 <Label htmlFor="bulkDsp">
-                  DSP (₱) for all {bulkPriceType === 'flavors' ? 'flavors' : 'batteries'} in this brand
+                  DSP (₱) for all {bulkPriceTypeLabel} in this brand
                 </Label>
                 <Input
                   id="bulkDsp"
@@ -2425,7 +2595,7 @@ export default function MainInventoryPage() {
               </div>
               <div>
                 <Label htmlFor="bulkRsp">
-                  RSP (₱) for all {bulkPriceType === 'flavors' ? 'flavors' : 'batteries'} in this brand
+                  RSP (₱) for all {bulkPriceTypeLabel} in this brand
                 </Label>
                 <Input
                   id="bulkRsp"
@@ -2438,8 +2608,22 @@ export default function MainInventoryPage() {
                   disabled={updatingBulkPrice}
                 />
               </div>
+              {hasWarehouseHubLink && (
+                <div>
+                  <Label htmlFor="bulkNote">Note (optional)</Label>
+                  <Textarea
+                    id="bulkNote"
+                    value={bulkPriceNote}
+                    onChange={(e) => setBulkPriceNote(e.target.value)}
+                    placeholder="e.g. supplier increase"
+                    disabled={updatingBulkPrice}
+                  />
+                </div>
+              )}
               <p className="text-sm text-muted-foreground">
-                This will update Selling Price, DSP, and RSP for all {bulkPriceType === 'flavors' ? 'flavors' : 'batteries'} in this brand.
+                {hasWarehouseHubLink
+                  ? `This updates Main Inventory Selling / DSP / RSP for all ${bulkPriceTypeLabel} now. Team Leaders and Mobile Sales must confirm before bags use the new price.`
+                  : `This will update Selling Price, DSP, and RSP for all ${bulkPriceTypeLabel} in this brand.`}
               </p>
               <div className="flex justify-end space-x-2">
                 <Button
@@ -2449,6 +2633,7 @@ export default function MainInventoryPage() {
                     setBulkPriceValue('');
                     setBulkDspValue('');
                     setBulkRspValue('');
+                    setBulkPriceNote('');
                   }}
                   disabled={updatingBulkPrice}
                 >
@@ -2458,7 +2643,11 @@ export default function MainInventoryPage() {
                   onClick={handleConfirmBulkPriceUpdate}
                   disabled={updatingBulkPrice}
                 >
-                  {updatingBulkPrice ? 'Updating...' : 'Update All Prices'}
+                  {updatingBulkPrice
+                    ? 'Updating...'
+                    : hasWarehouseHubLink
+                      ? 'Submit price change'
+                      : 'Update All Prices'}
                 </Button>
               </div>
             </div>
@@ -2927,6 +3116,16 @@ export default function MainInventoryPage() {
               ? 'Main warehouse'
               : undefined
         }
+      />
+
+      <BrandPriceHistoryDialog
+        open={!!brandPriceHistory}
+        onOpenChange={(open) => {
+          if (!open) setBrandPriceHistory(null);
+        }}
+        companyId={user?.company_id}
+        brandId={brandPriceHistory?.brandId ?? null}
+        brandName={brandPriceHistory?.brandName ?? ''}
       />
     </div>
   );

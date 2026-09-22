@@ -62,6 +62,8 @@ export function getNotificationHref(
             return '/clients';
         case 'cash_deposit':
             return '/inventory/cash-deposits';
+        case 'company_price_change_batch':
+            return '/inventory/price-agreements';
         default:
             return null;
     }
