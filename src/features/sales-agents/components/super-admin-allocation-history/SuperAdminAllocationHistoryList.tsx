@@ -6,20 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/features/auth';
-
-import { exportAllocationHistoryExcel } from './utils/exportAllocationHistoryExcel';
-import { SuperAdminAllocationHistoryFilter } from './filter/Filter';
+import { getDatePresetLabel } from '@/lib/dateRangePresets';
 import type { DateRangeFilterValue } from '@/features/shared/components/DateRangeFilterPopover';
-import {
-  filterAllocationHistoryGroups,
-  getAllocationHistoryDateBounds,
-  hasAllocationHistoryDateFilter,
-  type AllocationFilterKey,
-} from './utils/allocationHistoryFilters';
-import { useCompanyBrands } from './hooks/useCompanyBrands';
-import { useCompanyTeamLeaders, type RecipientRole } from './hooks/useCompanyTeamLeaders';
-import { useAllocationHistoryOptions } from './hooks/useAllocationHistoryOptions';
-import { useSuperAdminAllocationHistory } from './hooks/useSuperAdminAllocationHistory';
 import {
   DEFAULT_PAGE_SIZE,
   getListPaginationSlice,
@@ -32,13 +20,27 @@ import {
   resolveTableSortDirection,
   type TableSortCycleState,
 } from '@/features/shared/utils/tableSortCycle';
+
+import { SuperAdminAllocationHistoryFilter } from './filter/Filter';
+import { useCompanyBrands } from './hooks/useCompanyBrands';
+import { useCompanyTeamLeaders, type RecipientRole } from './hooks/useCompanyTeamLeaders';
+import { useAllocationHistoryOptions } from './hooks/useAllocationHistoryOptions';
+import { useSuperAdminAllocationHistory } from './hooks/useSuperAdminAllocationHistory';
+import { SuperAdminAllocationHistoryTable } from './table/TableHeader';
+import {
+  filterAllocationHistoryGroups,
+  getAllocationHistoryDateBounds,
+  hasAllocationHistoryDateFilter,
+  type AllocationFilterKey,
+} from './utils/allocationHistoryFilters';
+import { exportAllocationHistoryExcel } from './utils/exportAllocationHistoryExcel';
+import { exportAllocationHistoryTlSummaryExcel } from './utils/exportAllocationHistoryTlSummaryExcel';
 import {
   DEFAULT_SUPER_ADMIN_ALLOCATION_SORT_DIRECTION,
   DEFAULT_SUPER_ADMIN_ALLOCATION_SORT_KEY,
   sortSuperAdminAllocationGroups,
   type SuperAdminAllocationSortKey,
 } from './utils/superAdminAllocationHistorySorting';
-import { SuperAdminAllocationHistoryTable } from './table/TableHeader';
 
 export default function SuperAdminAllocationHistoryList() {
   const { toast } = useToast();
@@ -57,6 +59,7 @@ export default function SuperAdminAllocationHistoryList() {
     useState<TableSortCycleState<SuperAdminAllocationSortKey>>(createInitialTableSortCycle);
   const [isExportingFiltered, setIsExportingFiltered] = useState(false);
   const [isExportingAll, setIsExportingAll] = useState(false);
+  const [isExportingTlSummary, setIsExportingTlSummary] = useState(false);
 
   const missingCompanyOnProfile =
     Boolean(user?.id) && !user?.company_id && user?.role === 'super_admin';
@@ -135,8 +138,13 @@ export default function SuperAdminAllocationHistoryList() {
     hasAllocationHistoryDateFilter(dateRangeFilter) ||
     (selectedFilter !== 'all' && filterValue.trim().length > 0);
 
+  const hasDateFilter = hasAllocationHistoryDateFilter(dateRangeFilter);
   const canExportFiltered = hasActiveFilters && filteredGroups.length > 0 && !isExportingFiltered;
   const canExportAll = groups.length > 0 && !isExportingAll;
+  const canExportTlSummary =
+    hasDateFilter &&
+    companyRecipients.length > 0 &&
+    !isExportingTlSummary;
 
   const onExportFiltered = async () => {
     try {
@@ -162,6 +170,35 @@ export default function SuperAdminAllocationHistoryList() {
     }
   };
 
+  const onExportTlSummary = async () => {
+    const dateLabel = getDatePresetLabel(
+      dateRangeFilter.preset,
+      dateRangeFilter.customStart,
+      dateRangeFilter.customEnd
+    );
+    try {
+      setIsExportingTlSummary(true);
+      await exportAllocationHistoryTlSummaryExcel(
+        filteredGroups,
+        'allocation_history_tl_summary',
+        { dateRangeLabel: dateLabel, roster: companyRecipients }
+      );
+      toast({
+        title: 'Export complete',
+        description: `Allocation summary exported · ${dateLabel}.`,
+      });
+    } catch (err) {
+      toast({
+        title: 'Export failed',
+        description:
+          err instanceof Error ? err.message : 'Could not export allocation summary.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsExportingTlSummary(false);
+    }
+  };
+
   return (
     <div className="space-y-4 p-4">
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -172,6 +209,18 @@ export default function SuperAdminAllocationHistoryList() {
             <Button variant="outline" onClick={onExportFiltered} disabled={!canExportFiltered}>
               <FileDown className="mr-2 h-4 w-4" />
               Export filtered
+            </Button>
+            <Button
+              variant="outline"
+              onClick={onExportTlSummary}
+              disabled={!canExportTlSummary}
+            >
+              {isExportingTlSummary ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <FileDown className="mr-2 h-4 w-4" />
+              )}
+              Export summary
             </Button>
             <Button variant="outline" onClick={onExportAll} disabled={!canExportAll}>
               <FileDown className="mr-2 h-4 w-4" />
