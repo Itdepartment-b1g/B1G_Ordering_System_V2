@@ -8,6 +8,13 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion';
 import {
   agreementProgress,
   cancelCompanyPriceChange,
@@ -110,8 +117,6 @@ function BatchDetail({
   });
   const progress = agreementProgress(visibleAgreements);
   const sortedAgreements = sortAgreements(visibleAgreements);
-  const confirmSectionTitle =
-    viewerRole === 'mobile_sales' ? 'Your confirmation' : 'Who confirmed';
   const showCompanyProgress =
     viewerRole === 'super_admin' || viewerRole === 'admin';
 
@@ -138,38 +143,74 @@ function BatchDetail({
       <PriceChangeItemsGroupedTable batch={batch} />
 
       {sortedAgreements.length > 0 && (
-        <div className="space-y-2">
-          <h4 className="text-sm font-semibold">{confirmSectionTitle}</h4>
-          <ul className="text-sm space-y-1">
-            {sortedAgreements.map((a) => (
-              <li key={a.id} className="flex flex-wrap gap-2 items-center">
+        <Accordion
+          type="single"
+          collapsible
+          defaultValue={
+            viewerRole === 'mobile_sales' || sortedAgreements.length <= 2
+              ? 'who-confirmed'
+              : undefined
+          }
+          className="rounded-md border px-3"
+        >
+          <AccordionItem value="who-confirmed" className="border-0">
+            <AccordionTrigger className="py-3 text-sm font-semibold hover:no-underline">
+              <span className="flex flex-wrap items-center gap-2 text-left">
                 <span>
-                  {viewerRole === 'mobile_sales' ? 'You' : a.profile_name}
+                  {viewerRole === 'mobile_sales' ? 'Your confirmation' : 'Show who confirmed'}
                 </span>
-                <Badge variant="outline" className="font-normal">
-                  {priceAgreementRoleLabel(a, leaderNameByAgentId)}
-                </Badge>
-                <Badge
-                  variant="outline"
-                  className={
-                    a.status === 'confirmed'
-                      ? 'bg-green-50 text-green-900 border-green-200'
-                      : a.status === 'pending'
-                        ? 'bg-amber-50 text-amber-900 border-amber-200'
-                        : ''
-                  }
-                >
-                  {a.status}
-                </Badge>
-                {a.confirmed_at && (
-                  <span className="text-muted-foreground">
-                    {new Date(a.confirmed_at).toLocaleString()}
-                  </span>
+                {viewerRole !== 'mobile_sales' && progress.total > 0 && (
+                  <Badge variant="outline" className="font-normal">
+                    {progress.confirmed}/{progress.total}
+                  </Badge>
                 )}
-              </li>
-            ))}
-          </ul>
-        </div>
+              </span>
+            </AccordionTrigger>
+            <AccordionContent className="pb-3">
+              <div className="rounded-md border overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-[28%]">Name</TableHead>
+                      <TableHead>Role</TableHead>
+                      <TableHead className="w-[110px]">Status</TableHead>
+                      <TableHead className="w-[160px]">Confirmed</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {sortedAgreements.map((a) => (
+                      <TableRow key={a.id}>
+                        <TableCell className="font-medium align-middle">
+                          {viewerRole === 'mobile_sales' ? 'You' : a.profile_name}
+                        </TableCell>
+                        <TableCell className="align-middle text-muted-foreground text-sm">
+                          {priceAgreementRoleLabel(a, leaderNameByAgentId)}
+                        </TableCell>
+                        <TableCell className="align-middle">
+                          <Badge
+                            variant="outline"
+                            className={
+                              a.status === 'confirmed'
+                                ? 'bg-green-50 text-green-900 border-green-200 font-normal capitalize'
+                                : a.status === 'pending'
+                                  ? 'bg-amber-50 text-amber-900 border-amber-200 font-normal capitalize'
+                                  : 'font-normal capitalize'
+                            }
+                          >
+                            {a.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="align-middle text-sm text-muted-foreground whitespace-nowrap">
+                          {a.confirmed_at ? new Date(a.confirmed_at).toLocaleString() : '—'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
       )}
 
       {canCancel && batch.status === 'pending_agreement' && (

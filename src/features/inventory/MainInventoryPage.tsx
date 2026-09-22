@@ -104,6 +104,10 @@ export default function MainInventoryPage() {
     sellingPrice?: number;
     dspPrice?: number;
     rspPrice?: number;
+    /** Snapshot at dialog open — used to detect real price edits for CPC batch */
+    originalSellingPrice?: number;
+    originalDspPrice?: number;
+    originalRspPrice?: number;
   } | null>(null);
   const [deleteVariantId, setDeleteVariantId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -485,7 +489,10 @@ export default function MainInventoryPage() {
       price: currentUnitPrice,
       sellingPrice: currentSellingPrice,
       dspPrice: currentDspPrice,
-      rspPrice: currentRspPrice
+      rspPrice: currentRspPrice,
+      originalSellingPrice: currentSellingPrice,
+      originalDspPrice: currentDspPrice,
+      originalRspPrice: currentRspPrice,
     });
     setPriceInputValue(''); // Start with empty input, show price as placeholder
     setSellingPriceInputValue('');
@@ -513,9 +520,9 @@ export default function MainInventoryPage() {
       const rspPrice = rspPriceInputValue === '' ? editingVariant.rspPrice : Number(rspPriceInputValue);
 
       const pricesChanged =
-        sellingPrice !== (editingVariant.sellingPrice ?? 0) ||
-        dspPrice !== (editingVariant.dspPrice ?? 0) ||
-        rspPrice !== (editingVariant.rspPrice ?? 0);
+        sellingPrice !== (editingVariant.originalSellingPrice ?? editingVariant.sellingPrice ?? 0) ||
+        dspPrice !== (editingVariant.originalDspPrice ?? editingVariant.dspPrice ?? 0) ||
+        rspPrice !== (editingVariant.originalRspPrice ?? editingVariant.rspPrice ?? 0);
 
       if (!isWarehouse && hasWarehouseHubLink && pricesChanged) {
         const result = await createCompanyPriceChangeBatch(
