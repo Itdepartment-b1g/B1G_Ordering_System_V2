@@ -217,9 +217,10 @@ function writePeopleSideBySideTable(
   });
   row += 1;
 
+  const dataStartRow = row;
   const maxLines = Math.max(0, ...summaries.map((s) => s.lineCount));
   for (let lineIdx = 0; lineIdx < maxLines; lineIdx++) {
-    const dataRow = ws.getRow(row);
+    const dataRow = ws.getRow(dataStartRow + lineIdx);
     summaries.forEach((person, i) => {
       const start = startColFor(i, colsPerBlock);
       const values = person.getCellValues(lineIdx);
@@ -234,12 +235,13 @@ function writePeopleSideBySideTable(
         dataRow.getCell(c).border = THIN;
       }
     });
-    row += 1;
   }
 
-  const totalRow = ws.getRow(row);
+  // TOTAL sticks under each person's own last row (not aligned to the tallest column)
   summaries.forEach((person, i) => {
     const start = startColFor(i, colsPerBlock);
+    const totalRowIndex = dataStartRow + person.lineCount;
+    const totalRow = ws.getRow(totalRowIndex);
     totalRow.getCell(start).value = 'TOTAL';
     totalRow.getCell(start + qtyColOffset).value = person.totalUnits;
     totalRow.getCell(start + qtyColOffset).alignment = { horizontal: 'right' };
@@ -254,7 +256,9 @@ function writePeopleSideBySideTable(
     }
   });
 
-  return row + 2;
+  const lastUsedRow =
+    dataStartRow + Math.max(0, ...summaries.map((s) => s.lineCount));
+  return lastUsedRow + 2;
 }
 
 function sortMobileSalesColumns(summaries: SideBySideSummary[]): SideBySideSummary[] {
