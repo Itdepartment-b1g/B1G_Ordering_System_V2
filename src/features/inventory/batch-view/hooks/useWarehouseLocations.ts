@@ -1,30 +1,29 @@
-import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { useEffect } from 'react';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import {
+  fetchWarehouseBatchViewLocations,
+  type WarehouseLocationOption,
+} from '@/store/slices/warehouse/batch-view';
 
-export type WarehouseLocationOption = {
-  id: string;
-  name: string;
-  is_main: boolean;
-};
+export type { WarehouseLocationOption };
 
 export function useWarehouseLocations(companyId?: string, enabled = true) {
-  const query = useQuery({
-    queryKey: ['warehouse-locations', companyId],
-    enabled: enabled && !!companyId,
-    queryFn: async (): Promise<WarehouseLocationOption[]> => {
-      const { data, error } = await supabase
-        .from('warehouse_locations')
-        .select('id, name, is_main')
-        .eq('company_id', companyId!)
-        .order('is_main', { ascending: false })
-        .order('name');
-      if (error) throw error;
-      return (data ?? []) as WarehouseLocationOption[];
-    },
-  });
+  const dispatch = useAppDispatch();
+  const { locations, locationsStatus, locationsError } = useAppSelector(
+    (state) => state.warehouseBatchView
+  );
+
+  useEffect(() => {
+    if (!enabled || !companyId) return;
+    void dispatch(fetchWarehouseBatchViewLocations());
+  }, [dispatch, enabled, companyId]);
+
+  const isLoading =
+    locationsStatus === 'loading' || (locationsStatus === 'idle' && enabled && !!companyId);
 
   return {
-    data: query.data ?? [],
-    isLoading: query.isLoading,
+    data: locations,
+    isLoading,
+    error: locationsError ? new Error(locationsError) : null,
   };
 }

@@ -1,8 +1,7 @@
-import { useMemo, useState, useCallback } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMemo, useState, useCallback, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Building2, Loader2, Plus, RefreshCw, Send, Undo2 } from 'lucide-react';
 import { useAuth } from '@/features/auth';
-import { supabase } from '@/lib/supabase';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -13,40 +12,29 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import {
+  allocateToSubWarehouse,
+  createSubWarehouse,
+  fetchMyWarehouseLocation,
+  fetchSubWarehouseLocationUsers,
+  fetchSubWarehouseLocations,
+  fetchSubWarehousePoReserved,
+  type SubWarehouseLocationRow,
+  type SubWarehouseLocationUserRow,
+} from '@/store/slices/warehouse/sub-warehouses';
 import { useInventory, type Brand, type Variant } from './InventoryContext';
 import { refetchWarehouseAllocationHistory } from './warehouse-allocation-history/hooks/useWarehouseAllocationHistory';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import { SubWarehouseReturnStockDialog } from './components/SubWarehouseReturnStockDialog';
 import { deriveLocationCode } from './internalStockRequestsStore';
+import { getMainWarehouseAllocatableQty } from './warehouseStockBoard';
 import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
 import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
 import SubwarehouseManual from '@/features/inventory/warehouse-manual/components/SubwarehouseManual';
-import { fetchOpenTransferPoReservedByVariant, getMainWarehouseAllocatableQty } from './warehouseStockBoard';
 
-type LocationRow = {
-  id: string;
-  name: string;
-  is_main: boolean;
-  created_at: string | null;
-};
-
-type LocationUserRow = {
-  location_id: string;
-  user_id: string;
-  profile?: { full_name: string | null; email: string | null } | null;
-};
-
-type LocationInventoryRow = {
-  variant_id: string;
-  stock: number;
-  variant?:
-    | {
-        name: string;
-        variant_type: string;
-        brand?: { name: string } | null;
-      }
-    | null;
-};
+type LocationRow = SubWarehouseLocationRow;
+type LocationUserRow = SubWarehouseLocationUserRow;
 
 function getVariantsByTypeEntries(brand: Brand): [string, Variant[]][] {
   const v = brand.variantsByType;
@@ -84,12 +72,22 @@ function getVariantTypeGroupsForBrand(brand: Brand, search: string): [string, Va
 export default function SubWarehousesPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
+  const dispatch = useAppDispatch();
   const { toast } = useToast();
   const { brands, loading: loadingBrands, refreshInventory } = useInventory();
   const { membership } = useWarehouseLocationMembership({
     userId: user?.id,
     isWarehouse: user?.role === 'warehouse',
   });
+
+  const {
+    locations,
+    locationUsers,
+    myLocation,
+    poReservedByVariantId,
+    poReservedLocationId,
+    status: locationsStatus,
+  } = useAppSelector((state) => state.warehouseSubWarehouses);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [allocOpen, setAllocOpen] = useState(false);
@@ -112,91 +110,39 @@ export default function SubWarehousesPage() {
 
   const isWarehouse = user?.role === 'warehouse';
 
-  const { data: myLocation } = useQuery({
-    queryKey: ['my-warehouse-location', user?.id],
-    enabled: !!user?.id && isWarehouse,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('warehouse_location_users')
-        .select('location_id, warehouse_locations!inner ( id, name, is_main )')
-        .eq('user_id', user!.id)
-        .maybeSingle();
-      if (error) throw error;
-      if (!data) return null;
-      const loc = data as any;
-      return {
-        location_id: loc.location_id as string,
-        warehouse_locations: Array.isArray(loc.warehouse_locations)
-          ? (loc.warehouse_locations[0] as { id: string; name: string; is_main: boolean })
-          : (loc.warehouse_locations as { id: string; name: string; is_main: boolean }),
-      };
-    },
-  });
+  useEffect(() => {
+    if (!user?.id || !isWarehouse) return;
+    void dispatch(fetchMyWarehouseLocation());
+  }, [dispatch, user?.id, isWarehouse]);
+
+  useEffect(() => {
+    if (!user?.company_id || !isWarehouse) return;
+    void dispatch(fetchSubWarehouseLocations());
+    void dispatch(fetchSubWarehouseLocationUsers());
+  }, [dispatch, user?.company_id, isWarehouse]);
 
   const isMainWarehouseUser = !!myLocation?.warehouse_locations?.is_main;
   const myLocationId = myLocation?.location_id || '';
-
-  const { data: locations = [], isLoading: loadingLocations } = useQuery({
-    queryKey: ['warehouse-locations', user?.company_id],
-    enabled: !!user?.company_id && isWarehouse,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('warehouse_locations')
-        .select('id,name,is_main,created_at')
-        .eq('company_id', user!.company_id)
-        .order('is_main', { ascending: false })
-        .order('name');
-      if (error) throw error;
-      return (data || []) as LocationRow[];
-    },
-  });
+  const loadingLocations =
+    locationsStatus === 'loading' || (locationsStatus === 'idle' && !!user?.company_id && isWarehouse);
 
   const mainWarehouseLocationId = useMemo(
     () => locations.find((loc) => loc.is_main)?.id ?? null,
     [locations]
   );
 
-  const { data: poReservedByVariantId = {} } = useQuery({
-    queryKey: ['sub-warehouse-alloc-po-reserved', user?.company_id, mainWarehouseLocationId],
-    enabled: !!user?.company_id && !!mainWarehouseLocationId && allocOpen,
-    queryFn: () => fetchOpenTransferPoReservedByVariant(user!.company_id!, mainWarehouseLocationId),
-  });
+  useEffect(() => {
+    if (!user?.company_id || !mainWarehouseLocationId || !allocOpen) return;
+    void dispatch(fetchSubWarehousePoReserved(mainWarehouseLocationId));
+  }, [dispatch, user?.company_id, mainWarehouseLocationId, allocOpen]);
+
+  const visiblePoReserved =
+    poReservedLocationId === mainWarehouseLocationId ? poReservedByVariantId : {};
 
   const getAllocatableQty = useCallback(
-    (variant: Variant) => getMainWarehouseAllocatableQty(variant, poReservedByVariantId),
-    [poReservedByVariantId]
+    (variant: Variant) => getMainWarehouseAllocatableQty(variant, visiblePoReserved),
+    [visiblePoReserved]
   );
-
-  const { data: locationUsers = [] } = useQuery({
-    queryKey: ['warehouse-location-users', user?.company_id],
-    enabled: !!user?.company_id && isWarehouse,
-    queryFn: async () => {
-      // Two-step to avoid nested RLS/embeds being flaky.
-      const { data: wlu, error: wluErr } = await supabase
-        .from('warehouse_location_users')
-        .select('location_id,user_id')
-        .order('created_at', { ascending: true });
-      if (wluErr) throw wluErr;
-
-      const userIds = Array.from(new Set((wlu || []).map((r: any) => r.user_id).filter(Boolean)));
-      if (userIds.length === 0) return [] as LocationUserRow[];
-
-      const { data: profs, error: pErr } = await supabase
-        .from('profiles')
-        .select('id,full_name,email')
-        .in('id', userIds);
-      if (pErr) throw pErr;
-
-      const map = new Map<string, { full_name: string | null; email: string | null }>();
-      (profs || []).forEach((p: any) => map.set(p.id, { full_name: p.full_name ?? null, email: p.email ?? null }));
-
-      return (wlu || []).map((r: any) => ({
-        location_id: r.location_id,
-        user_id: r.user_id,
-        profile: map.get(r.user_id) ?? null,
-      })) as LocationUserRow[];
-    },
-  });
 
   const locationUserByLocationId = useMemo(() => {
     const m = new Map<string, LocationUserRow>();
@@ -225,9 +171,12 @@ export default function SubWarehousesPage() {
   }, [allocQuantities]);
 
   const onRefresh = async () => {
-    await qc.invalidateQueries({ queryKey: ['warehouse-locations'] });
-    await qc.invalidateQueries({ queryKey: ['warehouse-location-users'] });
-    await refreshInventory();
+    await Promise.all([
+      dispatch(fetchSubWarehouseLocations()),
+      dispatch(fetchSubWarehouseLocationUsers()),
+      dispatch(fetchMyWarehouseLocation()),
+      refreshInventory(),
+    ]);
   };
 
   const openReturnForMyLocation = () => {
@@ -235,49 +184,24 @@ export default function SubWarehousesPage() {
     setReturnOpen(true);
   };
 
-  const createSubWarehouse = async () => {
+  const createSubWarehouseAccount = async () => {
     if (!user?.company_id) return;
     if (!createForm.location_name.trim() || !createForm.full_name.trim() || !createForm.email.trim() || !createForm.password) {
       toast({ title: 'Missing fields', description: 'Fill out location name, user name, email, and password.', variant: 'destructive' });
       return;
     }
 
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-    if (!supabaseUrl) {
-      toast({ title: 'Config error', description: 'Supabase URL missing', variant: 'destructive' });
-      return;
-    }
-
-    const { data: sessionData } = await supabase.auth.getSession();
-    const accessToken = sessionData?.session?.access_token;
-    if (!accessToken) {
-      toast({ title: 'Auth', description: 'Not authenticated', variant: 'destructive' });
-      return;
-    }
-
     try {
       setCreating(true);
-      const res = await fetch(`${supabaseUrl}/functions/v1/create-sub-warehouse`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-          apikey: import.meta.env.VITE_SUPABASE_ANON_KEY || '',
-        },
-        body: JSON.stringify({
-          company_id: user.company_id,
+      await dispatch(
+        createSubWarehouse({
           location_name: createForm.location_name.trim(),
           full_name: createForm.full_name.trim(),
           email: createForm.email.trim(),
           password: createForm.password,
           phone: createForm.phone.trim() || null,
-        }),
-      });
-
-      const result = await res.json().catch(() => ({}));
-      if (!res.ok || !result.success) {
-        throw new Error(result.error || 'Failed to create sub-warehouse');
-      }
+        })
+      ).unwrap();
 
       toast({ title: 'Success', description: 'Sub-warehouse and account created.' });
       setCreateOpen(false);
@@ -322,13 +246,13 @@ export default function SubWarehousesPage() {
 
     try {
       setAllocating(true);
-      const { data, error } = await supabase.rpc('allocate_stock_to_sub_warehouse', {
-        p_location_id: selectedLocationId,
-        p_items: items,
-        p_notes: 'Allocated to sub-warehouse',
-      });
-      if (error) throw error;
-      if (data && (data as any).success === false) throw new Error((data as any).error || 'Allocation failed');
+      await dispatch(
+        allocateToSubWarehouse({
+          location_id: selectedLocationId,
+          items,
+          notes: 'Allocated to sub-warehouse',
+        })
+      ).unwrap();
 
       toast({ title: 'Success', description: 'Stock allocated to sub-warehouse.' });
       const allocatedLocationId = selectedLocationId;
@@ -514,7 +438,7 @@ export default function SubWarehousesPage() {
             <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={creating}>
               Cancel
             </Button>
-            <Button onClick={() => void createSubWarehouse()} disabled={creating}>
+            <Button onClick={() => void createSubWarehouseAccount()} disabled={creating}>
               {creating ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -710,7 +634,6 @@ export default function SubWarehousesPage() {
         isMainWarehouseUser={isMainWarehouseUser}
         myLocationId={myLocationId || null}
         locations={locations}
-        userId={user?.id ?? null}
         onSuccess={onRefresh}
       />
     </div>

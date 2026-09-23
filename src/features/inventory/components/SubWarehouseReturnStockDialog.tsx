@@ -1,9 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { Loader2 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import {
+  clearSubWarehouseReturnLots,
+  createSubWarehouseStockReturn,
+  fetchSubWarehouseReturnLots,
+  type ReturnLotRow,
+} from '@/store/slices/warehouse/sub-warehouses';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -28,18 +34,6 @@ export type SubWarehouseLocationOption = {
   id: string;
   name: string;
   is_main: boolean;
-};
-
-type ReturnLotRow = {
-  lot_id: string;
-  variant_id: string;
-  brandName: string;
-  variantName: string;
-  variantType: string;
-  batch_number: string;
-  expiration_date: string | null;
-  quantity_remaining: number;
-  received_at: string;
 };
 
 function formatLotDate(date: string | null): string {
@@ -92,7 +86,6 @@ export interface SubWarehouseReturnStockDialogProps {
   isMainWarehouseUser: boolean;
   myLocationId: string | null;
   locations: SubWarehouseLocationOption[];
-  userId: string | null;
   onSuccess?: () => void | Promise<void>;
 }
 
@@ -102,86 +95,54 @@ export function SubWarehouseReturnStockDialog({
   isMainWarehouseUser,
   myLocationId,
   locations,
-  userId,
   onSuccess,
 }: SubWarehouseReturnStockDialogProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const dispatch = useAppDispatch();
 
-  const [returning, setReturning] = useState(false);
+  const returnLots = useAppSelector((s) => s.warehouseSubWarehouses.returnLots);
+  const returnLotsLocationId = useAppSelector((s) => s.warehouseSubWarehouses.returnLotsLocationId);
+  const returnLotsStatus = useAppSelector((s) => s.warehouseSubWarehouses.returnLotsStatus);
+  const mutationStatus = useAppSelector((s) => s.warehouseSubWarehouses.mutationStatus);
+
   const [returnLocationId, setReturnLocationId] = useState('');
   const [returnLotQuantities, setReturnLotQuantities] = useState<Record<string, number>>({});
   const [returnFilter, setReturnFilter] = useState('');
+
+  const returning = mutationStatus === 'loading';
+  const loadingReturnBatchLots =
+    !!returnLocationId &&
+    (returnLotsStatus === 'loading' ||
+      (returnLotsStatus === 'idle' && returnLotsLocationId !== returnLocationId) ||
+      (returnLotsStatus === 'succeeded' && returnLotsLocationId !== returnLocationId));
+
+  const returnBatchLots =
+    returnLotsLocationId === returnLocationId ? returnLots : ([] as ReturnLotRow[]);
 
   useEffect(() => {
     if (!open) {
       setReturnLocationId('');
       setReturnLotQuantities({});
       setReturnFilter('');
+      dispatch(clearSubWarehouseReturnLots());
       return;
     }
     if (!isMainWarehouseUser && myLocationId) {
       setReturnLocationId(myLocationId);
     }
-  }, [open, isMainWarehouseUser, myLocationId]);
+  }, [open, isMainWarehouseUser, myLocationId, dispatch]);
+
+  useEffect(() => {
+    if (!open || !returnLocationId) return;
+    void dispatch(fetchSubWarehouseReturnLots(returnLocationId));
+  }, [open, returnLocationId, dispatch]);
 
   const returnSummary = useMemo(() => {
     const lines = Object.entries(returnLotQuantities).filter(([, q]) => (q ?? 0) > 0);
     const totalQty = lines.reduce((s, [, q]) => s + (q ?? 0), 0);
     return { lineCount: lines.length, totalQty };
   }, [returnLotQuantities]);
-
-  const { data: returnBatchLots = [], isLoading: loadingReturnBatchLots } = useQuery({
-    queryKey: ['warehouse-return-batch-lots', returnLocationId],
-    enabled: open && !!returnLocationId,
-    staleTime: 0,
-    refetchOnMount: 'always',
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('inventory_batch_lots')
-        .select(
-          `
-          id,
-          variant_id,
-          quantity_remaining,
-          received_at,
-          expiration_date,
-          batch:inventory_batches ( batch_number ),
-          variant:variants!inventory_batch_lots_variant_id_fkey (
-            name,
-            variant_type,
-            brand:brands!variants_brand_id_fkey ( name )
-          )
-        `
-        )
-        .eq('warehouse_location_id', returnLocationId)
-        .gt('quantity_remaining', 0)
-        .order('received_at', { ascending: true });
-      if (error) throw error;
-
-      return (data ?? [])
-        .map((row) => {
-          const r = row as Record<string, unknown>;
-          const batch = Array.isArray(r.batch) ? r.batch[0] : r.batch;
-          const variant = Array.isArray(r.variant) ? r.variant[0] : r.variant;
-          const brand = variant && (Array.isArray(variant.brand) ? variant.brand[0] : variant.brand);
-          const remaining = Number(r.quantity_remaining);
-          if (!Number.isFinite(remaining) || remaining <= 0) return null;
-          return {
-            lot_id: r.id as string,
-            variant_id: r.variant_id as string,
-            brandName: (brand as { name?: string })?.name ?? 'Unknown Brand',
-            variantName: (variant as { name?: string })?.name ?? String(r.variant_id),
-            variantType: (variant as { variant_type?: string })?.variant_type ?? 'unknown',
-            batch_number: (batch as { batch_number?: string })?.batch_number ?? '—',
-            expiration_date: (r.expiration_date as string | null) ?? null,
-            quantity_remaining: remaining,
-            received_at: r.received_at as string,
-          } satisfies ReturnLotRow;
-        })
-        .filter(Boolean) as ReturnLotRow[];
-    },
-  });
 
   const returnLotRowsFiltered = useMemo(() => {
     const q = returnFilter.trim().toLowerCase();
@@ -228,19 +189,19 @@ export function SubWarehouseReturnStockDialog({
     }
 
     try {
-      setReturning(true);
-      const { data, error } = await supabase.rpc('create_warehouse_stock_return_request', {
-        p_from_location_id: returnLocationId,
-        p_items: items,
-        p_notes: 'Returned from sub-warehouse',
-        p_created_by: userId,
-      });
-      if (error) throw error;
-      if (data && (data as { success?: boolean }).success === false) {
-        throw new Error((data as { error?: string }).error || 'Return request failed');
+      const result = await dispatch(
+        createSubWarehouseStockReturn({
+          from_location_id: returnLocationId,
+          items,
+          notes: 'Returned from sub-warehouse',
+        })
+      ).unwrap();
+
+      if (result && result.success === false) {
+        throw new Error(result.error || 'Return request failed');
       }
 
-      const requestNumber = (data as { request_number?: string })?.request_number;
+      const requestNumber = result?.request_number;
       toast({
         title: 'Return submitted',
         description: requestNumber
@@ -255,7 +216,6 @@ export function SubWarehouseReturnStockDialog({
       await queryClient.invalidateQueries({
         queryKey: ['warehouse-location-inventory', returnLocationId],
       });
-      await queryClient.invalidateQueries({ queryKey: ['warehouse-return-batch-lots', returnLocationId] });
       await queryClient.invalidateQueries({ queryKey: ['variant-batch-lots'] });
       await queryClient.invalidateQueries({ queryKey: ['warehouse-stock-returns'] });
       await queryClient.refetchQueries({ queryKey: ['warehouse-stock-returns'] });
@@ -266,8 +226,6 @@ export function SubWarehouseReturnStockDialog({
         description: e instanceof Error ? e.message : 'Failed to return stock',
         variant: 'destructive',
       });
-    } finally {
-      setReturning(false);
     }
   };
 

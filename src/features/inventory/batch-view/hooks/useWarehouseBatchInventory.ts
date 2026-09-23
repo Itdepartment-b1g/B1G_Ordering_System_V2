@@ -1,9 +1,9 @@
-import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
-import { fetchReceivePackingByLotIds } from '@/features/inventory/utils/formatReceivePacking';
-
-import { mapBatchInventoryGroups } from '../utils/batchInventoryMappers';
-import type { BatchInventoryGroup } from '../types';
+import { useEffect } from 'react';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import {
+  fetchWarehouseBatchInventory,
+  type BatchInventoryGroup,
+} from '@/store/slices/warehouse/batch-view';
 
 export function useWarehouseBatchInventory({
   companyId,
@@ -13,53 +13,45 @@ export function useWarehouseBatchInventory({
   companyId?: string;
   locationId?: string | null;
   enabled: boolean;
-}) {
-  const scopeAll = locationId === 'all';
+}): {
+  data: BatchInventoryGroup[];
+  isLoading: boolean;
+  isFetching: boolean;
+  isError: boolean;
+  error: Error | null;
+  refetch: () => Promise<unknown>;
+} {
+  const dispatch = useAppDispatch();
+  const {
+    groups,
+    locationId: loadedLocationId,
+    status,
+    error,
+  } = useAppSelector((state) => state.warehouseBatchView);
 
-  return useQuery({
-    queryKey: ['warehouse-batch-inventory', companyId, locationId],
-    enabled: enabled && !!companyId && !!locationId,
-    staleTime: 0,
-    refetchOnMount: 'always',
-    refetchOnWindowFocus: true,
-    queryFn: async (): Promise<BatchInventoryGroup[]> => {
-      let query = supabase
-        .from('inventory_batch_lots')
-        .select(
-          `
-          id,
-          quantity_remaining,
-          expiration_date,
-          batch:inventory_batches (
-            id,
-            batch_number,
-            source_type,
-            received_at,
-            total_amount
-          ),
-          variant:variants (
-            id,
-            name,
-            variant_type,
-            brand:brands ( id, name )
-          ),
-          warehouse_location:warehouse_locations ( id, name )
-        `
-        )
-        .eq('company_id', companyId!)
-        .gt('quantity_remaining', 0);
+  useEffect(() => {
+    if (!enabled || !companyId || !locationId) return;
+    void dispatch(fetchWarehouseBatchInventory(locationId));
+  }, [dispatch, enabled, companyId, locationId]);
 
-      if (!scopeAll) {
-        query = query.eq('warehouse_location_id', locationId!);
-      }
+  const matching = loadedLocationId === locationId;
+  const isFetching = status === 'loading' && matching;
+  const isLoading =
+    !!enabled &&
+    !!locationId &&
+    ((status === 'loading' && (!matching || groups.length === 0)) ||
+      (status === 'idle' && !!companyId) ||
+      (status === 'succeeded' && !matching));
 
-      const { data, error } = await query;
-      if (error) throw error;
-
-      const rows = data ?? [];
-      const lotIds = rows.map((row) => String((row as { id: string }).id));
-      const packingByLotId = await fetchReceivePackingByLotIds(lotIds);
-      return mapBatchInventoryGroups(rows, packingByLotId);
-    },
-  });
+  return {
+    data: matching ? groups : [],
+    isLoading,
+    isFetching,
+    isError: status === 'failed' && matching,
+    error: status === 'failed' && matching && error ? new Error(error) : null,
+    refetch: () =>
+      locationId
+        ? dispatch(fetchWarehouseBatchInventory(locationId))
+        : Promise.resolve(),
+  };
 }
