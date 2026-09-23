@@ -7,6 +7,8 @@ import { kaPaymentTermsReducer } from "./key-accounts/payment-terms";
 import { kaPurchaseOrderReducer } from "./key-accounts/purchase-order";
 import { kaSalesTargetsReducer } from "./key-accounts/sales-targets";
 import { kaUserManagementReducer } from "./key-accounts/user-management";
+import { warehouseLocationsReducer } from "./warehouse/locations";
+import { warehouseStockRequestsReducer } from "./warehouse/stock-requests";
 
 export const rootReducer = {
   ...executiveReducers,
@@ -18,4 +20,6 @@ export const rootReducer = {
   kaSalesTargets: kaSalesTargetsReducer,
   kaAnalytics: kaAnalyticsReducer,
   kaDashboard: kaDashboardReducer,
+  warehouseLocations: warehouseLocationsReducer,
+  warehouseStockRequests: warehouseStockRequestsReducer,
 };

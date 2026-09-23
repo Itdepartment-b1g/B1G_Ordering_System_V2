@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import {
   AlertCircle,
@@ -18,7 +18,6 @@ import {
   XCircle,
   FileDown,
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import {
   DateRangeFilterPopover,
@@ -26,6 +25,17 @@ import {
 } from '@/features/shared/components/DateRangeFilterPopover';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import {
+  cancelWarehouseStockRequest,
+  createWarehouseStockRequest,
+  fetchWarehouseStockRequestBrands,
+  fetchWarehouseStockRequestCatalog,
+  fetchWarehouseStockRequests,
+  receiveWarehouseStockRequest,
+  updateWarehouseStockRequest,
+  type WarehouseStockRequestRow,
+} from '@/store/slices/warehouse/stock-requests';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -94,61 +104,8 @@ import { generateAndOpenStockRequestPdf } from './utils/exportWarehouseStockRequ
 import { formatReceivePacking } from './utils/formatReceivePacking';
 import { WarehouseStockReceiveDialog } from './components/WarehouseStockReceiveDialog';
 
-type RequestStatus =
-  | 'pending_receive'
-  | 'partially_received'
-  | 'fully_received'
-  | 'cancelled';
-
-type StockRequestRow = {
-  id: string;
-  request_number: string;
-  status: RequestStatus;
-  expected_delivery_date: string | null;
-  notes: string | null;
-  created_at: string;
-  brand: { id: string; name: string } | null;
-  created_by_user: { full_name: string } | null;
-  items: Array<{
-    id: string;
-    variant_id: string;
-    ordered_quantity: number;
-    received_quantity: number;
-    variant: {
-      id: string;
-      name: string;
-      variant_type: string;
-      brand: { id: string; name: string } | null;
-    } | null;
-  }>;
-  receives: Array<{
-    id: string;
-    received_at: string;
-    notes: string | null;
-    batch: { batch_number: string; total_amount?: number | null } | null;
-    received_by_user: { full_name: string } | null;
-    lines: Array<{
-      id: string;
-      variant_id: string;
-      quantity: number;
-      box_count: number | null;
-      units_per_box: number | null;
-      loose_box_count: number | null;
-      loose_qty: number | null;
-      extra_qty: number;
-      manufactured_date: string | null;
-      expiration_date: string | null;
-      unit_cost: number | null;
-      variant: {
-        id: string;
-        name: string;
-        brand: { id: string; name: string } | null;
-      } | null;
-    }>;
-  }>;
-};
-
-type BrandOption = { id: string; name: string };
+type RequestStatus = WarehouseStockRequestRow['status'];
+type StockRequestRow = WarehouseStockRequestRow;
 
 type CreateRequestLineItem = {
   id: string;
@@ -158,14 +115,6 @@ type CreateRequestLineItem = {
   variantName: string;
   variantType: string;
   quantity: number;
-};
-
-type CatalogVariant = {
-  id: string;
-  name: string;
-  variant_type: string;
-  brand_id: string;
-  brand: { id: string; name: string } | { id: string; name: string }[] | null;
 };
 
 const STATUS_LABELS: Record<RequestStatus, string> = {
@@ -187,11 +136,6 @@ const STATUS_VARIANT: Record<
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
 const DEFAULT_PAGE_SIZE = PAGE_SIZE_OPTIONS[0];
-
-function firstRelation<T>(value: T | T[] | null | undefined): T | null {
-  if (Array.isArray(value)) return value[0] ?? null;
-  return value ?? null;
-}
 
 function getRequestBrandLabel(req: StockRequestRow): string {
   if (req.brand?.name) return req.brand.name;
@@ -228,96 +172,23 @@ async function exportPendingStockRequestPdf(req: StockRequestRow): Promise<void>
   });
 }
 
-
-function mapRequestRow(raw: Record<string, unknown>): StockRequestRow {
-  const brand = firstRelation(raw.brand as StockRequestRow['brand'] | StockRequestRow['brand'][]);
-  const createdBy = firstRelation(
-    raw.created_by_user as StockRequestRow['created_by_user'] | StockRequestRow['created_by_user'][]
-  );
-
-  const items = ((raw.items as unknown[]) ?? []).map((item) => {
-    const row = item as Record<string, unknown>;
-    return {
-      id: row.id as string,
-      variant_id: row.variant_id as string,
-      ordered_quantity: row.ordered_quantity as number,
-      received_quantity: row.received_quantity as number,
-      variant: (() => {
-        const v = firstRelation(
-          row.variant as StockRequestRow['items'][0]['variant'] | StockRequestRow['items'][0]['variant'][]
-        );
-        if (!v) return null;
-        const brand = firstRelation(v.brand as { id: string; name: string } | { id: string; name: string }[]);
-        return { ...v, brand };
-      })(),
-    };
-  });
-
-  const receives = ((raw.receives as unknown[]) ?? []).map((recv) => {
-    const row = recv as Record<string, unknown>;
-    const lines = ((row.lines as unknown[]) ?? []).map((lineRaw) => {
-      const line = lineRaw as Record<string, unknown>;
-      const variant = firstRelation(
-        line.variant as
-          | StockRequestRow['receives'][0]['lines'][0]['variant']
-          | StockRequestRow['receives'][0]['lines'][0]['variant'][]
-      );
-      return {
-        id: line.id as string,
-        variant_id: line.variant_id as string,
-        quantity: line.quantity as number,
-        box_count: (line.box_count as number | null) ?? null,
-        units_per_box: (line.units_per_box as number | null) ?? null,
-        loose_box_count: (line.loose_box_count as number | null) ?? null,
-        loose_qty: (line.loose_qty as number | null) ?? null,
-        extra_qty: (line.extra_qty as number | null) ?? 0,
-        manufactured_date: (line.manufactured_date as string | null) ?? null,
-        expiration_date: (line.expiration_date as string | null) ?? null,
-        unit_cost: (line.unit_cost as number | null) ?? null,
-        variant: variant
-          ? {
-              ...variant,
-              brand: firstRelation(
-                variant.brand as { id: string; name: string } | { id: string; name: string }[]
-              ),
-            }
-          : null,
-      };
-    });
-
-    return {
-      id: row.id as string,
-      received_at: row.received_at as string,
-      notes: row.notes as string | null,
-      batch: firstRelation(row.batch as StockRequestRow['receives'][0]['batch']),
-      received_by_user: firstRelation(
-        row.received_by_user as StockRequestRow['receives'][0]['received_by_user']
-      ),
-      lines: Array.isArray(lines) ? lines : [],
-    };
-  });
-
-  return {
-    id: raw.id as string,
-    request_number: raw.request_number as string,
-    status: raw.status as RequestStatus,
-    expected_delivery_date: raw.expected_delivery_date as string | null,
-    notes: raw.notes as string | null,
-    created_at: raw.created_at as string,
-    brand,
-    created_by_user: createdBy,
-    items,
-    receives,
-  };
-}
-
 export default function WarehouseStockRequestsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const dispatch = useAppDispatch();
   const queryClient = useQueryClient();
   const isWarehouse = user?.role === 'warehouse';
   const { membership } = useWarehouseLocationMembership({ userId: user?.id, isWarehouse });
   const isMainWarehouseUser = membership.isMain;
+
+  const {
+    requests,
+    brands,
+    catalog: catalogVariants,
+    status: requestsStatus,
+    catalogStatus,
+    error: requestsError,
+  } = useAppSelector((state) => state.warehouseStockRequests);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -347,93 +218,25 @@ export default function WarehouseStockRequestsPage() {
   const [receiveNotes, setReceiveNotes] = useState('');
   const [receiveSubmitting, setReceiveSubmitting] = useState(false);
 
-  const { data: brands = [] } = useQuery({
-    queryKey: ['warehouse-stock-request-brands', user?.company_id],
-    enabled: !!user?.company_id && isWarehouse && isMainWarehouseUser,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('brands')
-        .select('id, name')
-        .eq('company_id', user!.company_id!)
-        .eq('is_active', true)
-        .order('name');
-      if (error) throw error;
-      return (data ?? []) as BrandOption[];
-    },
-  });
+  const isLoading =
+    requestsStatus === 'loading' || (requestsStatus === 'idle' && !!user?.company_id && isWarehouse);
+  const catalogLoading = catalogStatus === 'loading' && createOpen;
+  const error = requestsError ? new Error(requestsError) : null;
 
-  const { data: catalogVariants = [], isLoading: catalogLoading } = useQuery({
-    queryKey: ['warehouse-stock-request-catalog', user?.company_id],
-    enabled: !!user?.company_id && isWarehouse && isMainWarehouseUser && createOpen,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('variants')
-        .select('id, name, variant_type, brand_id, brand:brands ( id, name )')
-        .eq('company_id', user!.company_id!)
-        .eq('is_active', true)
-        .order('variant_type')
-        .order('name');
-      if (error) throw error;
-      return (data ?? []) as CatalogVariant[];
-    },
-  });
+  useEffect(() => {
+    if (!user?.company_id || !isWarehouse) return;
+    void dispatch(fetchWarehouseStockRequests());
+  }, [dispatch, user?.company_id, isWarehouse]);
 
-  const {
-    data: requests = [],
-    isLoading,
-    error,
-  } = useQuery({
-    queryKey: ['warehouse-stock-requests', user?.company_id],
-    enabled: !!user?.company_id && isWarehouse,
-    queryFn: async () => {
-      const { data, error: fetchError } = await supabase
-        .from('warehouse_stock_requests')
-        .select(
-          `
-          id,
-          request_number,
-          status,
-          expected_delivery_date,
-          notes,
-          created_at,
-          brand:brands ( id, name ),
-          created_by_user:profiles!warehouse_stock_requests_created_by_fkey ( full_name ),
-          items:warehouse_stock_request_items (
-            id,
-            variant_id,
-            ordered_quantity,
-            received_quantity,
-            variant:variants ( id, name, variant_type, brand:brands ( id, name ) )
-          ),
-          receives:warehouse_stock_request_receives (
-            id,
-            received_at,
-            notes,
-            batch:inventory_batches ( batch_number, total_amount ),
-            received_by_user:profiles!warehouse_stock_request_receives_received_by_fkey ( full_name ),
-            lines:warehouse_stock_request_receive_lines (
-              id,
-              variant_id,
-              quantity,
-              box_count,
-              units_per_box,
-              loose_box_count,
-              loose_qty,
-              extra_qty,
-              manufactured_date,
-              expiration_date,
-              unit_cost,
-              variant:variants ( id, name, brand:brands ( id, name ) )
-            )
-          )
-        `
-        )
-        .eq('company_id', user!.company_id!)
-        .order('created_at', { ascending: false });
-      if (fetchError) throw fetchError;
-      return (data ?? []).map((row) => mapRequestRow(row as Record<string, unknown>));
-    },
-  });
+  useEffect(() => {
+    if (!user?.company_id || !isWarehouse || !isMainWarehouseUser) return;
+    void dispatch(fetchWarehouseStockRequestBrands());
+  }, [dispatch, user?.company_id, isWarehouse, isMainWarehouseUser]);
+
+  useEffect(() => {
+    if (!user?.company_id || !isWarehouse || !isMainWarehouseUser || !createOpen) return;
+    void dispatch(fetchWarehouseStockRequestCatalog());
+  }, [dispatch, user?.company_id, isWarehouse, isMainWarehouseUser, createOpen]);
 
   const requestDateRange = useMemo(() => {
     return getDateRangeFromPreset(
@@ -650,35 +453,27 @@ export default function WarehouseStockRequestsPage() {
     setCreateSubmitting(true);
     try {
       if (formMode === 'edit' && editingRequest) {
-        const { data, error } = await supabase.rpc('update_warehouse_stock_request', {
-          p_request_id: editingRequest.id,
-          p_items: items,
-          p_notes: createNotes.trim() || null,
-          p_expected_delivery_date: createExpectedDate || null,
-          p_updated_by: user?.id ?? null,
-        });
-        if (error) throw error;
-        const result = data as { success?: boolean; error?: string; request_number?: string };
-        if (!result?.success) {
-          throw new Error(result?.error ?? 'Failed to update stock request');
-        }
+        const result = await dispatch(
+          updateWarehouseStockRequest({
+            request_id: editingRequest.id,
+            items,
+            notes: createNotes.trim() || null,
+            expected_delivery_date: createExpectedDate || null,
+          })
+        ).unwrap();
         toast({
           title: 'Stock request updated',
           description: result.request_number ?? 'Request saved.',
         });
       } else {
-        const { data, error } = await supabase.rpc('create_warehouse_stock_request', {
-          p_brand_id: headerBrandId,
-          p_items: items,
-          p_notes: createNotes.trim() || null,
-          p_expected_delivery_date: createExpectedDate || null,
-          p_created_by: user?.id ?? null,
-        });
-        if (error) throw error;
-        const result = data as { success?: boolean; error?: string; request_number?: string };
-        if (!result?.success) {
-          throw new Error(result?.error ?? 'Failed to create stock request');
-        }
+        const result = await dispatch(
+          createWarehouseStockRequest({
+            brand_id: headerBrandId,
+            items,
+            notes: createNotes.trim() || null,
+            expected_delivery_date: createExpectedDate || null,
+          })
+        ).unwrap();
         toast({
           title: 'Stock request created',
           description: result.request_number ?? 'Request saved.',
@@ -686,7 +481,7 @@ export default function WarehouseStockRequestsPage() {
       }
       setCreateOpen(false);
       resetCreateForm();
-      await queryClient.invalidateQueries({ queryKey: ['warehouse-stock-requests'] });
+      await dispatch(fetchWarehouseStockRequests());
     } catch (err: unknown) {
       const message =
         err instanceof Error
@@ -717,24 +512,13 @@ export default function WarehouseStockRequestsPage() {
 
     setReceiveSubmitting(true);
     try {
-      const { data, error } = await supabase.rpc('receive_warehouse_stock_request', {
-        p_request_id: selectedRequest.id,
-        p_items: items,
-        p_notes: receiveNotes.trim() || null,
-        p_received_by: user?.id ?? null,
-      });
-      if (error) throw error;
-      const result = data as {
-        success?: boolean;
-        error?: string;
-        batch_number?: string;
-        fully_received?: boolean;
-        total_received?: number;
-        total_amount?: number;
-      };
-      if (!result?.success) {
-        throw new Error(result?.error ?? 'Failed to receive stock');
-      }
+      const result = await dispatch(
+        receiveWarehouseStockRequest({
+          request_id: selectedRequest.id,
+          items,
+          notes: receiveNotes.trim() || null,
+        })
+      ).unwrap();
       const amountLabel =
         typeof result.total_amount === 'number'
           ? ` · ${formatReceiveCurrency(result.total_amount)}`
@@ -745,7 +529,7 @@ export default function WarehouseStockRequestsPage() {
       });
       setReceiveOpen(false);
       setSelectedRequest(null);
-      await queryClient.invalidateQueries({ queryKey: ['warehouse-stock-requests'] });
+      await dispatch(fetchWarehouseStockRequests());
       await queryClient.invalidateQueries({ queryKey: ['warehouse-inventory-catalog'] });
       await queryClient.invalidateQueries({ queryKey: ['inventory'] });
       await queryClient.invalidateQueries({ queryKey: ['variant-batch-lots'] });
@@ -761,19 +545,15 @@ export default function WarehouseStockRequestsPage() {
   const handleCancel = async () => {
     if (!cancelTarget) return;
     try {
-      const { data, error } = await supabase.rpc('cancel_warehouse_stock_request', {
-        p_request_id: cancelTarget.id,
-        p_reason: 'Cancelled by user',
-        p_cancelled_by: user?.id ?? null,
-      });
-      if (error) throw error;
-      const result = data as { success?: boolean; error?: string };
-      if (!result?.success) {
-        throw new Error(result?.error ?? 'Failed to cancel request');
-      }
+      await dispatch(
+        cancelWarehouseStockRequest({
+          request_id: cancelTarget.id,
+          reason: 'Cancelled by user',
+        })
+      ).unwrap();
       toast({ title: 'Request cancelled' });
       setCancelTarget(null);
-      await queryClient.invalidateQueries({ queryKey: ['warehouse-stock-requests'] });
+      await dispatch(fetchWarehouseStockRequests());
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to cancel request';
       toast({ title: 'Error', description: message, variant: 'destructive' });

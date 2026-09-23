@@ -1,13 +1,12 @@
-import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { useEffect } from 'react';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import {
+  fetchWarehouseMembership,
+  type WarehouseMembership,
+  type WarehouseMembershipStatus,
+} from '@/store/slices/warehouse/locations';
 
-export type WarehouseMembershipStatus = 'main' | 'sub' | 'unlinked';
-
-export type WarehouseLocationMembership = {
-  status: WarehouseMembershipStatus;
-  isMain: boolean;
-  locationId: string | null;
-};
+export type { WarehouseMembershipStatus, WarehouseMembership };
 
 type MembershipParams = {
   userId?: string | null;
@@ -15,48 +14,35 @@ type MembershipParams = {
 };
 
 export function useWarehouseLocationMembership({ userId, isWarehouse }: MembershipParams): {
-  membership: WarehouseLocationMembership;
+  membership: WarehouseMembership;
   isLoading: boolean;
   error: Error | null;
 } {
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['warehouse-location-membership', userId],
-    enabled: !!userId && !!isWarehouse,
-    staleTime: 0,
-    refetchOnMount: 'always',
-    refetchOnWindowFocus: true,
-    refetchOnReconnect: true,
-    queryFn: async (): Promise<WarehouseLocationMembership> => {
-      // 1) Find user’s linked location (if any)
-      const { data: linkRow, error: linkErr } = await supabase
-        .from('warehouse_location_users')
-        .select('location_id')
-        .eq('user_id', userId!)
-        .maybeSingle();
-      if (linkErr) throw linkErr;
+  const dispatch = useAppDispatch();
+  const { membership, membershipStatus, membershipError } = useAppSelector(
+    (state) => state.warehouseLocations
+  );
 
-      // Fail-safe-to-main: no link means “unlinked”, but treat as main for stock source.
-      if (!linkRow?.location_id) {
-        return { status: 'unlinked', isMain: true, locationId: null };
-      }
+  useEffect(() => {
+    if (!userId || !isWarehouse) return;
+    void dispatch(fetchWarehouseMembership());
+  }, [dispatch, userId, isWarehouse]);
 
-      // 2) Read main/sub flag for that location
-      const { data: locRow, error: locErr } = await supabase
-        .from('warehouse_locations')
-        .select('is_main')
-        .eq('id', linkRow.location_id)
-        .maybeSingle();
-      if (locErr) throw locErr;
+  // Non-warehouse users: treat as unlinked (main=true doesn't matter; pages gate by role).
+  if (!isWarehouse) {
+    return {
+      membership: { status: 'unlinked', isMain: true, locationId: null },
+      isLoading: false,
+      error: null,
+    };
+  }
 
-      const isMain = !!locRow?.is_main;
-      return { status: isMain ? 'main' : 'sub', isMain, locationId: linkRow.location_id as string };
-    },
-  });
+  const isLoading =
+    membershipStatus === 'loading' || (membershipStatus === 'idle' && !!userId);
 
-  // Non-warehouse users: treat as unlinked (but main=true doesn’t matter because pages gate by role).
-  const membership: WarehouseLocationMembership =
-    data ?? ({ status: 'unlinked', isMain: true, locationId: null } satisfies WarehouseLocationMembership);
-
-  return { membership, isLoading, error: (error as Error) ?? null };
+  return {
+    membership,
+    isLoading,
+    error: membershipError ? new Error(membershipError) : null,
+  };
 }
-
