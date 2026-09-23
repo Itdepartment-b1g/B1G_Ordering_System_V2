@@ -8,6 +8,7 @@ import { kaPurchaseOrderReducer } from "./key-accounts/purchase-order";
 import { kaSalesTargetsReducer } from "./key-accounts/sales-targets";
 import { kaUserManagementReducer } from "./key-accounts/user-management";
 import { warehouseBatchViewReducer } from "./warehouse/batch-view";
+import { warehouseInternalStockRequestsReducer } from "./warehouse/internal-stock-requests";
 import { warehouseLocationsReducer } from "./warehouse/locations";
 import { warehouseStockAdjustmentsReducer } from "./warehouse/stock-adjustments";
 import { warehouseStockRequestsReducer } from "./warehouse/stock-requests";
@@ -28,4 +29,5 @@ export const rootReducer = {
   warehouseStockAdjustments: warehouseStockAdjustmentsReducer,
   warehouseSubWarehouses: warehouseSubWarehousesReducer,
   warehouseBatchView: warehouseBatchViewReducer,
+  warehouseInternalStockRequests: warehouseInternalStockRequestsReducer,
 };

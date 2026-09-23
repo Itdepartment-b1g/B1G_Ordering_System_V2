@@ -51,7 +51,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/features/auth';
-import { supabase } from '@/lib/supabase';
 import {
   getItemDeliveredQty,
   getItemReceivedQty,
@@ -78,6 +77,7 @@ import {
   deliverMainStockAllocation,
   fetchInternalStockRequestById,
   fetchInternalStockRequests,
+  fetchSubLocationsForAllocate,
   rejectInternalStockRequest,
 } from './internalStockRequestsApi';
 import { countRequestsByStatus } from './internalStockRequestsMappers';
@@ -732,14 +732,12 @@ export default function MainWarehouseSubStockRequestsPage() {
     enabled: !!user?.company_id && mainAllocateOpen,
     staleTime: 60_000,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('warehouse_locations')
-        .select('id, name, code')
-        .eq('company_id', user!.company_id!)
-        .eq('is_main', false)
-        .order('name');
-      if (error) throw error;
-      return (data ?? []) as Array<{ id: string; name: string; code: string | null }>;
+      const locations = await fetchSubLocationsForAllocate();
+      return locations.map((l) => ({
+        id: l.id,
+        name: l.name,
+        code: null as string | null,
+      }));
     },
   });
 

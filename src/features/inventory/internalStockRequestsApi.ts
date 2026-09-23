@@ -1,9 +1,8 @@
 /**
- * Supabase API for internal stock requests (sub → main) and main-initiated allocations.
- * Request numbers: RN-{LOCATION_CODE}-{####} (e.g. RN-STR-0001).
- * Allocation numbers: AL-{COMPANY_INITIALS}-{####} (e.g. AL-BMW-0001 for B1G Main Warehouse).
+ * Client API for internal stock requests (sub → main) and main-initiated allocations.
+ * All data access goes through /api/warehouse/internal-stock-requests.
  */
-import { supabase } from '@/lib/supabase';
+import { warehouseRequest } from '@/store/slices/warehouse/api';
 import { mapInternalStockRequestRow } from './internalStockRequestsMappers';
 import type { SubWarehouseStockRequest } from './components/SubWarehouseStockRequestDialog';
 
@@ -46,6 +45,7 @@ export type InternalStockRequestRow = {
   rejection_signature_url: string | null;
   created_at: string;
   updated_at: string;
+  open_discrepancy_count?: number;
   from_location?: { id: string; name: string; code: string } | null;
   requested_by_user?: { id: string; full_name: string | null } | null;
   items?: InternalStockRequestItemRow[];
@@ -86,60 +86,20 @@ export type InternalStockRequestEventRow = {
   created_by_user?: { full_name: string | null } | null;
 };
 
-const REQUEST_SELECT = `
-  *,
-  from_location:warehouse_locations!internal_stock_requests_from_location_id_fkey (
-    id, name, code
-  ),
-  requested_by_user:profiles!internal_stock_requests_requested_by_fkey (
-    id, full_name
-  ),
-  items:internal_stock_request_items (
-    id,
-    request_id,
-    variant_id,
-    requested_quantity,
-    delivered_quantity,
-    received_quantity,
-    open_receive_quantity,
-    variant:variants (
-      id,
-      name,
-      brand:brands ( id, name )
-    )
-  ),
-  events:internal_stock_request_events (
-    id,
-    request_id,
-    event_type,
-    note,
-    lines,
-    short_quantity,
-    proof_image_url,
-    proof_image_urls,
-    signature_url,
-    rider_name,
-    rider_plate_number,
-    rider_photo_url,
-    dr_number,
-    created_by,
-    created_at,
-    created_by_user:profiles!internal_stock_request_events_created_by_fkey (
-      full_name
-    )
-  )
-`;
-
-function assertRpcOk<T extends { success?: boolean; error?: string }>(result: T, fallback: string): T {
-  if (!result?.success) {
-    throw new Error(result?.error || fallback);
-  }
-  return result;
-}
+type RpcResult = {
+  success?: boolean;
+  error?: string;
+  request_id?: string;
+  request_number?: string;
+  status?: string;
+  dr_number?: string;
+  allocated?: number;
+  short_quantity?: number;
+  discrepancy_count?: number;
+};
 
 /**
  * List views do not need signed proof/signature blobs — drop them to cut JSON size and render cost.
- * Detail / PDF / packing slip should call fetchInternalStockRequestById for full attachments.
  */
 export function slimInternalStockRequestForList(
   request: SubWarehouseStockRequest
@@ -167,30 +127,32 @@ export function slimInternalStockRequestForList(
   };
 }
 
-async function attachOpenDiscrepancyCounts(
-  requests: SubWarehouseStockRequest[]
-): Promise<SubWarehouseStockRequest[]> {
-  if (requests.length === 0) return requests;
-  const ids = requests.map((r) => r.id);
-  const { data, error } = await supabase
-    .from('internal_stock_request_discrepancies')
-    .select('request_id')
-    .eq('status', 'open')
-    .in('request_id', ids);
-  if (error) {
-    // Table may not exist until migration is applied.
-    console.warn('[internalStockRequests] open discrepancy count failed', error);
-    return requests.map((r) => ({ ...r, openDiscrepancyCount: r.openDiscrepancyCount ?? 0 }));
+function withOpenDiscrepancyCount(
+  mapped: SubWarehouseStockRequest,
+  row: InternalStockRequestRow
+): SubWarehouseStockRequest {
+  return {
+    ...mapped,
+    openDiscrepancyCount: row.open_discrepancy_count ?? mapped.openDiscrepancyCount ?? 0,
+  };
+}
+
+function assertRpcOk<T extends RpcResult>(result: T, fallback: string): T {
+  if (!result?.success) {
+    throw new Error(result?.error || fallback);
   }
-  const countById = new Map<string, number>();
-  for (const row of data || []) {
-    const id = row.request_id as string;
-    countById.set(id, (countById.get(id) ?? 0) + 1);
-  }
-  return requests.map((r) => ({
-    ...r,
-    openDiscrepancyCount: countById.get(r.id) ?? 0,
-  }));
+  return result;
+}
+
+async function postAction<T extends RpcResult>(
+  body: Record<string, unknown>,
+  fallback: string
+): Promise<T> {
+  const result = await warehouseRequest<T>('internal-stock-requests', {
+    method: 'POST',
+    body,
+  });
+  return assertRpcOk(result, fallback);
 }
 
 export async function fetchInternalStockRequests(options?: {
@@ -201,72 +163,24 @@ export async function fetchInternalStockRequests(options?: {
   includeAttachments?: boolean;
 }): Promise<SubWarehouseStockRequest[]> {
   const includeEvents = options?.includeAttachments === true;
-  const { data, error } = await supabase.rpc('list_internal_stock_requests_for_caller', {
-    p_from_location_id:
-      options?.fromLocationId && options.fromLocationId !== 'all'
-        ? options.fromLocationId
-        : null,
-    p_status: options?.status && options.status !== 'all' ? options.status : null,
-    p_include_events: includeEvents,
-  });
-
-  const finalize = (mapped: SubWarehouseStockRequest[]) => {
-    const withCounts = attachOpenDiscrepancyCounts(mapped);
-    if (includeEvents) return withCounts;
-    return withCounts.then((rows) => rows.map(slimInternalStockRequestForList));
-  };
-
-  if (error) {
-    // Fallback: older DBs without p_include_events, then direct select.
-    console.warn('[internalStockRequests] list RPC failed, retrying without events flag', error);
-    const retry = await supabase.rpc('list_internal_stock_requests_for_caller', {
-      p_from_location_id:
-        options?.fromLocationId && options.fromLocationId !== 'all'
-          ? options.fromLocationId
-          : null,
-      p_status: options?.status && options.status !== 'all' ? options.status : null,
-    });
-    if (!retry.error) {
-      let mapped = ((Array.isArray(retry.data) ? retry.data : []) as InternalStockRequestRow[]).map(
-        mapInternalStockRequestRow
-      );
-      if (options?.search?.trim()) {
-        const q = options.search.trim().toLowerCase();
-        mapped = mapped.filter(
-          (r) =>
-            r.requestNumber.toLowerCase().includes(q) ||
-            (r.drNumber || '').toLowerCase().includes(q) ||
-            r.fromLocationName.toLowerCase().includes(q)
-        );
-      }
-      return finalize(mapped);
+  const { requests } = await warehouseRequest<{ requests: InternalStockRequestRow[] }>(
+    'internal-stock-requests',
+    {
+      params: {
+        resource: 'list',
+        status: options?.status && options.status !== 'all' ? options.status : undefined,
+        fromLocationId:
+          options?.fromLocationId && options.fromLocationId !== 'all'
+            ? options.fromLocationId
+            : undefined,
+        includeEvents: includeEvents ? '1' : undefined,
+      },
     }
+  );
 
-    console.warn('[internalStockRequests] list RPC failed, falling back to direct select', retry.error);
-    let query = supabase
-      .from('internal_stock_requests')
-      .select(REQUEST_SELECT)
-      .order('created_at', { ascending: false });
-
-    if (options?.status && options.status !== 'all') {
-      query = query.eq('status', options.status);
-    }
-    if (options?.fromLocationId && options.fromLocationId !== 'all') {
-      query = query.eq('from_location_id', options.fromLocationId);
-    }
-    if (options?.search?.trim()) {
-      query = query.ilike('request_number', `%${options.search.trim()}%`);
-    }
-
-    const fallback = await query;
-    if (fallback.error) throw fallback.error;
-    return finalize(
-      ((fallback.data ?? []) as InternalStockRequestRow[]).map(mapInternalStockRequestRow)
-    );
-  }
-
-  const rows = (Array.isArray(data) ? data : []) as InternalStockRequestRow[];
-  let mapped = rows.map(mapInternalStockRequestRow);
+  let mapped = (requests ?? []).map((row) =>
+    withOpenDiscrepancyCount(mapInternalStockRequestRow(row), row)
+  );
 
   if (options?.search?.trim()) {
     const q = options.search.trim().toLowerCase();
@@ -278,21 +192,24 @@ export async function fetchInternalStockRequests(options?: {
     );
   }
 
-  return finalize(mapped);
+  if (includeEvents) return mapped;
+  return mapped.map(slimInternalStockRequestForList);
 }
 
 export async function fetchInternalStockRequestById(requestId: string) {
-  const { data, error } = await supabase
-    .from('internal_stock_requests')
-    .select(REQUEST_SELECT)
-    .eq('id', requestId)
-    .maybeSingle();
-  if (error) throw error;
-  if (!data) return null;
-  const [mapped] = await attachOpenDiscrepancyCounts([
-    mapInternalStockRequestRow(data as InternalStockRequestRow),
-  ]);
-  return mapped;
+  const { request } = await warehouseRequest<{ request: InternalStockRequestRow | null }>(
+    'internal-stock-requests',
+    { params: { resource: 'detail', requestId } }
+  );
+  if (!request) return null;
+  return withOpenDiscrepancyCount(mapInternalStockRequestRow(request), request);
+}
+
+export async function fetchSubLocationsForAllocate() {
+  const { locations } = await warehouseRequest<{
+    locations: Array<{ id: string; name: string; is_main: boolean }>;
+  }>('internal-stock-requests', { params: { resource: 'sub-locations' } });
+  return locations ?? [];
 }
 
 export async function createInternalStockRequest(input: {
@@ -300,57 +217,20 @@ export async function createInternalStockRequest(input: {
   notes?: string;
   fromLocationId?: string;
 }) {
-  const { data, error } = await supabase.rpc('create_internal_stock_request', {
-    p_items: input.items,
-    p_notes: input.notes ?? null,
-    p_from_location_id: input.fromLocationId ?? null,
-  });
-  if (error) throw error;
-  return assertRpcOk(
-    data as { success: boolean; error?: string; request_id?: string; request_number?: string },
+  return postAction(
+    {
+      action: 'create',
+      items: input.items,
+      notes: input.notes ?? null,
+      from_location_id: input.fromLocationId ?? null,
+    },
     'Failed to create stock request'
   );
 }
 
 /** @deprecated Prefer createMainStockAllocation + deliverMainStockAllocation. */
-export async function createAndDeliverMainStockAllocation(input: {
-  fromLocationId: string;
-  items: Array<{ variant_id: string; quantity: number }>;
-  signatureUrl: string;
-  proofImageUrl: string;
-  riderName: string;
-  riderPlateNumber: string;
-  riderPhotoUrl: string;
-  signaturePath?: string;
-  proofImagePath?: string;
-  riderPhotoPath?: string;
-  notes?: string;
-}) {
-  const { data, error } = await supabase.rpc('create_and_deliver_main_stock_allocation', {
-    p_from_location_id: input.fromLocationId,
-    p_items: input.items,
-    p_signature_url: input.signatureUrl,
-    p_signature_path: input.signaturePath ?? null,
-    p_proof_image_url: input.proofImageUrl,
-    p_proof_image_path: input.proofImagePath ?? null,
-    p_rider_name: input.riderName,
-    p_rider_plate_number: input.riderPlateNumber,
-    p_rider_photo_url: input.riderPhotoUrl,
-    p_rider_photo_path: input.riderPhotoPath ?? null,
-    p_notes: input.notes ?? null,
-  });
-  if (error) throw error;
-  return assertRpcOk(
-    data as {
-      success: boolean;
-      error?: string;
-      request_id?: string;
-      request_number?: string;
-      dr_number?: string;
-      status?: string;
-    },
-    'Failed to allocate stock to sub warehouse'
-  );
+export async function createAndDeliverMainStockAllocation(_input: unknown) {
+  throw new Error('createAndDeliverMainStockAllocation is deprecated');
 }
 
 export async function createMainStockAllocation(input: {
@@ -362,23 +242,16 @@ export async function createMainStockAllocation(input: {
   proofImagePaths?: string[];
   notes?: string;
 }) {
-  const { data, error } = await supabase.rpc('create_main_stock_allocation', {
-    p_from_location_id: input.fromLocationId,
-    p_items: input.items,
-    p_proof_image_url: input.proofImageUrl,
-    p_proof_image_path: input.proofImagePath ?? null,
-    p_proof_image_urls: input.proofImageUrls ?? null,
-    p_proof_image_paths: input.proofImagePaths ?? null,
-    p_notes: input.notes ?? null,
-  });
-  if (error) throw error;
-  return assertRpcOk(
-    data as {
-      success: boolean;
-      error?: string;
-      request_id?: string;
-      request_number?: string;
-      status?: string;
+  return postAction(
+    {
+      action: 'create-allocation',
+      from_location_id: input.fromLocationId,
+      items: input.items,
+      proof_image_url: input.proofImageUrl,
+      proof_image_path: input.proofImagePath ?? null,
+      proof_image_urls: input.proofImageUrls ?? null,
+      proof_image_paths: input.proofImagePaths ?? null,
+      notes: input.notes ?? null,
     },
     'Failed to create stock allocation'
   );
@@ -393,29 +266,24 @@ export async function deliverMainStockAllocation(input: {
   signaturePath?: string;
   riderPhotoPath?: string;
 }) {
-  const { data, error } = await supabase.rpc('deliver_main_stock_allocation', {
-    p_request_id: input.requestId,
-    p_signature_url: input.signatureUrl,
-    p_signature_path: input.signaturePath ?? null,
-    p_rider_name: input.riderName,
-    p_rider_plate_number: input.riderPlateNumber,
-    p_rider_photo_url: input.riderPhotoUrl,
-    p_rider_photo_path: input.riderPhotoPath ?? null,
-  });
-  if (error) throw error;
-  return assertRpcOk(
-    data as { success: boolean; error?: string; status?: string; dr_number?: string },
+  return postAction(
+    {
+      action: 'deliver-allocation',
+      request_id: input.requestId,
+      signature_url: input.signatureUrl,
+      signature_path: input.signaturePath ?? null,
+      rider_name: input.riderName,
+      rider_plate_number: input.riderPlateNumber,
+      rider_photo_url: input.riderPhotoUrl,
+      rider_photo_path: input.riderPhotoPath ?? null,
+    },
     'Failed to deliver allocation'
   );
 }
 
 export async function approveInternalStockRequest(input: { requestId: string }) {
-  const { data, error } = await supabase.rpc('approve_internal_stock_request', {
-    p_request_id: input.requestId,
-  });
-  if (error) throw error;
-  return assertRpcOk(
-    data as { success: boolean; error?: string; status?: string },
+  return postAction(
+    { action: 'approve', request_id: input.requestId },
     'Failed to approve request'
   );
 }
@@ -431,20 +299,19 @@ export async function deliverInternalStockRequest(input: {
   proofImagePath?: string;
   riderPhotoPath?: string;
 }) {
-  const { data, error } = await supabase.rpc('deliver_internal_stock_request', {
-    p_request_id: input.requestId,
-    p_signature_url: input.signatureUrl,
-    p_signature_path: input.signaturePath ?? null,
-    p_proof_image_url: input.proofImageUrl,
-    p_proof_image_path: input.proofImagePath ?? null,
-    p_rider_name: input.riderName,
-    p_rider_plate_number: input.riderPlateNumber,
-    p_rider_photo_url: input.riderPhotoUrl,
-    p_rider_photo_path: input.riderPhotoPath ?? null,
-  });
-  if (error) throw error;
-  return assertRpcOk(
-    data as { success: boolean; error?: string; status?: string; dr_number?: string },
+  return postAction(
+    {
+      action: 'deliver',
+      request_id: input.requestId,
+      signature_url: input.signatureUrl,
+      signature_path: input.signaturePath ?? null,
+      proof_image_url: input.proofImageUrl,
+      proof_image_path: input.proofImagePath ?? null,
+      rider_name: input.riderName,
+      rider_plate_number: input.riderPlateNumber,
+      rider_photo_url: input.riderPhotoUrl,
+      rider_photo_path: input.riderPhotoPath ?? null,
+    },
     'Failed to deliver request'
   );
 }
@@ -455,15 +322,14 @@ export async function rejectInternalStockRequest(input: {
   signatureUrl: string;
   signaturePath?: string;
 }) {
-  const { data, error } = await supabase.rpc('reject_internal_stock_request', {
-    p_request_id: input.requestId,
-    p_reason: input.reason,
-    p_signature_url: input.signatureUrl,
-    p_signature_path: input.signaturePath ?? null,
-  });
-  if (error) throw error;
-  return assertRpcOk(
-    data as { success: boolean; error?: string; status?: string },
+  return postAction(
+    {
+      action: 'reject',
+      request_id: input.requestId,
+      reason: input.reason,
+      signature_url: input.signatureUrl,
+      signature_path: input.signaturePath ?? null,
+    },
     'Failed to reject request'
   );
 }
@@ -481,22 +347,21 @@ export async function allocateInternalStockRequestRemaining(input: {
   signaturePath?: string;
   riderPhotoPath?: string;
 }) {
-  const { data, error } = await supabase.rpc('allocate_internal_stock_request_remaining', {
-    p_request_id: input.requestId,
-    p_lines: input.lines,
-    p_proof_image_url: input.proofImageUrl,
-    p_signature_url: input.signatureUrl,
-    p_note: input.note ?? null,
-    p_proof_image_path: input.proofImagePath ?? null,
-    p_signature_path: input.signaturePath ?? null,
-    p_rider_name: input.riderName,
-    p_rider_plate_number: input.riderPlateNumber,
-    p_rider_photo_url: input.riderPhotoUrl,
-    p_rider_photo_path: input.riderPhotoPath ?? null,
-  });
-  if (error) throw error;
-  return assertRpcOk(
-    data as { success: boolean; error?: string; allocated?: number; dr_number?: string },
+  return postAction(
+    {
+      action: 'allocate-remaining',
+      request_id: input.requestId,
+      lines: input.lines,
+      proof_image_url: input.proofImageUrl,
+      signature_url: input.signatureUrl,
+      note: input.note ?? null,
+      proof_image_path: input.proofImagePath ?? null,
+      signature_path: input.signaturePath ?? null,
+      rider_name: input.riderName,
+      rider_plate_number: input.riderPlateNumber,
+      rider_photo_url: input.riderPhotoUrl,
+      rider_photo_path: input.riderPhotoPath ?? null,
+    },
     'Failed to allocate remaining'
   );
 }
@@ -516,24 +381,17 @@ export async function confirmInternalStockRequestReceive(input: {
   proofImageName?: string;
   signaturePath?: string;
 }) {
-  const { data, error } = await supabase.rpc('confirm_internal_stock_request_receive', {
-    p_request_id: input.requestId,
-    p_lines: input.lines,
-    p_proof_image_url: input.proofImageUrl,
-    p_signature_url: input.signatureUrl,
-    p_notes: input.notes ?? null,
-    p_proof_image_path: input.proofImagePath ?? null,
-    p_proof_image_name: input.proofImageName ?? null,
-    p_signature_path: input.signaturePath ?? null,
-  });
-  if (error) throw error;
-  return assertRpcOk(
-    data as {
-      success: boolean;
-      error?: string;
-      status?: string;
-      short_quantity?: number;
-      discrepancy_count?: number;
+  return postAction(
+    {
+      action: 'confirm-receive',
+      request_id: input.requestId,
+      lines: input.lines,
+      proof_image_url: input.proofImageUrl,
+      signature_url: input.signatureUrl,
+      notes: input.notes ?? null,
+      proof_image_path: input.proofImagePath ?? null,
+      proof_image_name: input.proofImageName ?? null,
+      signature_path: input.signaturePath ?? null,
     },
     'Failed to confirm receive'
   );
