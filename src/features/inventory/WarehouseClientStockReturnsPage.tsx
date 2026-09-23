@@ -28,9 +28,15 @@ import {
   type PageSize,
 } from '@/features/shared/components/ListPagination';
 import {
-  DateRangeFilterPopover,
+  ALL_TIME_DATE_RANGE,
   type DateRangeFilterValue,
 } from '@/features/shared/components/DateRangeFilterPopover';
+import {
+  QuickFilterSheet,
+  createQuickFilterAndClause,
+  matchesQuickFilterAndClauses,
+  type QuickFilterColumn,
+} from '@/features/shared/components/QuickFilterSheet';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -50,13 +56,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -228,6 +227,34 @@ const STATUS_VARIANT: Record<
   fully_received: 'outline',
   cancelled: 'destructive',
 };
+
+type ClientReturnQuickColumn = 'returnNumber' | 'client' | 'location' | 'returnType';
+type ClientReturnStatusFilter =
+  | 'all'
+  | 'pending_receive'
+  | 'partially_received'
+  | 'fully_received'
+  | 'cancelled';
+
+const ClientReturnQuickFilterSheet = QuickFilterSheet<
+  ClientReturnQuickColumn,
+  ClientReturnStatusFilter
+>;
+
+const CLIENT_RETURN_STATUS_OPTIONS: Array<{
+  value: ClientReturnStatusFilter;
+  label: string;
+}> = [
+  { value: 'all', label: 'All statuses' },
+  { value: 'pending_receive', label: 'Pending inspect' },
+  { value: 'partially_received', label: 'Partially inspected' },
+  { value: 'fully_received', label: 'Fully inspected' },
+  { value: 'cancelled', label: 'Cancelled' },
+];
+
+function uniqueSortedLabels(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
 
 function firstRelation<T>(value: T | T[] | null | undefined): T | null {
   if (Array.isArray(value)) return value[0] ?? null;
@@ -408,8 +435,12 @@ export default function WarehouseClientStockReturnsPage() {
   const isMainWarehouseUser = membership.isMain;
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
+  const [statusFilter, setStatusFilter] = useState<ClientReturnStatusFilter>('all');
+  const [dateRangeFilter, setDateRangeFilter] =
+    useState<DateRangeFilterValue>(ALL_TIME_DATE_RANGE);
+  const [columnClauses, setColumnClauses] = useState(() => [
+    createQuickFilterAndClause<ClientReturnQuickColumn>(),
+  ]);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [inspectOpen, setInspectOpen] = useState(false);
@@ -585,6 +616,51 @@ export default function WarehouseClientStockReturnsPage() {
     [dateRangeFilter]
   );
 
+  const quickColumns = useMemo((): QuickFilterColumn<ClientReturnQuickColumn>[] => {
+    const returnNumbers = uniqueSortedLabels(returns.map((r) => r.request_number));
+    const clients = uniqueSortedLabels(
+      returns.map((r) => r.client_company?.company_name ?? '').filter(Boolean)
+    );
+    const locations = uniqueSortedLabels(
+      returns.map((r) => r.destination_location?.name ?? '').filter(Boolean)
+    );
+    const returnTypes = uniqueSortedLabels(
+      returns.map((r) => formatSaReturnType(r.return_type)).filter(Boolean)
+    );
+    return [
+      {
+        key: 'returnNumber',
+        label: 'Return #',
+        options: returnNumbers.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search RT #…',
+      },
+      {
+        key: 'client',
+        label: 'Client',
+        options: clients.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search client…',
+      },
+      {
+        key: 'location',
+        label: 'Destination',
+        options: locations.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search location…',
+      },
+      {
+        key: 'returnType',
+        label: 'Type',
+        options: returnTypes.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search type…',
+      },
+    ];
+  }, [returns]);
+
+  const clearQuickFilters = () => {
+    setStatusFilter('all');
+    setDateRangeFilter(ALL_TIME_DATE_RANGE);
+    setColumnClauses([createQuickFilterAndClause<ClientReturnQuickColumn>()]);
+  };
+
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const { start, end } = dateRange;
@@ -598,6 +674,18 @@ export default function WarehouseClientStockReturnsPage() {
       );
       if (!inCreatedRange && !inReceiptRange) return false;
 
+      if (
+        !matchesQuickFilterAndClauses(columnClauses, (field, value) => {
+          if (field === 'returnNumber') return row.request_number === value;
+          if (field === 'client') return row.client_company?.company_name === value;
+          if (field === 'location') return row.destination_location?.name === value;
+          if (field === 'returnType') return formatSaReturnType(row.return_type) === value;
+          return true;
+        })
+      ) {
+        return false;
+      }
+
       if (!q) return true;
       return (
         row.request_number.toLowerCase().includes(q) ||
@@ -610,11 +698,11 @@ export default function WarehouseClientStockReturnsPage() {
         )
       );
     });
-  }, [returns, searchQuery, statusFilter, dateRange]);
+  }, [returns, searchQuery, statusFilter, columnClauses, dateRange]);
 
   useEffect(() => {
     setPage(0);
-  }, [statusFilter, searchQuery, dateRangeFilter, pageSize]);
+  }, [statusFilter, searchQuery, dateRangeFilter, columnClauses, pageSize]);
 
   const { pageCount, safePage, pagedItems } = getListPaginationSlice(filtered, page, pageSize);
 
@@ -900,24 +988,17 @@ export default function WarehouseClientStockReturnsPage() {
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
-            <DateRangeFilterPopover
-              value={dateRangeFilter}
-              onChange={setDateRangeFilter}
-              triggerClassName="w-full sm:w-[220px] justify-between h-10 shrink-0"
-              align="end"
+            <ClientReturnQuickFilterSheet
+              dateRange={dateRangeFilter}
+              onDateRangeChange={setDateRangeFilter}
+              columns={quickColumns}
+              columnClauses={columnClauses}
+              onColumnClausesChange={setColumnClauses}
+              status={statusFilter}
+              statusOptions={CLIENT_RETURN_STATUS_OPTIONS}
+              onStatusChange={setStatusFilter}
+              onClear={clearQuickFilters}
             />
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-full sm:w-[200px]">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All statuses</SelectItem>
-                <SelectItem value="pending_receive">Pending inspect</SelectItem>
-                <SelectItem value="partially_received">Partially inspected</SelectItem>
-                <SelectItem value="fully_received">Fully inspected</SelectItem>
-                <SelectItem value="cancelled">Cancelled</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
         </CardHeader>
         <CardContent>

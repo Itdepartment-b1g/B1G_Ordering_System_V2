@@ -1,135 +1,96 @@
 import { Button } from '@/components/ui/button';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  DateRangeFilterPopover,
+  ALL_TIME_DATE_RANGE,
   type DateRangeFilterValue,
 } from '@/features/shared/components/DateRangeFilterPopover';
+import {
+  QuickFilterSheet,
+  createQuickFilterAndClause,
+  type QuickFilterAndClause,
+  type QuickFilterColumn,
+} from '@/features/shared/components/QuickFilterSheet';
 
 import type {
-  PhysicalCountHistoryFilterKey,
   PhysicalCountHistoryFilterOption,
+  PhysicalCountHistoryQuickColumn,
 } from '../utils/physicalCountHistoryFilters';
 
+type PhysicalCountStatusFilter = 'all';
+
+const PhysicalCountHistoryQuickFilterSheet = QuickFilterSheet<
+  PhysicalCountHistoryQuickColumn,
+  PhysicalCountStatusFilter
+>;
+
 type PhysicalCountHistoryFilterProps = {
-  selectedFilter: PhysicalCountHistoryFilterKey;
-  filterValue: string;
   dateRangeFilter: DateRangeFilterValue;
+  columnClauses: QuickFilterAndClause<PhysicalCountHistoryQuickColumn>[];
   batchOptions: PhysicalCountHistoryFilterOption[];
   locationOptions: PhysicalCountHistoryFilterOption[];
   performedByOptions: PhysicalCountHistoryFilterOption[];
   showLocationFilter: boolean;
   isLoading?: boolean;
-  onSelectedFilterChange: (value: PhysicalCountHistoryFilterKey) => void;
-  onFilterValueChange: (value: string) => void;
   onDateRangeFilterChange: (value: DateRangeFilterValue) => void;
+  onColumnClausesChange: (
+    clauses: QuickFilterAndClause<PhysicalCountHistoryQuickColumn>[]
+  ) => void;
   onClearFilters: () => void;
 };
 
 export function PhysicalCountHistoryFilter({
-  selectedFilter,
-  filterValue,
   dateRangeFilter,
+  columnClauses,
   batchOptions,
   locationOptions,
   performedByOptions,
   showLocationFilter,
   isLoading = false,
-  onSelectedFilterChange,
-  onFilterValueChange,
   onDateRangeFilterChange,
+  onColumnClausesChange,
   onClearFilters,
 }: PhysicalCountHistoryFilterProps) {
-  const selectTriggerClass = 'w-[160px]';
+  const columns: QuickFilterColumn<PhysicalCountHistoryQuickColumn>[] = [
+    {
+      key: 'batch',
+      label: isLoading ? 'Batch (loading…)' : 'Batch',
+      options: batchOptions.map((opt) => ({ value: opt.id, label: opt.name })),
+      searchPlaceholder: 'Search batch…',
+    },
+    ...(showLocationFilter
+      ? ([
+          {
+            key: 'location' as const,
+            label: isLoading ? 'Location (loading…)' : 'Sub-warehouse',
+            options: locationOptions.map((opt) => ({ value: opt.id, label: opt.name })),
+            searchPlaceholder: 'Search location…',
+          },
+        ] satisfies QuickFilterColumn<PhysicalCountHistoryQuickColumn>[])
+      : []),
+    {
+      key: 'performed_by',
+      label: isLoading ? 'Counted by (loading…)' : 'Counted by',
+      options: performedByOptions.map((opt) => ({ value: opt.id, label: opt.name })),
+      searchPlaceholder: 'Search person…',
+    },
+  ];
+
+  const clearQuickFilters = () => {
+    onDateRangeFilterChange(ALL_TIME_DATE_RANGE);
+    onColumnClausesChange([createQuickFilterAndClause<PhysicalCountHistoryQuickColumn>()]);
+  };
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <Select
-        value={selectedFilter}
-        onValueChange={(value) => {
-          onSelectedFilterChange(value as PhysicalCountHistoryFilterKey);
-          onFilterValueChange('');
-        }}
-      >
-        <SelectTrigger className={selectTriggerClass}>
-          <SelectValue placeholder="Filter by" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">All</SelectItem>
-          <SelectItem value="batch">Batch</SelectItem>
-          {showLocationFilter && <SelectItem value="location">Sub-warehouse</SelectItem>}
-          <SelectItem value="performed_by">Counted by</SelectItem>
-        </SelectContent>
-      </Select>
-
-      {selectedFilter === 'batch' && (
-        <Select
-          value={filterValue || undefined}
-          onValueChange={onFilterValueChange}
-          disabled={isLoading}
-        >
-          <SelectTrigger className="w-[200px]">
-            <SelectValue placeholder={isLoading ? 'Loading batches…' : 'Select batch'} />
-          </SelectTrigger>
-          <SelectContent>
-            {batchOptions.map((opt) => (
-              <SelectItem key={opt.id} value={opt.id}>
-                {opt.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      )}
-
-      {selectedFilter === 'location' && showLocationFilter && (
-        <Select
-          value={filterValue || undefined}
-          onValueChange={onFilterValueChange}
-          disabled={isLoading}
-        >
-          <SelectTrigger className="w-[200px]">
-            <SelectValue
-              placeholder={isLoading ? 'Loading locations…' : 'Select sub-warehouse'}
-            />
-          </SelectTrigger>
-          <SelectContent>
-            {locationOptions.map((opt) => (
-              <SelectItem key={opt.id} value={opt.id}>
-                {opt.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      )}
-
-      {selectedFilter === 'performed_by' && (
-        <Select
-          value={filterValue || undefined}
-          onValueChange={onFilterValueChange}
-          disabled={isLoading}
-        >
-          <SelectTrigger className="w-[200px]">
-            <SelectValue placeholder={isLoading ? 'Loading users…' : 'Select user'} />
-          </SelectTrigger>
-          <SelectContent>
-            {performedByOptions.map((opt) => (
-              <SelectItem key={opt.id} value={opt.id}>
-                {opt.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      )}
-
-      <DateRangeFilterPopover
-        value={dateRangeFilter}
-        onChange={onDateRangeFilterChange}
-        triggerClassName="w-[160px]"
+      <PhysicalCountHistoryQuickFilterSheet
+        dateRange={dateRangeFilter}
+        onDateRangeChange={onDateRangeFilterChange}
+        columns={columns}
+        columnClauses={columnClauses}
+        onColumnClausesChange={onColumnClausesChange}
+        status="all"
+        statusOptions={[{ value: 'all', label: 'All' }]}
+        onStatusChange={() => undefined}
+        onClear={clearQuickFilters}
       />
 
       <Button type="button" variant="outline" className="shrink-0" onClick={onClearFilters}>

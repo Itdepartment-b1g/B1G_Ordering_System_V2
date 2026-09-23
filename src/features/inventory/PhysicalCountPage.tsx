@@ -8,8 +8,13 @@ import { getDateRangeFromPreset } from '@/lib/dateRangePresets';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import {
+  ALL_TIME_DATE_RANGE,
   type DateRangeFilterValue,
 } from '@/features/shared/components/DateRangeFilterPopover';
+import {
+  createQuickFilterAndClause,
+  type QuickFilterAndClause,
+} from '@/features/shared/components/QuickFilterSheet';
 import {
   DEFAULT_PAGE_SIZE,
   getListPaginationSlice,
@@ -71,7 +76,7 @@ import type { PhysicalCountLine, PhysicalCountLotOption, PhysicalCountSubmitLine
 import { uploadPhysicalCountSignature } from './physical-count/utils/uploadPhysicalCountSignature';
 import {
   filterPhysicalCountHistory,
-  type PhysicalCountHistoryFilterKey,
+  type PhysicalCountHistoryQuickColumn,
 } from './physical-count/utils/physicalCountHistoryFilters';
 import { getPhysicalCountPerformerName } from './physical-count/utils/physicalCountPerformer';
 import {
@@ -116,11 +121,11 @@ export default function PhysicalCountPage() {
   const [submitting, setSubmitting] = useState(false);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const [historyDetailOpen, setHistoryDetailOpen] = useState(false);
-  const [historyDateRangeFilter, setHistoryDateRangeFilter] = useState<DateRangeFilterValue>({
-    preset: 'all',
-  });
-  const [historyFilterKey, setHistoryFilterKey] = useState<PhysicalCountHistoryFilterKey>('all');
-  const [historyFilterValue, setHistoryFilterValue] = useState('');
+  const [historyDateRangeFilter, setHistoryDateRangeFilter] =
+    useState<DateRangeFilterValue>(ALL_TIME_DATE_RANGE);
+  const [historyColumnClauses, setHistoryColumnClauses] = useState<
+    QuickFilterAndClause<PhysicalCountHistoryQuickColumn>[]
+  >(() => [createQuickFilterAndClause<PhysicalCountHistoryQuickColumn>()]);
   const [historySortState, setHistorySortState] =
     useState<TableSortCycleState<PhysicalCountHistorySortKey>>(createInitialTableSortCycle);
   const [historyPage, setHistoryPage] = useState(0);
@@ -307,12 +312,11 @@ export default function PhysicalCountPage() {
     () =>
       filterPhysicalCountHistory(
         history,
-        historyFilterKey,
-        historyFilterValue,
+        historyColumnClauses,
         historyDateRange.start,
         historyDateRange.end
       ),
-    [history, historyFilterKey, historyFilterValue, historyDateRange]
+    [history, historyColumnClauses, historyDateRange]
   );
 
   const { key: resolvedHistorySortKey, direction: resolvedHistorySortDirection } = useMemo(
@@ -331,9 +335,8 @@ export default function PhysicalCountPage() {
   );
 
   const clearHistoryFilters = () => {
-    setHistoryFilterKey('all');
-    setHistoryFilterValue('');
-    setHistoryDateRangeFilter({ preset: 'all' });
+    setHistoryColumnClauses([createQuickFilterAndClause<PhysicalCountHistoryQuickColumn>()]);
+    setHistoryDateRangeFilter(ALL_TIME_DATE_RANGE);
   };
 
   const handleHistorySort = (key: PhysicalCountHistorySortKey) => {
@@ -342,7 +345,7 @@ export default function PhysicalCountPage() {
 
   useEffect(() => {
     setHistoryPage(0);
-  }, [historyFilterKey, historyFilterValue, historyDateRangeFilter, historyPageSize, historySortState]);
+  }, [historyColumnClauses, historyDateRangeFilter, historyPageSize, historySortState]);
 
   const {
     pageCount: historyPageCount,
@@ -902,17 +905,15 @@ export default function PhysicalCountPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <PhysicalCountHistoryFilter
-            selectedFilter={historyFilterKey}
-            filterValue={historyFilterValue}
             dateRangeFilter={historyDateRangeFilter}
+            columnClauses={historyColumnClauses}
             batchOptions={batchOptions}
             locationOptions={locationOptions}
             performedByOptions={performedByOptions}
             showLocationFilter={isMainScope}
             isLoading={historyFilterOptionsLoading}
-            onSelectedFilterChange={setHistoryFilterKey}
-            onFilterValueChange={setHistoryFilterValue}
             onDateRangeFilterChange={setHistoryDateRangeFilter}
+            onColumnClausesChange={setHistoryColumnClauses}
             onClearFilters={clearHistoryFilters}
           />
 

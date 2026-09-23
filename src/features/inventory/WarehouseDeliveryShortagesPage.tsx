@@ -7,9 +7,15 @@ import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import {
-  DateRangeFilterPopover,
+  ALL_TIME_DATE_RANGE,
   type DateRangeFilterValue,
 } from '@/features/shared/components/DateRangeFilterPopover';
+import {
+  QuickFilterSheet,
+  createQuickFilterAndClause,
+  matchesQuickFilterAndClauses,
+  type QuickFilterColumn,
+} from '@/features/shared/components/QuickFilterSheet';
 import { useToast } from '@/hooks/use-toast';
 import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
 import DeliveryShortagesManual from '@/features/inventory/warehouse-manual/components/DeliveryShortagesManual';
@@ -38,13 +44,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 
 type ShortageSource = 'po' | 'internal';
 
@@ -151,6 +150,15 @@ async function enrichVariantAndProfileNames(
 
 const SHORTAGE_GROUPS_PER_PAGE = 10;
 
+type ShortageQuickColumn = 'reference' | 'location' | 'brand';
+type ShortageStatusFilter = 'open' | 'resolved' | 'all';
+
+const ShortageQuickFilterSheet = QuickFilterSheet<ShortageQuickColumn, ShortageStatusFilter>;
+
+function uniqueSortedLabels(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
 export default function WarehouseDeliveryShortagesPage() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -167,12 +175,16 @@ export default function WarehouseDeliveryShortagesPage() {
     const s = searchParams.get('source');
     return s === 'internal' ? 'internal' : 'po';
   });
-  const [statusFilter, setStatusFilter] = useState<'open' | 'all' | 'resolved'>(() => {
+  const [statusFilter, setStatusFilter] = useState<ShortageStatusFilter>(() => {
     const s = searchParams.get('status');
     if (s === 'open' || s === 'all' || s === 'resolved') return s;
     return 'open';
   });
-  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
+  const [dateRangeFilter, setDateRangeFilter] =
+    useState<DateRangeFilterValue>(ALL_TIME_DATE_RANGE);
+  const [columnClauses, setColumnClauses] = useState(() => [
+    createQuickFilterAndClause<ShortageQuickColumn>(),
+  ]);
   const [searchQuery, setSearchQuery] = useState(() => searchParams.get('search') ?? '');
   const [shortagesPage, setShortagesPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -372,12 +384,71 @@ export default function WarehouseDeliveryShortagesPage() {
     );
   }, [dateRangeFilter]);
 
+  const openCount = useMemo(() => rows.filter((r) => r.status === 'open').length, [rows]);
+
+  const shortageStatusOptions = useMemo(
+    () => [
+      { value: 'open' as const, label: `Open (${openCount})` },
+      { value: 'resolved' as const, label: 'Resolved' },
+      { value: 'all' as const, label: 'All' },
+    ],
+    [openCount]
+  );
+
+  const quickColumns = useMemo((): QuickFilterColumn<ShortageQuickColumn>[] => {
+    const references = uniqueSortedLabels(
+      rows.flatMap((r) => [r.parent_number, r.dr_number].filter(Boolean) as string[])
+    );
+    const locations = uniqueSortedLabels(
+      rows.map((r) => r.location_name ?? '').filter(Boolean)
+    );
+    const brands = uniqueSortedLabels(rows.map((r) => r.brand_name ?? '').filter(Boolean));
+    return [
+      {
+        key: 'reference',
+        label: source === 'internal' ? 'RN / DR' : 'PO / DR',
+        options: references.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search reference…',
+      },
+      {
+        key: 'location',
+        label: 'Location',
+        options: locations.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search location…',
+      },
+      {
+        key: 'brand',
+        label: 'Brand',
+        options: brands.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search brand…',
+      },
+    ];
+  }, [rows, source]);
+
+  const clearQuickFilters = () => {
+    setStatusFilter('open');
+    setDateRangeFilter(ALL_TIME_DATE_RANGE);
+    setColumnClauses([createQuickFilterAndClause<ShortageQuickColumn>()]);
+  };
+
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return rows.filter((row) => {
       if (statusFilter === 'open' && row.status !== 'open') return false;
       if (statusFilter === 'resolved' && row.status === 'open') return false;
       if (!isDateInRange(row.created_at, reportDateRange.start, reportDateRange.end)) return false;
+      if (
+        !matchesQuickFilterAndClauses(columnClauses, (field, value) => {
+          if (field === 'reference') {
+            return row.parent_number === value || row.dr_number === value;
+          }
+          if (field === 'location') return row.location_name === value;
+          if (field === 'brand') return row.brand_name === value;
+          return true;
+        })
+      ) {
+        return false;
+      }
       if (!q) return true;
       const hay = [
         row.parent_number,
@@ -394,7 +465,14 @@ export default function WarehouseDeliveryShortagesPage() {
         .toLowerCase();
       return hay.includes(q);
     });
-  }, [rows, searchQuery, statusFilter, reportDateRange.end, reportDateRange.start]);
+  }, [
+    rows,
+    searchQuery,
+    statusFilter,
+    columnClauses,
+    reportDateRange.end,
+    reportDateRange.start,
+  ]);
 
   const groups = useMemo((): ShortageGroup[] => {
     const byGroup = new Map<string, DiscrepancyRow[]>();
@@ -436,7 +514,7 @@ export default function WarehouseDeliveryShortagesPage() {
 
   useEffect(() => {
     setShortagesPage(1);
-  }, [searchQuery, statusFilter, reportDateRange.start, reportDateRange.end, source]);
+  }, [searchQuery, statusFilter, columnClauses, reportDateRange.start, reportDateRange.end, source]);
 
   const totalShortagePages = Math.max(1, Math.ceil(groups.length / SHORTAGE_GROUPS_PER_PAGE));
   const currentShortagePage = Math.min(Math.max(1, shortagesPage), totalShortagePages);
@@ -444,8 +522,6 @@ export default function WarehouseDeliveryShortagesPage() {
     (currentShortagePage - 1) * SHORTAGE_GROUPS_PER_PAGE,
     currentShortagePage * SHORTAGE_GROUPS_PER_PAGE
   );
-
-  const openCount = useMemo(() => rows.filter((r) => r.status === 'open').length, [rows]);
 
   const selectedOpenRows = useMemo(
     () => rows.filter((r) => r.status === 'open' && selectedIds.has(r.id)),
@@ -651,24 +727,16 @@ export default function WarehouseDeliveryShortagesPage() {
                 className="pl-9"
               />
             </div>
-            <Select
-              value={statusFilter}
-              onValueChange={(v) => setStatusFilter(v as typeof statusFilter)}
-            >
-              <SelectTrigger className="w-full sm:w-[180px] h-10">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="open">Open ({openCount})</SelectItem>
-                <SelectItem value="resolved">Resolved</SelectItem>
-                <SelectItem value="all">All</SelectItem>
-              </SelectContent>
-            </Select>
-            <DateRangeFilterPopover
-              value={dateRangeFilter}
-              onChange={setDateRangeFilter}
-              triggerClassName="w-full sm:w-[220px] justify-between h-10 shrink-0"
-              align="end"
+            <ShortageQuickFilterSheet
+              dateRange={dateRangeFilter}
+              onDateRangeChange={setDateRangeFilter}
+              columns={quickColumns}
+              columnClauses={columnClauses}
+              onColumnClausesChange={setColumnClauses}
+              status={statusFilter}
+              statusOptions={shortageStatusOptions}
+              onStatusChange={setStatusFilter}
+              onClear={clearQuickFilters}
             />
           </div>
 

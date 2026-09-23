@@ -125,9 +125,15 @@ import {
 } from './warehouseStockBoard';
 import { Input } from '@/components/ui/input';
 import {
-  DateRangeFilterPopover,
+  ALL_TIME_DATE_RANGE,
   type DateRangeFilterValue,
 } from '@/features/shared/components/DateRangeFilterPopover';
+import {
+  QuickFilterSheet,
+  createQuickFilterAndClause,
+  matchesQuickFilterAndClauses,
+  type QuickFilterColumn,
+} from '@/features/shared/components/QuickFilterSheet';
 import {
   DEFAULT_PAGE_SIZE,
   getListPaginationSlice,
@@ -157,6 +163,9 @@ const STATUS_LABELS: Record<SubWarehouseStockRequestStatus, string> = {
 type ListViewMode = 'cards' | 'rows';
 type StatusFilter = 'all' | SubWarehouseStockRequestStatus;
 type ListTab = 'requests' | 'allocations';
+type MainSubQuickColumn = 'requestNumber' | 'warehouse' | 'requestedBy';
+
+const MainSubQuickFilterSheet = QuickFilterSheet<MainSubQuickColumn, StatusFilter>;
 
 const ALLOCATION_STATUS_FILTERS: SubWarehouseStockRequestStatus[] = [
   'ready_to_deliver',
@@ -164,6 +173,10 @@ const ALLOCATION_STATUS_FILTERS: SubWarehouseStockRequestStatus[] = [
   'partially_received',
   'fully_received',
 ];
+
+function uniqueSortedLabels(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
 
 function StatusBadge({ status }: { status: SubWarehouseStockRequestStatus }) {
   if (status === 'pending_approval') {
@@ -549,7 +562,11 @@ export default function MainWarehouseSubStockRequestsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [warehouseFilter, setWarehouseFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
+  const [dateRangeFilter, setDateRangeFilter] =
+    useState<DateRangeFilterValue>(ALL_TIME_DATE_RANGE);
+  const [columnClauses, setColumnClauses] = useState(() => [
+    createQuickFilterAndClause<MainSubQuickColumn>(),
+  ]);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [sortState, setSortState] =
@@ -846,12 +863,72 @@ export default function MainWarehouseSubStockRequestsPage() {
     [requests, listTab]
   );
 
+  const statusOptions = useMemo(() => {
+    const statuses =
+      listTab === 'allocations'
+        ? ALLOCATION_STATUS_FILTERS
+        : (Object.keys(STATUS_LABELS) as SubWarehouseStockRequestStatus[]);
+    return [
+      { value: 'all' as const, label: 'All statuses' },
+      ...statuses.map((s) => ({ value: s, label: STATUS_LABELS[s] })),
+    ];
+  }, [listTab]);
+
+  const quickColumns = useMemo((): QuickFilterColumn<MainSubQuickColumn>[] => {
+    const requestNumbers = uniqueSortedLabels(tabRequests.map((r) => r.requestNumber));
+    const warehouses = uniqueSortedLabels(
+      tabRequests.map((r) => r.fromLocationName).filter(Boolean)
+    );
+    const requestedBy = uniqueSortedLabels(
+      tabRequests.map((r) => r.requestedByName ?? '').filter(Boolean)
+    );
+    return [
+      {
+        key: 'requestNumber',
+        label: listTab === 'allocations' ? 'AL / DR' : 'RN / DR',
+        options: requestNumbers.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search number…',
+      },
+      {
+        key: 'warehouse',
+        label: 'Sub-warehouse',
+        options: warehouses.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search warehouse…',
+      },
+      {
+        key: 'requestedBy',
+        label: 'Requested by',
+        options: requestedBy.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search person…',
+      },
+    ];
+  }, [tabRequests, listTab]);
+
+  const clearQuickFilters = () => {
+    setStatusFilter('all');
+    setWarehouseFilter('all');
+    setDateRangeFilter(ALL_TIME_DATE_RANGE);
+    setColumnClauses([createQuickFilterAndClause<MainSubQuickColumn>()]);
+  };
+
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return tabRequests.filter((r) => {
       if (statusFilter !== 'all' && r.status !== statusFilter) return false;
       if (warehouseFilter !== 'all' && r.fromLocationId !== warehouseFilter) return false;
       if (!isDateInRange(r.createdAt, dateRange.start, dateRange.end)) return false;
+      if (
+        !matchesQuickFilterAndClauses(columnClauses, (field, value) => {
+          if (field === 'requestNumber') {
+            return r.requestNumber === value || r.drNumber === value;
+          }
+          if (field === 'warehouse') return r.fromLocationName === value;
+          if (field === 'requestedBy') return r.requestedByName === value;
+          return true;
+        })
+      ) {
+        return false;
+      }
       if (q) {
         const haystack = [
           r.requestNumber,
@@ -870,6 +947,7 @@ export default function MainWarehouseSubStockRequestsPage() {
     statusFilter,
     warehouseFilter,
     searchQuery,
+    columnClauses,
     dateRange.end,
     dateRange.start,
   ]);
@@ -891,7 +969,16 @@ export default function MainWarehouseSubStockRequestsPage() {
 
   useEffect(() => {
     setPage(0);
-  }, [listTab, statusFilter, warehouseFilter, searchQuery, dateRangeFilter, pageSize, sortState]);
+  }, [
+    listTab,
+    statusFilter,
+    warehouseFilter,
+    searchQuery,
+    dateRangeFilter,
+    columnClauses,
+    pageSize,
+    sortState,
+  ]);
 
   useEffect(() => {
     // Drop status filters that don't apply on the allocations tab.
@@ -1476,43 +1563,28 @@ export default function MainWarehouseSubStockRequestsPage() {
                   className="h-9 pl-8"
                 />
               </div>
-              <Select value={warehouseFilter} onValueChange={setWarehouseFilter}>
-                <SelectTrigger className="w-full sm:w-[200px] h-9">
-                  <SelectValue placeholder="Sub-warehouse" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All warehouses</SelectItem>
-                  {warehouseOptions.map((wh) => (
-                    <SelectItem key={wh.id} value={wh.id}>
-                      {wh.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <DateRangeFilterPopover
-                value={dateRangeFilter}
-                onChange={setDateRangeFilter}
-                triggerClassName="w-full sm:w-[220px] justify-between h-9"
+              <MainSubQuickFilterSheet
+                dateRange={dateRangeFilter}
+                onDateRangeChange={setDateRangeFilter}
+                columns={quickColumns}
+                columnClauses={columnClauses}
+                onColumnClausesChange={setColumnClauses}
+                status={statusFilter}
+                statusOptions={statusOptions}
+                onStatusChange={setStatusFilter}
+                extraSelects={[
+                  {
+                    title: 'Sub-warehouse',
+                    value: warehouseFilter,
+                    options: [
+                      { value: 'all', label: 'All warehouses' },
+                      ...warehouseOptions.map((wh) => ({ value: wh.id, label: wh.name })),
+                    ],
+                    onChange: setWarehouseFilter,
+                  },
+                ]}
+                onClear={clearQuickFilters}
               />
-              <Select
-                value={statusFilter}
-                onValueChange={(v) => setStatusFilter(v as StatusFilter)}
-              >
-                <SelectTrigger className="w-[180px] h-9">
-                  <SelectValue placeholder="Filter status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All statuses</SelectItem>
-                  {(listTab === 'allocations'
-                    ? ALLOCATION_STATUS_FILTERS
-                    : (Object.keys(STATUS_LABELS) as SubWarehouseStockRequestStatus[])
-                  ).map((s) => (
-                    <SelectItem key={s} value={s}>
-                      {STATUS_LABELS[s]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
               <Button
                 type="button"
                 size="sm"

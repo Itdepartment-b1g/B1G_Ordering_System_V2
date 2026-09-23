@@ -20,9 +20,15 @@ import {
 } from 'lucide-react';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import {
-  DateRangeFilterPopover,
+  ALL_TIME_DATE_RANGE,
   type DateRangeFilterValue,
 } from '@/features/shared/components/DateRangeFilterPopover';
+import {
+  QuickFilterSheet,
+  createQuickFilterAndClause,
+  matchesQuickFilterAndClauses,
+  type QuickFilterColumn,
+} from '@/features/shared/components/QuickFilterSheet';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { useAppDispatch, useAppSelector } from '@/store/store';
@@ -137,6 +143,36 @@ const STATUS_VARIANT: Record<
 const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
 const DEFAULT_PAGE_SIZE = PAGE_SIZE_OPTIONS[0];
 
+type StockRequestQuickColumn = 'requestNumber' | 'brand';
+type StockRequestStatusFilter =
+  | 'all'
+  | 'open'
+  | 'pending_receive'
+  | 'partially_received'
+  | 'fully_received'
+  | 'cancelled';
+
+const StockRequestQuickFilterSheet = QuickFilterSheet<
+  StockRequestQuickColumn,
+  StockRequestStatusFilter
+>;
+
+const STOCK_REQUEST_STATUS_OPTIONS: Array<{
+  value: StockRequestStatusFilter;
+  label: string;
+}> = [
+  { value: 'all', label: 'All statuses' },
+  { value: 'open', label: 'Open only' },
+  { value: 'pending_receive', label: 'Pending receive' },
+  { value: 'partially_received', label: 'Partially received' },
+  { value: 'fully_received', label: 'Fully received' },
+  { value: 'cancelled', label: 'Cancelled' },
+];
+
+function uniqueSortedLabels(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
 function getRequestBrandLabel(req: StockRequestRow): string {
   if (req.brand?.name) return req.brand.name;
   const names = [
@@ -191,10 +227,12 @@ export default function WarehouseStockRequestsPage() {
   } = useAppSelector((state) => state.warehouseStockRequests);
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
-    preset: 'all',
-  });
+  const [statusFilter, setStatusFilter] = useState<StockRequestStatusFilter>('all');
+  const [dateRangeFilter, setDateRangeFilter] =
+    useState<DateRangeFilterValue>(ALL_TIME_DATE_RANGE);
+  const [columnClauses, setColumnClauses] = useState(() => [
+    createQuickFilterAndClause<StockRequestQuickColumn>(),
+  ]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [sortState, setSortState] =
@@ -246,6 +284,39 @@ export default function WarehouseStockRequestsPage() {
     );
   }, [dateRangeFilter]);
 
+  const quickColumns = useMemo((): QuickFilterColumn<StockRequestQuickColumn>[] => {
+    const requestNumbers = uniqueSortedLabels(requests.map((r) => r.request_number));
+    const brandNames = uniqueSortedLabels(
+      requests.flatMap((r) => {
+        const labels = [getRequestBrandLabel(r)];
+        for (const item of r.items) {
+          if (item.variant?.brand?.name) labels.push(item.variant.brand.name);
+        }
+        return labels.filter((label) => label !== '—');
+      })
+    );
+    return [
+      {
+        key: 'requestNumber',
+        label: 'Request #',
+        options: requestNumbers.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search request #…',
+      },
+      {
+        key: 'brand',
+        label: 'Brand',
+        options: brandNames.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search brand…',
+      },
+    ];
+  }, [requests]);
+
+  const clearQuickFilters = () => {
+    setStatusFilter('all');
+    setDateRangeFilter(ALL_TIME_DATE_RANGE);
+    setColumnClauses([createQuickFilterAndClause<StockRequestQuickColumn>()]);
+  };
+
   const filteredRequests = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const { start, end } = requestDateRange;
@@ -265,6 +336,18 @@ export default function WarehouseStockRequestsPage() {
       } else if (statusFilter !== 'all' && r.status !== statusFilter) {
         return false;
       }
+      if (
+        !matchesQuickFilterAndClauses(columnClauses, (field, value) => {
+          if (field === 'requestNumber') return r.request_number === value;
+          if (field === 'brand') {
+            if (getRequestBrandLabel(r) === value) return true;
+            return r.items.some((item) => item.variant?.brand?.name === value);
+          }
+          return true;
+        })
+      ) {
+        return false;
+      }
       if (!q) return true;
       const brandName = getRequestBrandLabel(r).toLowerCase();
       const itemBrands = r.items
@@ -277,7 +360,14 @@ export default function WarehouseStockRequestsPage() {
         (r.notes?.toLowerCase().includes(q) ?? false)
       );
     });
-  }, [requests, searchQuery, statusFilter, requestDateRange.end, requestDateRange.start]);
+  }, [
+    requests,
+    searchQuery,
+    statusFilter,
+    columnClauses,
+    requestDateRange.end,
+    requestDateRange.start,
+  ]);
 
   const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
     () =>
@@ -307,7 +397,7 @@ export default function WarehouseStockRequestsPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [searchQuery, statusFilter, dateRangeFilter, pageSize, sortState]);
+  }, [searchQuery, statusFilter, dateRangeFilter, columnClauses, pageSize, sortState]);
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
@@ -626,25 +716,17 @@ export default function WarehouseStockRequestsPage() {
                 className="pl-9"
               />
             </div>
-            <DateRangeFilterPopover
-              value={dateRangeFilter}
-              onChange={setDateRangeFilter}
-              triggerClassName="w-full sm:w-[220px] justify-between h-10 shrink-0"
-              align="end"
+            <StockRequestQuickFilterSheet
+              dateRange={dateRangeFilter}
+              onDateRangeChange={setDateRangeFilter}
+              columns={quickColumns}
+              columnClauses={columnClauses}
+              onColumnClausesChange={setColumnClauses}
+              status={statusFilter}
+              statusOptions={STOCK_REQUEST_STATUS_OPTIONS}
+              onStatusChange={setStatusFilter}
+              onClear={clearQuickFilters}
             />
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-full sm:w-[200px]">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All statuses</SelectItem>
-                <SelectItem value="open">Open only</SelectItem>
-                <SelectItem value="pending_receive">Pending receive</SelectItem>
-                <SelectItem value="partially_received">Partially received</SelectItem>
-                <SelectItem value="fully_received">Fully received</SelectItem>
-                <SelectItem value="cancelled">Cancelled</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
         </CardHeader>
         <CardContent>

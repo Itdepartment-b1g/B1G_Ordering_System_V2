@@ -1,10 +1,14 @@
 import { isDateInRange } from '@/lib/dateRangePresets';
 import type { DateRangeFilterValue } from '@/features/shared/components/DateRangeFilterPopover';
+import {
+  matchesQuickFilterAndClauses,
+  type QuickFilterAndClause,
+} from '@/features/shared/components/QuickFilterSheet';
 
 import type { PhysicalCountHistoryRow } from '../types';
 import { getPhysicalCountPerformerId } from './physicalCountPerformer';
 
-export type PhysicalCountHistoryFilterKey = 'all' | 'batch' | 'location' | 'performed_by';
+export type PhysicalCountHistoryQuickColumn = 'batch' | 'location' | 'performed_by';
 
 export type PhysicalCountHistoryFilterOption = { id: string; name: string };
 
@@ -14,28 +18,21 @@ export function hasPhysicalCountHistoryDateFilter(value: DateRangeFilterValue): 
 
 export function filterPhysicalCountHistory(
   rows: PhysicalCountHistoryRow[],
-  selectedFilter: PhysicalCountHistoryFilterKey,
-  filterValue: string,
+  columnClauses: QuickFilterAndClause<PhysicalCountHistoryQuickColumn>[] | undefined,
   start?: Date,
   end?: Date
 ): PhysicalCountHistoryRow[] {
-  const value = filterValue.trim();
-
   return rows.filter((row) => {
     if (!isDateInRange(new Date(row.counted_at), start, end)) return false;
 
-    if (selectedFilter === 'all' || !value) return true;
-
-    if (selectedFilter === 'batch') {
-      return row.batch?.id === value;
-    }
-    if (selectedFilter === 'location') {
-      return row.warehouse_location?.id === value;
-    }
-    if (selectedFilter === 'performed_by') {
-      return getPhysicalCountPerformerId(row) === value;
-    }
-
-    return true;
+    return matchesQuickFilterAndClauses(columnClauses, (field, value) => {
+      if (field === 'batch') return row.batch?.id === value;
+      if (field === 'location') return row.warehouse_location?.id === value;
+      if (field === 'performed_by') return getPhysicalCountPerformerId(row) === value;
+      return true;
+    });
   });
 }
+
+/** @deprecated Prefer PhysicalCountHistoryQuickColumn + QuickFilterSheet */
+export type PhysicalCountHistoryFilterKey = 'all' | 'batch' | 'location' | 'performed_by';

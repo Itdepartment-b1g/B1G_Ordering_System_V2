@@ -18,9 +18,15 @@ import {
 import { supabase } from '@/lib/supabase';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import {
-  DateRangeFilterPopover,
+  ALL_TIME_DATE_RANGE,
   type DateRangeFilterValue,
 } from '@/features/shared/components/DateRangeFilterPopover';
+import {
+  QuickFilterSheet,
+  createQuickFilterAndClause,
+  matchesQuickFilterAndClauses,
+  type QuickFilterColumn,
+} from '@/features/shared/components/QuickFilterSheet';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
@@ -184,6 +190,36 @@ const STATUS_VARIANT: Record<
 const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
 const DEFAULT_PAGE_SIZE = PAGE_SIZE_OPTIONS[0];
 
+type StockReturnQuickColumn = 'returnNumber' | 'location';
+type StockReturnStatusFilter =
+  | 'all'
+  | 'open'
+  | 'pending_receive'
+  | 'partially_received'
+  | 'fully_received'
+  | 'cancelled';
+
+const StockReturnQuickFilterSheet = QuickFilterSheet<
+  StockReturnQuickColumn,
+  StockReturnStatusFilter
+>;
+
+const STOCK_RETURN_STATUS_OPTIONS: Array<{
+  value: StockReturnStatusFilter;
+  label: string;
+}> = [
+  { value: 'all', label: 'All statuses' },
+  { value: 'open', label: 'Open only' },
+  { value: 'pending_receive', label: 'Pending inspect' },
+  { value: 'partially_received', label: 'Partially inspected' },
+  { value: 'fully_received', label: 'Fully inspected' },
+  { value: 'cancelled', label: 'Cancelled' },
+];
+
+function uniqueSortedLabels(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
 function firstRelation<T>(value: T | T[] | null | undefined): T | null {
   if (Array.isArray(value)) return value[0] ?? null;
   return value ?? null;
@@ -315,8 +351,12 @@ export default function WarehouseStockReturnsPage() {
   const isMainWarehouseUser = membership.isMain;
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
+  const [statusFilter, setStatusFilter] = useState<StockReturnStatusFilter>('all');
+  const [dateRangeFilter, setDateRangeFilter] =
+    useState<DateRangeFilterValue>(ALL_TIME_DATE_RANGE);
+  const [columnClauses, setColumnClauses] = useState(() => [
+    createQuickFilterAndClause<StockReturnQuickColumn>(),
+  ]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [sortState, setSortState] =
@@ -503,6 +543,33 @@ export default function WarehouseStockReturnsPage() {
     );
   }, [dateRangeFilter]);
 
+  const quickColumns = useMemo((): QuickFilterColumn<StockReturnQuickColumn>[] => {
+    const returnNumbers = uniqueSortedLabels(visibleReturns.map((r) => r.request_number));
+    const locations = uniqueSortedLabels(
+      visibleReturns.map((r) => r.from_location?.name ?? '').filter(Boolean)
+    );
+    return [
+      {
+        key: 'returnNumber',
+        label: 'Return #',
+        options: returnNumbers.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search return #…',
+      },
+      {
+        key: 'location',
+        label: 'From location',
+        options: locations.map((value) => ({ value, label: value })),
+        searchPlaceholder: 'Search location…',
+      },
+    ];
+  }, [visibleReturns]);
+
+  const clearQuickFilters = () => {
+    setStatusFilter('all');
+    setDateRangeFilter(ALL_TIME_DATE_RANGE);
+    setColumnClauses([createQuickFilterAndClause<StockReturnQuickColumn>()]);
+  };
+
   const filteredReturns = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const { start, end } = returnDateRange;
@@ -520,11 +587,20 @@ export default function WarehouseStockReturnsPage() {
       } else if (statusFilter !== 'all' && r.status !== statusFilter) {
         return false;
       }
+      if (
+        !matchesQuickFilterAndClauses(columnClauses, (field, value) => {
+          if (field === 'returnNumber') return r.request_number === value;
+          if (field === 'location') return r.from_location?.name === value;
+          return true;
+        })
+      ) {
+        return false;
+      }
       if (!q) return true;
       const loc = r.from_location?.name?.toLowerCase() ?? '';
       return r.request_number.toLowerCase().includes(q) || loc.includes(q);
     });
-  }, [visibleReturns, searchQuery, statusFilter, returnDateRange]);
+  }, [visibleReturns, searchQuery, statusFilter, columnClauses, returnDateRange]);
 
   const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
     () =>
@@ -554,7 +630,7 @@ export default function WarehouseStockReturnsPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [searchQuery, statusFilter, dateRangeFilter, pageSize, sortState]);
+  }, [searchQuery, statusFilter, dateRangeFilter, columnClauses, pageSize, sortState]);
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
@@ -818,25 +894,17 @@ export default function WarehouseStockReturnsPage() {
                 className="pl-9"
               />
             </div>
-            <DateRangeFilterPopover
-              value={dateRangeFilter}
-              onChange={setDateRangeFilter}
-              triggerClassName="w-full sm:w-[220px] justify-between h-10 shrink-0"
-              align="end"
+            <StockReturnQuickFilterSheet
+              dateRange={dateRangeFilter}
+              onDateRangeChange={setDateRangeFilter}
+              columns={quickColumns}
+              columnClauses={columnClauses}
+              onColumnClausesChange={setColumnClauses}
+              status={statusFilter}
+              statusOptions={STOCK_RETURN_STATUS_OPTIONS}
+              onStatusChange={setStatusFilter}
+              onClear={clearQuickFilters}
             />
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-full sm:w-[200px]">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All statuses</SelectItem>
-                <SelectItem value="open">Open only</SelectItem>
-                <SelectItem value="pending_receive">Pending inspect</SelectItem>
-                <SelectItem value="partially_received">Partially inspected</SelectItem>
-                <SelectItem value="fully_received">Fully inspected</SelectItem>
-                <SelectItem value="cancelled">Cancelled</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
         </CardHeader>
         <CardContent>

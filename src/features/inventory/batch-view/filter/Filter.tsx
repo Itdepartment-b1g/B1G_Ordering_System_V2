@@ -1,16 +1,15 @@
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  DateRangeFilterPopover,
+  ALL_TIME_DATE_RANGE,
   type DateRangeFilterValue,
 } from '@/features/shared/components/DateRangeFilterPopover';
+import {
+  QuickFilterSheet,
+  createQuickFilterAndClause,
+  type QuickFilterAndClause,
+  type QuickFilterColumn,
+} from '@/features/shared/components/QuickFilterSheet';
 
 import { ALL_WAREHOUSES_FILTER_VALUE } from '../utils/batchInventoryFilters';
 
@@ -24,37 +23,59 @@ type LocationOption = {
   name: string;
 };
 
+export type BatchViewQuickColumn = 'brand';
+type BatchViewStatusFilter = 'all';
+
+const BatchViewQuickFilterSheet = QuickFilterSheet<BatchViewQuickColumn, BatchViewStatusFilter>;
+
 type BatchViewFilterProps = {
   search: string;
-  brandId: string;
   dateRangeFilter: DateRangeFilterValue;
   brandOptions: BrandOption[];
   locationOptions: LocationOption[];
   selectedLocationId: string;
   showLocationPicker: boolean;
   isLoadingBrands: boolean;
+  columnClauses: QuickFilterAndClause<BatchViewQuickColumn>[];
   onSearchChange: (value: string) => void;
-  onBrandIdChange: (value: string) => void;
   onDateRangeFilterChange: (value: DateRangeFilterValue) => void;
   onLocationChange: (value: string) => void;
+  onColumnClausesChange: (clauses: QuickFilterAndClause<BatchViewQuickColumn>[]) => void;
   onClearFilters: () => void;
 };
 
 export function BatchViewFilter({
   search,
-  brandId,
   dateRangeFilter,
   brandOptions,
   locationOptions,
   selectedLocationId,
   showLocationPicker,
   isLoadingBrands,
+  columnClauses,
   onSearchChange,
-  onBrandIdChange,
   onDateRangeFilterChange,
   onLocationChange,
+  onColumnClausesChange,
   onClearFilters,
 }: BatchViewFilterProps) {
+  const columns: QuickFilterColumn<BatchViewQuickColumn>[] = [
+    {
+      key: 'brand',
+      label: isLoadingBrands ? 'Brand (loading…)' : 'Brand',
+      options: brandOptions.map((opt) => ({ value: opt.id, label: opt.name })),
+      searchPlaceholder: 'Search brand…',
+    },
+  ];
+
+  const clearQuickFilters = () => {
+    onDateRangeFilterChange(ALL_TIME_DATE_RANGE);
+    onColumnClausesChange([createQuickFilterAndClause<BatchViewQuickColumn>()]);
+    if (showLocationPicker) {
+      onLocationChange(ALL_WAREHOUSES_FILTER_VALUE);
+    }
+  };
+
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Input
@@ -64,43 +85,31 @@ export function BatchViewFilter({
         className="w-full max-w-xs"
       />
 
-      {showLocationPicker && (
-        <Select
-          value={selectedLocationId || ALL_WAREHOUSES_FILTER_VALUE}
-          onValueChange={onLocationChange}
-        >
-          <SelectTrigger className="w-[200px]">
-            <SelectValue placeholder="All warehouses" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL_WAREHOUSES_FILTER_VALUE}>All warehouses</SelectItem>
-            {locationOptions.map((opt) => (
-              <SelectItem key={opt.id} value={opt.id}>
-                {opt.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      )}
-
-      <Select value={brandId || 'all'} onValueChange={(v) => onBrandIdChange(v === 'all' ? '' : v)}>
-        <SelectTrigger className="w-[180px]">
-          <SelectValue placeholder={isLoadingBrands ? 'Loading brands...' : 'All brands'} />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">All brands</SelectItem>
-          {brandOptions.map((opt) => (
-            <SelectItem key={opt.id} value={opt.id}>
-              {opt.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-
-      <DateRangeFilterPopover
-        value={dateRangeFilter}
-        onChange={onDateRangeFilterChange}
-        triggerClassName="w-[160px]"
+      <BatchViewQuickFilterSheet
+        dateRange={dateRangeFilter}
+        onDateRangeChange={onDateRangeFilterChange}
+        columns={columns}
+        columnClauses={columnClauses}
+        onColumnClausesChange={onColumnClausesChange}
+        status="all"
+        statusOptions={[{ value: 'all', label: 'All' }]}
+        onStatusChange={() => undefined}
+        extraSelects={
+          showLocationPicker
+            ? [
+                {
+                  title: 'Warehouse',
+                  value: selectedLocationId || ALL_WAREHOUSES_FILTER_VALUE,
+                  options: [
+                    { value: ALL_WAREHOUSES_FILTER_VALUE, label: 'All warehouses' },
+                    ...locationOptions.map((opt) => ({ value: opt.id, label: opt.name })),
+                  ],
+                  onChange: onLocationChange,
+                },
+              ]
+            : []
+        }
+        onClear={clearQuickFilters}
       />
 
       <Button type="button" variant="outline" className="shrink-0" onClick={onClearFilters}>

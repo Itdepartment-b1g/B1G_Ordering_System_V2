@@ -8,7 +8,15 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/features/auth';
 import { useWarehouseLocationMembership } from '@/features/inventory/useWarehouseLocationMembership';
 import { useCompanyBrands } from '@/features/sales-agents/components/super-admin-allocation-history/hooks/useCompanyBrands';
-import type { DateRangeFilterValue } from '@/features/shared/components/DateRangeFilterPopover';
+import {
+  ALL_TIME_DATE_RANGE,
+  type DateRangeFilterValue,
+} from '@/features/shared/components/DateRangeFilterPopover';
+import {
+  createQuickFilterAndClause,
+  matchesQuickFilterAndClauses,
+  type QuickFilterAndClause,
+} from '@/features/shared/components/QuickFilterSheet';
 import {
   DEFAULT_PAGE_SIZE,
   getListPaginationSlice,
@@ -16,7 +24,7 @@ import {
   type PageSize,
 } from '@/features/shared/components/ListPagination';
 
-import { BatchViewFilter } from './filter/Filter';
+import { BatchViewFilter, type BatchViewQuickColumn } from './filter/Filter';
 import { useWarehouseBatchInventory } from './hooks/useWarehouseBatchInventory';
 import { useWarehouseLocations } from './hooks/useWarehouseLocations';
 import { BatchViewTable } from './table/BatchViewTable';
@@ -29,7 +37,6 @@ import {
 } from './utils/batchInventoryFilters';
 import {
   getNextTableSortCycleState,
-  getTableSortDisplayDirection,
   createInitialTableSortCycle,
   resolveTableSortDirection,
   type TableSortCycleState,
@@ -63,8 +70,11 @@ export default function BatchViewList() {
     isMainWarehouseUser ? ALL_WAREHOUSES_FILTER_VALUE : ''
   );
   const [search, setSearch] = useState('');
-  const [brandId, setBrandId] = useState('');
-  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
+  const [dateRangeFilter, setDateRangeFilter] =
+    useState<DateRangeFilterValue>(ALL_TIME_DATE_RANGE);
+  const [columnClauses, setColumnClauses] = useState<QuickFilterAndClause<BatchViewQuickColumn>[]>(
+    () => [createQuickFilterAndClause<BatchViewQuickColumn>()]
+  );
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [isExportingFiltered, setIsExportingFiltered] = useState(false);
@@ -132,10 +142,15 @@ export default function BatchViewList() {
     [dateRangeFilter]
   );
 
-  const filteredGroups = useMemo(
-    () => filterBatchInventoryGroups(groups, search, brandId, fromDate, toDate),
-    [groups, search, brandId, fromDate, toDate]
-  );
+  const filteredGroups = useMemo(() => {
+    const base = filterBatchInventoryGroups(groups, search, '', fromDate, toDate);
+    return base.filter((group) =>
+      matchesQuickFilterAndClauses(columnClauses, (field, value) => {
+        if (field === 'brand') return group.brands.some((b) => b.brandId === value);
+        return true;
+      })
+    );
+  }, [groups, search, columnClauses, fromDate, toDate]);
 
   const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
     () =>
@@ -154,7 +169,7 @@ export default function BatchViewList() {
 
   useEffect(() => {
     setPage(0);
-  }, [search, brandId, dateRangeFilter, activeLocationId, sortState]);
+  }, [search, dateRangeFilter, columnClauses, activeLocationId, sortState]);
 
   const { pageCount, safePage, pagedItems: pagedGroups } = getListPaginationSlice(
     sortedGroups,
@@ -171,13 +186,13 @@ export default function BatchViewList() {
   const hasActiveFilters =
     hasBatchInventoryDateFilter(dateRangeFilter) ||
     search.trim().length > 0 ||
-    brandId.length > 0 ||
+    columnClauses.some((c) => c.field !== 'all' && c.value) ||
     (isMainWarehouseUser && activeLocationId !== ALL_WAREHOUSES_FILTER_VALUE);
 
   const clearFilters = () => {
     setSearch('');
-    setBrandId('');
-    setDateRangeFilter({ preset: 'all' });
+    setDateRangeFilter(ALL_TIME_DATE_RANGE);
+    setColumnClauses([createQuickFilterAndClause<BatchViewQuickColumn>()]);
     if (isMainWarehouseUser) {
       setSelectedLocationId(ALL_WAREHOUSES_FILTER_VALUE);
     }
@@ -304,17 +319,17 @@ export default function BatchViewList() {
         <CardContent className="space-y-4">
           <BatchViewFilter
             search={search}
-            brandId={brandId}
             dateRangeFilter={dateRangeFilter}
             brandOptions={companyBrands}
             locationOptions={locationOptions}
             selectedLocationId={selectedLocationId}
             showLocationPicker={showLocationPicker}
             isLoadingBrands={isLoadingBrands}
+            columnClauses={columnClauses}
             onSearchChange={setSearch}
-            onBrandIdChange={setBrandId}
             onDateRangeFilterChange={setDateRangeFilter}
             onLocationChange={setSelectedLocationId}
+            onColumnClausesChange={setColumnClauses}
             onClearFilters={clearFilters}
           />
 
