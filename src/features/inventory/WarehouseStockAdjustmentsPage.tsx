@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { differenceInDays, format } from 'date-fns';
 import {
   AlertCircle,
@@ -12,7 +12,6 @@ import {
   Scale,
   Search,
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import {
   DateRangeFilterPopover,
@@ -20,6 +19,19 @@ import {
 } from '@/features/shared/components/DateRangeFilterPopover';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import {
+  applyWarehouseStockAdjustment,
+  clearWarehouseStockAdjustmentBatchLots,
+  clearWarehouseStockAdjustmentVariants,
+  fetchWarehouseStockAdjustmentBatchLots,
+  fetchWarehouseStockAdjustmentBrands,
+  fetchWarehouseStockAdjustmentLocations,
+  fetchWarehouseStockAdjustmentVariants,
+  fetchWarehouseStockAdjustments,
+  type BatchLotOption,
+  type WarehouseStockAdjustmentRow,
+} from '@/store/slices/warehouse/stock-adjustments';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHeader, TableRow } from '@/components/ui/table';
@@ -63,37 +75,7 @@ const NEW_BATCH_VALUE = '__new__';
 const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
 const DEFAULT_PAGE_SIZE = PAGE_SIZE_OPTIONS[0];
 
-type LocationOption = { id: string; name: string; is_main: boolean };
-type BrandOption = { id: string; name: string };
-type VariantOption = { id: string; name: string; variant_type: string; brand_id: string };
-
-type BatchLotOption = {
-  lot_id: string;
-  batch_id: string;
-  batch_number: string;
-  source_type: string;
-  quantity_remaining: number;
-  quantity_received: number;
-  received_at: string;
-  expiration_date: string | null;
-};
-
-type AdjustmentRow = {
-  id: string;
-  direction: 'in' | 'out';
-  quantity: number;
-  reason: string;
-  notes: string | null;
-  created_at: string;
-  warehouse_location: { name: string; is_main: boolean } | null;
-  variant: {
-    name: string;
-    variant_type: string;
-    brand: { id: string; name: string } | null;
-  } | null;
-  batch: { batch_number: string } | null;
-  performed_by_user: { full_name: string } | null;
-};
+type AdjustmentRow = WarehouseStockAdjustmentRow;
 
 const REASON_PRESETS = [
   'Cycle count correction',
@@ -110,11 +92,6 @@ const SOURCE_LABELS: Record<string, string> = {
   stock_request_receive: 'Stock request',
   adjustment_in: 'Adjustment',
 };
-
-function firstRelation<T>(value: T | T[] | null | undefined): T | null {
-  if (Array.isArray(value)) return value[0] ?? null;
-  return value ?? null;
-}
 
 function formatLotDate(date: string | null): string {
   if (!date) return '—';
@@ -134,10 +111,24 @@ function formatBatchLotHeading(lot: Pick<BatchLotOption, 'batch_number' | 'expir
 export default function WarehouseStockAdjustmentsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const dispatch = useAppDispatch();
   const queryClient = useQueryClient();
   const isWarehouse = user?.role === 'warehouse';
   const { membership } = useWarehouseLocationMembership({ userId: user?.id, isWarehouse });
   const isMainWarehouseUser = membership.isMain;
+
+  const {
+    adjustments,
+    locations,
+    brands,
+    variants,
+    batchLots,
+    variantsBrandId,
+    batchLotsKey,
+    status: adjustmentsStatus,
+    batchLotsStatus,
+    error: adjustmentsError,
+  } = useAppSelector((state) => state.warehouseStockAdjustments);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [brandFilter, setBrandFilter] = useState('all');
@@ -162,108 +153,60 @@ export default function WarehouseStockAdjustmentsPage() {
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const { data: locations = [] } = useQuery({
-    queryKey: ['warehouse-adjustment-locations', user?.company_id],
-    enabled: !!user?.company_id && isWarehouse && isMainWarehouseUser,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('warehouse_locations')
-        .select('id, name, is_main')
-        .eq('company_id', user!.company_id!)
-        .order('is_main', { ascending: false })
-        .order('name');
-      if (error) throw error;
-      return (data ?? []) as LocationOption[];
-    },
-  });
+  const isLoading =
+    adjustmentsStatus === 'loading' ||
+    (adjustmentsStatus === 'idle' && !!user?.company_id && isWarehouse && isMainWarehouseUser);
+  const batchesLoading = batchLotsStatus === 'loading';
+  const error = adjustmentsError ? new Error(adjustmentsError) : null;
 
-  const { data: brands = [] } = useQuery({
-    queryKey: ['warehouse-adjustment-brands', user?.company_id],
-    enabled: !!user?.company_id && isWarehouse && adjustOpen,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('brands')
-        .select('id, name')
-        .eq('company_id', user!.company_id!)
-        .eq('is_active', true)
-        .order('name');
-      if (error) throw error;
-      return (data ?? []) as BrandOption[];
-    },
-  });
+  useEffect(() => {
+    if (!user?.company_id || !isWarehouse || !isMainWarehouseUser) return;
+    void dispatch(fetchWarehouseStockAdjustments());
+    void dispatch(fetchWarehouseStockAdjustmentLocations());
+  }, [dispatch, user?.company_id, isWarehouse, isMainWarehouseUser]);
 
-  const { data: variants = [] } = useQuery({
-    queryKey: ['warehouse-adjustment-variants', brandId],
-    enabled: !!brandId && adjustOpen,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('variants')
-        .select('id, name, variant_type, brand_id')
-        .eq('brand_id', brandId)
-        .eq('is_active', true)
-        .order('variant_type')
-        .order('name');
-      if (error) throw error;
-      return (data ?? []) as VariantOption[];
-    },
-  });
+  useEffect(() => {
+    if (!user?.company_id || !isWarehouse || !isMainWarehouseUser || !adjustOpen) return;
+    void dispatch(fetchWarehouseStockAdjustmentBrands());
+  }, [dispatch, user?.company_id, isWarehouse, isMainWarehouseUser, adjustOpen]);
 
-  const { data: batchLots = [], isLoading: batchesLoading } = useQuery({
-    queryKey: ['warehouse-adjustment-batch-lots', locationId, variantId],
-    enabled: !!locationId && !!variantId && adjustOpen,
-    queryFn: async (): Promise<BatchLotOption[]> => {
-      const { data, error } = await supabase
-        .from('inventory_batch_lots')
-        .select(
-          `
-          id,
-          batch_id,
-          quantity_remaining,
-          quantity_received,
-          received_at,
-          expiration_date,
-          batch:inventory_batches (
-            batch_number,
-            source_type
-          )
-        `
-        )
-        .eq('warehouse_location_id', locationId)
-        .eq('variant_id', variantId)
-        .order('received_at', { ascending: true });
-      if (error) throw error;
+  useEffect(() => {
+    if (!brandId || !adjustOpen) {
+      dispatch(clearWarehouseStockAdjustmentVariants());
+      return;
+    }
+    void dispatch(fetchWarehouseStockAdjustmentVariants(brandId));
+  }, [dispatch, brandId, adjustOpen]);
 
-      return (data ?? [])
-        .map((row) => {
-          const r = row as Record<string, unknown>;
-          const batch = firstRelation(
-            r.batch as { batch_number: string; source_type: string } | null
-          );
-          if (!batch) return null;
-          return {
-            lot_id: r.id as string,
-            batch_id: r.batch_id as string,
-            batch_number: batch.batch_number,
-            source_type: batch.source_type,
-            quantity_remaining: r.quantity_remaining as number,
-            quantity_received: r.quantity_received as number,
-            received_at: r.received_at as string,
-            expiration_date: (r.expiration_date as string | null) ?? null,
-          } satisfies BatchLotOption;
-        })
-        .filter(Boolean) as BatchLotOption[];
-    },
-  });
+  useEffect(() => {
+    if (!locationId || !variantId || !adjustOpen) {
+      dispatch(clearWarehouseStockAdjustmentBatchLots());
+      return;
+    }
+    void dispatch(
+      fetchWarehouseStockAdjustmentBatchLots({ locationId, variantId })
+    );
+  }, [dispatch, locationId, variantId, adjustOpen]);
+
+  // Drop stale catalog rows when brand / lot key changes mid-flight.
+  const visibleVariants =
+    variantsBrandId === brandId ? variants : [];
+  const visibleBatchLots =
+    batchLotsKey === `${locationId}:${variantId}` ? batchLots : [];
 
   const selectedLot = useMemo(
-    () => (lotId && lotId !== NEW_BATCH_VALUE ? batchLots.find((l) => l.lot_id === lotId) : null),
-    [batchLots, lotId]
+    () =>
+      lotId && lotId !== NEW_BATCH_VALUE
+        ? visibleBatchLots.find((l) => l.lot_id === lotId)
+        : null,
+    [visibleBatchLots, lotId]
   );
 
-  const selectableLots = useMemo(() => batchLots, [batchLots]);
+  const selectableLots = useMemo(() => visibleBatchLots, [visibleBatchLots]);
 
   const hasBatchSelection =
-    !!lotId && (lotId === NEW_BATCH_VALUE || batchLots.some((l) => l.lot_id === lotId));
+    !!lotId &&
+    (lotId === NEW_BATCH_VALUE || visibleBatchLots.some((l) => l.lot_id === lotId));
 
   const canRemoveFromSelectedBatch =
     hasBatchSelection &&
@@ -297,66 +240,6 @@ export default function WarehouseStockAdjustmentsPage() {
     if (direction === 'out' && selectedLot) return selectedLot.quantity_remaining;
     return undefined;
   }, [direction, selectedLot]);
-
-  const {
-    data: adjustments = [],
-    isLoading,
-    error,
-  } = useQuery({
-    queryKey: ['warehouse-stock-adjustments', user?.company_id],
-    enabled: !!user?.company_id && isWarehouse && isMainWarehouseUser,
-    queryFn: async () => {
-      const { data, error: fetchError } = await supabase
-        .from('warehouse_stock_adjustments')
-        .select(
-          `
-          id,
-          direction,
-          quantity,
-          reason,
-          notes,
-          created_at,
-          warehouse_location:warehouse_locations ( name, is_main ),
-          variant:variants (
-            name,
-            variant_type,
-            brand:brands ( id, name )
-          ),
-          batch:inventory_batches ( batch_number ),
-          performed_by_user:profiles!warehouse_stock_adjustments_performed_by_fkey ( full_name )
-        `
-        )
-        .eq('company_id', user!.company_id!)
-        .order('created_at', { ascending: false });
-      if (fetchError) throw fetchError;
-
-      return (data ?? []).map((row) => {
-        const r = row as Record<string, unknown>;
-        const variant = firstRelation(
-          r.variant as AdjustmentRow['variant'] | AdjustmentRow['variant'][]
-        );
-        const brand = variant?.brand
-          ? firstRelation(variant.brand as { id: string; name: string } | { id: string; name: string }[])
-          : null;
-        return {
-          id: r.id as string,
-          direction: r.direction as 'in' | 'out',
-          quantity: r.quantity as number,
-          reason: r.reason as string,
-          notes: r.notes as string | null,
-          created_at: r.created_at as string,
-          warehouse_location: firstRelation(
-            r.warehouse_location as AdjustmentRow['warehouse_location']
-          ),
-          variant: variant ? { ...variant, brand } : null,
-          batch: firstRelation(r.batch as AdjustmentRow['batch']),
-          performed_by_user: firstRelation(
-            r.performed_by_user as AdjustmentRow['performed_by_user']
-          ),
-        } satisfies AdjustmentRow;
-      });
-    },
-  });
 
   const adjustmentDateRange = useMemo(() => {
     return getDateRangeFromPreset(
@@ -472,7 +355,7 @@ export default function WarehouseStockAdjustmentsPage() {
       if (!current) return '';
       if (next === 'out') {
         if (current === NEW_BATCH_VALUE) return '';
-        const lot = batchLots.find((l) => l.lot_id === current);
+        const lot = visibleBatchLots.find((l) => l.lot_id === current);
         if (!lot || lot.quantity_remaining <= 0) return '';
       }
       return current;
@@ -553,55 +436,16 @@ export default function WarehouseStockAdjustmentsPage() {
 
     setSubmitting(true);
     try {
-      const rpcParams: {
-        p_warehouse_location_id: string;
-        p_variant_id: string;
-        p_quantity_delta: number;
-        p_reason: string;
-        p_notes: string | null;
-        p_performed_by: string | null;
-        p_lot_id?: string;
-      } = {
-        p_warehouse_location_id: locationId,
-        p_variant_id: variantId,
-        p_quantity_delta: delta,
-        p_reason: resolvedReason,
-        p_notes: notes.trim() || null,
-        p_performed_by: user?.id ?? null,
-      };
-
-      // Only send p_lot_id when set — PostgREST 404s if the DB only has the 6-arg RPC
-      // but the client includes p_lot_id: null (needs 7-arg migration 20260609160000).
-      if (rpcLotId) {
-        rpcParams.p_lot_id = rpcLotId;
-      }
-
-      const { data, error } = await supabase.rpc('apply_warehouse_stock_adjustment', rpcParams);
-      if (error) {
-        const pgCode = (error as { code?: string }).code;
-        if (
-          pgCode === 'PGRST202' ||
-          pgCode === '42883' ||
-          error.message?.includes('404') ||
-          error.message?.toLowerCase().includes('not found')
-        ) {
-          throw new Error(
-            'Batch adjustment is not enabled on this database yet. Run supabase/migrations/20260609160000_warehouse_stock_adjustments_by_batch.sql in the Supabase SQL Editor, then reload the API schema.'
-          );
-        }
-        throw error;
-      }
-      const result = data as {
-        success?: boolean;
-        error?: string;
-        batch_number?: string;
-        direction?: string;
-        quantity?: number;
-        remaining_after?: number;
-      };
-      if (!result?.success) {
-        throw new Error(result?.error ?? 'Adjustment failed');
-      }
+      const result = await dispatch(
+        applyWarehouseStockAdjustment({
+          warehouse_location_id: locationId,
+          variant_id: variantId,
+          quantity_delta: delta,
+          reason: resolvedReason,
+          notes: notes.trim() || null,
+          lot_id: rpcLotId,
+        })
+      ).unwrap();
       toast({
         title: direction === 'in' ? 'Stock added' : 'Stock removed',
         description:
@@ -613,8 +457,10 @@ export default function WarehouseStockAdjustmentsPage() {
       });
       setAdjustOpen(false);
       resetForm();
-      await queryClient.invalidateQueries({ queryKey: ['warehouse-stock-adjustments'] });
-      await queryClient.invalidateQueries({ queryKey: ['warehouse-adjustment-batch-lots'] });
+      await dispatch(fetchWarehouseStockAdjustments());
+      if (locationId && variantId) {
+        await dispatch(fetchWarehouseStockAdjustmentBatchLots({ locationId, variantId }));
+      }
       await queryClient.invalidateQueries({ queryKey: ['inventory'] });
       await queryClient.invalidateQueries({ queryKey: ['variant-batch-lots'] });
       await queryClient.invalidateQueries({ queryKey: ['batch-lot-adjustments'] });
@@ -956,7 +802,7 @@ export default function WarehouseStockAdjustmentsPage() {
                   <SelectValue placeholder={brandId ? 'Select variant' : 'Select brand first'} />
                 </SelectTrigger>
                 <SelectContent>
-                  {variants.map((v) => (
+                  {visibleVariants.map((v) => (
                     <SelectItem key={v.id} value={v.id}>
                       {v.variant_type} — {v.name}
                     </SelectItem>
