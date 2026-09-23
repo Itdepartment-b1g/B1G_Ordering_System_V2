@@ -4,7 +4,6 @@ import { Loader2, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/features/auth';
-import { supabase } from '@/lib/supabase';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import {
   SubWarehouseStockRequestDialog,
@@ -22,6 +21,7 @@ import {
   createInternalStockRequest,
   fetchInternalStockRequestById,
   fetchInternalStockRequests,
+  fetchMainWarehouseLocationName,
 } from './internalStockRequestsApi';
 import {
   broadcastInternalStockRequestsChanged,
@@ -109,19 +109,9 @@ export default function SubWarehouseStockRequestPage() {
   const { data: mainLocationName } = useQuery({
     queryKey: ['main-warehouse-location-name', user?.company_id],
     enabled: !!user?.company_id,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('warehouse_locations')
-        .select('name')
-        .eq('company_id', user!.company_id!)
-        .eq('is_main', true)
-        .maybeSingle();
-      if (error) throw error;
-      return data?.name || 'Main warehouse';
-    },
+    queryFn: () => fetchMainWarehouseLocationName(),
     staleTime: 5 * 60_000,
   });
-
   const createMutation = useMutation({
     mutationFn: async (payload: { notes: string; items: SubWarehouseStockRequestItem[] }) => {
       return createInternalStockRequest({

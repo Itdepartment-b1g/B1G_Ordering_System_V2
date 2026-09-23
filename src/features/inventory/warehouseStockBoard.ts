@@ -1,5 +1,6 @@
 import { fetchAllPaginated } from '@/lib/supabasePaginate';
 import { supabase } from '@/lib/supabase';
+import { warehouseRequest } from '@/store/slices/warehouse/api';
 import {
   groupFlatInventoryRowsIntoBrands,
   LOW_STOCK_THRESHOLD,
@@ -191,25 +192,6 @@ export function finalizeStockBoardBrands(brands: Brand[]): Brand[] {
   }));
 }
 
-const MAIN_STOCK_BOARD_SELECT = `
-  id,
-  stock,
-  allocated_stock,
-  reorder_level,
-  variants:variant_id (
-    id,
-    name,
-    variant_type,
-    created_at,
-    is_active,
-    brands:brand_id (
-      id,
-      name,
-      is_active
-    )
-  )
-`;
-
 const LOCATION_STOCK_BOARD_SELECT = `
   stock,
   variant_id,
@@ -231,17 +213,12 @@ const LOCATION_STOCK_BOARD_SELECT = `
 `;
 
 export async function fetchMainWarehouseStockBoard(companyId: string): Promise<Brand[]> {
-  const rows = await fetchAllPaginated(async (from, to) => {
-    const { data, error } = await supabase
-      .from('main_inventory')
-      .select(MAIN_STOCK_BOARD_SELECT)
-      .eq('company_id', companyId)
-      .order('variant_id')
-      .range(from, to);
-    return { data, error };
+  void companyId; // company scoped on the server from auth context
+  const { rows } = await warehouseRequest<{ rows: unknown[] }>('internal-stock-requests', {
+    params: { resource: 'main-stock-board' },
   });
 
-  return groupFlatInventoryRowsIntoBrands(rows, (row) => ({
+  return groupFlatInventoryRowsIntoBrands(rows ?? [], (row) => ({
     id: row.id ?? `main:${row.variants?.id}`,
     stock: row.stock ?? 0,
     allocated_stock: row.allocated_stock ?? 0,
@@ -361,19 +338,14 @@ export async function fetchOpenTransferPoReservedByVariant(
 
 /** Main allocatable qty via RPC (works for sub-warehouse users blocked by PO-hold RLS). */
 export async function fetchMainWarehouseAllocatableByVariant(
-  variantIds?: string[]
+  _variantIds?: string[]
 ): Promise<Record<string, number>> {
-  const { data, error } = await supabase.rpc('get_main_warehouse_allocatable_by_variant', {
-    p_variant_ids: variantIds?.length ? variantIds : null,
+  const { allocatableByVariantId } = await warehouseRequest<{
+    allocatableByVariantId: Record<string, number>;
+  }>('internal-stock-requests', {
+    params: { resource: 'main-allocatable' },
   });
-  if (error) throw error;
-
-  const map: Record<string, number> = {};
-  for (const row of (data as { variant_id: string; allocatable: number }[]) || []) {
-    const vid = String(row.variant_id);
-    map[vid] = Math.max(0, Number(row.allocatable || 0));
-  }
-  return map;
+  return allocatableByVariantId ?? {};
 }
 
 export async function resolveStockBoardReservedLocationId(opts: {

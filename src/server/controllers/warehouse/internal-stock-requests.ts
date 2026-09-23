@@ -12,7 +12,10 @@ import {
   deliverInternalStockRequest,
   deliverMainStockAllocation,
   getInternalStockRequestById,
+  getMainWarehouseAllocatableByVariant,
+  getMainWarehouseLocationName,
   listInternalStockRequests,
+  listMainWarehouseStockBoardRows,
   listSubWarehouseLocationsForAllocate,
   rejectInternalStockRequest,
 } from '../../repositories/warehouse/internal-stock-requests';
@@ -51,6 +54,18 @@ export async function getWarehouseInternalStockRequestsHandler(req: any, res: an
       case 'sub-locations': {
         const ctx = await resolveCtx(authorization, true);
         return { status: 200, body: await listSubWarehouseLocationsForAllocate(ctx) };
+      }
+      case 'main-location': {
+        const ctx = await resolveCtx(authorization, false);
+        return { status: 200, body: await getMainWarehouseLocationName(ctx) };
+      }
+      case 'main-stock-board': {
+        const ctx = await resolveCtx(authorization, false);
+        return { status: 200, body: await listMainWarehouseStockBoardRows(ctx) };
+      }
+      case 'main-allocatable': {
+        const ctx = await resolveCtx(authorization, false);
+        return { status: 200, body: await getMainWarehouseAllocatableByVariant(ctx) };
       }
       default:
         throw new HttpError(400, 'Unknown resource');

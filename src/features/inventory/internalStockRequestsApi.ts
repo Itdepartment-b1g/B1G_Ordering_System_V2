@@ -212,6 +212,13 @@ export async function fetchSubLocationsForAllocate() {
   return locations ?? [];
 }
 
+export async function fetchMainWarehouseLocationName() {
+  const { name } = await warehouseRequest<{ name: string }>('internal-stock-requests', {
+    params: { resource: 'main-location' },
+  });
+  return name || 'Main warehouse';
+}
+
 export async function createInternalStockRequest(input: {
   items: Array<{ variant_id: string; quantity: number }>;
   notes?: string;

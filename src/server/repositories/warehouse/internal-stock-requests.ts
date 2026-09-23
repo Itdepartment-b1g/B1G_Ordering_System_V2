@@ -411,3 +411,76 @@ export async function confirmInternalStockRequestReceive(
   if (error) throw error;
   return assertRpcOk(data, 'Failed to confirm receive');
 }
+
+const MAIN_STOCK_BOARD_SELECT = `
+  id,
+  stock,
+  allocated_stock,
+  reorder_level,
+  variants:variant_id (
+    id,
+    name,
+    variant_type,
+    created_at,
+    is_active,
+    brands:brand_id (
+      id,
+      name,
+      is_active
+    )
+  )
+`;
+
+export async function getMainWarehouseLocationName(
+  ctx: WarehouseContext
+): Promise<{ name: string }> {
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb
+    .from('warehouse_locations')
+    .select('name')
+    .eq('company_id', ctx.companyId)
+    .eq('is_main', true)
+    .maybeSingle();
+  if (error) throw error;
+  return { name: data?.name || 'Main warehouse' };
+}
+
+export async function listMainWarehouseStockBoardRows(
+  ctx: WarehouseContext
+): Promise<{ rows: unknown[] }> {
+  const sb = getSupabaseAdmin();
+  const pageSize = 1000;
+  const rows: unknown[] = [];
+  for (let from = 0; ; from += pageSize) {
+    const to = from + pageSize - 1;
+    const { data, error } = await sb
+      .from('main_inventory')
+      .select(MAIN_STOCK_BOARD_SELECT)
+      .eq('company_id', ctx.companyId)
+      .order('variant_id')
+      .range(from, to);
+    if (error) throw error;
+    const chunk = data ?? [];
+    rows.push(...chunk);
+    if (chunk.length < pageSize) break;
+  }
+  return { rows };
+}
+
+export async function getMainWarehouseAllocatableByVariant(
+  ctx: WarehouseContext,
+  variantIds?: string[] | null
+): Promise<{ allocatableByVariantId: Record<string, number> }> {
+  const userSb = requireUserClient(ctx);
+  const { data, error } = await userSb.rpc('get_main_warehouse_allocatable_by_variant', {
+    p_variant_ids: variantIds?.length ? variantIds : null,
+  });
+  if (error) throw error;
+
+  const map: Record<string, number> = {};
+  for (const row of (data as { variant_id: string; allocatable: number }[]) || []) {
+    const vid = String(row.variant_id);
+    map[vid] = Math.max(0, Number(row.allocatable || 0));
+  }
+  return { allocatableByVariantId: map };
+}
