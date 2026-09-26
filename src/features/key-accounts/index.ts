@@ -29,6 +29,7 @@ export { KeyAccountPaymentTermsPage } from './pages/KeyAccountPaymentTermsPage';
 export { KeyAccountHistoricalImportPage } from './pages/KeyAccountHistoricalImportPage';
 export { KeyAccountSalesRecordImportPage } from './pages/KeyAccountSalesRecordImportPage';
 export { KeyAccountSalesOrderImportPage } from './pages/KeyAccountSalesOrderImportPage';
+export { KeyAccountSalesTrackerImportPage } from './pages/KeyAccountSalesTrackerImportPage';
 
 // Future exports (Phase 3+):
 // - KAMOrderPage: Create purchase orders
