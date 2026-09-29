@@ -275,7 +275,7 @@ export default function TLTransferShortagesPage() {
           Investigate stock that left your inventory at dispatch but arrived short. Found returns
           those units to you; then dispatch again or keep them. Write off is only for lost stock.{' '}
           <Link to="/inventory/tl-stock-requests" className="text-primary underline-offset-4 hover:underline">
-            Back to my transfers
+            Back to my transfer request
           </Link>
         </p>
       </div>

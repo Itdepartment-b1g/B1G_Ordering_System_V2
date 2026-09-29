@@ -544,7 +544,7 @@ export default function TLStockRequestPage() {
               <CardTitle>Transfers</CardTitle>
               <CardDescription>
                 Incoming is stock Super Admin approved for you to dispatch. Dispatched is stock you
-                already sent. My transfers are requests you created — receive them when they are in
+                already sent. My transfer request lists the requests you created — receive them when they are in
                 transit. Lost groups SKUs that arrived short or were written off; click an item to
                 see the transfer numbers.{' '}
                 <Link
@@ -602,7 +602,7 @@ export default function TLStockRequestPage() {
                 ) : null}
               </TabsTrigger>
               <TabsTrigger value="mine" className="gap-2">
-                My transfers
+                My transfer request
                 {inTransitCount > 0 ? (
                   <Badge variant="secondary" className="h-5 min-w-5 px-1.5">
                     {inTransitCount} in transit
