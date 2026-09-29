@@ -27,6 +27,38 @@ function variantTypeLabel(type: string | null): string {
   return type;
 }
 
+function groupLinesByBrandAndType(lines: AllocationHistoryGroup['lines']) {
+  const byBrand = new Map<string, AllocationHistoryGroup['lines']>();
+  for (const line of lines) {
+    const brand = line.brandName.trim() || 'Unbranded';
+    const list = byBrand.get(brand) ?? [];
+    list.push(line);
+    byBrand.set(brand, list);
+  }
+  return [...byBrand.entries()]
+    .sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+    .map(([brand, items]) => {
+      const byType = new Map<string, AllocationHistoryGroup['lines']>();
+      for (const line of items) {
+        const type = variantTypeLabel(line.variantType);
+        const list = byType.get(type) ?? [];
+        list.push(line);
+        byType.set(type, list);
+      }
+      return {
+        brand,
+        types: [...byType.entries()]
+          .sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+          .map(([type, typeItems]) => ({
+            type,
+            items: [...typeItems].sort((a, b) =>
+              a.variantName.localeCompare(b.variantName, undefined, { sensitivity: 'base' })
+            ),
+          })),
+      };
+    });
+}
+
 export async function exportAllocationHistoryExcel(
   rows: AllocationHistoryGroup[],
   filenamePrefix: string
@@ -82,12 +114,30 @@ export async function exportAllocationHistoryExcel(
       emptyRow.getCell(1).value = 'No linked variant lines';
       emptyRow.getCell(1).font = { italic: true };
     } else {
-      group.lines.forEach((line) => {
-        const lineRow = worksheet.getRow(rowCursor++);
-        lineRow.getCell(1).value = line.brandName;
-        lineRow.getCell(2).value = line.variantName;
-        lineRow.getCell(3).value = variantTypeLabel(line.variantType);
-        lineRow.getCell(4).value = line.quantity;
+      groupLinesByBrandAndType(group.lines).forEach((brandGroup) => {
+        const brandCount = brandGroup.types.reduce((sum, typeGroup) => sum + typeGroup.items.length, 0);
+        const brandRow = worksheet.getRow(rowCursor++);
+        worksheet.mergeCells(`A${brandRow.number}:D${brandRow.number}`);
+        brandRow.getCell(1).value = `${brandGroup.brand} · ${brandCount} item${brandCount === 1 ? '' : 's'}`;
+        styleHeader(brandRow, 'FFF3F4F6');
+        brandRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
+
+        brandGroup.types.forEach((typeGroup) => {
+          const typeRow = worksheet.getRow(rowCursor++);
+          worksheet.mergeCells(`A${typeRow.number}:D${typeRow.number}`);
+          typeRow.getCell(1).value =
+            `    ${typeGroup.type} · ${typeGroup.items.length} item${typeGroup.items.length === 1 ? '' : 's'}`;
+          typeRow.getCell(1).font = { bold: true };
+          typeRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
+
+          typeGroup.items.forEach((line) => {
+            const lineRow = worksheet.getRow(rowCursor++);
+            lineRow.getCell(1).value = '';
+            lineRow.getCell(2).value = line.variantName;
+            lineRow.getCell(3).value = typeGroup.type;
+            lineRow.getCell(4).value = line.quantity;
+          });
+        });
       });
     }
 

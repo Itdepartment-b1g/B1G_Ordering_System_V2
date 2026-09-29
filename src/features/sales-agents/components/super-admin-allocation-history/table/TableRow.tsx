@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   ChevronDown,
@@ -44,7 +44,9 @@ export function formatManilaDateTime(iso: string): string {
 }
 
 export function allocationTypeLabel(type: AllocationHistoryGroup['allocationType']): string {
-  return type === 'leader_to_agent' ? 'Leader to Agent' : 'Main to Leader';
+  if (type === 'leader_to_agent') return 'Leader to Agent';
+  if (type === 'leader_to_leader') return 'TL to TL';
+  return 'Main to Leader';
 }
 
 function variantTypeLabel(type: string | null): string | null {
@@ -72,6 +74,38 @@ export function AllocationGroupRow({ group }: { group: AllocationHistoryGroup })
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const missingLines = group.lineCount === 0;
   const isExporting = isExportingExcel || isExportingPdf;
+  const linesByBrand = useMemo(() => {
+    const byBrand = new Map<string, typeof group.lines>();
+    for (const line of group.lines) {
+      const brand = line.brandName.trim() || 'Unbranded';
+      const list = byBrand.get(brand) ?? [];
+      list.push(line);
+      byBrand.set(brand, list);
+    }
+    return [...byBrand.entries()]
+      .sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+      .map(([brand, items]) => {
+        const byType = new Map<string, typeof group.lines>();
+        for (const line of items) {
+          const type = variantTypeLabel(line.variantType) || 'Other';
+          const list = byType.get(type) ?? [];
+          list.push(line);
+          byType.set(type, list);
+        }
+        return {
+          brand,
+          types: [...byType.entries()]
+            .sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+            .map(([type, typeItems]) => ({
+              type,
+              variantType: typeItems[0]?.variantType ?? null,
+              items: [...typeItems].sort((a, b) =>
+                a.variantName.localeCompare(b.variantName, undefined, { sensitivity: 'base' })
+              ),
+            })),
+        };
+      });
+  }, [group.lines]);
 
   const onExportExcel = async (e: Event) => {
     e.stopPropagation();
@@ -132,7 +166,21 @@ export function AllocationGroupRow({ group }: { group: AllocationHistoryGroup })
         <TableCell className="whitespace-nowrap text-sm">{formatManilaDateTime(group.createdAt)}</TableCell>
         <TableCell className="font-medium">{group.allocatedToName}</TableCell>
         <TableCell>
-          <Badge variant="secondary">{allocationTypeLabel(group.allocationType)}</Badge>
+          <div className="flex flex-col items-start gap-1">
+            <Badge
+              variant="secondary"
+              className={
+                group.allocationType === 'leader_to_leader'
+                  ? 'border-purple-200 bg-purple-100 text-purple-900 hover:bg-purple-100'
+                  : undefined
+              }
+            >
+              {allocationTypeLabel(group.allocationType)}
+            </Badge>
+            {group.requestNumber ? (
+              <span className="font-mono text-[11px] text-muted-foreground">{group.requestNumber}</span>
+            ) : null}
+          </div>
         </TableCell>
         <TableCell
           className={
@@ -216,33 +264,59 @@ export function AllocationGroupRow({ group }: { group: AllocationHistoryGroup })
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Brand</TableHead>
                       <TableHead>Variant</TableHead>
                       <TableHead className="text-right">Quantity</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {group.lines.map((line) => (
-                      <TableRow key={line.id}>
-                        <TableCell>{line.brandName}</TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <span>{line.variantName}</span>
-                            {variantTypeLabel(line.variantType) && (
-                              <Badge
-                                variant="outline"
-                                className={`text-[10px] ${variantTypeBadgeClass(line.variantType)}`}
-                              >
-                                {variantTypeLabel(line.variantType)}
-                              </Badge>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {line.quantity.toLocaleString()}
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {linesByBrand.map((brandGroup) => {
+                      const brandItemCount = brandGroup.types.reduce(
+                        (sum, typeGroup) => sum + typeGroup.items.length,
+                        0
+                      );
+                      return (
+                        <Fragment key={brandGroup.brand}>
+                          <TableRow className="bg-muted/50 hover:bg-muted/50">
+                            <TableCell colSpan={2} className="py-2">
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold">{brandGroup.brand}</span>
+                                <Badge variant="outline" className="text-[10px] font-normal">
+                                  {brandItemCount} item{brandItemCount === 1 ? '' : 's'}
+                                </Badge>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                          {brandGroup.types.map((typeGroup) => (
+                            <Fragment key={`${brandGroup.brand}-${typeGroup.type}`}>
+                              <TableRow className="hover:bg-transparent">
+                                <TableCell colSpan={2} className="py-1.5 pl-6">
+                                  <div className="flex items-center gap-2">
+                                    <Badge
+                                      variant="outline"
+                                      className={`text-[10px] ${variantTypeBadgeClass(typeGroup.variantType)}`}
+                                    >
+                                      {typeGroup.type}
+                                    </Badge>
+                                    <span className="text-[11px] text-muted-foreground">
+                                      {typeGroup.items.length} item
+                                      {typeGroup.items.length === 1 ? '' : 's'}
+                                    </span>
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                              {typeGroup.items.map((line) => (
+                                <TableRow key={line.id}>
+                                  <TableCell className="pl-10">{line.variantName}</TableCell>
+                                  <TableCell className="text-right tabular-nums">
+                                    {line.quantity.toLocaleString()}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </Fragment>
+                          ))}
+                        </Fragment>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>

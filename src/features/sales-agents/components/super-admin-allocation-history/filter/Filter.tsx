@@ -149,6 +149,7 @@ export function SuperAdminAllocationHistoryFilter({
           <SelectContent>
             <SelectItem value="main_to_leader">Main to Leader</SelectItem>
             <SelectItem value="leader_to_agent">Leader to Agent</SelectItem>
+            <SelectItem value="leader_to_leader">TL to TL</SelectItem>
           </SelectContent>
         </Select>
       )}

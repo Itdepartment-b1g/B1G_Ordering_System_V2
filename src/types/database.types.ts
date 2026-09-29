@@ -818,7 +818,8 @@ export interface AllocationHistory {
   allocated_to: string;
   allocated_by: string;
   brand_id: string | null;
-  allocation_type: "main_to_leader" | "leader_to_agent";
+  allocation_type: "main_to_leader" | "leader_to_agent" | "leader_to_leader";
+  tl_stock_request_id?: string | null;
   created_at: string;
 }
 

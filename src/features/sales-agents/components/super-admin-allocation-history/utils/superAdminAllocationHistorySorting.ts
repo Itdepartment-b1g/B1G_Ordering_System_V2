@@ -16,7 +16,9 @@ export const DEFAULT_SUPER_ADMIN_ALLOCATION_SORT_DIRECTION: SuperAdminAllocation
   'desc';
 
 function getFlowLabel(type: AllocationHistoryGroup['allocationType']): string {
-  return type === 'leader_to_agent' ? 'Leader to Agent' : 'Main to Leader';
+  if (type === 'leader_to_agent') return 'Leader to Agent';
+  if (type === 'leader_to_leader') return 'TL to TL';
+  return 'Main to Leader';
 }
 
 function getBrandSortLabel(group: AllocationHistoryGroup): string {
