@@ -1233,7 +1233,7 @@ export function KeyAccountPurchaseOrdersPage() {
   const visibleTabs = useMemo<Array<{ value: TabKey; label: string }>>(
     () => [
       { value: 'pending', label: 'Pending' },
-      { value: 'rebates', label: 'Rebate' },
+      // { value: 'rebates', label: 'Rebate' },
       { value: 'warehouse', label: 'Warehouse' },
       { value: 'done', label: 'Done' },
       ...(isDirector ? [{ value: 'my' as TabKey, label: 'My PO' }] : []),

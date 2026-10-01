@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ClipboardCheck, Loader2, Upload } from 'lucide-react';
+import { ClipboardCheck, Download, Loader2, Upload } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Button } from '@/components/ui/button';
@@ -166,6 +167,30 @@ function poBrandLabel(po: PreviewPo) {
     if (brand) return brand;
   }
   return 'Unknown brand';
+}
+
+function brandMatchKey(value: string) {
+  const key = value.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!key) return '';
+  if (key.includes('amz')) return 'amz';
+  if (key.includes('xslim') || key.includes('slimbar')) return 'xslimbar';
+  if (key.includes('ultralite') || (key.includes('ultra') && key.includes('lite'))) return 'ultralite';
+  if (key.includes('xforge') || key === 'forge') return 'xforge';
+  if (key.includes('chillax')) return 'chillax';
+  if (key.includes('onebar')) return 'onebar';
+  if (key.includes('aero')) return 'aero';
+  if (key.includes('relx') && key.includes('go')) return 'relxgo';
+  if (key.includes('relx') && key.includes('ultra') && key.includes('pro')) return 'relxultrapro';
+  return key;
+}
+
+function poVariantLabel(po: PreviewPo) {
+  const names = new Set<string>();
+  for (const item of po.items || []) {
+    const variant = String(item.excel_variant || item.variant || '').trim();
+    if (variant) names.add(variant);
+  }
+  return [...names].join(', ') || '—';
 }
 
 function paymentIsPaid(po: PreviewPo) {
@@ -397,7 +422,7 @@ export function KeyAccountSalesTrackerImportPage() {
   );
 
   const unmatchedProducts = useMemo(() => {
-    const map = new Map<string, { brand: string; variant: string; sheets: Set<string>; rfpf: Set<string> }>();
+    const map = new Map<string, { brand: string; variant: string; sheets: Set<string>; rfpf: Set<string>; orderedRfpf: Set<string>; quantity: number }>();
     for (const po of dryRun?.purchase_orders || []) {
       for (const item of po.items || []) {
         if (item.lookup_ok) continue;
@@ -406,9 +431,21 @@ export function KeyAccountSalesTrackerImportPage() {
         const key = productAliasKey(brand, variant);
         if (key === '||') continue;
         if (aliases.products[key]) continue;
-        const existing = map.get(key) || { brand, variant, sheets: new Set<string>(), rfpf: new Set<string>() };
+        const existing = map.get(key) || {
+          brand,
+          variant,
+          sheets: new Set<string>(),
+          rfpf: new Set<string>(),
+          orderedRfpf: new Set<string>(),
+          quantity: 0,
+        };
         if (item.sheet_name) existing.sheets.add(item.sheet_name);
         existing.rfpf.add(orderRfpfLabel(po));
+        const quantity = Number(item.quantity) || 0;
+        if (quantity > 0) {
+          existing.orderedRfpf.add(orderRfpfLabel(po));
+          existing.quantity += quantity;
+        }
         map.set(key, existing);
       }
     }
@@ -418,8 +455,26 @@ export function KeyAccountSalesTrackerImportPage() {
       variant: value.variant,
       sheets: [...value.sheets],
       rfpfCount: value.rfpf.size,
+      orderedRfpfCount: value.orderedRfpf.size,
+      quantity: value.quantity,
     }));
   }, [dryRun, aliases]);
+
+  const missingVariantsByBrand = useMemo(() => {
+    const map = new Map<string, typeof unmatchedProducts>();
+    for (const item of unmatchedProducts) {
+      const key = brandMatchKey(item.brand);
+      if (!key || !item.variant.trim()) continue;
+      if (!(item.quantity > 0) || item.orderedRfpfCount < 1) continue;
+      const list = map.get(key) || [];
+      list.push(item);
+      map.set(key, list);
+    }
+    for (const list of map.values()) {
+      list.sort((a, b) => a.variant.localeCompare(b.variant));
+    }
+    return map;
+  }, [unmatchedProducts]);
 
   const pendingMaster = dryRun?.pending_master || [];
 
@@ -504,6 +559,53 @@ export function KeyAccountSalesTrackerImportPage() {
     } finally {
       setBusy(null);
     }
+  };
+
+  const exportMissingBrands = (format: 'csv' | 'xlsx' | 'json') => {
+    if (!unmatchedProducts.length) return;
+    const rows = unmatchedProducts.map((item) => ({
+      brand: item.brand,
+      variant: item.variant,
+    }));
+    const today = new Date().toISOString().slice(0, 10);
+    const filename = `missing-brands_${today}.${format}`;
+    if (format === 'json') {
+      const blob = new Blob([JSON.stringify(rows, null, 2)], { type: 'application/json;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } else {
+      const sheetRows = rows.map((row) => ({
+        Brand: row.brand,
+        Variant: row.variant,
+      }));
+      const sheet = XLSX.utils.json_to_sheet(sheetRows);
+      if (format === 'csv') {
+        const csv = XLSX.utils.sheet_to_csv(sheet);
+        const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      } else {
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, sheet, 'Missing brands');
+        XLSX.writeFile(workbook, filename);
+      }
+    }
+    toast({
+      title: 'Exported',
+      description: `${unmatchedProducts.length} missing brand row(s) as ${format.toUpperCase()}.`,
+    });
   };
 
   const applyProductMaps = () => {
@@ -755,7 +857,7 @@ export function KeyAccountSalesTrackerImportPage() {
             <CardDescription>
               Nothing has been written. Import only uses the Can import tab.
               Has RFPF / No RFPF split orders by whether an RFPF number is present.
-              Paid / Unpaid (with variant) are ready-line reviews. Needs brand sheet groups RFPFs with no flavor breakdown so you can request that brand sheet from sales.
+              Paid / Unpaid (with variant) are ready-line reviews. Needs brand sheet groups RFPFs with no flavor breakdown and lists the missing variants for that brand so you can request the sheet from sales.
               Missing brands must be mapped to hub products before those RFPFs can import.
               {createMissing
                 ? ' Missing clients/shops/addresses will be created for ready POs.'
@@ -826,10 +928,26 @@ export function KeyAccountSalesTrackerImportPage() {
                   </p>
                 ) : (
                   <>
-                    <p className="text-sm text-muted-foreground">
-                      These Excel flavors were not found in the linked warehouse hub. Map them to an existing OMS brand + variant (or SKU), save, then dry-run again.
-                      Warehouse products are never auto-created here.
-                    </p>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <p className="text-sm text-muted-foreground">
+                        These Excel flavors were not found in the linked warehouse hub. Map them to an existing OMS brand + variant (or SKU), save, then dry-run again.
+                        Warehouse products are never auto-created here.
+                      </p>
+                      <div className="flex shrink-0 flex-wrap gap-2">
+                        <Button type="button" variant="outline" size="sm" onClick={() => exportMissingBrands('csv')}>
+                          <Download className="mr-2 h-4 w-4" />
+                          CSV
+                        </Button>
+                        <Button type="button" variant="outline" size="sm" onClick={() => exportMissingBrands('xlsx')}>
+                          <Download className="mr-2 h-4 w-4" />
+                          XLSX
+                        </Button>
+                        <Button type="button" variant="outline" size="sm" onClick={() => exportMissingBrands('json')}>
+                          <Download className="mr-2 h-4 w-4" />
+                          JSON
+                        </Button>
+                      </div>
+                    </div>
                     {unmatchedProducts.map((item) => (
                       <div key={item.key} className="grid gap-2 rounded-md border p-3 md:grid-cols-4">
                         <p className="text-sm md:col-span-4 font-medium">
@@ -907,7 +1025,7 @@ export function KeyAccountSalesTrackerImportPage() {
               </TabsContent>
               <TabsContent value="needs-sheet" className="space-y-4">
                 <p className="text-sm text-muted-foreground">
-                  RFPFs with no variant breakdown, grouped by brand (tracker PRODUCT). Ask sales for the flavor sheet for each brand below.
+                  RFPFs with no variant breakdown, grouped by brand (tracker PRODUCT). Missing variants are flavors for that brand that have an order and a quantity, and are not in the warehouse hub. Flavors with no order or no quantity are left off this tab.
                 </p>
                 {noVariantByBrand.length === 0 ? (
                   <p className="text-sm text-muted-foreground py-4">Every RFPF has at least one variant line.</p>
@@ -916,53 +1034,100 @@ export function KeyAccountSalesTrackerImportPage() {
                     <div className="rounded-md border bg-muted/30 p-3 text-sm">
                       <p className="font-medium mb-2">Brands to request from sales</p>
                       <ul className="list-disc space-y-1 pl-5">
-                        {noVariantByBrand.map((group) => (
-                          <li key={group.brand}>
-                            <span className="font-medium">{group.brand}</span>
-                            <span className="text-muted-foreground"> — {group.rfpfCount} RFPF(s)</span>
-                          </li>
-                        ))}
+                        {noVariantByBrand.map((group) => {
+                          const missingVariants = missingVariantsByBrand.get(brandMatchKey(group.brand)) || [];
+                          return (
+                            <li key={group.brand}>
+                              <span className="font-medium">{group.brand}</span>
+                              <span className="text-muted-foreground"> — {group.rfpfCount} RFPF(s)</span>
+                              {missingVariants.length ? (
+                                <span className="text-muted-foreground">
+                                  {' '}· missing variants: {missingVariants.map((item) => item.variant).join(', ')}
+                                </span>
+                              ) : null}
+                            </li>
+                          );
+                        })}
                       </ul>
                     </div>
                     <Accordion type="multiple" className="w-full">
-                      {noVariantByBrand.map((group) => (
-                        <AccordionItem key={group.brand} value={group.brand}>
-                          <AccordionTrigger className="hover:no-underline text-left">
-                            <div className="flex flex-1 items-center justify-between gap-3 pr-3">
-                              <span className="font-semibold tracking-wide">{group.brand}</span>
-                              <Badge variant="secondary">{group.rfpfCount} RFPF(s)</Badge>
-                            </div>
-                          </AccordionTrigger>
-                          <AccordionContent>
-                            <Table>
-                              <TableHeader>
-                                <TableRow>
-                                  <TableHead>RFPF</TableHead>
-                                  <TableHead>Date</TableHead>
-                                  <TableHead>Client</TableHead>
-                                  <TableHead>Shop</TableHead>
-                                  <TableHead>Payment</TableHead>
-                                  <TableHead>Issues</TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {group.orders.map((po) => (
-                                  <TableRow key={po.external_po_ref}>
-                                    <TableCell className="font-mono text-sm">{orderRfpfLabel(po)}</TableCell>
-                                    <TableCell className="text-sm">{formatDateDmy(po.order_date)}</TableCell>
-                                    <TableCell className="text-sm">{po.client}</TableCell>
-                                    <TableCell className="text-sm">{po.shop || '—'}</TableCell>
-                                    <TableCell><Badge variant="secondary">{po.payment_status}</Badge></TableCell>
-                                    <TableCell className="text-sm text-destructive max-w-xs">
-                                      {po.issues.length ? po.issues.slice(0, 2).join(' · ') : '—'}
-                                    </TableCell>
+                      {noVariantByBrand.map((group) => {
+                        const missingVariants = missingVariantsByBrand.get(brandMatchKey(group.brand)) || [];
+                        return (
+                          <AccordionItem key={group.brand} value={group.brand}>
+                            <AccordionTrigger className="hover:no-underline text-left">
+                              <div className="flex flex-1 items-center justify-between gap-3 pr-3">
+                                <span className="font-semibold tracking-wide">{group.brand}</span>
+                                <span className="flex flex-wrap items-center justify-end gap-2">
+                                  {missingVariants.length ? (
+                                    <Badge variant="outline">{missingVariants.length} missing variant{missingVariants.length === 1 ? '' : 's'}</Badge>
+                                  ) : null}
+                                  <Badge variant="secondary">{group.rfpfCount} RFPF(s)</Badge>
+                                </span>
+                              </div>
+                            </AccordionTrigger>
+                            <AccordionContent className="space-y-4">
+                              <div className="space-y-2">
+                                <p className="text-sm font-medium">Missing variants</p>
+                                {missingVariants.length === 0 ? (
+                                  <p className="text-sm text-muted-foreground">
+                                    No flavor name on file for this brand. These RFPFs only have the tracker product until a brand sheet line exists.
+                                  </p>
+                                ) : (
+                                  <Table>
+                                    <TableHeader>
+                                      <TableRow>
+                                        <TableHead>Variant</TableHead>
+                                        <TableHead>Sheet</TableHead>
+                                        <TableHead>RFPFs</TableHead>
+                                      </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                      {missingVariants.map((item) => (
+                                        <TableRow key={item.key}>
+                                          <TableCell className="text-sm font-medium">{item.variant}</TableCell>
+                                          <TableCell className="text-sm text-muted-foreground">
+                                            {item.sheets.length ? item.sheets.join(', ') : '—'}
+                                          </TableCell>
+                                          <TableCell className="text-sm tabular-nums">{item.orderedRfpfCount}</TableCell>
+                                        </TableRow>
+                                      ))}
+                                    </TableBody>
+                                  </Table>
+                                )}
+                              </div>
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead>RFPF</TableHead>
+                                    <TableHead>Date</TableHead>
+                                    <TableHead>Client</TableHead>
+                                    <TableHead>Shop</TableHead>
+                                    <TableHead>Variant</TableHead>
+                                    <TableHead>Payment</TableHead>
+                                    <TableHead>Issues</TableHead>
                                   </TableRow>
-                                ))}
-                              </TableBody>
-                            </Table>
-                          </AccordionContent>
-                        </AccordionItem>
-                      ))}
+                                </TableHeader>
+                                <TableBody>
+                                  {group.orders.map((po) => (
+                                    <TableRow key={po.external_po_ref}>
+                                      <TableCell className="font-mono text-sm">{orderRfpfLabel(po)}</TableCell>
+                                      <TableCell className="text-sm">{formatDateDmy(po.order_date)}</TableCell>
+                                      <TableCell className="text-sm">{po.client}</TableCell>
+                                      <TableCell className="text-sm">{po.shop || '—'}</TableCell>
+                                      <TableCell className="text-sm">{poVariantLabel(po)}</TableCell>
+                                      <TableCell><Badge variant="secondary">{po.payment_status}</Badge></TableCell>
+                                      <TableCell className="text-sm text-destructive max-w-xs">
+                                        {po.issues.length ? po.issues.slice(0, 2).join(' · ') : '—'}
+                                      </TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </AccordionContent>
+                          </AccordionItem>
+                        );
+                      })}
                     </Accordion>
                   </>
                 )}

@@ -12,7 +12,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
-import { parseKeyAccountSalesOrderExcel, displayRfpfCode, type SalesOrderParseResult } from '@/features/key-accounts/utils/parseKeyAccountSalesOrderExcel';
+import {
+  parseKeyAccountSalesOrderExcel,
+  displayRfpfCode,
+  type SalesOrderAmountMismatch,
+  type SalesOrderParseResult,
+} from '@/features/key-accounts/utils/parseKeyAccountSalesOrderExcel';
 import { applySalesRecordAliases, productAliasKey } from '@/features/key-accounts/utils/unpivotClientSalesRecord';
 import {
   SALES_RECORD_IMPORT_PO_CHUNK,
@@ -282,9 +287,30 @@ export function KeyAccountSalesOrderImportPage() {
     return map;
   }, [rows]);
 
+  const amountMismatchByRef = useMemo(() => {
+    const map = new Map<string, SalesOrderAmountMismatch>();
+    for (const item of parsed?.amount_mismatches || []) {
+      map.set(item.external_po_ref, item);
+    }
+    return map;
+  }, [parsed]);
+
+  const amountMismatchList = useMemo(
+    () => parsed?.amount_mismatches || [],
+    [parsed]
+  );
+
+  const noBrandSheetList = useMemo(
+    () => parsed?.no_brand_sheet || [],
+    [parsed]
+  );
+
   const readyPos = useMemo(
-    () => dryRun?.purchase_orders.filter((po) => po.would_insert) || [],
-    [dryRun]
+    () =>
+      dryRun?.purchase_orders.filter(
+        (po) => po.would_insert && !amountMismatchByRef.has(po.external_po_ref)
+      ) || [],
+    [dryRun, amountMismatchByRef]
   );
   const blockedPos = useMemo(
     () => dryRun?.purchase_orders.filter((po) => !po.would_insert) || [],
@@ -297,18 +323,22 @@ export function KeyAccountSalesOrderImportPage() {
   );
 
   const unmatchedProducts = useMemo(() => {
-    const map = new Map<string, { brand: string; variant: string }>();
-    for (const po of blockedPos) {
+    const map = new Map<string, { brand: string; variant: string; orders: string[] }>();
+    for (const po of dryRun?.purchase_orders || []) {
       for (const item of po.items || []) {
         if (item.lookup_ok) continue;
         const brand = item.excel_brand || item.brand;
         const variant = item.excel_variant || item.variant;
         const key = productAliasKey(brand, variant);
-        if (key !== '||' && !aliases.products[key]) map.set(key, { brand, variant });
+        if (key === '||' || aliases.products[key]) continue;
+        const prev = map.get(key) || { brand, variant, orders: [] };
+        const label = orderRfpfLabel(po);
+        if (!prev.orders.includes(label)) prev.orders.push(label);
+        map.set(key, prev);
       }
     }
     return [...map.entries()];
-  }, [blockedPos, aliases]);
+  }, [dryRun, aliases]);
 
   useEffect(() => {
     void supabase
@@ -351,7 +381,7 @@ export function KeyAccountSalesOrderImportPage() {
       ).size;
       toast({
         title: 'File loaded',
-        description: `${next.rows.length} line(s), ${orders} order(s), ${withRfpf} with RFPF. Tracker used for RFPF match only.`,
+        description: `${next.rows.length} line(s), ${orders} order(s), ${withRfpf} with RFPF, ${next.amount_mismatches.length} amount mismatch(es), ${next.no_brand_sheet.length} tracker-only.`,
       });
     } catch (error) {
       setParsed(null);
@@ -381,10 +411,17 @@ export function KeyAccountSalesOrderImportPage() {
         return { ...po, rfpf_number: rfpf || null };
       });
       setDryRun({ ...result, purchase_orders: purchaseOrders });
-      const ready = purchaseOrders.filter((po) => po.would_insert).length;
+      const amountBlocked = purchaseOrders.filter(
+        (po) => po.would_insert && amountMismatchByRef.has(po.external_po_ref)
+      ).length;
+      const ready = purchaseOrders.filter(
+        (po) => po.would_insert && !amountMismatchByRef.has(po.external_po_ref)
+      ).length;
       toast({
-        title: result.blocking_pos ? 'Dry-run found issues' : 'Dry-run passed',
-        description: `${ready} can push, ${result.blocking_pos} cannot. Nothing was inserted.`,
+        title: result.blocking_pos || amountBlocked || amountMismatchList.length || noBrandSheetList.length
+          ? 'Dry-run found issues'
+          : 'Dry-run passed',
+        description: `${ready} can push · ${result.blocking_pos} cannot · ${amountMismatchList.length} amount mismatch(es) · ${noBrandSheetList.length} no brand sheet. Nothing was inserted.`,
       });
       setSoftChecked(true);
       window.setTimeout(() => {
@@ -458,9 +495,9 @@ export function KeyAccountSalesOrderImportPage() {
       <div>
         <h1 className="text-2xl font-semibold">Sales order import</h1>
         <p className="text-sm text-muted-foreground mt-1 max-w-3xl">
-          Upload the Key Account Sales Order workbook. Each product-sheet row becomes one purchase order.
-          Flavor and device columns become lines. The sales tracker is skipped.
-          Clients, shops, and hub products that are not already in OMS stay on Cannot push. Nothing is created for them.
+          Upload the Key Account Sales Order workbook. Any brand sheet is imported (not only AMZ / Slimbar / Ultralite).
+          Flavor and device columns become lines. Tracker TOTAL AMT must equal the brand-sheet TOTAL AMOUNT.
+          Clients, shops, and hub products that are not already in OMS stay blocked. Nothing is created for them.
         </p>
       </div>
 
@@ -468,7 +505,9 @@ export function KeyAccountSalesOrderImportPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base">1. Upload workbook</CardTitle>
-            <CardDescription>AMZ, Xslimbar, and Ultralite sheets. Identity is date, agent, shop owner, and vape shop.</CardDescription>
+            <CardDescription>
+              Any brand / variant sheet plus B1G Sales Tracker. New brand tabs are picked up automatically from the sheet name.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <input
@@ -497,7 +536,7 @@ export function KeyAccountSalesOrderImportPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base">2. Dry-run</CardTitle>
-            <CardDescription>Checks existing clients, shops, addresses, KAMs, and hub variants. Nothing is written.</CardDescription>
+            <CardDescription>Checks existing clients, shops, addresses, KAMs, hub variants, and tracker vs sheet TOTAL AMT. Nothing is written.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <Button onClick={() => void runDryRun()} disabled={!rows.length || !!busy}>
@@ -506,7 +545,7 @@ export function KeyAccountSalesOrderImportPage() {
             </Button>
             {dryRun ? (
               <p className="text-sm text-muted-foreground">
-                {readyPos.length} can push · {blockedPos.length} cannot
+                {readyPos.length} can push · {blockedPos.length} cannot · {amountMismatchList.length} amount mismatch · {noBrandSheetList.length} no brand sheet · {unmatchedProducts.length} missing in warehouse
               </p>
             ) : null}
           </CardContent>
@@ -565,7 +604,10 @@ export function KeyAccountSalesOrderImportPage() {
         <Card>
           <CardHeader>
             <CardTitle>Map missing brands / variants</CardTitle>
-            <CardDescription>These flavors were not found in the linked warehouse hub. Map them to an existing OMS brand and variant.</CardDescription>
+            <CardDescription>
+              These flavors were not found in the linked warehouse hub. Map them to an existing OMS brand and variant.
+              Soft Check also lists them under Missing in warehouse.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             {unmatchedProducts.map(([key, item]) => (
@@ -610,25 +652,179 @@ export function KeyAccountSalesOrderImportPage() {
               Soft check
             </CardTitle>
             <CardDescription>
-              Can push only when the client, shop, address, KAM, and every line already exist. Cannot push is left out of the import.
+              Can push only when client, shop, address, KAM, and every line already exist, and Sales Tracker amount matches Brand sheet amount
+              (exact RFPF). Amount mismatch, no brand sheet, and missing warehouse products are hard-blocked from import.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Tabs defaultValue={blockedPos.length ? 'blocked' : 'ready'}>
-              <TabsList>
+            <Tabs
+              defaultValue={
+                amountMismatchList.length
+                  ? 'amount'
+                  : noBrandSheetList.length
+                    ? 'no-brand'
+                    : unmatchedProducts.length
+                      ? 'warehouse'
+                      : blockedPos.length
+                        ? 'blocked'
+                        : 'ready'
+              }
+            >
+              <TabsList className="flex h-auto flex-wrap gap-1">
                 <TabsTrigger value="ready">Can push ({readyPos.length})</TabsTrigger>
+                <TabsTrigger value="amount">Amount mismatch ({amountMismatchList.length})</TabsTrigger>
+                <TabsTrigger value="no-brand">No brand sheet ({noBrandSheetList.length})</TabsTrigger>
+                <TabsTrigger value="warehouse">Missing in warehouse ({unmatchedProducts.length})</TabsTrigger>
                 <TabsTrigger value="blocked">Cannot push ({blockedPos.length})</TabsTrigger>
               </TabsList>
+
               <TabsContent value="ready" className="space-y-2">
                 <SoftCheckOrderList
                   orders={readyPos}
                   emptyLabel="No orders can be pushed yet."
                 />
               </TabsContent>
+
+              <TabsContent value="amount" className="space-y-2">
+                {!amountMismatchList.length ? (
+                  <p className="text-sm text-muted-foreground py-4">
+                    Sales Tracker amount matches Brand sheet amount for every exact RFPF match.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                      Same order on Sales Tracker and brand sheet (RFPF/SI + date + agent + client + brand),
+                      but Sales Tracker amount ≠ Brand sheet amount.
+                    </p>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>RFPF</TableHead>
+                          <TableHead>Date</TableHead>
+                          <TableHead>Client / Shop</TableHead>
+                          <TableHead>Brand</TableHead>
+                          <TableHead className="text-right">Sales Tracker amount</TableHead>
+                          <TableHead className="text-right">Brand sheet amount</TableHead>
+                          <TableHead className="text-right">Difference</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {amountMismatchList.map((item) => (
+                          <TableRow key={item.external_po_ref}>
+                            <TableCell className="text-sm">
+                              {`RFPF (${displayRfpfCode(item.rfpf_number) || 'NO RFPF'})`}
+                            </TableCell>
+                            <TableCell>{formatDateDmy(item.order_date)}</TableCell>
+                            <TableCell>
+                              <div className="min-w-0">
+                                <p className="font-medium">{item.client || '—'}</p>
+                                <p className="text-xs text-muted-foreground truncate">{item.shop || '—'}</p>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="min-w-0">
+                                <p>{item.brand}</p>
+                                <p className="text-xs text-muted-foreground">{item.sheet_name}</p>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">{peso(item.tracker_total_amt)}</TableCell>
+                            <TableCell className="text-right tabular-nums">{peso(item.sheet_total_amount)}</TableCell>
+                            <TableCell className="text-right tabular-nums text-destructive">
+                              {peso(item.difference)}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="no-brand" className="space-y-2">
+                {!noBrandSheetList.length ? (
+                  <p className="text-sm text-muted-foreground py-4">
+                    Every Sales Tracker RFPF has a brand / variant sheet breakdown.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                      These Sales Tracker rows have no brand / variant sheet match
+                      (RFPF/SI + date + agent + client + brand). Not amount-compared; will not import until a flavor breakdown exists.
+                    </p>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>RFPF</TableHead>
+                          <TableHead>Date</TableHead>
+                          <TableHead>Client / Shop</TableHead>
+                          <TableHead>Product</TableHead>
+                          <TableHead className="text-right">Sales Tracker amount</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {noBrandSheetList.map((item, index) => (
+                          <TableRow key={`${item.rfpf_number}-${item.product}-${item.order_date}-${index}`}>
+                            <TableCell className="text-sm">
+                              {`RFPF (${displayRfpfCode(item.rfpf_number) || 'NO RFPF'})`}
+                            </TableCell>
+                            <TableCell>{formatDateDmy(item.order_date)}</TableCell>
+                            <TableCell>
+                              <div className="min-w-0">
+                                <p className="font-medium">{item.client || '—'}</p>
+                                <p className="text-xs text-muted-foreground truncate">{item.shop || '—'}</p>
+                              </div>
+                            </TableCell>
+                            <TableCell>{item.product || '—'}</TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {item.tracker_total_amt != null ? peso(item.tracker_total_amt) : '—'}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="warehouse" className="space-y-2">
+                {!unmatchedProducts.length ? (
+                  <p className="text-sm text-muted-foreground py-4">
+                    Every brand / variant on these orders exists in the linked warehouse hub (or is mapped).
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                      These Excel brands / variants are not in the warehouse hub. Map them above, then dry-run again. They will not import until matched.
+                    </p>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Excel brand</TableHead>
+                          <TableHead>Excel variant</TableHead>
+                          <TableHead>Affected orders</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {unmatchedProducts.map(([key, item]) => (
+                          <TableRow key={key}>
+                            <TableCell className="font-medium">{item.brand || '—'}</TableCell>
+                            <TableCell>{item.variant || '—'}</TableCell>
+                            <TableCell className="text-sm text-muted-foreground">
+                              {item.orders.slice(0, 6).join(' · ')}
+                              {item.orders.length > 6 ? ` · +${item.orders.length - 6} more` : ''}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </TabsContent>
+
               <TabsContent value="blocked" className="space-y-2">
                 <SoftCheckOrderList
                   orders={blockedPos}
-                  emptyLabel="Every order can be pushed."
+                  emptyLabel="Every order can be pushed (aside from amount / warehouse / no-brand tabs)."
                   showIssues
                 />
               </TabsContent>
