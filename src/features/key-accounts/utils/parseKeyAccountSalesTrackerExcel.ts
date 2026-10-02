@@ -62,18 +62,22 @@ const IDENTITY: Record<string, string> = {
   dateofpayment: 'payment_date',
   modeofpayment: 'payment_method',
   product: 'product',
+  // Order-level money. Not a per-flavor amount.
+  totalamount: 'sheet_total_amount',
+  totalamt: 'sheet_total_amount',
 };
 
-const MARKER: Record<string, 'total_qty' | 'price' | 'amount'> = {
+const MARKER: Record<string, 'total_qty' | 'price' | 'amount' | 'total'> = {
   totalqty: 'total_qty',
   totalpods: 'total_qty',
   totaldevice: 'total_qty',
+  totalquantity: 'total_qty',
+  totalqtydevice: 'total_qty',
   price: 'price',
   amount: 'amount',
   amt: 'amount',
-  totalamt: 'amount',
-  total: 'amount',
-  totalamount: 'amount',
+  // Bare TOTAL is qty or money depending on the columns beside it.
+  total: 'total',
 };
 
 const IGNORE = new Set([
@@ -102,7 +106,7 @@ type Col = {
   header: string;
   role: 'identity' | 'flavor' | 'marker' | 'ignore';
   field?: string;
-  marker?: 'total_qty' | 'price' | 'amount';
+  marker?: 'total_qty' | 'price' | 'amount' | 'total';
 };
 
 type QtyGroup = {
@@ -189,7 +193,7 @@ function classify(header: string): Pick<Col, 'role' | 'field' | 'marker'> {
   if (field) return { role: 'identity', field };
   const marker = MARKER[key];
   if (marker) return { role: 'marker', marker };
-  // Keep TOTAL QTY / TOTAL AMOUNT as markers above; ignore other TOTAL* summary cols.
+  // TOTAL AMOUNT / TOTAL QTY are handled above. Ignore other TOTAL* summary cols.
   if (key.startsWith('total')) return { role: 'ignore' };
   return { role: 'flavor' };
 }
@@ -303,6 +307,26 @@ function unitPriceFromAmountFormula(
   return fromAmount;
 }
 
+function roundMoney(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+/** Split an Excel amount across flavor quantities. The last flavor absorbs rounding. */
+function splitMoney(qtys: number[], amount: number): number[] {
+  const positive = qtys.map((qty) => (qty > 0 ? qty : 0));
+  const sum = positive.reduce((total, qty) => total + qty, 0);
+  if (!(sum > 0) || !(amount > 0)) return positive.map(() => 0);
+  let used = 0;
+  return positive.map((qty, index) => {
+    if (!(qty > 0)) return 0;
+    const later = positive.slice(index + 1).some((next) => next > 0);
+    if (!later) return roundMoney(amount - used);
+    const share = roundMoney((amount * qty) / sum);
+    used = roundMoney(used + share);
+    return share;
+  });
+}
+
 function buildGroups(columns: Col[]): QtyGroup[] {
   const groups: QtyGroup[] = [];
   let current: QtyGroup = { flavors: [] };
@@ -321,6 +345,15 @@ function buildGroups(columns: Col[]): QtyGroup[] {
       else if (col.marker === 'amount') {
         current.amountCol = col.index;
         close();
+      } else if (col.marker === 'total') {
+        // ULTRALITE / ONE BAR: TOTAL after flavors is the piece count, and AMOUNT or
+        // TOTAL AMOUNT is the money. X-FORGE / AMZ: TOTAL after TOTAL QTY or PRICE is the money.
+        if (current.priceCol == null && current.totalQtyCol == null && current.amountCol == null) {
+          current.totalQtyCol = col.index;
+        } else {
+          current.amountCol = col.index;
+          close();
+        }
       }
       continue;
     }
@@ -444,9 +477,9 @@ function brandSheetLines(name: string, matrix: unknown[][]): BrandLine[] {
     const warehouse = String(cellAt(cells, columns, 'warehouse_location_name') || '').trim();
     const paymentDate = parseDate(cellAt(cells, columns, 'payment_date'));
     const sourceKey = `${name}|${i + 1}`;
-    let pushed = 0;
-
-    for (const group of groups) {
+    const sheetTotalRaw = parseNumber(cellAt(cells, columns, 'sheet_total_amount'));
+    const sheetTotal = sheetTotalRaw != null && sheetTotalRaw > 0 ? sheetTotalRaw : undefined;
+    const prepared = groups.map((group) => {
       const listed = group.priceCol != null ? parseNumber(cells[group.priceCol]) : undefined;
       const amount = group.amountCol != null ? parseNumber(cells[group.amountCol]) : undefined;
       const totalQty = group.totalQtyCol != null ? parseNumber(cells[group.totalQtyCol]) : undefined;
@@ -455,20 +488,53 @@ function brandSheetLines(name: string, matrix: unknown[][]): BrandLine[] {
         qty: parseNumber(cells[flavor.index]) || 0,
       }));
       const flavorSum = flavorQty.reduce((sum, item) => sum + (item.qty > 0 ? item.qty : 0), 0);
-      const fromAmountFormula = unitPriceFromAmountFormula(listed, amount, flavorSum, totalQty);
-      const unit =
-        fromAmountFormula != null
-          ? fromAmountFormula
-          : listed != null && listed > 0
-            ? listed
-            : amount != null && flavorSum > 0
-              ? amount / flavorSum
-              : amount != null && totalQty && totalQty > 0
-                ? amount / totalQty
-                : 0;
+      const ownAmount = amount != null && amount > 0 ? amount : undefined;
+      const realPrice = listed != null && listed > 1 ? listed : undefined;
+      return { listed, amount, totalQty, flavorQty, flavorSum, ownAmount, realPrice };
+    });
+    const coveredAmount = prepared.reduce((sum, group) => sum + (group.ownAmount || 0), 0);
+    const uncoveredQty = prepared.reduce(
+      (sum, group) => sum + (!group.ownAmount && !group.realPrice ? group.flavorSum : 0),
+      0
+    );
+    const leftover =
+      sheetTotal != null ? Math.max(0, roundMoney(sheetTotal - coveredAmount)) : 0;
+    let pushed = 0;
 
-      for (const item of flavorQty) {
-        if (!(item.qty > 0)) continue;
+    for (const group of prepared) {
+      const sharedAmount =
+        !group.ownAmount && !group.realPrice && uncoveredQty > 0 && leftover > 0
+          ? leftover * (group.flavorSum / uncoveredQty)
+          : undefined;
+      const pool = group.ownAmount ?? sharedAmount;
+      const fromAmountFormula = unitPriceFromAmountFormula(
+        group.listed,
+        pool ?? group.amount,
+        group.flavorSum,
+        group.totalQty
+      );
+      const unit =
+        pool != null && group.flavorSum > 0
+          ? pool / group.flavorSum
+          : fromAmountFormula != null
+            ? fromAmountFormula
+            : group.realPrice != null
+              ? group.realPrice
+              : group.listed != null && group.listed > 0
+                ? group.listed
+                : 0;
+      const positive = group.flavorQty.filter((item) => item.qty > 0);
+      const shares =
+        pool != null && group.flavorSum > 0
+          ? splitMoney(
+              positive.map((item) => item.qty),
+              pool
+            )
+          : positive.map((item) => roundMoney(item.qty * unit));
+
+      positive.forEach((item, index) => {
+        const lineTotal = shares[index] ?? roundMoney(item.qty * unit);
+        const unitPrice = item.qty > 0 ? roundMoney(lineTotal / item.qty) : roundMoney(unit);
         rows.push({
           excel_row: i + 1,
           sheet_name: name,
@@ -487,8 +553,8 @@ function brandSheetLines(name: string, matrix: unknown[][]): BrandLine[] {
           brand_name: brand,
           variant_name: item.flavor.name,
           quantity: item.qty,
-          unit_price: Math.round(unit * 100) / 100,
-          line_total: Math.round(item.qty * unit * 100) / 100,
+          unit_price: unitPrice,
+          line_total: lineTotal,
           agent_name: agent || undefined,
           notes: notes || undefined,
           inventory_kind: parseKind(cellAt(cells, columns, 'inventory_kind')),
@@ -499,6 +565,19 @@ function brandSheetLines(name: string, matrix: unknown[][]): BrandLine[] {
           proof_url: proofText(cellAt(cells, columns, 'proof_url')) || undefined,
         });
         pushed += 1;
+      });
+    }
+
+    if (pushed > 0 && sheetTotal != null) {
+      const start = rows.length - pushed;
+      const sum = rows.slice(start).reduce((total, line) => total + (Number(line.line_total) || 0), 0);
+      const diff = roundMoney(sheetTotal - sum);
+      if (Math.abs(diff) >= 0.01 && Math.abs(diff) <= 1) {
+        const last = rows[rows.length - 1];
+        const lineTotal = roundMoney((Number(last.line_total) || 0) + diff);
+        const qty = Number(last.quantity) || 0;
+        last.line_total = lineTotal;
+        last.unit_price = qty > 0 ? roundMoney(lineTotal / qty) : last.unit_price;
       }
     }
 
