@@ -454,6 +454,106 @@ function ImportResultTable({
   );
 }
 
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function failedImportPayload(orders: PreviewPo[]) {
+  return {
+    exported_at: new Date().toISOString(),
+    failed_count: orders.length,
+    orders: orders.map((po) => {
+      const error = po.issues.find((issue) => !issue.startsWith('Next step:')) || 'Failed to save';
+      const nextStep = po.issues.find((issue) => issue.startsWith('Next step:')) || '';
+      return {
+        rfpf: orderRfpfLabel(po),
+        order_date: po.order_date || '',
+        client: po.client || '',
+        shop: po.shop || '',
+        payment_status: po.payment_status || '',
+        order_kind: po.po_order_kind || '',
+        line_count: po.line_count,
+        total_amount: po.total_amount,
+        payment_amount: po.payment_amount,
+        error,
+        next_step: nextStep,
+        lines: (po.items || []).map((item) => ({
+          brand: item.excel_brand || item.brand || '',
+          variant: item.excel_variant || item.variant || '',
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          amount: itemAmount(item),
+          matched: item.lookup_ok,
+        })),
+      };
+    }),
+  };
+}
+
+function failedImportSheetRows(orders: PreviewPo[]) {
+  const payload = failedImportPayload(orders);
+  const rows: Record<string, string | number | boolean>[] = [];
+  for (const order of payload.orders) {
+    const header = {
+      RFPF: order.rfpf,
+      Date: order.order_date,
+      Client: order.client,
+      Shop: order.shop,
+      'Payment status': order.payment_status,
+      'Order kind': order.order_kind,
+      'Line count': order.line_count,
+      'Order total': order.total_amount,
+      'Total paid': order.payment_amount,
+      Error: order.error,
+      'Next step': order.next_step,
+    };
+    if (!order.lines.length) {
+      rows.push({ ...header, Brand: '', Variant: '', Qty: '', 'Unit price': '', Amount: '', Matched: '' });
+      continue;
+    }
+    for (const line of order.lines) {
+      rows.push({
+        ...header,
+        Brand: line.brand,
+        Variant: line.variant,
+        Qty: line.quantity,
+        'Unit price': line.unit_price,
+        Amount: line.amount,
+        Matched: line.matched ? 'Matched' : 'Not matched',
+      });
+    }
+  }
+  return rows;
+}
+
+function exportFailedImports(orders: PreviewPo[], format: 'csv' | 'xlsx' | 'json') {
+  if (!orders.length) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const filename = `sales-tracker-failed-import_${today}.${format}`;
+  if (format === 'json') {
+    downloadBlob(
+      new Blob([JSON.stringify(failedImportPayload(orders), null, 2)], { type: 'application/json;charset=utf-8;' }),
+      filename
+    );
+    return;
+  }
+  const sheet = XLSX.utils.json_to_sheet(failedImportSheetRows(orders));
+  if (format === 'csv') {
+    downloadBlob(new Blob(['\uFEFF' + XLSX.utils.sheet_to_csv(sheet)], { type: 'text/csv;charset=utf-8;' }), filename);
+    return;
+  }
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Failed to import');
+  XLSX.writeFile(workbook, filename);
+}
+
 function ImportResultCard({
   imported,
   failed,
@@ -490,9 +590,26 @@ function ImportResultCard({
           </TabsContent>
           <TabsContent value="failed" className="space-y-2">
             {failed.length ? (
-              <p className="text-sm text-muted-foreground">
-                Open an RFPF to see why it did not save, what to change, and the brand and variant on that order.
-              </p>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <p className="text-sm text-muted-foreground">
+                  Open an RFPF to see why it did not save, what to change, and the brand and variant on that order.
+                  Export keeps the error, the order total, the payment, and each variant line.
+                </p>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={() => exportFailedImports(failedOrders, 'csv')}>
+                    <Download className="mr-2 h-4 w-4" />
+                    CSV
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" onClick={() => exportFailedImports(failedOrders, 'xlsx')}>
+                    <Download className="mr-2 h-4 w-4" />
+                    XLSX
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" onClick={() => exportFailedImports(failedOrders, 'json')}>
+                    <Download className="mr-2 h-4 w-4" />
+                    JSON
+                  </Button>
+                </div>
+              </div>
             ) : null}
             <SoftCheckOrderList
               orders={failedOrders}

@@ -82,7 +82,8 @@ const MARKER: Record<string, 'total_qty' | 'price' | 'amount' | 'total'> = {
 
 const IGNORE = new Set([
   'pods',
-  'device',
+  // DEVICE on a brand sheet is a quantity column (ONE BAR: 20 devices, AMOUNT beside it).
+  // The tracker summary column of the same name is not parsed here.
   'year',
   'month',
   'week',
