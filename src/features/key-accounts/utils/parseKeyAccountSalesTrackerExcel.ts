@@ -283,6 +283,26 @@ function proofText(value: unknown): string {
     .join('\n');
 }
 
+/**
+ * ONE BAR-style brand sheets store the real unit cost inside the amount formula
+ * (qty × 205 → ₱92,250). The Price column on those sheets is a placeholder of 1.
+ * Other workbooks keep their own price column, so this returns nothing unless
+ * Price is missing or 1 and amount ÷ qty is a real unit cost.
+ */
+function unitPriceFromAmountFormula(
+  listed: number | undefined,
+  amount: number | undefined,
+  flavorSum: number,
+  totalQty: number | undefined
+): number | undefined {
+  const qty = flavorSum > 0 ? flavorSum : totalQty && totalQty > 0 ? totalQty : 0;
+  if (amount == null || amount <= 0 || qty <= 0) return undefined;
+  const fromAmount = Math.round((amount / qty) * 100) / 100;
+  if (!(fromAmount > 1)) return undefined;
+  if (listed != null && listed > 1) return undefined;
+  return fromAmount;
+}
+
 function buildGroups(columns: Col[]): QtyGroup[] {
   const groups: QtyGroup[] = [];
   let current: QtyGroup = { flavors: [] };
@@ -435,14 +455,17 @@ function brandSheetLines(name: string, matrix: unknown[][]): BrandLine[] {
         qty: parseNumber(cells[flavor.index]) || 0,
       }));
       const flavorSum = flavorQty.reduce((sum, item) => sum + (item.qty > 0 ? item.qty : 0), 0);
+      const fromAmountFormula = unitPriceFromAmountFormula(listed, amount, flavorSum, totalQty);
       const unit =
-        listed != null && listed > 0
-          ? listed
-          : amount != null && flavorSum > 0
-            ? amount / flavorSum
-            : amount != null && totalQty && totalQty > 0
-              ? amount / totalQty
-              : 0;
+        fromAmountFormula != null
+          ? fromAmountFormula
+          : listed != null && listed > 0
+            ? listed
+            : amount != null && flavorSum > 0
+              ? amount / flavorSum
+              : amount != null && totalQty && totalQty > 0
+                ? amount / totalQty
+                : 0;
 
       for (const item of flavorQty) {
         if (!(item.qty > 0)) continue;

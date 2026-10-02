@@ -88,7 +88,22 @@ type ImportPoResult = {
   ok: boolean;
   po_number?: string;
   issues?: string[];
+  already_imported?: boolean;
 };
+
+function isAlreadyImportedPo(po: PreviewPo) {
+  return po.issues.some((issue) => issue.startsWith('already in OMS'));
+}
+
+function isAlreadyImportedResult(row: ImportPoResult) {
+  return row.already_imported === true
+    || (row.issues || []).some((issue) => issue.startsWith('already imported') || issue.startsWith('already in OMS'));
+}
+
+function existingPoLabel(po: PreviewPo) {
+  const issue = po.issues.find((item) => item.startsWith('already in OMS')) || '';
+  return issue.replace(/^already in OMS:\s*/, '').trim();
+}
 
 function peso(value: number) {
   return `₱${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
@@ -202,6 +217,52 @@ function paymentIsUnpaid(po: PreviewPo) {
   return status === 'unpaid' || status === 'partial' || status.includes('balance');
 }
 
+function nextStepForSaveError(message: string, po?: PreviewPo) {
+  const text = message.toLowerCase();
+  if (text.includes('exceeds remaining balance') || (text.includes('payment') && text.includes('exceed'))) {
+    const paid = po ? peso(po.payment_amount) : 'the payment';
+    const total = po ? peso(po.total_amount) : 'the order total';
+    return `Next step: payment ${paid} is higher than the order total ${total}. Lower the Excel payment, or correct the flavor quantities and amounts below, then import this RFPF again.`;
+  }
+  if (text.includes('not allowed to record payment')) {
+    return 'Next step: sign in as Sales Admin or Sales Head for this company, then import this RFPF again.';
+  }
+  if (text.includes('timeout')) {
+    return 'Next step: import this RFPF again. The database stopped the save because it took too long.';
+  }
+  if (text.includes('duplicate') || text.includes('unique') || text.includes('already')) {
+    return 'Next step: this RFPF is already stored, or it duplicates a PO number. Check Already imported before importing it again.';
+  }
+  return 'Next step: fix the problem named above on this RFPF, then import it again. Orders that already saved stay skipped.';
+}
+
+function failedImportOrders(failed: ImportPoResult[], catalog: PreviewPo[]): PreviewPo[] {
+  const byRef = new Map(catalog.map((po) => [po.external_po_ref, po]));
+  return failed.map((row) => {
+    const source = byRef.get(row.external_po_ref);
+    const message = row.issues?.filter(Boolean).join(' · ') || 'Failed to save';
+    const base: PreviewPo = source || {
+      external_po_ref: row.external_po_ref,
+      would_insert: false,
+      order_date: '',
+      client: '',
+      shop: '',
+      kam: '',
+      line_count: 0,
+      total_amount: 0,
+      payment_amount: 0,
+      payment_status: '',
+      issues: [],
+      items: [],
+    };
+    return {
+      ...base,
+      would_insert: false,
+      issues: [message, nextStepForSaveError(message, base)],
+    };
+  });
+}
+
 function poHasRfpf(po: PreviewPo) {
   const raw = String(po.rfpf_number || po.external_po_ref || '').trim();
   if (!raw || raw.includes('|')) return false;
@@ -213,10 +274,12 @@ function SoftCheckOrderList({
   orders,
   emptyLabel,
   showIssues,
+  statusLabel,
 }: {
   orders: PreviewPo[];
   emptyLabel: string;
   showIssues?: boolean;
+  statusLabel?: string;
 }) {
   if (!orders.length) {
     return <p className="text-sm text-muted-foreground py-4">{emptyLabel}</p>;
@@ -242,7 +305,11 @@ function SoftCheckOrderList({
                 <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm">
                   {consigned ? <Badge variant="outline">Consigned</Badge> : null}
                   <Badge variant="secondary">{po.payment_status}</Badge>
-                  {!po.would_insert ? <Badge variant="destructive">Blocked</Badge> : null}
+                  {statusLabel
+                    ? <Badge variant="secondary">{statusLabel}</Badge>
+                    : !po.would_insert
+                      ? <Badge variant="destructive">Blocked</Badge>
+                      : null}
                   <span className="tabular-nums text-muted-foreground">{po.line_count} line(s)</span>
                   <span className="tabular-nums font-medium">{peso(po.total_amount)}</span>
                 </div>
@@ -251,9 +318,20 @@ function SoftCheckOrderList({
             <AccordionContent>
               <div className="space-y-4 pl-1">
                 {showIssues && po.issues.length ? (
-                  <ul className="list-disc space-y-1 pl-4 text-sm text-destructive">
+                  <ul className="list-disc space-y-1 pl-4 text-sm">
                     {po.issues.map((issue) => (
-                      <li key={issue}>{issue}</li>
+                      <li
+                        key={issue}
+                        className={
+                          issue.startsWith('Next step:')
+                            ? 'text-foreground'
+                            : statusLabel === 'Already imported'
+                              ? 'text-muted-foreground'
+                              : 'text-destructive'
+                        }
+                      >
+                        {issue}
+                      </li>
                     ))}
                   </ul>
                 ) : null}
@@ -333,6 +411,109 @@ async function kaPost<T>(
   return body as T;
 }
 
+function ImportResultTable({
+  rows,
+  emptyLabel,
+  status,
+}: {
+  rows: ImportPoResult[];
+  emptyLabel: string;
+  status: 'imported' | 'failed' | 'already';
+}) {
+  if (!rows.length) {
+    return <p className="text-sm text-muted-foreground py-4">{emptyLabel}</p>;
+  }
+
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>RFPF</TableHead>
+          <TableHead>System PO</TableHead>
+          <TableHead>Status</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((row) => (
+          <TableRow key={row.external_po_ref}>
+            <TableCell className="font-mono text-sm">
+              {displayRfpfCode(row.external_po_ref) || row.external_po_ref}
+            </TableCell>
+            <TableCell className="font-mono">{row.po_number || '—'}</TableCell>
+            <TableCell>
+              {status === 'imported' ? <Badge>Imported</Badge> : null}
+              {status === 'already' ? <Badge variant="secondary">Already imported</Badge> : null}
+              {status === 'failed' ? (
+                <span className="text-sm text-destructive">{row.issues?.join(' · ') || 'Failed'}</span>
+              ) : null}
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+function ImportResultCard({
+  imported,
+  failed,
+  failedOrders,
+  already,
+}: {
+  imported: ImportPoResult[];
+  failed: ImportPoResult[];
+  failedOrders: PreviewPo[];
+  already: ImportPoResult[];
+}) {
+  const defaultValue = failed.length ? 'failed' : imported.length ? 'imported' : 'already';
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Import result</CardTitle>
+        <CardDescription>
+          {imported.length} imported · {already.length} already imported · {failed.length} failed to save
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Tabs defaultValue={defaultValue}>
+          <TabsList className="flex h-auto flex-wrap gap-1">
+            <TabsTrigger value="imported">Imported ({imported.length})</TabsTrigger>
+            <TabsTrigger value="failed">Failed to import ({failed.length})</TabsTrigger>
+            <TabsTrigger value="already">Already imported ({already.length})</TabsTrigger>
+          </TabsList>
+          <TabsContent value="imported">
+            <ImportResultTable
+              rows={imported}
+              status="imported"
+              emptyLabel="No purchase orders were imported in this run."
+            />
+          </TabsContent>
+          <TabsContent value="failed" className="space-y-2">
+            {failed.length ? (
+              <p className="text-sm text-muted-foreground">
+                Open an RFPF to see why it did not save, what to change, and the brand and variant on that order.
+              </p>
+            ) : null}
+            <SoftCheckOrderList
+              orders={failedOrders}
+              emptyLabel="No purchase orders failed to save."
+              showIssues
+              statusLabel="Failed to save"
+            />
+          </TabsContent>
+          <TabsContent value="already">
+            <ImportResultTable
+              rows={already}
+              status="already"
+              emptyLabel="No RFPFs in this file were already in OMS."
+            />
+          </TabsContent>
+        </Tabs>
+      </CardContent>
+    </Card>
+  );
+}
+
 function groupRows(rows: KASalesRecordExcelRow[]) {
   const map = new Map<string, KASalesRecordExcelRow[]>();
   for (const row of rows) {
@@ -368,8 +549,12 @@ export function KeyAccountSalesTrackerImportPage() {
     () => dryRun?.purchase_orders.filter((po) => po.would_insert) || [],
     [dryRun]
   );
+  const alreadyImportedPos = useMemo(
+    () => (dryRun?.purchase_orders || []).filter((po) => isAlreadyImportedPo(po)),
+    [dryRun]
+  );
   const blockedPos = useMemo(
-    () => dryRun?.purchase_orders.filter((po) => !po.would_insert) || [],
+    () => (dryRun?.purchase_orders || []).filter((po) => !po.would_insert && !isAlreadyImportedPo(po)),
     [dryRun]
   );
   const paidWithVariantPos = useMemo(
@@ -643,10 +828,11 @@ export function KeyAccountSalesTrackerImportPage() {
         setImportResults([...all]);
       }
       const imported = all.filter((row) => row.ok).length;
-      const failed = all.filter((row) => row.ok === false).length;
+      const already = alreadyImportedPos.length + all.filter((row) => !row.ok && isAlreadyImportedResult(row)).length;
+      const failed = all.filter((row) => !row.ok && !isAlreadyImportedResult(row)).length;
       toast({
         title: failed ? 'Import finished with errors' : 'Import complete',
-        description: `${imported} PO(s) imported, ${failed} failed. Delivered. Stock was not deducted.`,
+        description: `${imported} imported, ${already} already in OMS, ${failed} failed to save. Delivered orders did not deduct stock.`,
       });
     } catch (error) {
       toast({
@@ -728,7 +914,7 @@ export function KeyAccountSalesTrackerImportPage() {
             </Button>
             {dryRun ? (
               <p className="text-sm text-muted-foreground">
-                {readyPos.length} can import · {blockedPos.length} cannot
+                {readyPos.length} can import · {alreadyImportedPos.length} already imported · {blockedPos.length} cannot
               </p>
             ) : null}
           </CardContent>
@@ -737,13 +923,13 @@ export function KeyAccountSalesTrackerImportPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base">3. Soft Check</CardTitle>
-            <CardDescription>Review Can import vs Cannot import before writing anything.</CardDescription>
+            <CardDescription>Review Can import, Already imported, and Cannot import before writing anything.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
               {dryRun
                 ? softChecked
-                  ? `Reviewed · ${readyPos.length} ready · ${blockedPos.length} blocked`
+                  ? `Reviewed · ${readyPos.length} ready · ${alreadyImportedPos.length} already imported · ${blockedPos.length} blocked`
                   : 'Dry-run complete. Open Soft Check to inspect.'
                 : 'Run a dry-run first'}
             </p>
@@ -769,7 +955,7 @@ export function KeyAccountSalesTrackerImportPage() {
                 ? 'Run a dry-run first'
                 : !softChecked
                   ? 'Open Soft Check first'
-                  : `${readyPos.length} ready · ${blockedPos.length} skipped`}
+                  : `${readyPos.length} ready · ${alreadyImportedPos.length} already imported · ${blockedPos.length} skipped`}
             </p>
             <Button onClick={() => void runImport()} disabled={!softChecked || !readyPos.length || !!busy}>
               {busy === 'import' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -900,10 +1086,11 @@ export function KeyAccountSalesTrackerImportPage() {
               </div>
             ) : null}
 
-            <Tabs defaultValue={blockedPos.length ? 'blocked' : 'ready'}>
+            <Tabs defaultValue={blockedPos.length ? 'blocked' : alreadyImportedPos.length && !readyPos.length ? 'already' : 'ready'}>
               <TabsList className="flex h-auto flex-wrap gap-1">
                 <TabsTrigger value="ready">Can import ({readyPos.length})</TabsTrigger>
                 <TabsTrigger value="blocked">Cannot import ({blockedPos.length})</TabsTrigger>
+                <TabsTrigger value="already">Already imported ({alreadyImportedPos.length})</TabsTrigger>
                 <TabsTrigger value="missing">Missing brands ({unmatchedProducts.length})</TabsTrigger>
                 <TabsTrigger value="has-rfpf">Has RFPF ({withRfpfPos.length})</TabsTrigger>
                 <TabsTrigger value="no-rfpf">No RFPF ({withoutRfpfPos.length})</TabsTrigger>
@@ -919,7 +1106,18 @@ export function KeyAccountSalesTrackerImportPage() {
                 <SoftCheckOrderList orders={readyPos} emptyLabel="No orders can be imported yet." />
               </TabsContent>
               <TabsContent value="blocked" className="space-y-2">
-                <SoftCheckOrderList orders={blockedPos} emptyLabel="Every order can be imported." showIssues />
+                <SoftCheckOrderList orders={blockedPos} emptyLabel="Every other order can be imported or is already in OMS." showIssues />
+              </TabsContent>
+              <TabsContent value="already" className="space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  These RFPFs are already in OMS from an earlier import. Import skips them.
+                </p>
+                <SoftCheckOrderList
+                  orders={alreadyImportedPos}
+                  emptyLabel="No RFPFs in this file are already in OMS."
+                  showIssues
+                  statusLabel="Already imported"
+                />
               </TabsContent>
               <TabsContent value="missing" className="space-y-4">
                 {unmatchedProducts.length === 0 ? (
@@ -1144,37 +1342,24 @@ export function KeyAccountSalesTrackerImportPage() {
       ) : null}
 
       {importResults.length > 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Import result</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>RFPF</TableHead>
-                  <TableHead>System PO</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {importResults.map((row) => (
-                  <TableRow key={row.external_po_ref}>
-                    <TableCell className="font-mono text-sm">
-                      {displayRfpfCode(row.external_po_ref) || row.external_po_ref}
-                    </TableCell>
-                    <TableCell className="font-mono">{row.po_number || '—'}</TableCell>
-                    <TableCell>
-                      {row.ok
-                        ? <Badge>Imported</Badge>
-                        : <span className="text-sm text-destructive">{row.issues?.join(' · ') || 'Failed'}</span>}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+        <ImportResultCard
+          imported={importResults.filter((row) => row.ok)}
+          failed={importResults.filter((row) => !row.ok && !isAlreadyImportedResult(row))}
+          failedOrders={failedImportOrders(
+            importResults.filter((row) => !row.ok && !isAlreadyImportedResult(row)),
+            dryRun?.purchase_orders || []
+          )}
+          already={[
+            ...alreadyImportedPos.map((po) => ({
+              external_po_ref: po.external_po_ref,
+              ok: false,
+              po_number: existingPoLabel(po) || undefined,
+              issues: po.issues,
+              already_imported: true,
+            })),
+            ...importResults.filter((row) => !row.ok && isAlreadyImportedResult(row)),
+          ].filter((row, index, list) => list.findIndex((item) => item.external_po_ref === row.external_po_ref) === index)}
+        />
       ) : null}
     </div>
   );

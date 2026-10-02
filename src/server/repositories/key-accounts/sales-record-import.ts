@@ -109,7 +109,22 @@ export type KASalesRecordImportPoResult = {
   order_date?: string;
   rfpf_number?: string | null;
   issues?: string[];
+  already_imported?: boolean;
 };
+
+function describeDbError(error: unknown) {
+  if (error instanceof Error && error.message) return error.message;
+  if (error && typeof error === 'object') {
+    const row = error as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown };
+    const message = typeof row.message === 'string' ? row.message.trim() : '';
+    const details = typeof row.details === 'string' ? row.details.trim() : '';
+    const hint = typeof row.hint === 'string' ? row.hint.trim() : '';
+    const code = typeof row.code === 'string' ? row.code.trim() : '';
+    const text = [message, details, hint].filter(Boolean).join(' — ');
+    if (text) return code ? `${text} (${code})` : text;
+  }
+  return 'Import failed';
+}
 
 type CatalogClient = {
   id: string;
@@ -947,13 +962,17 @@ async function importOne(
   resolved.forEach((r) => previewIssues.push(...r.errors.map((e) => `row ${r.excel_row}: ${e}`)));
   const first = resolved.find((r) => r.client && r.shop && r.address && r.kam && r.variant && r.location);
   if (!first) previewIssues.push('could not resolve header lookups');
-  if (displayRef) {
-    const dupes = await alreadyImported(ctx.companyId, displayRef);
-    if (dupes.length) previewIssues.push(`already imported: ${dupes.map((d) => d.po_number).join(', ')}`);
-  }
+  const dupes = displayRef ? await alreadyImported(ctx.companyId, displayRef) : [];
+  if (dupes.length) previewIssues.push(`already imported: ${dupes.map((d) => d.po_number).join(', ')}`);
   const uniqueIssues = [...new Set(previewIssues)];
   if (uniqueIssues.length || !first) {
-    return { ok: false, external_po_ref: displayRef, issues: uniqueIssues };
+    return {
+      ok: false,
+      external_po_ref: displayRef,
+      po_number: dupes.map((row) => row.po_number).filter(Boolean).join(', ') || undefined,
+      issues: uniqueIssues,
+      already_imported: dupes.length > 0,
+    };
   }
 
   const pay = summarizePayment(lines);
@@ -1103,7 +1122,7 @@ async function importOne(
     return {
       ok: false,
       external_po_ref: displayRef,
-      issues: [error instanceof Error ? error.message : String(error)],
+      issues: [describeDbError(error)],
     };
   }
 }
