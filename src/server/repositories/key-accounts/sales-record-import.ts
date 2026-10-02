@@ -18,6 +18,9 @@ export type KASalesRecordLineInput = {
   expected_delivery_date?: string;
   client_name?: string;
   shop_name?: string;
+  trade_name?: string;
+  vape_shop_names?: string;
+  shop_name_confirmed?: boolean;
   address_label?: string;
   client_category?: string;
   contact_phone?: string;
@@ -81,6 +84,9 @@ export type KASalesRecordPoPreview = {
   will_create_client: boolean;
   will_create_shop: boolean;
   will_create_address: boolean;
+  trade_name?: string;
+  vape_shops?: string[];
+  shop_choice_required?: boolean;
   items: KASalesRecordPreviewItem[];
   issues: string[];
 };
@@ -362,6 +368,144 @@ function shopNameOf(row: KASalesRecordLineInput) {
   return String(row.shop_name || '').trim() || String(row.client_name || '').trim();
 }
 
+function shopKey(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function shopLabels(value: unknown) {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const part of String(value || '').split('|')) {
+    const text = part.trim();
+    const key = shopKey(text);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+  }
+  return out;
+}
+
+function matchShops(shops: CatalogShop[], name: string) {
+  const want = shopKey(name);
+  if (!want) return [];
+  const exact = shops.filter((shop) => shopKey(shop.shop_name) === want);
+  if (exact.length) return exact;
+  if (want.length < 4) return [];
+  return shops.filter((shop) => {
+    const got = shopKey(shop.shop_name);
+    if (got.length < 4) return false;
+    return got.includes(want) || want.includes(got);
+  });
+}
+
+function uniqueCatalogShops(shops: CatalogShop[]) {
+  return shops.filter((shop, index) => shops.findIndex((item) => item.id === shop.id) === index);
+}
+
+type ShopDecision = {
+  shop?: CatalogShop;
+  resolvedShopName: string;
+  wouldCreate: boolean;
+  error?: string;
+  choiceRequired: boolean;
+  tradeName: string;
+  vapeShops: string[];
+};
+
+function decideSingleShop(
+  shopName: string,
+  clientShops: CatalogShop[],
+  createMissing: boolean,
+  wouldCreateClient: boolean,
+  tradeName: string,
+  vapeShops: string[]
+): ShopDecision {
+  const base = { tradeName, vapeShops, choiceRequired: false, resolvedShopName: shopName };
+  if (wouldCreateClient) {
+    return { ...base, wouldCreate: Boolean(shopName) };
+  }
+  const hits = uniqueCatalogShops(matchShops(clientShops, shopName));
+  if (hits.length === 1) return { ...base, shop: hits[0], wouldCreate: false, resolvedShopName: hits[0].shop_name };
+  if (hits.length > 1) {
+    return {
+      ...base,
+      wouldCreate: false,
+      error: `shop ambiguous: ${hits.map((shop) => shop.shop_name).join(', ')}`,
+    };
+  }
+  if (createMissing && shopName) return { ...base, wouldCreate: true };
+  return {
+    ...base,
+    wouldCreate: false,
+    error: shopName ? `shop not found under client: ${shopName}` : 'shop_name required (client has multiple shops)',
+  };
+}
+
+function decideShop(
+  row: KASalesRecordLineInput,
+  clientShops: CatalogShop[],
+  createMissing: boolean,
+  wouldCreateClient: boolean
+): ShopDecision {
+  const tradeShops = shopLabels(row.trade_name);
+  const vapeShops = shopLabels(row.vape_shop_names);
+  const tradeName = tradeShops.join(' | ');
+  const hasPair = tradeShops.length + vapeShops.length > 0;
+  if (row.shop_name_confirmed === true || !hasPair) {
+    return decideSingleShop(shopNameOf(row), clientShops, createMissing, wouldCreateClient, tradeName, vapeShops);
+  }
+  const candidates = shopLabels(`${tradeName} | ${vapeShops.join(' | ')}`);
+  if (candidates.length <= 1) {
+    return decideSingleShop(
+      candidates[0] || shopNameOf(row),
+      clientShops,
+      createMissing,
+      wouldCreateClient,
+      tradeName,
+      vapeShops
+    );
+  }
+  if (wouldCreateClient) {
+    return {
+      tradeName,
+      vapeShops,
+      resolvedShopName: '',
+      wouldCreate: false,
+      choiceRequired: true,
+      error: `choose shop: trade name "${tradeName || '—'}" or vape shop "${vapeShops.join(' · ') || '—'}"`,
+    };
+  }
+  const hits = uniqueCatalogShops(candidates.flatMap((name) => matchShops(clientShops, name)));
+  if (hits.length === 1) {
+    return {
+      shop: hits[0],
+      resolvedShopName: hits[0].shop_name,
+      wouldCreate: false,
+      choiceRequired: false,
+      tradeName,
+      vapeShops,
+    };
+  }
+  if (hits.length > 1) {
+    return {
+      resolvedShopName: '',
+      wouldCreate: false,
+      choiceRequired: true,
+      tradeName,
+      vapeShops,
+      error: `shop matches more than one: ${hits.map((shop) => shop.shop_name).join(' · ')}. Trade name "${tradeName}" or vape shop "${vapeShops.join(' · ')}"`,
+    };
+  }
+  return {
+    resolvedShopName: '',
+    wouldCreate: false,
+    choiceRequired: true,
+    tradeName,
+    vapeShops,
+    error: `choose shop: trade name "${tradeName || '—'}" or vape shop "${vapeShops.join(' · ') || '—'}"`,
+  };
+}
+
 function mapClientCategory(raw: unknown) {
   const t = n(raw);
   if (t.includes('reseller')) return 'reseller';
@@ -408,6 +552,11 @@ type ResolvedLine = {
   wouldCreateClient: boolean;
   wouldCreateShop: boolean;
   wouldCreateAddress: boolean;
+  resolvedShopName: string;
+  shopError?: string;
+  shopChoiceRequired: boolean;
+  tradeName: string;
+  vapeShops: string[];
 };
 
 function resolveLine(
@@ -451,26 +600,16 @@ function resolveLine(
     wouldCreateClient = true;
   } else errors.push(pickError(pickClient));
 
-  const shopName = shopNameOf(row);
-  let shop: CatalogShop | undefined;
-  if (wouldCreateClient) {
-    wouldCreateShop = true;
-    wouldCreateAddress = true;
-  } else if (client) {
-    const clientShops = catalog.shops.filter((s) => s.client_id === client!.id);
-    const pickShop = pickByName(
-      clientShops,
-      (s) => s.shop_name,
-      shopName,
-      shopName ? `shop not found under client: ${shopName}` : 'shop_name required (client has multiple shops)',
-      (hits) => `shop ambiguous: ${hits.map((s) => s.shop_name).join(', ')}`
-    );
-    if (pickShop.ok) shop = pickShop.row;
-    else if (options.createMissing && isMissingPick(pickError(pickShop), 'shop not found')) {
-      wouldCreateShop = true;
-      wouldCreateAddress = true;
-    } else errors.push(pickError(pickShop));
-  }
+  const shopDecision = decideShop(
+    row,
+    client ? catalog.shops.filter((shop) => shop.client_id === client.id) : [],
+    options.createMissing,
+    wouldCreateClient
+  );
+  const shop = shopDecision.shop;
+  wouldCreateShop = shopDecision.wouldCreate || (wouldCreateClient && !shopDecision.choiceRequired);
+  if (wouldCreateShop) wouldCreateAddress = true;
+  if (shopDecision.error && !shopDecision.choiceRequired) errors.push(shopDecision.error);
 
   let address: CatalogAddr | undefined;
   if (wouldCreateShop) {
@@ -561,6 +700,11 @@ function resolveLine(
     wouldCreateClient,
     wouldCreateShop,
     wouldCreateAddress,
+    resolvedShopName: shopDecision.resolvedShopName,
+    shopError: shopDecision.choiceRequired ? shopDecision.error : undefined,
+    shopChoiceRequired: shopDecision.choiceRequired,
+    tradeName: shopDecision.tradeName,
+    vapeShops: shopDecision.vapeShops,
   };
 }
 
@@ -686,6 +830,9 @@ function previewFromGroup(
     will_create_client: willCreateClient,
     will_create_shop: willCreateShop,
     will_create_address: willCreateAddress,
+    trade_name: (resolved.find((line) => line.tradeName) || resolved[0])?.tradeName || '',
+    vape_shops: (resolved.find((line) => line.vapeShops.length) || resolved[0])?.vapeShops || [],
+    shop_choice_required: resolved.some((line) => line.shopChoiceRequired),
     items: resolved.map((r) => ({
       excel_row: r.excel_row,
       sheet_name: r.source.sheet_name,
@@ -722,7 +869,7 @@ function pendingFromLine(r: ResolvedLine): PendingMaster | null {
   if (!r.wouldCreateClient && !r.wouldCreateShop && !r.wouldCreateAddress) return null;
   const clientName = String(r.source.client_name || '').trim();
   if (!clientName) return null;
-  const shopName = shopNameOf(r.source);
+  const shopName = String(r.resolvedShopName || shopNameOf(r.source)).trim();
   const addr = addressFields(r.source, shopName);
   return {
     clientName,
@@ -907,6 +1054,8 @@ export async function dryRunKASalesRecordImport(
     const resolved = lines.map((line) => resolveLine(line, catalog, { createMissing }));
     pendingResolved.push(...resolved);
     resolved.forEach((r) => issues.push(...r.errors.map((e) => `row ${r.excel_row}: ${e}`)));
+    const shopIssue = resolved.find((line) => line.shopError)?.shopError;
+    if (shopIssue) issues.push(shopIssue);
     const pay = summarizePayment(lines);
     if (displayRef) {
       const dupes = await alreadyImported(ctx.companyId, displayRef);
@@ -962,6 +1111,8 @@ async function importOne(
   const previewIssues: string[] = [];
   const resolved = lines.map((line) => resolveLine(line, catalog, { createMissing: false }));
   resolved.forEach((r) => previewIssues.push(...r.errors.map((e) => `row ${r.excel_row}: ${e}`)));
+  const shopIssue = resolved.find((line) => line.shopError)?.shopError;
+  if (shopIssue) previewIssues.push(shopIssue);
   const first = resolved.find((r) => r.client && r.shop && r.address && r.kam && r.variant && r.location);
   if (!first) previewIssues.push('could not resolve header lookups');
   const dupes = displayRef ? await alreadyImported(ctx.companyId, displayRef) : [];

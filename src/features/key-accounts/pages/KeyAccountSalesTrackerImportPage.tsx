@@ -58,6 +58,9 @@ type PreviewPo = {
   will_create_client?: boolean;
   will_create_shop?: boolean;
   will_create_address?: boolean;
+  trade_name?: string;
+  vape_shops?: string[];
+  shop_choice_required?: boolean;
   items?: PreviewItem[];
   issues: string[];
 };
@@ -605,24 +608,98 @@ function exportFailedImports(orders: PreviewPo[], format: 'csv' | 'xlsx' | 'json
   XLSX.writeFile(workbook, filename);
 }
 
+function ShopChoiceTable({
+  orders,
+  choices,
+  onChoose,
+}: {
+  orders: PreviewPo[];
+  choices: Record<string, string>;
+  onChoose: (ref: string, shopName: string) => void;
+}) {
+  if (!orders.length) {
+    return <p className="text-sm text-muted-foreground py-4">Every order already has a shop, or the shop name is the same in both columns.</p>;
+  }
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>RFPF</TableHead>
+          <TableHead>Client</TableHead>
+          <TableHead>Trade name</TableHead>
+          <TableHead>Vape shop</TableHead>
+          <TableHead>Use as shop</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {orders.map((po) => {
+          const chosen = choices[po.external_po_ref] || '';
+          const options = shopOptions(po);
+          return (
+            <TableRow key={po.external_po_ref}>
+              <TableCell className="font-mono text-sm">{orderRfpfLabel(po)}</TableCell>
+              <TableCell className="text-sm">{po.client || '—'}</TableCell>
+              <TableCell className="text-sm">{po.trade_name || '—'}</TableCell>
+              <TableCell className="text-sm">{(po.vape_shops || []).join(' · ') || '—'}</TableCell>
+              <TableCell className="min-w-52">
+                <Select
+                  value={chosen || undefined}
+                  onValueChange={(value) => onChoose(po.external_po_ref, value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose shop" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {options.map((name) => (
+                      <SelectItem key={name} value={name}>{name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {chosen ? `Will create ${chosen}` : 'This shop is not in OMS yet.'}
+                </p>
+              </TableCell>
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
+  );
+}
+
 function ImportResultCard({
   imported,
   failed,
   failedOrders,
   already,
+  missingShops,
+  shopChoices,
+  onChooseShop,
 }: {
   imported: ImportPoResult[];
   failed: ImportPoResult[];
   failedOrders: PreviewPo[];
   already: ImportPoResult[];
+  missingShops: PreviewPo[];
+  shopChoices: Record<string, string>;
+  onChooseShop: (ref: string, shopName: string) => void;
 }) {
-  const defaultValue = failed.length ? 'failed' : imported.length ? 'imported' : 'already';
+  const defaultValue = !imported.length && !failed.length && missingShops.length
+    ? 'choose-shop'
+    : failed.length
+      ? 'failed'
+      : imported.length
+        ? 'imported'
+        : missingShops.length
+          ? 'choose-shop'
+          : 'already';
   return (
     <Card>
       <CardHeader>
         <CardTitle>Import result</CardTitle>
         <CardDescription>
           {imported.length} imported · {already.length} already imported · {failed.length} failed to save
+          {missingShops.length ? ` · ${missingShops.length} need a shop name` : ''}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -631,6 +708,7 @@ function ImportResultCard({
             <TabsTrigger value="imported">Imported ({imported.length})</TabsTrigger>
             <TabsTrigger value="failed">Failed to import ({failed.length})</TabsTrigger>
             <TabsTrigger value="already">Already imported ({already.length})</TabsTrigger>
+            <TabsTrigger value="choose-shop">Choose shop ({missingShops.length})</TabsTrigger>
           </TabsList>
           <TabsContent value="imported">
             <ImportResultTable
@@ -676,6 +754,13 @@ function ImportResultCard({
               emptyLabel="No RFPFs in this file were already in OMS."
             />
           </TabsContent>
+          <TabsContent value="choose-shop" className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              These orders have no saved shop under the client. Pick the trade name or the vape shop.
+              That name is created on import. Run Dry-run again if you want them listed on Can import first.
+            </p>
+            <ShopChoiceTable orders={missingShops} choices={shopChoices} onChoose={onChooseShop} />
+          </TabsContent>
         </Tabs>
       </CardContent>
     </Card>
@@ -692,6 +777,44 @@ function groupRows(rows: KASalesRecordExcelRow[]) {
   return map;
 }
 
+function isShopChoiceIssue(issue: string) {
+  return issue.startsWith('choose shop:') || issue.startsWith('shop matches more than one:');
+}
+
+function shopSpellKey(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function shopOptions(po: PreviewPo) {
+  const names = [
+    ...String(po.trade_name || '').split('|').map((part) => part.trim()),
+    ...(po.vape_shops || []),
+  ];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const name of names) {
+    const key = shopSpellKey(name);
+    if (!name || !key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+  }
+  return out;
+}
+
+function rowsWithShopChoices(source: KASalesRecordExcelRow[], choices: Record<string, string>) {
+  return source.map((row) => {
+    const chosen = choices[String(row.external_po_ref || '').trim()];
+    if (!chosen) return row;
+    return {
+      ...row,
+      shop_name: chosen,
+      trade_name: chosen,
+      vape_shop_names: chosen,
+      shop_name_confirmed: true,
+    };
+  });
+}
+
 export function KeyAccountSalesTrackerImportPage() {
   const { toast } = useToast();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -706,6 +829,7 @@ export function KeyAccountSalesTrackerImportPage() {
   const stopImportRef = useRef(false);
   const [productDrafts, setProductDrafts] = useState<Record<string, { brand_name: string; variant_name: string; sku: string }>>({});
   const [createMissing, setCreateMissing] = useState(true);
+  const [shopChoices, setShopChoices] = useState<Record<string, string>>({});
   const [softChecked, setSoftChecked] = useState(false);
   const softCheckRef = useRef<HTMLDivElement>(null);
 
@@ -787,6 +911,35 @@ export function KeyAccountSalesTrackerImportPage() {
     () => sameRfpfPos.filter((row) => row.po.would_insert),
     [sameRfpfPos]
   );
+  const missingShopPos = useMemo(
+    () => (dryRun?.purchase_orders || []).filter((po) => po.issues.some((issue) => issue.startsWith('choose shop:'))),
+    [dryRun]
+  );
+  const shopNamePos = useMemo(() => {
+    return (dryRun?.purchase_orders || []).filter((po) => {
+      const trades = String(po.trade_name || '').split('|').map((part) => part.trim()).filter(Boolean);
+      const vapes = po.vape_shops || [];
+      if (po.shop_choice_required) return true;
+      if (!vapes.length || !trades.length) return false;
+      const keys = new Set([...trades, ...vapes].map(shopSpellKey).filter(Boolean));
+      if (keys.size > 1) return true;
+      const raw = new Set([...trades, ...vapes].map((part) => part.trim().toLowerCase()));
+      return raw.size > 1;
+    });
+  }, [dryRun]);
+  const shopChoiceReady = useMemo(() => {
+    return (dryRun?.purchase_orders || []).filter((po) => {
+      if (!po.shop_choice_required) return false;
+      if (!shopChoices[po.external_po_ref]) return false;
+      if (isAlreadyImportedPo(po)) return false;
+      const issues = po.issues.filter((issue) => !issue.startsWith('already in OMS') && !isShopChoiceIssue(issue));
+      return issues.length === 0;
+    });
+  }, [dryRun, shopChoices]);
+  const importPos = useMemo(() => {
+    const seen = new Set(readyPos.map((po) => po.external_po_ref));
+    return [...readyPos, ...shopChoiceReady.filter((po) => !seen.has(po.external_po_ref))];
+  }, [readyPos, shopChoiceReady]);
 
   const namedAgents = useMemo(
     () => (parsed?.agents || []).filter((agent) => !isEmail(agent)),
@@ -883,6 +1036,7 @@ export function KeyAccountSalesTrackerImportPage() {
       const next = await parseKeyAccountSalesTrackerExcel(file);
       setParsed(next);
       setFileName(file.name);
+      setShopChoices({});
       toast({
         title: 'File loaded',
         description: `${next.tracker_rfpf_total} tracker RFPF(s), ${next.matched_rfpf} matched to brand sheets, ${next.tracker_only.length} tracker-only.`,
@@ -914,7 +1068,7 @@ export function KeyAccountSalesTrackerImportPage() {
     setImportResults([]);
     setSoftChecked(false);
     try {
-      const result = await kaPost<DryRunResult>('dry-run', rows, createMissing);
+      const result = await kaPost<DryRunResult>('dry-run', rowsWithShopChoices(rows, shopChoices), createMissing);
       setDryRun(result);
       const ready = result.purchase_orders.filter((po) => po.would_insert).length;
       toast({
@@ -996,12 +1150,12 @@ export function KeyAccountSalesTrackerImportPage() {
   };
 
   const runImport = async () => {
-    if (!readyPos.length) return;
+    if (!importPos.length) return;
     stopImportRef.current = false;
     setBusy('import');
     setImportResults([]);
-    const grouped = groupRows(rows);
-    const refs = readyPos.map((po) => po.external_po_ref);
+    const grouped = groupRows(rowsWithShopChoices(rows, shopChoices));
+    const refs = importPos.map((po) => po.external_po_ref);
     const chunks: string[][] = [];
     for (let i = 0; i < refs.length; i += SALES_RECORD_IMPORT_PO_CHUNK) {
       chunks.push(refs.slice(i, i + SALES_RECORD_IMPORT_PO_CHUNK));
@@ -1051,7 +1205,7 @@ export function KeyAccountSalesTrackerImportPage() {
         <h1 className="text-2xl font-semibold">Sales tracker import</h1>
         <p className="text-sm text-muted-foreground mt-1 max-w-3xl">
           Upload Key Account Sales 2026. Headers come from <span className="font-medium">B1G Sales Tracker</span>
-          {' '}(RFPF, date, agent, client, trade name as shop). Flavor/device lines come from brand sheets joined by the same RFPF.
+          {' '}(RFPF, date, agent, client, trade name). Brand sheets supply the vape shop name and the flavor/device lines, joined by the same RFPF.
           Dry-run first, then Soft Check Can / Cannot import. Missing clients and shops can be created like Sales Record Import.
           Imported POs are delivered; stock is not deducted.
         </p>
@@ -1104,7 +1258,7 @@ export function KeyAccountSalesTrackerImportPage() {
                 }}
               />
               <Label htmlFor="tracker-create-missing" className="text-sm font-normal leading-snug">
-                Create missing clients, shops (trade name), and delivery addresses from Excel
+                Create missing clients, shops, and delivery addresses from Excel. If the shop is not in OMS yet, choose the name on Import result → Choose shop.
               </Label>
             </div>
             <Button onClick={() => void runDryRun()} disabled={!rows.length || !!busy}>
@@ -1154,12 +1308,12 @@ export function KeyAccountSalesTrackerImportPage() {
                 ? 'Run a dry-run first'
                 : !softChecked
                   ? 'Open Soft Check first'
-                  : `${readyPos.length} ready · ${alreadyImportedPos.length} already imported · ${blockedPos.length} skipped`}
+                  : `${importPos.length} ready · ${alreadyImportedPos.length} already imported · ${blockedPos.length} skipped`}
             </p>
             <div className="flex flex-wrap items-center gap-2">
-              <Button onClick={() => void runImport()} disabled={!softChecked || !readyPos.length || !!busy}>
+              <Button onClick={() => void runImport()} disabled={!softChecked || !importPos.length || !!busy}>
                 {busy === 'import' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Import {readyPos.length || ''} ready PO{readyPos.length === 1 ? '' : 's'}
+                Import {importPos.length || ''} ready PO{importPos.length === 1 ? '' : 's'}
               </Button>
               {busy === 'import' ? (
                 <Button
@@ -1268,7 +1422,7 @@ export function KeyAccountSalesTrackerImportPage() {
               <div className="space-y-2">
                 <h3 className="font-medium">Will create on import</h3>
                 <p className="text-sm text-muted-foreground">
-                  Trade name is used as the shop name. Warehouse brands and variants are never created here.
+                  A saved shop is used when trade name and vape shop are the same, or when one of them already matches. Warehouse brands and variants are never created here.
                 </p>
                 <Table>
                   <TableHeader>
@@ -1315,6 +1469,7 @@ export function KeyAccountSalesTrackerImportPage() {
                 <TabsTrigger value="consigned">Consigned ({consignedPos.length})</TabsTrigger>
                 <TabsTrigger value="same-rfpf">Same RFPF ({sameRfpfPos.length})</TabsTrigger>
                 <TabsTrigger value="same-rfpf-ready">Same RFPF · Can import ({sameRfpfReadyPos.length})</TabsTrigger>
+                <TabsTrigger value="shop-name">Shop name ({shopNamePos.length})</TabsTrigger>
               </TabsList>
 
               <TabsContent value="ready" className="space-y-2">
@@ -1572,12 +1727,75 @@ export function KeyAccountSalesTrackerImportPage() {
                 </p>
                 <SameRfpfTable rows={sameRfpfReadyPos} emptyLabel="No shared RFPF is ready to import." />
               </TabsContent>
+              <TabsContent value="shop-name" className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Tracker TRADE NAME and the brand-sheet Vape Shop / SHOP column. When they are the same shop, or one of them
+                  already exists under the client, that shop is used. When they differ and neither is a saved shop, choose which
+                  name to save. Chosen rows are included in Import. Run Dry-run again to move them onto Can import.
+                </p>
+                {shopNamePos.length ? (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>RFPF</TableHead>
+                        <TableHead>Client</TableHead>
+                        <TableHead>Trade name</TableHead>
+                        <TableHead>Vape shop</TableHead>
+                        <TableHead>Result</TableHead>
+                        <TableHead>Use as shop</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {shopNamePos.map((po) => {
+                        const chosen = shopChoices[po.external_po_ref] || '';
+                        const options = shopOptions(po);
+                        return (
+                          <TableRow key={po.external_po_ref}>
+                            <TableCell className="font-mono text-sm">{orderRfpfLabel(po)}</TableCell>
+                            <TableCell className="text-sm">{po.client || '—'}</TableCell>
+                            <TableCell className="text-sm">{po.trade_name || '—'}</TableCell>
+                            <TableCell className="text-sm">{(po.vape_shops || []).join(' · ') || '—'}</TableCell>
+                            <TableCell className="text-sm">
+                              {po.shop_choice_required
+                                ? (chosen ? `Will save as ${chosen}` : 'Choose which name to save')
+                                : po.will_create_shop
+                                  ? `Will create ${po.shop}`
+                                  : `Matched ${po.shop}`}
+                            </TableCell>
+                            <TableCell className="min-w-52">
+                              {po.shop_choice_required ? (
+                                <Select
+                                  value={chosen || undefined}
+                                  onValueChange={(value) => setShopChoices((prev) => ({ ...prev, [po.external_po_ref]: value }))}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Choose shop" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {options.map((name) => (
+                                      <SelectItem key={name} value={name}>{name}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              ) : (
+                                <span className="text-sm text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                ) : (
+                  <p className="text-sm text-muted-foreground py-4">Trade name and vape shop agree on every order.</p>
+                )}
+              </TabsContent>
             </Tabs>
           </CardContent>
         </Card>
       ) : null}
 
-      {importResults.length > 0 ? (
+      {importResults.length > 0 || missingShopPos.length > 0 ? (
         <ImportResultCard
           imported={importResults.filter((row) => row.ok)}
           failed={importResults.filter((row) => !row.ok && !isAlreadyImportedResult(row))}
@@ -1595,6 +1813,9 @@ export function KeyAccountSalesTrackerImportPage() {
             })),
             ...importResults.filter((row) => !row.ok && isAlreadyImportedResult(row)),
           ].filter((row, index, list) => list.findIndex((item) => item.external_po_ref === row.external_po_ref) === index)}
+          missingShops={missingShopPos}
+          shopChoices={shopChoices}
+          onChooseShop={(ref, shopName) => setShopChoices((prev) => ({ ...prev, [ref]: shopName }))}
         />
       ) : null}
     </div>

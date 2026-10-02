@@ -11,6 +11,9 @@ export type KASalesRecordExcelRow = {
   expected_delivery_date?: string;
   client_name?: string;
   shop_name?: string;
+  trade_name?: string;
+  vape_shop_names?: string;
+  shop_name_confirmed?: boolean;
   address_label?: string;
   client_category?: string;
   contact_phone?: string;

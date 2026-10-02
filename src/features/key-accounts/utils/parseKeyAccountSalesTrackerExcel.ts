@@ -172,6 +172,34 @@ export function rfpfAsWritten(raw: string): { code: string; note: string } {
   return { code, note: notes.join('\n') };
 }
 
+function shopSpellKey(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function uniqueShopLabels(values: Array<string | undefined>) {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const text = String(value || '').trim();
+    const key = shopSpellKey(text);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+  }
+  return out;
+}
+
+function shopIdentity(headers: TrackerHeader[], lines: BrandLine[]) {
+  const tradeLabels = uniqueShopLabels(headers.map((row) => row.shop_name));
+  const vapeLabels = uniqueShopLabels(lines.map((line) => line.shop_name));
+  const collapsed = uniqueShopLabels([...tradeLabels, ...vapeLabels]);
+  return {
+    trade_name: tradeLabels.join(' | ') || undefined,
+    vape_shop_names: vapeLabels.join(' | ') || undefined,
+    shop_name: collapsed.length === 1 ? collapsed[0] : tradeLabels[0] || vapeLabels[0] || undefined,
+  };
+}
+
 function rfpfMatchKey(code: string) {
   return code.trim().toUpperCase().replace(/[–—]/g, '-').replace(/\s+/g, '');
 }
@@ -750,6 +778,8 @@ export function parseKeyAccountSalesTrackerBuffer(buffer: ArrayBuffer): SalesTra
     const kindFor = (sheetName: string) =>
       headers.find((row) => sheetMatchesTrackerProduct(sheetName, row.product))?.inventory_kind;
 
+    const shopFields = shopIdentity(headers, byRfpf.get(header.rfpf_key) || lines);
+
     if (!qtyLines.length) {
       tracker_only.push({
         rfpf: header.rfpf_display,
@@ -765,7 +795,9 @@ export function parseKeyAccountSalesTrackerBuffer(buffer: ArrayBuffer): SalesTra
         rfpf_number: header.rfpf_display,
         order_date: header.order_date || undefined,
         client_name: header.client_name || undefined,
-        shop_name: header.shop_name || undefined,
+        shop_name: shopFields.shop_name,
+        trade_name: shopFields.trade_name,
+        vape_shop_names: shopFields.vape_shop_names,
         client_category: header.client_category || undefined,
         province: header.province || undefined,
         brand_name: header.product || undefined,
@@ -804,7 +836,9 @@ export function parseKeyAccountSalesTrackerBuffer(buffer: ArrayBuffer): SalesTra
         order_date: header.order_date || line.order_date,
         expected_delivery_date: line.expected_delivery_date || header.order_date || undefined,
         client_name: header.client_name || line.client_name,
-        shop_name: header.shop_name || line.shop_name,
+        shop_name: shopFields.shop_name || line.shop_name,
+        trade_name: shopFields.trade_name,
+        vape_shop_names: shopFields.vape_shop_names,
         client_category: header.client_category || line.client_category,
         province: header.province || line.province,
         agent_name: header.agent || line.agent_name,
