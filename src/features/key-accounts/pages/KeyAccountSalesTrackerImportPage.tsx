@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { ClipboardCheck, Download, Loader2, Upload } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -154,6 +154,60 @@ function brandsOf(po: PreviewPo) {
     map.get(brand)!.push(item);
   }
   return [...map.entries()];
+}
+
+type SameRfpfRow = {
+  po: PreviewPo;
+  brands: { brand: string; quantity: number; amount: number }[];
+};
+
+function SameRfpfTable({ rows, emptyLabel }: { rows: SameRfpfRow[]; emptyLabel: string }) {
+  if (!rows.length) {
+    return <p className="text-sm text-muted-foreground py-4">{emptyLabel}</p>;
+  }
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>RFPF</TableHead>
+          <TableHead>Product</TableHead>
+          <TableHead>Client</TableHead>
+          <TableHead className="text-right">Qty</TableHead>
+          <TableHead className="text-right">Amount</TableHead>
+          <TableHead className="text-right">Paid</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map(({ po, brands }) => {
+          const label = orderRfpfLabel(po);
+          const quantity = brands.reduce((sum, brand) => sum + brand.quantity, 0);
+          return (
+            <Fragment key={po.external_po_ref}>
+              {brands.map((brand) => (
+                <TableRow key={`${po.external_po_ref}|${brand.brand}`}>
+                  <TableCell className="font-mono text-sm">{label}</TableCell>
+                  <TableCell className="text-sm">{brand.brand}</TableCell>
+                  <TableCell className="text-sm">{po.client || '—'}</TableCell>
+                  <TableCell className="text-right tabular-nums">{brand.quantity}</TableCell>
+                  <TableCell className="text-right tabular-nums">{peso(brand.amount)}</TableCell>
+                  <TableCell className="text-right text-muted-foreground">—</TableCell>
+                </TableRow>
+              ))}
+              <TableRow className="bg-muted/50">
+                <TableCell className="font-mono text-sm font-medium">{label}</TableCell>
+                <TableCell className="text-sm font-medium" colSpan={2}>
+                  {brands.length} products with this RFPF → one PO
+                </TableCell>
+                <TableCell className="text-right tabular-nums font-medium">{quantity}</TableCell>
+                <TableCell className="text-right tabular-nums font-medium">{peso(po.total_amount)}</TableCell>
+                <TableCell className="text-right tabular-nums font-medium">{peso(po.payment_amount)}</TableCell>
+              </TableRow>
+            </Fragment>
+          );
+        })}
+      </TableBody>
+    </Table>
+  );
 }
 
 function PoMasterBadges({ po }: { po: PreviewPo }) {
@@ -729,6 +783,10 @@ export function KeyAccountSalesTrackerImportPage() {
       .sort((a, b) => orderRfpfLabel(a.po).localeCompare(orderRfpfLabel(b.po))),
     [dryRun]
   );
+  const sameRfpfReadyPos = useMemo(
+    () => sameRfpfPos.filter((row) => row.po.would_insert),
+    [sameRfpfPos]
+  );
 
   const namedAgents = useMemo(
     () => (parsed?.agents || []).filter((agent) => !isEmail(agent)),
@@ -1256,6 +1314,7 @@ export function KeyAccountSalesTrackerImportPage() {
                 <TabsTrigger value="needs-sheet">Needs brand sheet ({noVariantPos.length})</TabsTrigger>
                 <TabsTrigger value="consigned">Consigned ({consignedPos.length})</TabsTrigger>
                 <TabsTrigger value="same-rfpf">Same RFPF ({sameRfpfPos.length})</TabsTrigger>
+                <TabsTrigger value="same-rfpf-ready">Same RFPF · Can import ({sameRfpfReadyPos.length})</TabsTrigger>
               </TabsList>
 
               <TabsContent value="ready" className="space-y-2">
@@ -1494,44 +1553,24 @@ export function KeyAccountSalesTrackerImportPage() {
               </TabsContent>
               <TabsContent value="same-rfpf" className="space-y-3">
                 <p className="text-sm text-muted-foreground">
-                  These codes are on more than one product. Dry-run keeps each written code as one purchase order.
+                  Each product that shares a written RFPF is listed on its own row, with that same RFPF repeated.
+                  The shaded row is the one purchase order those rows become.
                   A hyphen is part of the code, so RFPF-1200 and RFPF1200 stay two orders.
                 </p>
-                {sameRfpfPos.length ? (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>RFPF</TableHead>
-                        <TableHead>Products on this PO</TableHead>
-                        <TableHead className="text-right">Qty</TableHead>
-                        <TableHead className="text-right">Amount</TableHead>
-                        <TableHead className="text-right">Paid</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {sameRfpfPos.map(({ po, brands }) => (
-                        <TableRow key={po.external_po_ref}>
-                          <TableCell className="font-mono text-sm">{orderRfpfLabel(po)}</TableCell>
-                          <TableCell className="text-sm">
-                            {brands.map((brand) => `${brand.brand} (${brand.quantity})`).join(' · ')}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {brands.reduce((sum, brand) => sum + brand.quantity, 0)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">{peso(po.total_amount)}</TableCell>
-                          <TableCell className="text-right tabular-nums">{peso(po.payment_amount)}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                ) : (
-                  <p className="text-sm text-muted-foreground py-4">No RFPF is shared by more than one product.</p>
-                )}
+                <SameRfpfTable rows={sameRfpfPos} emptyLabel="No RFPF is shared by more than one product." />
                 <SoftCheckOrderList
                   orders={sameRfpfPos.map((row) => row.po)}
                   emptyLabel="No shared RFPFs in this dry-run."
                   showIssues
                 />
+              </TabsContent>
+              <TabsContent value="same-rfpf-ready" className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Same written RFPF, more than one product, and ready to import.
+                  Each product is listed with that RFPF so you can see the basis. The shaded row is the one purchase order they become.
+                  A hyphen is part of the code, so RFPF-1200 and RFPF1200 stay two orders.
+                </p>
+                <SameRfpfTable rows={sameRfpfReadyPos} emptyLabel="No shared RFPF is ready to import." />
               </TabsContent>
             </Tabs>
           </CardContent>
