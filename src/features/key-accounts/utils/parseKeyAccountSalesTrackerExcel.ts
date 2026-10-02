@@ -148,6 +148,47 @@ export function normalizeRfpfKey(value: string) {
     .replace(/[^A-Z0-9]/g, '');
 }
 
+/**
+ * The code in the cell, with a hyphen only when the cell has one.
+ * RFPF0000059 and RFPF-0000059 stay different. Extra lines in the cell are a note.
+ */
+export function rfpfAsWritten(raw: string): { code: string; note: string } {
+  const lines = String(raw || '')
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  let code = '';
+  const notes: string[] = [];
+  for (const line of lines) {
+    const match = line.match(/RFPF\s*[-–—]?\s*\d+/i);
+    if (match && !code) {
+      code = match[0].replace(/\s+/g, '').replace(/[–—]/g, '-').toUpperCase();
+      const rest = line.slice(match.index! + match[0].length).trim();
+      if (rest) notes.push(rest);
+      continue;
+    }
+    notes.push(line);
+  }
+  return { code, note: notes.join('\n') };
+}
+
+function rfpfMatchKey(code: string) {
+  return code.trim().toUpperCase().replace(/[–—]/g, '-').replace(/\s+/g, '');
+}
+
+function sheetMatchesTrackerProduct(sheetName: string, trackerProduct: string) {
+  const sheet = normalizeSalesHeader(sheetName);
+  const product = normalizeSalesHeader(trackerProduct);
+  if (!product) return true;
+  if (!sheet) return false;
+  const qualified = (value: string) => value.includes('disposable') || value.includes('prefilled');
+  if (qualified(sheet) !== qualified(product)) return false;
+  const ultraLite = (value: string) => value === 'ultra' || value.startsWith('ultralite');
+  if (ultraLite(sheet) && ultraLite(product) && sheet !== product) return false;
+  if (sheet === product || sheet.startsWith(product) || product.startsWith(sheet)) return true;
+  return brandKey(sheetName) === brandKey(trackerProduct);
+}
+
 function brandFromSheet(name: string) {
   const key = normalizeSalesHeader(name);
   if (key.includes('amz')) return 'AMZ';
@@ -393,8 +434,9 @@ function parseTrackerHeaders(matrix: unknown[][]): TrackerHeader[] {
     const cells = matrix[i] || [];
     const raw = String(cells[idx.rfpf] ?? '').trim();
     if (!raw) continue;
-    const display = displayRfpfCode(raw);
-    const key = normalizeRfpfKey(display || raw);
+    const written = rfpfAsWritten(raw);
+    const display = written.code;
+    const key = rfpfMatchKey(display);
     if (!key) continue;
     const product = idx.product >= 0 ? String(cells[idx.product] ?? '').trim() : '';
     out.push({
@@ -415,7 +457,7 @@ function parseTrackerHeaders(matrix: unknown[][]): TrackerHeader[] {
       remaining_balance: idx.rem >= 0 ? parseNumber(cells[idx.rem]) : undefined,
       excel_status: idx.status >= 0 ? excelStatus(cells[idx.status]) : '',
       payment_date: idx.payDate >= 0 ? parseDate(cells[idx.payDate]) : '',
-      notes: idx.notes >= 0 ? String(cells[idx.notes] ?? '').trim() : '',
+      notes: [idx.notes >= 0 ? String(cells[idx.notes] ?? '').trim() : '', written.note].filter(Boolean).join('\n'),
       discount: idx.discount >= 0 ? parseNumber(cells[idx.discount]) || 0 : 0,
     });
   }
@@ -462,13 +504,14 @@ function brandSheetLines(name: string, matrix: unknown[][]): BrandLine[] {
     const agent = String(cellAt(cells, columns, 'agent') || '').trim();
     const orderDate = parseDate(cellAt(cells, columns, 'order_date'));
     const rfpfRaw = String(cellAt(cells, columns, 'rfpf_number') || '').trim();
-    const rfpfDisplay = displayRfpfCode(rfpfRaw);
-    const rfpf_key = normalizeRfpfKey(rfpfDisplay || rfpfRaw);
+    const written = rfpfAsWritten(rfpfRaw);
+    const rfpfDisplay = written.code;
+    const rfpf_key = rfpfMatchKey(rfpfDisplay);
     if (!client && !shop && !orderDate && !rfpf_key) continue;
     if (!rfpf_key) continue;
 
     const si = displayRfpfCode(String(cellAt(cells, columns, 'si') || '').trim());
-    const notes = [si, String(cellAt(cells, columns, 'notes') || '').trim()].filter(Boolean).join('\n');
+    const notes = [written.note, si, String(cellAt(cells, columns, 'notes') || '').trim()].filter(Boolean).join('\n');
     const status = excelStatus(cellAt(cells, columns, 'excel_status'));
     const paid = parseNumber(cellAt(cells, columns, 'payment_amount')) || 0;
     const remaining = parseNumber(cellAt(cells, columns, 'remaining_balance'));
@@ -610,10 +653,22 @@ function brandSheetLines(name: string, matrix: unknown[][]): BrandLine[] {
   return rows;
 }
 
-function pickBrandLines(header: TrackerHeader, byRfpf: Map<string, BrandLine[]>): BrandLine[] {
-  // Same RFPF on any brand sheet = all brand/variant lines for that PO.
-  const all = byRfpf.get(header.rfpf_key) || [];
-  return all.filter((line) => (Number(line.quantity) || 0) > 0);
+function pickBrandLines(headers: TrackerHeader[], byRfpf: Map<string, BrandLine[]>): BrandLine[] {
+  // Every product row with this written RFPF belongs on one PO.
+  // A disposable or prefilled sheet is included only when that tracker row names it.
+  const all = byRfpf.get(headers[0]?.rfpf_key || '') || [];
+  const seen = new Set<string>();
+  const lines: BrandLine[] = [];
+  for (const line of all) {
+    if (!((Number(line.quantity) || 0) > 0)) continue;
+    const matches = headers.some((header) => sheetMatchesTrackerProduct(line.sheet_name || '', header.product));
+    if (!matches) continue;
+    const key = `${line.source_row_key}|${line.variant_name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    lines.push(line);
+  }
+  return lines;
 }
 
 export function parseKeyAccountSalesTrackerBuffer(buffer: ArrayBuffer): SalesTrackerParseResult {
@@ -649,7 +704,7 @@ export function parseKeyAccountSalesTrackerBuffer(buffer: ArrayBuffer): SalesTra
     const parsed = brandSheetLines(name, matrix);
     if (!parsed.length && headerRow < 0) continue;
     brandLines.push(...parsed);
-    const orders = new Set(parsed.map((row) => row.rfpf_key)).size;
+    const orders = new Set(parsed.map((row) => row._rfpf_key)).size;
     sheets.push({ name, brand: brandFromSheet(name), orders, lines: parsed.filter((r) => (Number(r.quantity) || 0) > 0).length });
   }
 
@@ -657,13 +712,13 @@ export function parseKeyAccountSalesTrackerBuffer(buffer: ArrayBuffer): SalesTra
     throw new Error('No B1G Sales Tracker sheet found. Upload the Key Account Sales 2026 workbook.');
   }
 
-  // One PO per RFPF — keep first tracker row when Excel repeats the same RFPF.
-  const uniqueHeaders: TrackerHeader[] = [];
-  const seenRfpf = new Set<string>();
+  // One PO per written RFPF. Several product rows with RFPF-0001300 stay one order.
+  // RFPF0000059 is not RFPF-0000059.
+  const headersByCode = new Map<string, TrackerHeader[]>();
   for (const header of trackerHeaders) {
-    if (seenRfpf.has(header.rfpf_key)) continue;
-    seenRfpf.add(header.rfpf_key);
-    uniqueHeaders.push(header);
+    const list = headersByCode.get(header.rfpf_key) || [];
+    list.push(header);
+    headersByCode.set(header.rfpf_key, list);
   }
 
   const byRfpf = new Map<string, BrandLine[]>();
@@ -677,9 +732,23 @@ export function parseKeyAccountSalesTrackerBuffer(buffer: ArrayBuffer): SalesTra
   const tracker_only: SalesTrackerParseResult['tracker_only'] = [];
   let matched_rfpf = 0;
 
-  for (const header of uniqueHeaders) {
-    const lines = pickBrandLines(header, byRfpf);
+  for (const headers of headersByCode.values()) {
+    const header = headers[0];
+    const orderRef = header.rfpf_display;
+    const lines = pickBrandLines(headers, byRfpf);
     const qtyLines = lines.filter((line) => (Number(line.quantity) || 0) > 0);
+    const paid = headers.reduce((sum, row) => sum + (Number(row.payment_amount) || 0), 0);
+    const discount = headers.reduce((sum, row) => sum + (Number(row.discount) || 0), 0);
+    const remaining = headers.some((row) => row.remaining_balance != null)
+      ? headers.reduce((sum, row) => sum + (Number(row.remaining_balance) || 0), 0)
+      : undefined;
+    const headerNotes = [...new Set(headers.map((row) => row.notes).filter(Boolean))].join('\n');
+    const paymentDates = headers.map((row) => row.payment_date).filter(Boolean).sort();
+    const paymentDate = paymentDates[paymentDates.length - 1] || '';
+    const unpaid = headers.find((row) => String(row.excel_status || '').toUpperCase() !== 'PAID' && row.excel_status);
+    const excelStatus = unpaid?.excel_status || header.excel_status;
+    const kindFor = (sheetName: string) =>
+      headers.find((row) => sheetMatchesTrackerProduct(sheetName, row.product))?.inventory_kind;
 
     if (!qtyLines.length) {
       tracker_only.push({
@@ -692,7 +761,7 @@ export function parseKeyAccountSalesTrackerBuffer(buffer: ArrayBuffer): SalesTra
         excel_row: header.excel_row,
         sheet_name: 'B1G Sales Tracker',
         source_row_key: `tracker|${header.excel_row}`,
-        external_po_ref: header.rfpf_display,
+        external_po_ref: orderRef,
         rfpf_number: header.rfpf_display,
         order_date: header.order_date || undefined,
         client_name: header.client_name || undefined,
@@ -704,15 +773,15 @@ export function parseKeyAccountSalesTrackerBuffer(buffer: ArrayBuffer): SalesTra
         quantity: 0,
         unit_price: 0,
         agent_name: header.agent || undefined,
-        notes: header.notes
-          ? `${header.notes}\nNo brand-sheet flavor lines for ${header.product || 'product'}`
-          : `No brand-sheet flavor lines for ${header.product || 'product'}`,
+        notes: headerNotes
+          ? `${headerNotes}\nNo brand-sheet flavor lines for ${headers.map((row) => row.product).filter(Boolean).join(', ') || 'product'}`
+          : `No brand-sheet flavor lines for ${headers.map((row) => row.product).filter(Boolean).join(', ') || 'product'}`,
         inventory_kind: header.inventory_kind,
-        excel_status: header.excel_status || undefined,
-        payment_amount: header.payment_amount,
-        payment_date: header.payment_date || undefined,
-        remaining_balance: header.remaining_balance,
-        discount: header.discount || undefined,
+        excel_status: excelStatus || undefined,
+        payment_amount: paid,
+        payment_date: paymentDate || undefined,
+        remaining_balance: remaining,
+        discount: discount || undefined,
       });
       continue;
     }
@@ -730,7 +799,7 @@ export function parseKeyAccountSalesTrackerBuffer(buffer: ArrayBuffer): SalesTra
         excel_row: line.excel_row,
         sheet_name: line.sheet_name,
         source_row_key: line.source_row_key,
-        external_po_ref: header.rfpf_display,
+        external_po_ref: orderRef,
         rfpf_number: header.rfpf_display,
         order_date: header.order_date || line.order_date,
         expected_delivery_date: line.expected_delivery_date || header.order_date || undefined,
@@ -739,14 +808,14 @@ export function parseKeyAccountSalesTrackerBuffer(buffer: ArrayBuffer): SalesTra
         client_category: header.client_category || line.client_category,
         province: header.province || line.province,
         agent_name: header.agent || line.agent_name,
-        inventory_kind: header.inventory_kind || line.inventory_kind,
-        excel_status: header.excel_status || line.excel_status,
-        // payment once per tracker RFPF (first line only) so dry-run does not multiply paid
-        payment_amount: index === 0 ? header.payment_amount || line.payment_amount || 0 : 0,
-        payment_date: header.payment_date || line.payment_date,
-        remaining_balance: header.remaining_balance ?? line.remaining_balance,
-        discount: index === 0 ? header.discount || undefined : undefined,
-        notes: [header.notes, line.notes].filter(Boolean).join('\n') || undefined,
+        inventory_kind: kindFor(line.sheet_name || '') || header.inventory_kind || line.inventory_kind,
+        excel_status: excelStatus || line.excel_status,
+        // payment once for the whole RFPF so flavor lines do not multiply it
+        payment_amount: index === 0 ? paid || line.payment_amount || 0 : 0,
+        payment_date: paymentDate || line.payment_date,
+        remaining_balance: index === 0 ? remaining : undefined,
+        discount: index === 0 ? discount || undefined : undefined,
+        notes: [headerNotes, line.notes].filter(Boolean).join('\n') || undefined,
         proof_url: index === 0 ? proofUrls || line.proof_url : undefined,
       });
     });
@@ -759,7 +828,7 @@ export function parseKeyAccountSalesTrackerBuffer(buffer: ArrayBuffer): SalesTra
     })
     .map((key) => {
       const sample = (byRfpf.get(key) || [])[0];
-      return displayRfpfCode(String(sample?.rfpf_number || key)) || key;
+      return String(sample?.rfpf_number || key);
     });
 
   if (!rows.length) {
@@ -771,7 +840,7 @@ export function parseKeyAccountSalesTrackerBuffer(buffer: ArrayBuffer): SalesTra
     rows,
     sheets,
     agents,
-    tracker_rfpf_total: uniqueHeaders.length,
+    tracker_rfpf_total: headersByCode.size,
     matched_rfpf,
     tracker_only,
     brand_only_rfpf,

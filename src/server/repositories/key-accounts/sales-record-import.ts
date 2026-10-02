@@ -168,10 +168,12 @@ const n = (s: unknown) =>
 const money = (v: unknown) => Math.round((Number(v) || 0) * 100) / 100;
 
 function normalizeRfpf(value: unknown) {
+  // Keep a written hyphen so RFPF0000059 and RFPF-0000059 stay different orders.
   return String(value || '')
     .trim()
     .toUpperCase()
-    .replace(/[^A-Z0-9]/g, '');
+    .replace(/[–—]/g, '-')
+    .replace(/\s+/g, '');
 }
 
 type CatalogPick<T> = { ok: true; row: T } | { ok: false; error: string };

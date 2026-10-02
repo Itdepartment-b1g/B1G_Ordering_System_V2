@@ -18,7 +18,6 @@ import {
   parseKeyAccountSalesTrackerExcel,
   type SalesTrackerParseResult,
 } from '@/features/key-accounts/utils/parseKeyAccountSalesTrackerExcel';
-import { displayRfpfCode } from '@/features/key-accounts/utils/parseKeyAccountSalesOrderExcel';
 import { applySalesRecordAliases, productAliasKey } from '@/features/key-accounts/utils/unpivotClientSalesRecord';
 import {
   SALES_RECORD_IMPORT_PO_CHUNK,
@@ -138,9 +137,8 @@ function isEmail(value: string) {
 }
 
 function orderRfpfLabel(po: PreviewPo) {
-  const raw = String(po.rfpf_number || po.external_po_ref || '').trim();
-  const code = raw && !raw.includes('|') ? displayRfpfCode(raw) : '';
-  return code || raw || 'NO RFPF';
+  const raw = String(po.external_po_ref || po.rfpf_number || '').trim();
+  return raw || 'NO RFPF';
 }
 
 function itemAmount(item: PreviewItem) {
@@ -265,9 +263,8 @@ function failedImportOrders(failed: ImportPoResult[], catalog: PreviewPo[]): Pre
 
 function poHasRfpf(po: PreviewPo) {
   const raw = String(po.rfpf_number || po.external_po_ref || '').trim();
-  if (!raw || raw.includes('|')) return false;
-  const display = displayRfpfCode(raw);
-  return /RFPF\s*[-–—]?\s*\d+/i.test(raw) || /RFPF\s*[-–—]?\s*\d+/i.test(display);
+  if (!raw) return false;
+  return /RFPF\s*[-–—]?\s*\d+/i.test(raw);
 }
 
 function SoftCheckOrderList({
@@ -437,7 +434,7 @@ function ImportResultTable({
         {rows.map((row) => (
           <TableRow key={row.external_po_ref}>
             <TableCell className="font-mono text-sm">
-              {displayRfpfCode(row.external_po_ref) || row.external_po_ref}
+              {row.external_po_ref}
             </TableCell>
             <TableCell className="font-mono">{row.po_number || '—'}</TableCell>
             <TableCell>
@@ -652,6 +649,7 @@ export function KeyAccountSalesTrackerImportPage() {
   const [importResults, setImportResults] = useState<ImportPoResult[]>([]);
   const [busy, setBusy] = useState<'parse' | 'dry' | 'import' | null>(null);
   const [importProgress, setImportProgress] = useState('');
+  const stopImportRef = useRef(false);
   const [productDrafts, setProductDrafts] = useState<Record<string, { brand_name: string; variant_name: string; sku: string }>>({});
   const [createMissing, setCreateMissing] = useState(true);
   const [softChecked, setSoftChecked] = useState(false);
@@ -715,6 +713,20 @@ export function KeyAccountSalesTrackerImportPage() {
   );
   const withoutRfpfPos = useMemo(
     () => (dryRun?.purchase_orders || []).filter((po) => !poHasRfpf(po)),
+    [dryRun]
+  );
+  const sameRfpfPos = useMemo(
+    () => (dryRun?.purchase_orders || [])
+      .map((po) => {
+        const brands = brandsOf(po).map(([brand, items]) => ({
+          brand,
+          quantity: items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0),
+          amount: items.reduce((sum, item) => sum + itemAmount(item), 0),
+        }));
+        return { po, brands };
+      })
+      .filter((row) => row.brands.length > 1)
+      .sort((a, b) => orderRfpfLabel(a.po).localeCompare(orderRfpfLabel(b.po))),
     [dryRun]
   );
 
@@ -927,6 +939,7 @@ export function KeyAccountSalesTrackerImportPage() {
 
   const runImport = async () => {
     if (!readyPos.length) return;
+    stopImportRef.current = false;
     setBusy('import');
     setImportResults([]);
     const grouped = groupRows(rows);
@@ -936,20 +949,30 @@ export function KeyAccountSalesTrackerImportPage() {
       chunks.push(refs.slice(i, i + SALES_RECORD_IMPORT_PO_CHUNK));
     }
     const all: ImportPoResult[] = [];
+    let stopped = false;
     try {
       for (let i = 0; i < chunks.length; i++) {
+        if (stopImportRef.current) {
+          stopped = true;
+          break;
+        }
         setImportProgress(`Importing batch ${i + 1} of ${chunks.length}…`);
         const batchRows = chunks[i].flatMap((ref) => grouped.get(ref) || []);
         const result = await kaPost<{ results: ImportPoResult[] }>('import', batchRows, createMissing);
         all.push(...(result.results || []));
         setImportResults([...all]);
       }
+      if (stopImportRef.current) stopped = true;
       const imported = all.filter((row) => row.ok).length;
       const already = alreadyImportedPos.length + all.filter((row) => !row.ok && isAlreadyImportedResult(row)).length;
       const failed = all.filter((row) => !row.ok && !isAlreadyImportedResult(row)).length;
+      const savedRefs = new Set(all.map((row) => row.external_po_ref));
+      const remaining = refs.filter((ref) => !savedRefs.has(ref)).length;
       toast({
-        title: failed ? 'Import finished with errors' : 'Import complete',
-        description: `${imported} imported, ${already} already in OMS, ${failed} failed to save. Delivered orders did not deduct stock.`,
+        title: stopped ? 'Import stopped' : failed ? 'Import finished with errors' : 'Import complete',
+        description: stopped
+          ? `${imported} imported, ${failed} failed to save. ${remaining} ready PO${remaining === 1 ? '' : 's'} were not sent. Orders already saved stay saved.`
+          : `${imported} imported, ${already} already in OMS, ${failed} failed to save. Delivered orders did not deduct stock.`,
       });
     } catch (error) {
       toast({
@@ -958,6 +981,7 @@ export function KeyAccountSalesTrackerImportPage() {
         description: error instanceof Error ? error.message : String(error),
       });
     } finally {
+      stopImportRef.current = false;
       setBusy(null);
       setImportProgress('');
     }
@@ -1074,10 +1098,24 @@ export function KeyAccountSalesTrackerImportPage() {
                   ? 'Open Soft Check first'
                   : `${readyPos.length} ready · ${alreadyImportedPos.length} already imported · ${blockedPos.length} skipped`}
             </p>
-            <Button onClick={() => void runImport()} disabled={!softChecked || !readyPos.length || !!busy}>
-              {busy === 'import' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Import {readyPos.length || ''} ready PO{readyPos.length === 1 ? '' : 's'}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button onClick={() => void runImport()} disabled={!softChecked || !readyPos.length || !!busy}>
+                {busy === 'import' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Import {readyPos.length || ''} ready PO{readyPos.length === 1 ? '' : 's'}
+              </Button>
+              {busy === 'import' ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    stopImportRef.current = true;
+                    setImportProgress('Stopping after this batch…');
+                  }}
+                >
+                  Stop
+                </Button>
+              ) : null}
+            </div>
             {importProgress ? <p className="text-sm text-muted-foreground">{importProgress}</p> : null}
           </CardContent>
         </Card>
@@ -1217,6 +1255,7 @@ export function KeyAccountSalesTrackerImportPage() {
                 <TabsTrigger value="unpaid-no-variant">Unpaid no variant ({unpaidWithoutVariantPos.length})</TabsTrigger>
                 <TabsTrigger value="needs-sheet">Needs brand sheet ({noVariantPos.length})</TabsTrigger>
                 <TabsTrigger value="consigned">Consigned ({consignedPos.length})</TabsTrigger>
+                <TabsTrigger value="same-rfpf">Same RFPF ({sameRfpfPos.length})</TabsTrigger>
               </TabsList>
 
               <TabsContent value="ready" className="space-y-2">
@@ -1452,6 +1491,47 @@ export function KeyAccountSalesTrackerImportPage() {
                   RFPFs marked Consignment on B1G Sales Tracker (INVENTORY / CONSIGNMENT column).
                 </p>
                 <SoftCheckOrderList orders={consignedPos} emptyLabel="No consigned RFPFs in this dry-run." showIssues />
+              </TabsContent>
+              <TabsContent value="same-rfpf" className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  These codes are on more than one product. Dry-run keeps each written code as one purchase order.
+                  A hyphen is part of the code, so RFPF-1200 and RFPF1200 stay two orders.
+                </p>
+                {sameRfpfPos.length ? (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>RFPF</TableHead>
+                        <TableHead>Products on this PO</TableHead>
+                        <TableHead className="text-right">Qty</TableHead>
+                        <TableHead className="text-right">Amount</TableHead>
+                        <TableHead className="text-right">Paid</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {sameRfpfPos.map(({ po, brands }) => (
+                        <TableRow key={po.external_po_ref}>
+                          <TableCell className="font-mono text-sm">{orderRfpfLabel(po)}</TableCell>
+                          <TableCell className="text-sm">
+                            {brands.map((brand) => `${brand.brand} (${brand.quantity})`).join(' · ')}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {brands.reduce((sum, brand) => sum + brand.quantity, 0)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">{peso(po.total_amount)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{peso(po.payment_amount)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                ) : (
+                  <p className="text-sm text-muted-foreground py-4">No RFPF is shared by more than one product.</p>
+                )}
+                <SoftCheckOrderList
+                  orders={sameRfpfPos.map((row) => row.po)}
+                  emptyLabel="No shared RFPFs in this dry-run."
+                  showIssues
+                />
               </TabsContent>
             </Tabs>
           </CardContent>
