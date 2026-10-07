@@ -62,23 +62,28 @@ const IDENTITY: Record<string, string> = {
   dateofpayment: 'payment_date',
   modeofpayment: 'payment_method',
   product: 'product',
+  // Order-level money. Not a per-flavor amount.
+  totalamount: 'sheet_total_amount',
+  totalamt: 'sheet_total_amount',
 };
 
-const MARKER: Record<string, 'total_qty' | 'price' | 'amount'> = {
+const MARKER: Record<string, 'total_qty' | 'price' | 'amount' | 'total'> = {
   totalqty: 'total_qty',
   totalpods: 'total_qty',
   totaldevice: 'total_qty',
+  totalquantity: 'total_qty',
+  totalqtydevice: 'total_qty',
   price: 'price',
   amount: 'amount',
   amt: 'amount',
-  totalamt: 'amount',
-  total: 'amount',
-  totalamount: 'amount',
+  // Bare TOTAL is qty or money depending on the columns beside it.
+  total: 'total',
 };
 
 const IGNORE = new Set([
   'pods',
-  'device',
+  // DEVICE on a brand sheet is a quantity column (ONE BAR: 20 devices, AMOUNT beside it).
+  // The tracker summary column of the same name is not parsed here.
   'year',
   'month',
   'week',
@@ -102,7 +107,7 @@ type Col = {
   header: string;
   role: 'identity' | 'flavor' | 'marker' | 'ignore';
   field?: string;
-  marker?: 'total_qty' | 'price' | 'amount';
+  marker?: 'total_qty' | 'price' | 'amount' | 'total';
 };
 
 type QtyGroup = {
@@ -141,6 +146,75 @@ export function normalizeRfpfKey(value: string) {
     .trim()
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, '');
+}
+
+/**
+ * The code in the cell, with a hyphen only when the cell has one.
+ * RFPF0000059 and RFPF-0000059 stay different. Extra lines in the cell are a note.
+ */
+export function rfpfAsWritten(raw: string): { code: string; note: string } {
+  const lines = String(raw || '')
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  let code = '';
+  const notes: string[] = [];
+  for (const line of lines) {
+    const match = line.match(/RFPF\s*[-–—]?\s*\d+/i);
+    if (match && !code) {
+      code = match[0].replace(/\s+/g, '').replace(/[–—]/g, '-').toUpperCase();
+      const rest = line.slice(match.index! + match[0].length).trim();
+      if (rest) notes.push(rest);
+      continue;
+    }
+    notes.push(line);
+  }
+  return { code, note: notes.join('\n') };
+}
+
+function shopSpellKey(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function uniqueShopLabels(values: Array<string | undefined>) {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const text = String(value || '').trim();
+    const key = shopSpellKey(text);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+  }
+  return out;
+}
+
+function shopIdentity(headers: TrackerHeader[], lines: BrandLine[]) {
+  const tradeLabels = uniqueShopLabels(headers.map((row) => row.shop_name));
+  const vapeLabels = uniqueShopLabels(lines.map((line) => line.shop_name));
+  const collapsed = uniqueShopLabels([...tradeLabels, ...vapeLabels]);
+  return {
+    trade_name: tradeLabels.join(' | ') || undefined,
+    vape_shop_names: vapeLabels.join(' | ') || undefined,
+    shop_name: collapsed.length === 1 ? collapsed[0] : tradeLabels[0] || vapeLabels[0] || undefined,
+  };
+}
+
+function rfpfMatchKey(code: string) {
+  return code.trim().toUpperCase().replace(/[–—]/g, '-').replace(/\s+/g, '');
+}
+
+function sheetMatchesTrackerProduct(sheetName: string, trackerProduct: string) {
+  const sheet = normalizeSalesHeader(sheetName);
+  const product = normalizeSalesHeader(trackerProduct);
+  if (!product) return true;
+  if (!sheet) return false;
+  const qualified = (value: string) => value.includes('disposable') || value.includes('prefilled');
+  if (qualified(sheet) !== qualified(product)) return false;
+  const ultraLite = (value: string) => value === 'ultra' || value.startsWith('ultralite');
+  if (ultraLite(sheet) && ultraLite(product) && sheet !== product) return false;
+  if (sheet === product || sheet.startsWith(product) || product.startsWith(sheet)) return true;
+  return brandKey(sheetName) === brandKey(trackerProduct);
 }
 
 function brandFromSheet(name: string) {
@@ -189,7 +263,7 @@ function classify(header: string): Pick<Col, 'role' | 'field' | 'marker'> {
   if (field) return { role: 'identity', field };
   const marker = MARKER[key];
   if (marker) return { role: 'marker', marker };
-  // Keep TOTAL QTY / TOTAL AMOUNT as markers above; ignore other TOTAL* summary cols.
+  // TOTAL AMOUNT / TOTAL QTY are handled above. Ignore other TOTAL* summary cols.
   if (key.startsWith('total')) return { role: 'ignore' };
   return { role: 'flavor' };
 }
@@ -283,6 +357,46 @@ function proofText(value: unknown): string {
     .join('\n');
 }
 
+/**
+ * ONE BAR-style brand sheets store the real unit cost inside the amount formula
+ * (qty × 205 → ₱92,250). The Price column on those sheets is a placeholder of 1.
+ * Other workbooks keep their own price column, so this returns nothing unless
+ * Price is missing or 1 and amount ÷ qty is a real unit cost.
+ */
+function unitPriceFromAmountFormula(
+  listed: number | undefined,
+  amount: number | undefined,
+  flavorSum: number,
+  totalQty: number | undefined
+): number | undefined {
+  const qty = flavorSum > 0 ? flavorSum : totalQty && totalQty > 0 ? totalQty : 0;
+  if (amount == null || amount <= 0 || qty <= 0) return undefined;
+  const fromAmount = Math.round((amount / qty) * 100) / 100;
+  if (!(fromAmount > 1)) return undefined;
+  if (listed != null && listed > 1) return undefined;
+  return fromAmount;
+}
+
+function roundMoney(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+/** Split an Excel amount across flavor quantities. The last flavor absorbs rounding. */
+function splitMoney(qtys: number[], amount: number): number[] {
+  const positive = qtys.map((qty) => (qty > 0 ? qty : 0));
+  const sum = positive.reduce((total, qty) => total + qty, 0);
+  if (!(sum > 0) || !(amount > 0)) return positive.map(() => 0);
+  let used = 0;
+  return positive.map((qty, index) => {
+    if (!(qty > 0)) return 0;
+    const later = positive.slice(index + 1).some((next) => next > 0);
+    if (!later) return roundMoney(amount - used);
+    const share = roundMoney((amount * qty) / sum);
+    used = roundMoney(used + share);
+    return share;
+  });
+}
+
 function buildGroups(columns: Col[]): QtyGroup[] {
   const groups: QtyGroup[] = [];
   let current: QtyGroup = { flavors: [] };
@@ -301,6 +415,15 @@ function buildGroups(columns: Col[]): QtyGroup[] {
       else if (col.marker === 'amount') {
         current.amountCol = col.index;
         close();
+      } else if (col.marker === 'total') {
+        // ULTRALITE / ONE BAR: TOTAL after flavors is the piece count, and AMOUNT or
+        // TOTAL AMOUNT is the money. X-FORGE / AMZ: TOTAL after TOTAL QTY or PRICE is the money.
+        if (current.priceCol == null && current.totalQtyCol == null && current.amountCol == null) {
+          current.totalQtyCol = col.index;
+        } else {
+          current.amountCol = col.index;
+          close();
+        }
       }
       continue;
     }
@@ -339,8 +462,9 @@ function parseTrackerHeaders(matrix: unknown[][]): TrackerHeader[] {
     const cells = matrix[i] || [];
     const raw = String(cells[idx.rfpf] ?? '').trim();
     if (!raw) continue;
-    const display = displayRfpfCode(raw);
-    const key = normalizeRfpfKey(display || raw);
+    const written = rfpfAsWritten(raw);
+    const display = written.code;
+    const key = rfpfMatchKey(display);
     if (!key) continue;
     const product = idx.product >= 0 ? String(cells[idx.product] ?? '').trim() : '';
     out.push({
@@ -361,7 +485,7 @@ function parseTrackerHeaders(matrix: unknown[][]): TrackerHeader[] {
       remaining_balance: idx.rem >= 0 ? parseNumber(cells[idx.rem]) : undefined,
       excel_status: idx.status >= 0 ? excelStatus(cells[idx.status]) : '',
       payment_date: idx.payDate >= 0 ? parseDate(cells[idx.payDate]) : '',
-      notes: idx.notes >= 0 ? String(cells[idx.notes] ?? '').trim() : '',
+      notes: [idx.notes >= 0 ? String(cells[idx.notes] ?? '').trim() : '', written.note].filter(Boolean).join('\n'),
       discount: idx.discount >= 0 ? parseNumber(cells[idx.discount]) || 0 : 0,
     });
   }
@@ -408,13 +532,14 @@ function brandSheetLines(name: string, matrix: unknown[][]): BrandLine[] {
     const agent = String(cellAt(cells, columns, 'agent') || '').trim();
     const orderDate = parseDate(cellAt(cells, columns, 'order_date'));
     const rfpfRaw = String(cellAt(cells, columns, 'rfpf_number') || '').trim();
-    const rfpfDisplay = displayRfpfCode(rfpfRaw);
-    const rfpf_key = normalizeRfpfKey(rfpfDisplay || rfpfRaw);
+    const written = rfpfAsWritten(rfpfRaw);
+    const rfpfDisplay = written.code;
+    const rfpf_key = rfpfMatchKey(rfpfDisplay);
     if (!client && !shop && !orderDate && !rfpf_key) continue;
     if (!rfpf_key) continue;
 
     const si = displayRfpfCode(String(cellAt(cells, columns, 'si') || '').trim());
-    const notes = [si, String(cellAt(cells, columns, 'notes') || '').trim()].filter(Boolean).join('\n');
+    const notes = [written.note, si, String(cellAt(cells, columns, 'notes') || '').trim()].filter(Boolean).join('\n');
     const status = excelStatus(cellAt(cells, columns, 'excel_status'));
     const paid = parseNumber(cellAt(cells, columns, 'payment_amount')) || 0;
     const remaining = parseNumber(cellAt(cells, columns, 'remaining_balance'));
@@ -424,9 +549,9 @@ function brandSheetLines(name: string, matrix: unknown[][]): BrandLine[] {
     const warehouse = String(cellAt(cells, columns, 'warehouse_location_name') || '').trim();
     const paymentDate = parseDate(cellAt(cells, columns, 'payment_date'));
     const sourceKey = `${name}|${i + 1}`;
-    let pushed = 0;
-
-    for (const group of groups) {
+    const sheetTotalRaw = parseNumber(cellAt(cells, columns, 'sheet_total_amount'));
+    const sheetTotal = sheetTotalRaw != null && sheetTotalRaw > 0 ? sheetTotalRaw : undefined;
+    const prepared = groups.map((group) => {
       const listed = group.priceCol != null ? parseNumber(cells[group.priceCol]) : undefined;
       const amount = group.amountCol != null ? parseNumber(cells[group.amountCol]) : undefined;
       const totalQty = group.totalQtyCol != null ? parseNumber(cells[group.totalQtyCol]) : undefined;
@@ -435,17 +560,53 @@ function brandSheetLines(name: string, matrix: unknown[][]): BrandLine[] {
         qty: parseNumber(cells[flavor.index]) || 0,
       }));
       const flavorSum = flavorQty.reduce((sum, item) => sum + (item.qty > 0 ? item.qty : 0), 0);
-      const unit =
-        listed != null && listed > 0
-          ? listed
-          : amount != null && flavorSum > 0
-            ? amount / flavorSum
-            : amount != null && totalQty && totalQty > 0
-              ? amount / totalQty
-              : 0;
+      const ownAmount = amount != null && amount > 0 ? amount : undefined;
+      const realPrice = listed != null && listed > 1 ? listed : undefined;
+      return { listed, amount, totalQty, flavorQty, flavorSum, ownAmount, realPrice };
+    });
+    const coveredAmount = prepared.reduce((sum, group) => sum + (group.ownAmount || 0), 0);
+    const uncoveredQty = prepared.reduce(
+      (sum, group) => sum + (!group.ownAmount && !group.realPrice ? group.flavorSum : 0),
+      0
+    );
+    const leftover =
+      sheetTotal != null ? Math.max(0, roundMoney(sheetTotal - coveredAmount)) : 0;
+    let pushed = 0;
 
-      for (const item of flavorQty) {
-        if (!(item.qty > 0)) continue;
+    for (const group of prepared) {
+      const sharedAmount =
+        !group.ownAmount && !group.realPrice && uncoveredQty > 0 && leftover > 0
+          ? leftover * (group.flavorSum / uncoveredQty)
+          : undefined;
+      const pool = group.ownAmount ?? sharedAmount;
+      const fromAmountFormula = unitPriceFromAmountFormula(
+        group.listed,
+        pool ?? group.amount,
+        group.flavorSum,
+        group.totalQty
+      );
+      const unit =
+        pool != null && group.flavorSum > 0
+          ? pool / group.flavorSum
+          : fromAmountFormula != null
+            ? fromAmountFormula
+            : group.realPrice != null
+              ? group.realPrice
+              : group.listed != null && group.listed > 0
+                ? group.listed
+                : 0;
+      const positive = group.flavorQty.filter((item) => item.qty > 0);
+      const shares =
+        pool != null && group.flavorSum > 0
+          ? splitMoney(
+              positive.map((item) => item.qty),
+              pool
+            )
+          : positive.map((item) => roundMoney(item.qty * unit));
+
+      positive.forEach((item, index) => {
+        const lineTotal = shares[index] ?? roundMoney(item.qty * unit);
+        const unitPrice = item.qty > 0 ? roundMoney(lineTotal / item.qty) : roundMoney(unit);
         rows.push({
           excel_row: i + 1,
           sheet_name: name,
@@ -464,8 +625,8 @@ function brandSheetLines(name: string, matrix: unknown[][]): BrandLine[] {
           brand_name: brand,
           variant_name: item.flavor.name,
           quantity: item.qty,
-          unit_price: Math.round(unit * 100) / 100,
-          line_total: Math.round(item.qty * unit * 100) / 100,
+          unit_price: unitPrice,
+          line_total: lineTotal,
           agent_name: agent || undefined,
           notes: notes || undefined,
           inventory_kind: parseKind(cellAt(cells, columns, 'inventory_kind')),
@@ -476,6 +637,19 @@ function brandSheetLines(name: string, matrix: unknown[][]): BrandLine[] {
           proof_url: proofText(cellAt(cells, columns, 'proof_url')) || undefined,
         });
         pushed += 1;
+      });
+    }
+
+    if (pushed > 0 && sheetTotal != null) {
+      const start = rows.length - pushed;
+      const sum = rows.slice(start).reduce((total, line) => total + (Number(line.line_total) || 0), 0);
+      const diff = roundMoney(sheetTotal - sum);
+      if (Math.abs(diff) >= 0.01 && Math.abs(diff) <= 1) {
+        const last = rows[rows.length - 1];
+        const lineTotal = roundMoney((Number(last.line_total) || 0) + diff);
+        const qty = Number(last.quantity) || 0;
+        last.line_total = lineTotal;
+        last.unit_price = qty > 0 ? roundMoney(lineTotal / qty) : last.unit_price;
       }
     }
 
@@ -507,10 +681,22 @@ function brandSheetLines(name: string, matrix: unknown[][]): BrandLine[] {
   return rows;
 }
 
-function pickBrandLines(header: TrackerHeader, byRfpf: Map<string, BrandLine[]>): BrandLine[] {
-  // Same RFPF on any brand sheet = all brand/variant lines for that PO.
-  const all = byRfpf.get(header.rfpf_key) || [];
-  return all.filter((line) => (Number(line.quantity) || 0) > 0);
+function pickBrandLines(headers: TrackerHeader[], byRfpf: Map<string, BrandLine[]>): BrandLine[] {
+  // Every product row with this written RFPF belongs on one PO.
+  // A disposable or prefilled sheet is included only when that tracker row names it.
+  const all = byRfpf.get(headers[0]?.rfpf_key || '') || [];
+  const seen = new Set<string>();
+  const lines: BrandLine[] = [];
+  for (const line of all) {
+    if (!((Number(line.quantity) || 0) > 0)) continue;
+    const matches = headers.some((header) => sheetMatchesTrackerProduct(line.sheet_name || '', header.product));
+    if (!matches) continue;
+    const key = `${line.source_row_key}|${line.variant_name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    lines.push(line);
+  }
+  return lines;
 }
 
 export function parseKeyAccountSalesTrackerBuffer(buffer: ArrayBuffer): SalesTrackerParseResult {
@@ -546,7 +732,7 @@ export function parseKeyAccountSalesTrackerBuffer(buffer: ArrayBuffer): SalesTra
     const parsed = brandSheetLines(name, matrix);
     if (!parsed.length && headerRow < 0) continue;
     brandLines.push(...parsed);
-    const orders = new Set(parsed.map((row) => row.rfpf_key)).size;
+    const orders = new Set(parsed.map((row) => row._rfpf_key)).size;
     sheets.push({ name, brand: brandFromSheet(name), orders, lines: parsed.filter((r) => (Number(r.quantity) || 0) > 0).length });
   }
 
@@ -554,13 +740,13 @@ export function parseKeyAccountSalesTrackerBuffer(buffer: ArrayBuffer): SalesTra
     throw new Error('No B1G Sales Tracker sheet found. Upload the Key Account Sales 2026 workbook.');
   }
 
-  // One PO per RFPF — keep first tracker row when Excel repeats the same RFPF.
-  const uniqueHeaders: TrackerHeader[] = [];
-  const seenRfpf = new Set<string>();
+  // One PO per written RFPF. Several product rows with RFPF-0001300 stay one order.
+  // RFPF0000059 is not RFPF-0000059.
+  const headersByCode = new Map<string, TrackerHeader[]>();
   for (const header of trackerHeaders) {
-    if (seenRfpf.has(header.rfpf_key)) continue;
-    seenRfpf.add(header.rfpf_key);
-    uniqueHeaders.push(header);
+    const list = headersByCode.get(header.rfpf_key) || [];
+    list.push(header);
+    headersByCode.set(header.rfpf_key, list);
   }
 
   const byRfpf = new Map<string, BrandLine[]>();
@@ -574,9 +760,25 @@ export function parseKeyAccountSalesTrackerBuffer(buffer: ArrayBuffer): SalesTra
   const tracker_only: SalesTrackerParseResult['tracker_only'] = [];
   let matched_rfpf = 0;
 
-  for (const header of uniqueHeaders) {
-    const lines = pickBrandLines(header, byRfpf);
+  for (const headers of headersByCode.values()) {
+    const header = headers[0];
+    const orderRef = header.rfpf_display;
+    const lines = pickBrandLines(headers, byRfpf);
     const qtyLines = lines.filter((line) => (Number(line.quantity) || 0) > 0);
+    const paid = headers.reduce((sum, row) => sum + (Number(row.payment_amount) || 0), 0);
+    const discount = headers.reduce((sum, row) => sum + (Number(row.discount) || 0), 0);
+    const remaining = headers.some((row) => row.remaining_balance != null)
+      ? headers.reduce((sum, row) => sum + (Number(row.remaining_balance) || 0), 0)
+      : undefined;
+    const headerNotes = [...new Set(headers.map((row) => row.notes).filter(Boolean))].join('\n');
+    const paymentDates = headers.map((row) => row.payment_date).filter(Boolean).sort();
+    const paymentDate = paymentDates[paymentDates.length - 1] || '';
+    const unpaid = headers.find((row) => String(row.excel_status || '').toUpperCase() !== 'PAID' && row.excel_status);
+    const excelStatus = unpaid?.excel_status || header.excel_status;
+    const kindFor = (sheetName: string) =>
+      headers.find((row) => sheetMatchesTrackerProduct(sheetName, row.product))?.inventory_kind;
+
+    const shopFields = shopIdentity(headers, byRfpf.get(header.rfpf_key) || lines);
 
     if (!qtyLines.length) {
       tracker_only.push({
@@ -589,11 +791,13 @@ export function parseKeyAccountSalesTrackerBuffer(buffer: ArrayBuffer): SalesTra
         excel_row: header.excel_row,
         sheet_name: 'B1G Sales Tracker',
         source_row_key: `tracker|${header.excel_row}`,
-        external_po_ref: header.rfpf_display,
+        external_po_ref: orderRef,
         rfpf_number: header.rfpf_display,
         order_date: header.order_date || undefined,
         client_name: header.client_name || undefined,
-        shop_name: header.shop_name || undefined,
+        shop_name: shopFields.shop_name,
+        trade_name: shopFields.trade_name,
+        vape_shop_names: shopFields.vape_shop_names,
         client_category: header.client_category || undefined,
         province: header.province || undefined,
         brand_name: header.product || undefined,
@@ -601,15 +805,15 @@ export function parseKeyAccountSalesTrackerBuffer(buffer: ArrayBuffer): SalesTra
         quantity: 0,
         unit_price: 0,
         agent_name: header.agent || undefined,
-        notes: header.notes
-          ? `${header.notes}\nNo brand-sheet flavor lines for ${header.product || 'product'}`
-          : `No brand-sheet flavor lines for ${header.product || 'product'}`,
+        notes: headerNotes
+          ? `${headerNotes}\nNo brand-sheet flavor lines for ${headers.map((row) => row.product).filter(Boolean).join(', ') || 'product'}`
+          : `No brand-sheet flavor lines for ${headers.map((row) => row.product).filter(Boolean).join(', ') || 'product'}`,
         inventory_kind: header.inventory_kind,
-        excel_status: header.excel_status || undefined,
-        payment_amount: header.payment_amount,
-        payment_date: header.payment_date || undefined,
-        remaining_balance: header.remaining_balance,
-        discount: header.discount || undefined,
+        excel_status: excelStatus || undefined,
+        payment_amount: paid,
+        payment_date: paymentDate || undefined,
+        remaining_balance: remaining,
+        discount: discount || undefined,
       });
       continue;
     }
@@ -627,23 +831,25 @@ export function parseKeyAccountSalesTrackerBuffer(buffer: ArrayBuffer): SalesTra
         excel_row: line.excel_row,
         sheet_name: line.sheet_name,
         source_row_key: line.source_row_key,
-        external_po_ref: header.rfpf_display,
+        external_po_ref: orderRef,
         rfpf_number: header.rfpf_display,
         order_date: header.order_date || line.order_date,
         expected_delivery_date: line.expected_delivery_date || header.order_date || undefined,
         client_name: header.client_name || line.client_name,
-        shop_name: header.shop_name || line.shop_name,
+        shop_name: shopFields.shop_name || line.shop_name,
+        trade_name: shopFields.trade_name,
+        vape_shop_names: shopFields.vape_shop_names,
         client_category: header.client_category || line.client_category,
         province: header.province || line.province,
         agent_name: header.agent || line.agent_name,
-        inventory_kind: header.inventory_kind || line.inventory_kind,
-        excel_status: header.excel_status || line.excel_status,
-        // payment once per tracker RFPF (first line only) so dry-run does not multiply paid
-        payment_amount: index === 0 ? header.payment_amount || line.payment_amount || 0 : 0,
-        payment_date: header.payment_date || line.payment_date,
-        remaining_balance: header.remaining_balance ?? line.remaining_balance,
-        discount: index === 0 ? header.discount || undefined : undefined,
-        notes: [header.notes, line.notes].filter(Boolean).join('\n') || undefined,
+        inventory_kind: kindFor(line.sheet_name || '') || header.inventory_kind || line.inventory_kind,
+        excel_status: excelStatus || line.excel_status,
+        // payment once for the whole RFPF so flavor lines do not multiply it
+        payment_amount: index === 0 ? paid || line.payment_amount || 0 : 0,
+        payment_date: paymentDate || line.payment_date,
+        remaining_balance: index === 0 ? remaining : undefined,
+        discount: index === 0 ? discount || undefined : undefined,
+        notes: [headerNotes, line.notes].filter(Boolean).join('\n') || undefined,
         proof_url: index === 0 ? proofUrls || line.proof_url : undefined,
       });
     });
@@ -656,7 +862,7 @@ export function parseKeyAccountSalesTrackerBuffer(buffer: ArrayBuffer): SalesTra
     })
     .map((key) => {
       const sample = (byRfpf.get(key) || [])[0];
-      return displayRfpfCode(String(sample?.rfpf_number || key)) || key;
+      return String(sample?.rfpf_number || key);
     });
 
   if (!rows.length) {
@@ -668,7 +874,7 @@ export function parseKeyAccountSalesTrackerBuffer(buffer: ArrayBuffer): SalesTra
     rows,
     sheets,
     agents,
-    tracker_rfpf_total: uniqueHeaders.length,
+    tracker_rfpf_total: headersByCode.size,
     matched_rfpf,
     tracker_only,
     brand_only_rfpf,

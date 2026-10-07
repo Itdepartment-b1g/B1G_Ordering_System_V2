@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { ClipboardCheck, Loader2, Upload } from 'lucide-react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { ClipboardCheck, Download, Loader2, Upload } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Button } from '@/components/ui/button';
@@ -17,7 +18,6 @@ import {
   parseKeyAccountSalesTrackerExcel,
   type SalesTrackerParseResult,
 } from '@/features/key-accounts/utils/parseKeyAccountSalesTrackerExcel';
-import { displayRfpfCode } from '@/features/key-accounts/utils/parseKeyAccountSalesOrderExcel';
 import { applySalesRecordAliases, productAliasKey } from '@/features/key-accounts/utils/unpivotClientSalesRecord';
 import {
   SALES_RECORD_IMPORT_PO_CHUNK,
@@ -58,6 +58,9 @@ type PreviewPo = {
   will_create_client?: boolean;
   will_create_shop?: boolean;
   will_create_address?: boolean;
+  trade_name?: string;
+  vape_shops?: string[];
+  shop_choice_required?: boolean;
   items?: PreviewItem[];
   issues: string[];
 };
@@ -87,7 +90,22 @@ type ImportPoResult = {
   ok: boolean;
   po_number?: string;
   issues?: string[];
+  already_imported?: boolean;
 };
+
+function isAlreadyImportedPo(po: PreviewPo) {
+  return po.issues.some((issue) => issue.startsWith('already in OMS'));
+}
+
+function isAlreadyImportedResult(row: ImportPoResult) {
+  return row.already_imported === true
+    || (row.issues || []).some((issue) => issue.startsWith('already imported') || issue.startsWith('already in OMS'));
+}
+
+function existingPoLabel(po: PreviewPo) {
+  const issue = po.issues.find((item) => item.startsWith('already in OMS')) || '';
+  return issue.replace(/^already in OMS:\s*/, '').trim();
+}
 
 function peso(value: number) {
   return `₱${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
@@ -122,9 +140,8 @@ function isEmail(value: string) {
 }
 
 function orderRfpfLabel(po: PreviewPo) {
-  const raw = String(po.rfpf_number || po.external_po_ref || '').trim();
-  const code = raw && !raw.includes('|') ? displayRfpfCode(raw) : '';
-  return code || raw || 'NO RFPF';
+  const raw = String(po.external_po_ref || po.rfpf_number || '').trim();
+  return raw || 'NO RFPF';
 }
 
 function itemAmount(item: PreviewItem) {
@@ -140,6 +157,60 @@ function brandsOf(po: PreviewPo) {
     map.get(brand)!.push(item);
   }
   return [...map.entries()];
+}
+
+type SameRfpfRow = {
+  po: PreviewPo;
+  brands: { brand: string; quantity: number; amount: number }[];
+};
+
+function SameRfpfTable({ rows, emptyLabel }: { rows: SameRfpfRow[]; emptyLabel: string }) {
+  if (!rows.length) {
+    return <p className="text-sm text-muted-foreground py-4">{emptyLabel}</p>;
+  }
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>RFPF</TableHead>
+          <TableHead>Product</TableHead>
+          <TableHead>Client</TableHead>
+          <TableHead className="text-right">Qty</TableHead>
+          <TableHead className="text-right">Amount</TableHead>
+          <TableHead className="text-right">Paid</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map(({ po, brands }) => {
+          const label = orderRfpfLabel(po);
+          const quantity = brands.reduce((sum, brand) => sum + brand.quantity, 0);
+          return (
+            <Fragment key={po.external_po_ref}>
+              {brands.map((brand) => (
+                <TableRow key={`${po.external_po_ref}|${brand.brand}`}>
+                  <TableCell className="font-mono text-sm">{label}</TableCell>
+                  <TableCell className="text-sm">{brand.brand}</TableCell>
+                  <TableCell className="text-sm">{po.client || '—'}</TableCell>
+                  <TableCell className="text-right tabular-nums">{brand.quantity}</TableCell>
+                  <TableCell className="text-right tabular-nums">{peso(brand.amount)}</TableCell>
+                  <TableCell className="text-right text-muted-foreground">—</TableCell>
+                </TableRow>
+              ))}
+              <TableRow className="bg-muted/50">
+                <TableCell className="font-mono text-sm font-medium">{label}</TableCell>
+                <TableCell className="text-sm font-medium" colSpan={2}>
+                  {brands.length} products with this RFPF → one PO
+                </TableCell>
+                <TableCell className="text-right tabular-nums font-medium">{quantity}</TableCell>
+                <TableCell className="text-right tabular-nums font-medium">{peso(po.total_amount)}</TableCell>
+                <TableCell className="text-right tabular-nums font-medium">{peso(po.payment_amount)}</TableCell>
+              </TableRow>
+            </Fragment>
+          );
+        })}
+      </TableBody>
+    </Table>
+  );
 }
 
 function PoMasterBadges({ po }: { po: PreviewPo }) {
@@ -168,6 +239,30 @@ function poBrandLabel(po: PreviewPo) {
   return 'Unknown brand';
 }
 
+function brandMatchKey(value: string) {
+  const key = value.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!key) return '';
+  if (key.includes('amz')) return 'amz';
+  if (key.includes('xslim') || key.includes('slimbar')) return 'xslimbar';
+  if (key.includes('ultralite') || (key.includes('ultra') && key.includes('lite'))) return 'ultralite';
+  if (key.includes('xforge') || key === 'forge') return 'xforge';
+  if (key.includes('chillax')) return 'chillax';
+  if (key.includes('onebar')) return 'onebar';
+  if (key.includes('aero')) return 'aero';
+  if (key.includes('relx') && key.includes('go')) return 'relxgo';
+  if (key.includes('relx') && key.includes('ultra') && key.includes('pro')) return 'relxultrapro';
+  return key;
+}
+
+function poVariantLabel(po: PreviewPo) {
+  const names = new Set<string>();
+  for (const item of po.items || []) {
+    const variant = String(item.excel_variant || item.variant || '').trim();
+    if (variant) names.add(variant);
+  }
+  return [...names].join(', ') || '—';
+}
+
 function paymentIsPaid(po: PreviewPo) {
   return String(po.payment_status || '').toLowerCase() === 'paid';
 }
@@ -177,21 +272,68 @@ function paymentIsUnpaid(po: PreviewPo) {
   return status === 'unpaid' || status === 'partial' || status.includes('balance');
 }
 
+function nextStepForSaveError(message: string, po?: PreviewPo) {
+  const text = message.toLowerCase();
+  if (text.includes('exceeds remaining balance') || (text.includes('payment') && text.includes('exceed'))) {
+    const paid = po ? peso(po.payment_amount) : 'the payment';
+    const total = po ? peso(po.total_amount) : 'the order total';
+    return `Next step: payment ${paid} is higher than the order total ${total}. Lower the Excel payment, or correct the flavor quantities and amounts below, then import this RFPF again.`;
+  }
+  if (text.includes('not allowed to record payment')) {
+    return 'Next step: sign in as Sales Admin or Sales Head for this company, then import this RFPF again.';
+  }
+  if (text.includes('timeout')) {
+    return 'Next step: import this RFPF again. The database stopped the save because it took too long.';
+  }
+  if (text.includes('duplicate') || text.includes('unique') || text.includes('already')) {
+    return 'Next step: this RFPF is already stored, or it duplicates a PO number. Check Already imported before importing it again.';
+  }
+  return 'Next step: fix the problem named above on this RFPF, then import it again. Orders that already saved stay skipped.';
+}
+
+function failedImportOrders(failed: ImportPoResult[], catalog: PreviewPo[]): PreviewPo[] {
+  const byRef = new Map(catalog.map((po) => [po.external_po_ref, po]));
+  return failed.map((row) => {
+    const source = byRef.get(row.external_po_ref);
+    const message = row.issues?.filter(Boolean).join(' · ') || 'Failed to save';
+    const base: PreviewPo = source || {
+      external_po_ref: row.external_po_ref,
+      would_insert: false,
+      order_date: '',
+      client: '',
+      shop: '',
+      kam: '',
+      line_count: 0,
+      total_amount: 0,
+      payment_amount: 0,
+      payment_status: '',
+      issues: [],
+      items: [],
+    };
+    return {
+      ...base,
+      would_insert: false,
+      issues: [message, nextStepForSaveError(message, base)],
+    };
+  });
+}
+
 function poHasRfpf(po: PreviewPo) {
   const raw = String(po.rfpf_number || po.external_po_ref || '').trim();
-  if (!raw || raw.includes('|')) return false;
-  const display = displayRfpfCode(raw);
-  return /RFPF\s*[-–—]?\s*\d+/i.test(raw) || /RFPF\s*[-–—]?\s*\d+/i.test(display);
+  if (!raw) return false;
+  return /RFPF\s*[-–—]?\s*\d+/i.test(raw);
 }
 
 function SoftCheckOrderList({
   orders,
   emptyLabel,
   showIssues,
+  statusLabel,
 }: {
   orders: PreviewPo[];
   emptyLabel: string;
   showIssues?: boolean;
+  statusLabel?: string;
 }) {
   if (!orders.length) {
     return <p className="text-sm text-muted-foreground py-4">{emptyLabel}</p>;
@@ -217,7 +359,11 @@ function SoftCheckOrderList({
                 <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm">
                   {consigned ? <Badge variant="outline">Consigned</Badge> : null}
                   <Badge variant="secondary">{po.payment_status}</Badge>
-                  {!po.would_insert ? <Badge variant="destructive">Blocked</Badge> : null}
+                  {statusLabel
+                    ? <Badge variant="secondary">{statusLabel}</Badge>
+                    : !po.would_insert
+                      ? <Badge variant="destructive">Blocked</Badge>
+                      : null}
                   <span className="tabular-nums text-muted-foreground">{po.line_count} line(s)</span>
                   <span className="tabular-nums font-medium">{peso(po.total_amount)}</span>
                 </div>
@@ -226,9 +372,20 @@ function SoftCheckOrderList({
             <AccordionContent>
               <div className="space-y-4 pl-1">
                 {showIssues && po.issues.length ? (
-                  <ul className="list-disc space-y-1 pl-4 text-sm text-destructive">
+                  <ul className="list-disc space-y-1 pl-4 text-sm">
                     {po.issues.map((issue) => (
-                      <li key={issue}>{issue}</li>
+                      <li
+                        key={issue}
+                        className={
+                          issue.startsWith('Next step:')
+                            ? 'text-foreground'
+                            : statusLabel === 'Already imported'
+                              ? 'text-muted-foreground'
+                              : 'text-destructive'
+                        }
+                      >
+                        {issue}
+                      </li>
                     ))}
                   </ul>
                 ) : null}
@@ -308,6 +465,308 @@ async function kaPost<T>(
   return body as T;
 }
 
+function ImportResultTable({
+  rows,
+  emptyLabel,
+  status,
+}: {
+  rows: ImportPoResult[];
+  emptyLabel: string;
+  status: 'imported' | 'failed' | 'already';
+}) {
+  if (!rows.length) {
+    return <p className="text-sm text-muted-foreground py-4">{emptyLabel}</p>;
+  }
+
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>RFPF</TableHead>
+          <TableHead>System PO</TableHead>
+          <TableHead>Status</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((row) => (
+          <TableRow key={row.external_po_ref}>
+            <TableCell className="font-mono text-sm">
+              {row.external_po_ref}
+            </TableCell>
+            <TableCell className="font-mono">{row.po_number || '—'}</TableCell>
+            <TableCell>
+              {status === 'imported' ? <Badge>Imported</Badge> : null}
+              {status === 'already' ? <Badge variant="secondary">Already imported</Badge> : null}
+              {status === 'failed' ? (
+                <span className="text-sm text-destructive">{row.issues?.join(' · ') || 'Failed'}</span>
+              ) : null}
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function failedImportPayload(orders: PreviewPo[]) {
+  return {
+    exported_at: new Date().toISOString(),
+    failed_count: orders.length,
+    orders: orders.map((po) => {
+      const error = po.issues.find((issue) => !issue.startsWith('Next step:')) || 'Failed to save';
+      const nextStep = po.issues.find((issue) => issue.startsWith('Next step:')) || '';
+      return {
+        rfpf: orderRfpfLabel(po),
+        order_date: po.order_date || '',
+        client: po.client || '',
+        shop: po.shop || '',
+        payment_status: po.payment_status || '',
+        order_kind: po.po_order_kind || '',
+        line_count: po.line_count,
+        total_amount: po.total_amount,
+        payment_amount: po.payment_amount,
+        error,
+        next_step: nextStep,
+        lines: (po.items || []).map((item) => ({
+          brand: item.excel_brand || item.brand || '',
+          variant: item.excel_variant || item.variant || '',
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          amount: itemAmount(item),
+          matched: item.lookup_ok,
+        })),
+      };
+    }),
+  };
+}
+
+function failedImportSheetRows(orders: PreviewPo[]) {
+  const payload = failedImportPayload(orders);
+  const rows: Record<string, string | number | boolean>[] = [];
+  for (const order of payload.orders) {
+    const header = {
+      RFPF: order.rfpf,
+      Date: order.order_date,
+      Client: order.client,
+      Shop: order.shop,
+      'Payment status': order.payment_status,
+      'Order kind': order.order_kind,
+      'Line count': order.line_count,
+      'Order total': order.total_amount,
+      'Total paid': order.payment_amount,
+      Error: order.error,
+      'Next step': order.next_step,
+    };
+    if (!order.lines.length) {
+      rows.push({ ...header, Brand: '', Variant: '', Qty: '', 'Unit price': '', Amount: '', Matched: '' });
+      continue;
+    }
+    for (const line of order.lines) {
+      rows.push({
+        ...header,
+        Brand: line.brand,
+        Variant: line.variant,
+        Qty: line.quantity,
+        'Unit price': line.unit_price,
+        Amount: line.amount,
+        Matched: line.matched ? 'Matched' : 'Not matched',
+      });
+    }
+  }
+  return rows;
+}
+
+function exportFailedImports(orders: PreviewPo[], format: 'csv' | 'xlsx' | 'json') {
+  if (!orders.length) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const filename = `sales-tracker-failed-import_${today}.${format}`;
+  if (format === 'json') {
+    downloadBlob(
+      new Blob([JSON.stringify(failedImportPayload(orders), null, 2)], { type: 'application/json;charset=utf-8;' }),
+      filename
+    );
+    return;
+  }
+  const sheet = XLSX.utils.json_to_sheet(failedImportSheetRows(orders));
+  if (format === 'csv') {
+    downloadBlob(new Blob(['\uFEFF' + XLSX.utils.sheet_to_csv(sheet)], { type: 'text/csv;charset=utf-8;' }), filename);
+    return;
+  }
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Failed to import');
+  XLSX.writeFile(workbook, filename);
+}
+
+function ShopChoiceTable({
+  orders,
+  choices,
+  onChoose,
+}: {
+  orders: PreviewPo[];
+  choices: Record<string, string>;
+  onChoose: (ref: string, shopName: string) => void;
+}) {
+  if (!orders.length) {
+    return <p className="text-sm text-muted-foreground py-4">Every order already has a shop, or the shop name is the same in both columns.</p>;
+  }
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>RFPF</TableHead>
+          <TableHead>Client</TableHead>
+          <TableHead>Trade name</TableHead>
+          <TableHead>Vape shop</TableHead>
+          <TableHead>Use as shop</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {orders.map((po) => {
+          const chosen = choices[po.external_po_ref] || '';
+          const options = shopOptions(po);
+          return (
+            <TableRow key={po.external_po_ref}>
+              <TableCell className="font-mono text-sm">{orderRfpfLabel(po)}</TableCell>
+              <TableCell className="text-sm">{po.client || '—'}</TableCell>
+              <TableCell className="text-sm">{po.trade_name || '—'}</TableCell>
+              <TableCell className="text-sm">{(po.vape_shops || []).join(' · ') || '—'}</TableCell>
+              <TableCell className="min-w-52">
+                <Select
+                  value={chosen || undefined}
+                  onValueChange={(value) => onChoose(po.external_po_ref, value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose shop" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {options.map((name) => (
+                      <SelectItem key={name} value={name}>{name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {chosen ? `Will create ${chosen}` : 'This shop is not in OMS yet.'}
+                </p>
+              </TableCell>
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
+  );
+}
+
+function ImportResultCard({
+  imported,
+  failed,
+  failedOrders,
+  already,
+  missingShops,
+  shopChoices,
+  onChooseShop,
+}: {
+  imported: ImportPoResult[];
+  failed: ImportPoResult[];
+  failedOrders: PreviewPo[];
+  already: ImportPoResult[];
+  missingShops: PreviewPo[];
+  shopChoices: Record<string, string>;
+  onChooseShop: (ref: string, shopName: string) => void;
+}) {
+  const defaultValue = !imported.length && !failed.length && missingShops.length
+    ? 'choose-shop'
+    : failed.length
+      ? 'failed'
+      : imported.length
+        ? 'imported'
+        : missingShops.length
+          ? 'choose-shop'
+          : 'already';
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Import result</CardTitle>
+        <CardDescription>
+          {imported.length} imported · {already.length} already imported · {failed.length} failed to save
+          {missingShops.length ? ` · ${missingShops.length} need a shop name` : ''}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Tabs defaultValue={defaultValue}>
+          <TabsList className="flex h-auto flex-wrap gap-1">
+            <TabsTrigger value="imported">Imported ({imported.length})</TabsTrigger>
+            <TabsTrigger value="failed">Failed to import ({failed.length})</TabsTrigger>
+            <TabsTrigger value="already">Already imported ({already.length})</TabsTrigger>
+            <TabsTrigger value="choose-shop">Choose shop ({missingShops.length})</TabsTrigger>
+          </TabsList>
+          <TabsContent value="imported">
+            <ImportResultTable
+              rows={imported}
+              status="imported"
+              emptyLabel="No purchase orders were imported in this run."
+            />
+          </TabsContent>
+          <TabsContent value="failed" className="space-y-2">
+            {failed.length ? (
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <p className="text-sm text-muted-foreground">
+                  Open an RFPF to see why it did not save, what to change, and the brand and variant on that order.
+                  Export keeps the error, the order total, the payment, and each variant line.
+                </p>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={() => exportFailedImports(failedOrders, 'csv')}>
+                    <Download className="mr-2 h-4 w-4" />
+                    CSV
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" onClick={() => exportFailedImports(failedOrders, 'xlsx')}>
+                    <Download className="mr-2 h-4 w-4" />
+                    XLSX
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" onClick={() => exportFailedImports(failedOrders, 'json')}>
+                    <Download className="mr-2 h-4 w-4" />
+                    JSON
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+            <SoftCheckOrderList
+              orders={failedOrders}
+              emptyLabel="No purchase orders failed to save."
+              showIssues
+              statusLabel="Failed to save"
+            />
+          </TabsContent>
+          <TabsContent value="already">
+            <ImportResultTable
+              rows={already}
+              status="already"
+              emptyLabel="No RFPFs in this file were already in OMS."
+            />
+          </TabsContent>
+          <TabsContent value="choose-shop" className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              These orders have no saved shop under the client. Pick the trade name or the vape shop.
+              That name is created on import. Run Dry-run again if you want them listed on Can import first.
+            </p>
+            <ShopChoiceTable orders={missingShops} choices={shopChoices} onChoose={onChooseShop} />
+          </TabsContent>
+        </Tabs>
+      </CardContent>
+    </Card>
+  );
+}
+
 function groupRows(rows: KASalesRecordExcelRow[]) {
   const map = new Map<string, KASalesRecordExcelRow[]>();
   for (const row of rows) {
@@ -316,6 +775,44 @@ function groupRows(rows: KASalesRecordExcelRow[]) {
     map.get(ref)!.push(row);
   }
   return map;
+}
+
+function isShopChoiceIssue(issue: string) {
+  return issue.startsWith('choose shop:') || issue.startsWith('shop matches more than one:');
+}
+
+function shopSpellKey(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function shopOptions(po: PreviewPo) {
+  const names = [
+    ...String(po.trade_name || '').split('|').map((part) => part.trim()),
+    ...(po.vape_shops || []),
+  ];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const name of names) {
+    const key = shopSpellKey(name);
+    if (!name || !key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+  }
+  return out;
+}
+
+function rowsWithShopChoices(source: KASalesRecordExcelRow[], choices: Record<string, string>) {
+  return source.map((row) => {
+    const chosen = choices[String(row.external_po_ref || '').trim()];
+    if (!chosen) return row;
+    return {
+      ...row,
+      shop_name: chosen,
+      trade_name: chosen,
+      vape_shop_names: chosen,
+      shop_name_confirmed: true,
+    };
+  });
 }
 
 export function KeyAccountSalesTrackerImportPage() {
@@ -329,8 +826,10 @@ export function KeyAccountSalesTrackerImportPage() {
   const [importResults, setImportResults] = useState<ImportPoResult[]>([]);
   const [busy, setBusy] = useState<'parse' | 'dry' | 'import' | null>(null);
   const [importProgress, setImportProgress] = useState('');
+  const stopImportRef = useRef(false);
   const [productDrafts, setProductDrafts] = useState<Record<string, { brand_name: string; variant_name: string; sku: string }>>({});
   const [createMissing, setCreateMissing] = useState(true);
+  const [shopChoices, setShopChoices] = useState<Record<string, string>>({});
   const [softChecked, setSoftChecked] = useState(false);
   const softCheckRef = useRef<HTMLDivElement>(null);
 
@@ -343,8 +842,12 @@ export function KeyAccountSalesTrackerImportPage() {
     () => dryRun?.purchase_orders.filter((po) => po.would_insert) || [],
     [dryRun]
   );
+  const alreadyImportedPos = useMemo(
+    () => (dryRun?.purchase_orders || []).filter((po) => isAlreadyImportedPo(po)),
+    [dryRun]
+  );
   const blockedPos = useMemo(
-    () => dryRun?.purchase_orders.filter((po) => !po.would_insert) || [],
+    () => (dryRun?.purchase_orders || []).filter((po) => !po.would_insert && !isAlreadyImportedPo(po)),
     [dryRun]
   );
   const paidWithVariantPos = useMemo(
@@ -390,6 +893,53 @@ export function KeyAccountSalesTrackerImportPage() {
     () => (dryRun?.purchase_orders || []).filter((po) => !poHasRfpf(po)),
     [dryRun]
   );
+  const sameRfpfPos = useMemo(
+    () => (dryRun?.purchase_orders || [])
+      .map((po) => {
+        const brands = brandsOf(po).map(([brand, items]) => ({
+          brand,
+          quantity: items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0),
+          amount: items.reduce((sum, item) => sum + itemAmount(item), 0),
+        }));
+        return { po, brands };
+      })
+      .filter((row) => row.brands.length > 1)
+      .sort((a, b) => orderRfpfLabel(a.po).localeCompare(orderRfpfLabel(b.po))),
+    [dryRun]
+  );
+  const sameRfpfReadyPos = useMemo(
+    () => sameRfpfPos.filter((row) => row.po.would_insert),
+    [sameRfpfPos]
+  );
+  const missingShopPos = useMemo(
+    () => (dryRun?.purchase_orders || []).filter((po) => po.issues.some((issue) => issue.startsWith('choose shop:'))),
+    [dryRun]
+  );
+  const shopNamePos = useMemo(() => {
+    return (dryRun?.purchase_orders || []).filter((po) => {
+      const trades = String(po.trade_name || '').split('|').map((part) => part.trim()).filter(Boolean);
+      const vapes = po.vape_shops || [];
+      if (po.shop_choice_required) return true;
+      if (!vapes.length || !trades.length) return false;
+      const keys = new Set([...trades, ...vapes].map(shopSpellKey).filter(Boolean));
+      if (keys.size > 1) return true;
+      const raw = new Set([...trades, ...vapes].map((part) => part.trim().toLowerCase()));
+      return raw.size > 1;
+    });
+  }, [dryRun]);
+  const shopChoiceReady = useMemo(() => {
+    return (dryRun?.purchase_orders || []).filter((po) => {
+      if (!po.shop_choice_required) return false;
+      if (!shopChoices[po.external_po_ref]) return false;
+      if (isAlreadyImportedPo(po)) return false;
+      const issues = po.issues.filter((issue) => !issue.startsWith('already in OMS') && !isShopChoiceIssue(issue));
+      return issues.length === 0;
+    });
+  }, [dryRun, shopChoices]);
+  const importPos = useMemo(() => {
+    const seen = new Set(readyPos.map((po) => po.external_po_ref));
+    return [...readyPos, ...shopChoiceReady.filter((po) => !seen.has(po.external_po_ref))];
+  }, [readyPos, shopChoiceReady]);
 
   const namedAgents = useMemo(
     () => (parsed?.agents || []).filter((agent) => !isEmail(agent)),
@@ -397,7 +947,7 @@ export function KeyAccountSalesTrackerImportPage() {
   );
 
   const unmatchedProducts = useMemo(() => {
-    const map = new Map<string, { brand: string; variant: string; sheets: Set<string>; rfpf: Set<string> }>();
+    const map = new Map<string, { brand: string; variant: string; sheets: Set<string>; rfpf: Set<string>; orderedRfpf: Set<string>; quantity: number }>();
     for (const po of dryRun?.purchase_orders || []) {
       for (const item of po.items || []) {
         if (item.lookup_ok) continue;
@@ -406,9 +956,21 @@ export function KeyAccountSalesTrackerImportPage() {
         const key = productAliasKey(brand, variant);
         if (key === '||') continue;
         if (aliases.products[key]) continue;
-        const existing = map.get(key) || { brand, variant, sheets: new Set<string>(), rfpf: new Set<string>() };
+        const existing = map.get(key) || {
+          brand,
+          variant,
+          sheets: new Set<string>(),
+          rfpf: new Set<string>(),
+          orderedRfpf: new Set<string>(),
+          quantity: 0,
+        };
         if (item.sheet_name) existing.sheets.add(item.sheet_name);
         existing.rfpf.add(orderRfpfLabel(po));
+        const quantity = Number(item.quantity) || 0;
+        if (quantity > 0) {
+          existing.orderedRfpf.add(orderRfpfLabel(po));
+          existing.quantity += quantity;
+        }
         map.set(key, existing);
       }
     }
@@ -418,8 +980,26 @@ export function KeyAccountSalesTrackerImportPage() {
       variant: value.variant,
       sheets: [...value.sheets],
       rfpfCount: value.rfpf.size,
+      orderedRfpfCount: value.orderedRfpf.size,
+      quantity: value.quantity,
     }));
   }, [dryRun, aliases]);
+
+  const missingVariantsByBrand = useMemo(() => {
+    const map = new Map<string, typeof unmatchedProducts>();
+    for (const item of unmatchedProducts) {
+      const key = brandMatchKey(item.brand);
+      if (!key || !item.variant.trim()) continue;
+      if (!(item.quantity > 0) || item.orderedRfpfCount < 1) continue;
+      const list = map.get(key) || [];
+      list.push(item);
+      map.set(key, list);
+    }
+    for (const list of map.values()) {
+      list.sort((a, b) => a.variant.localeCompare(b.variant));
+    }
+    return map;
+  }, [unmatchedProducts]);
 
   const pendingMaster = dryRun?.pending_master || [];
 
@@ -456,6 +1036,7 @@ export function KeyAccountSalesTrackerImportPage() {
       const next = await parseKeyAccountSalesTrackerExcel(file);
       setParsed(next);
       setFileName(file.name);
+      setShopChoices({});
       toast({
         title: 'File loaded',
         description: `${next.tracker_rfpf_total} tracker RFPF(s), ${next.matched_rfpf} matched to brand sheets, ${next.tracker_only.length} tracker-only.`,
@@ -487,7 +1068,7 @@ export function KeyAccountSalesTrackerImportPage() {
     setImportResults([]);
     setSoftChecked(false);
     try {
-      const result = await kaPost<DryRunResult>('dry-run', rows, createMissing);
+      const result = await kaPost<DryRunResult>('dry-run', rowsWithShopChoices(rows, shopChoices), createMissing);
       setDryRun(result);
       const ready = result.purchase_orders.filter((po) => po.would_insert).length;
       toast({
@@ -506,6 +1087,53 @@ export function KeyAccountSalesTrackerImportPage() {
     }
   };
 
+  const exportMissingBrands = (format: 'csv' | 'xlsx' | 'json') => {
+    if (!unmatchedProducts.length) return;
+    const rows = unmatchedProducts.map((item) => ({
+      brand: item.brand,
+      variant: item.variant,
+    }));
+    const today = new Date().toISOString().slice(0, 10);
+    const filename = `missing-brands_${today}.${format}`;
+    if (format === 'json') {
+      const blob = new Blob([JSON.stringify(rows, null, 2)], { type: 'application/json;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } else {
+      const sheetRows = rows.map((row) => ({
+        Brand: row.brand,
+        Variant: row.variant,
+      }));
+      const sheet = XLSX.utils.json_to_sheet(sheetRows);
+      if (format === 'csv') {
+        const csv = XLSX.utils.sheet_to_csv(sheet);
+        const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      } else {
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, sheet, 'Missing brands');
+        XLSX.writeFile(workbook, filename);
+      }
+    }
+    toast({
+      title: 'Exported',
+      description: `${unmatchedProducts.length} missing brand row(s) as ${format.toUpperCase()}.`,
+    });
+  };
+
   const applyProductMaps = () => {
     const products = { ...aliases.products };
     for (const [key, draft] of Object.entries(productDrafts)) {
@@ -522,29 +1150,41 @@ export function KeyAccountSalesTrackerImportPage() {
   };
 
   const runImport = async () => {
-    if (!readyPos.length) return;
+    if (!importPos.length) return;
+    stopImportRef.current = false;
     setBusy('import');
     setImportResults([]);
-    const grouped = groupRows(rows);
-    const refs = readyPos.map((po) => po.external_po_ref);
+    const grouped = groupRows(rowsWithShopChoices(rows, shopChoices));
+    const refs = importPos.map((po) => po.external_po_ref);
     const chunks: string[][] = [];
     for (let i = 0; i < refs.length; i += SALES_RECORD_IMPORT_PO_CHUNK) {
       chunks.push(refs.slice(i, i + SALES_RECORD_IMPORT_PO_CHUNK));
     }
     const all: ImportPoResult[] = [];
+    let stopped = false;
     try {
       for (let i = 0; i < chunks.length; i++) {
+        if (stopImportRef.current) {
+          stopped = true;
+          break;
+        }
         setImportProgress(`Importing batch ${i + 1} of ${chunks.length}…`);
         const batchRows = chunks[i].flatMap((ref) => grouped.get(ref) || []);
         const result = await kaPost<{ results: ImportPoResult[] }>('import', batchRows, createMissing);
         all.push(...(result.results || []));
         setImportResults([...all]);
       }
+      if (stopImportRef.current) stopped = true;
       const imported = all.filter((row) => row.ok).length;
-      const failed = all.filter((row) => row.ok === false).length;
+      const already = alreadyImportedPos.length + all.filter((row) => !row.ok && isAlreadyImportedResult(row)).length;
+      const failed = all.filter((row) => !row.ok && !isAlreadyImportedResult(row)).length;
+      const savedRefs = new Set(all.map((row) => row.external_po_ref));
+      const remaining = refs.filter((ref) => !savedRefs.has(ref)).length;
       toast({
-        title: failed ? 'Import finished with errors' : 'Import complete',
-        description: `${imported} PO(s) imported, ${failed} failed. Delivered. Stock was not deducted.`,
+        title: stopped ? 'Import stopped' : failed ? 'Import finished with errors' : 'Import complete',
+        description: stopped
+          ? `${imported} imported, ${failed} failed to save. ${remaining} ready PO${remaining === 1 ? '' : 's'} were not sent. Orders already saved stay saved.`
+          : `${imported} imported, ${already} already in OMS, ${failed} failed to save. Delivered orders did not deduct stock.`,
       });
     } catch (error) {
       toast({
@@ -553,6 +1193,7 @@ export function KeyAccountSalesTrackerImportPage() {
         description: error instanceof Error ? error.message : String(error),
       });
     } finally {
+      stopImportRef.current = false;
       setBusy(null);
       setImportProgress('');
     }
@@ -564,7 +1205,7 @@ export function KeyAccountSalesTrackerImportPage() {
         <h1 className="text-2xl font-semibold">Sales tracker import</h1>
         <p className="text-sm text-muted-foreground mt-1 max-w-3xl">
           Upload Key Account Sales 2026. Headers come from <span className="font-medium">B1G Sales Tracker</span>
-          {' '}(RFPF, date, agent, client, trade name as shop). Flavor/device lines come from brand sheets joined by the same RFPF.
+          {' '}(RFPF, date, agent, client, trade name). Brand sheets supply the vape shop name and the flavor/device lines, joined by the same RFPF.
           Dry-run first, then Soft Check Can / Cannot import. Missing clients and shops can be created like Sales Record Import.
           Imported POs are delivered; stock is not deducted.
         </p>
@@ -617,7 +1258,7 @@ export function KeyAccountSalesTrackerImportPage() {
                 }}
               />
               <Label htmlFor="tracker-create-missing" className="text-sm font-normal leading-snug">
-                Create missing clients, shops (trade name), and delivery addresses from Excel
+                Create missing clients, shops, and delivery addresses from Excel. If the shop is not in OMS yet, choose the name on Import result → Choose shop.
               </Label>
             </div>
             <Button onClick={() => void runDryRun()} disabled={!rows.length || !!busy}>
@@ -626,7 +1267,7 @@ export function KeyAccountSalesTrackerImportPage() {
             </Button>
             {dryRun ? (
               <p className="text-sm text-muted-foreground">
-                {readyPos.length} can import · {blockedPos.length} cannot
+                {readyPos.length} can import · {alreadyImportedPos.length} already imported · {blockedPos.length} cannot
               </p>
             ) : null}
           </CardContent>
@@ -635,13 +1276,13 @@ export function KeyAccountSalesTrackerImportPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base">3. Soft Check</CardTitle>
-            <CardDescription>Review Can import vs Cannot import before writing anything.</CardDescription>
+            <CardDescription>Review Can import, Already imported, and Cannot import before writing anything.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
               {dryRun
                 ? softChecked
-                  ? `Reviewed · ${readyPos.length} ready · ${blockedPos.length} blocked`
+                  ? `Reviewed · ${readyPos.length} ready · ${alreadyImportedPos.length} already imported · ${blockedPos.length} blocked`
                   : 'Dry-run complete. Open Soft Check to inspect.'
                 : 'Run a dry-run first'}
             </p>
@@ -667,12 +1308,26 @@ export function KeyAccountSalesTrackerImportPage() {
                 ? 'Run a dry-run first'
                 : !softChecked
                   ? 'Open Soft Check first'
-                  : `${readyPos.length} ready · ${blockedPos.length} skipped`}
+                  : `${importPos.length} ready · ${alreadyImportedPos.length} already imported · ${blockedPos.length} skipped`}
             </p>
-            <Button onClick={() => void runImport()} disabled={!softChecked || !readyPos.length || !!busy}>
-              {busy === 'import' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Import {readyPos.length || ''} ready PO{readyPos.length === 1 ? '' : 's'}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button onClick={() => void runImport()} disabled={!softChecked || !importPos.length || !!busy}>
+                {busy === 'import' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Import {importPos.length || ''} ready PO{importPos.length === 1 ? '' : 's'}
+              </Button>
+              {busy === 'import' ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    stopImportRef.current = true;
+                    setImportProgress('Stopping after this batch…');
+                  }}
+                >
+                  Stop
+                </Button>
+              ) : null}
+            </div>
             {importProgress ? <p className="text-sm text-muted-foreground">{importProgress}</p> : null}
           </CardContent>
         </Card>
@@ -755,7 +1410,7 @@ export function KeyAccountSalesTrackerImportPage() {
             <CardDescription>
               Nothing has been written. Import only uses the Can import tab.
               Has RFPF / No RFPF split orders by whether an RFPF number is present.
-              Paid / Unpaid (with variant) are ready-line reviews. Needs brand sheet groups RFPFs with no flavor breakdown so you can request that brand sheet from sales.
+              Paid / Unpaid (with variant) are ready-line reviews. Needs brand sheet groups RFPFs with no flavor breakdown and lists the missing variants for that brand so you can request the sheet from sales.
               Missing brands must be mapped to hub products before those RFPFs can import.
               {createMissing
                 ? ' Missing clients/shops/addresses will be created for ready POs.'
@@ -767,7 +1422,7 @@ export function KeyAccountSalesTrackerImportPage() {
               <div className="space-y-2">
                 <h3 className="font-medium">Will create on import</h3>
                 <p className="text-sm text-muted-foreground">
-                  Trade name is used as the shop name. Warehouse brands and variants are never created here.
+                  A saved shop is used when trade name and vape shop are the same, or when one of them already matches. Warehouse brands and variants are never created here.
                 </p>
                 <Table>
                   <TableHeader>
@@ -798,10 +1453,11 @@ export function KeyAccountSalesTrackerImportPage() {
               </div>
             ) : null}
 
-            <Tabs defaultValue={blockedPos.length ? 'blocked' : 'ready'}>
+            <Tabs defaultValue={blockedPos.length ? 'blocked' : alreadyImportedPos.length && !readyPos.length ? 'already' : 'ready'}>
               <TabsList className="flex h-auto flex-wrap gap-1">
                 <TabsTrigger value="ready">Can import ({readyPos.length})</TabsTrigger>
                 <TabsTrigger value="blocked">Cannot import ({blockedPos.length})</TabsTrigger>
+                <TabsTrigger value="already">Already imported ({alreadyImportedPos.length})</TabsTrigger>
                 <TabsTrigger value="missing">Missing brands ({unmatchedProducts.length})</TabsTrigger>
                 <TabsTrigger value="has-rfpf">Has RFPF ({withRfpfPos.length})</TabsTrigger>
                 <TabsTrigger value="no-rfpf">No RFPF ({withoutRfpfPos.length})</TabsTrigger>
@@ -811,13 +1467,27 @@ export function KeyAccountSalesTrackerImportPage() {
                 <TabsTrigger value="unpaid-no-variant">Unpaid no variant ({unpaidWithoutVariantPos.length})</TabsTrigger>
                 <TabsTrigger value="needs-sheet">Needs brand sheet ({noVariantPos.length})</TabsTrigger>
                 <TabsTrigger value="consigned">Consigned ({consignedPos.length})</TabsTrigger>
+                <TabsTrigger value="same-rfpf">Same RFPF ({sameRfpfPos.length})</TabsTrigger>
+                <TabsTrigger value="same-rfpf-ready">Same RFPF · Can import ({sameRfpfReadyPos.length})</TabsTrigger>
+                <TabsTrigger value="shop-name">Shop name ({shopNamePos.length})</TabsTrigger>
               </TabsList>
 
               <TabsContent value="ready" className="space-y-2">
                 <SoftCheckOrderList orders={readyPos} emptyLabel="No orders can be imported yet." />
               </TabsContent>
               <TabsContent value="blocked" className="space-y-2">
-                <SoftCheckOrderList orders={blockedPos} emptyLabel="Every order can be imported." showIssues />
+                <SoftCheckOrderList orders={blockedPos} emptyLabel="Every other order can be imported or is already in OMS." showIssues />
+              </TabsContent>
+              <TabsContent value="already" className="space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  These RFPFs are already in OMS from an earlier import. Import skips them.
+                </p>
+                <SoftCheckOrderList
+                  orders={alreadyImportedPos}
+                  emptyLabel="No RFPFs in this file are already in OMS."
+                  showIssues
+                  statusLabel="Already imported"
+                />
               </TabsContent>
               <TabsContent value="missing" className="space-y-4">
                 {unmatchedProducts.length === 0 ? (
@@ -826,10 +1496,26 @@ export function KeyAccountSalesTrackerImportPage() {
                   </p>
                 ) : (
                   <>
-                    <p className="text-sm text-muted-foreground">
-                      These Excel flavors were not found in the linked warehouse hub. Map them to an existing OMS brand + variant (or SKU), save, then dry-run again.
-                      Warehouse products are never auto-created here.
-                    </p>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <p className="text-sm text-muted-foreground">
+                        These Excel flavors were not found in the linked warehouse hub. Map them to an existing OMS brand + variant (or SKU), save, then dry-run again.
+                        Warehouse products are never auto-created here.
+                      </p>
+                      <div className="flex shrink-0 flex-wrap gap-2">
+                        <Button type="button" variant="outline" size="sm" onClick={() => exportMissingBrands('csv')}>
+                          <Download className="mr-2 h-4 w-4" />
+                          CSV
+                        </Button>
+                        <Button type="button" variant="outline" size="sm" onClick={() => exportMissingBrands('xlsx')}>
+                          <Download className="mr-2 h-4 w-4" />
+                          XLSX
+                        </Button>
+                        <Button type="button" variant="outline" size="sm" onClick={() => exportMissingBrands('json')}>
+                          <Download className="mr-2 h-4 w-4" />
+                          JSON
+                        </Button>
+                      </div>
+                    </div>
                     {unmatchedProducts.map((item) => (
                       <div key={item.key} className="grid gap-2 rounded-md border p-3 md:grid-cols-4">
                         <p className="text-sm md:col-span-4 font-medium">
@@ -907,7 +1593,7 @@ export function KeyAccountSalesTrackerImportPage() {
               </TabsContent>
               <TabsContent value="needs-sheet" className="space-y-4">
                 <p className="text-sm text-muted-foreground">
-                  RFPFs with no variant breakdown, grouped by brand (tracker PRODUCT). Ask sales for the flavor sheet for each brand below.
+                  RFPFs with no variant breakdown, grouped by brand (tracker PRODUCT). Missing variants are flavors for that brand that have an order and a quantity, and are not in the warehouse hub. Flavors with no order or no quantity are left off this tab.
                 </p>
                 {noVariantByBrand.length === 0 ? (
                   <p className="text-sm text-muted-foreground py-4">Every RFPF has at least one variant line.</p>
@@ -916,53 +1602,100 @@ export function KeyAccountSalesTrackerImportPage() {
                     <div className="rounded-md border bg-muted/30 p-3 text-sm">
                       <p className="font-medium mb-2">Brands to request from sales</p>
                       <ul className="list-disc space-y-1 pl-5">
-                        {noVariantByBrand.map((group) => (
-                          <li key={group.brand}>
-                            <span className="font-medium">{group.brand}</span>
-                            <span className="text-muted-foreground"> — {group.rfpfCount} RFPF(s)</span>
-                          </li>
-                        ))}
+                        {noVariantByBrand.map((group) => {
+                          const missingVariants = missingVariantsByBrand.get(brandMatchKey(group.brand)) || [];
+                          return (
+                            <li key={group.brand}>
+                              <span className="font-medium">{group.brand}</span>
+                              <span className="text-muted-foreground"> — {group.rfpfCount} RFPF(s)</span>
+                              {missingVariants.length ? (
+                                <span className="text-muted-foreground">
+                                  {' '}· missing variants: {missingVariants.map((item) => item.variant).join(', ')}
+                                </span>
+                              ) : null}
+                            </li>
+                          );
+                        })}
                       </ul>
                     </div>
                     <Accordion type="multiple" className="w-full">
-                      {noVariantByBrand.map((group) => (
-                        <AccordionItem key={group.brand} value={group.brand}>
-                          <AccordionTrigger className="hover:no-underline text-left">
-                            <div className="flex flex-1 items-center justify-between gap-3 pr-3">
-                              <span className="font-semibold tracking-wide">{group.brand}</span>
-                              <Badge variant="secondary">{group.rfpfCount} RFPF(s)</Badge>
-                            </div>
-                          </AccordionTrigger>
-                          <AccordionContent>
-                            <Table>
-                              <TableHeader>
-                                <TableRow>
-                                  <TableHead>RFPF</TableHead>
-                                  <TableHead>Date</TableHead>
-                                  <TableHead>Client</TableHead>
-                                  <TableHead>Shop</TableHead>
-                                  <TableHead>Payment</TableHead>
-                                  <TableHead>Issues</TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {group.orders.map((po) => (
-                                  <TableRow key={po.external_po_ref}>
-                                    <TableCell className="font-mono text-sm">{orderRfpfLabel(po)}</TableCell>
-                                    <TableCell className="text-sm">{formatDateDmy(po.order_date)}</TableCell>
-                                    <TableCell className="text-sm">{po.client}</TableCell>
-                                    <TableCell className="text-sm">{po.shop || '—'}</TableCell>
-                                    <TableCell><Badge variant="secondary">{po.payment_status}</Badge></TableCell>
-                                    <TableCell className="text-sm text-destructive max-w-xs">
-                                      {po.issues.length ? po.issues.slice(0, 2).join(' · ') : '—'}
-                                    </TableCell>
+                      {noVariantByBrand.map((group) => {
+                        const missingVariants = missingVariantsByBrand.get(brandMatchKey(group.brand)) || [];
+                        return (
+                          <AccordionItem key={group.brand} value={group.brand}>
+                            <AccordionTrigger className="hover:no-underline text-left">
+                              <div className="flex flex-1 items-center justify-between gap-3 pr-3">
+                                <span className="font-semibold tracking-wide">{group.brand}</span>
+                                <span className="flex flex-wrap items-center justify-end gap-2">
+                                  {missingVariants.length ? (
+                                    <Badge variant="outline">{missingVariants.length} missing variant{missingVariants.length === 1 ? '' : 's'}</Badge>
+                                  ) : null}
+                                  <Badge variant="secondary">{group.rfpfCount} RFPF(s)</Badge>
+                                </span>
+                              </div>
+                            </AccordionTrigger>
+                            <AccordionContent className="space-y-4">
+                              <div className="space-y-2">
+                                <p className="text-sm font-medium">Missing variants</p>
+                                {missingVariants.length === 0 ? (
+                                  <p className="text-sm text-muted-foreground">
+                                    No flavor name on file for this brand. These RFPFs only have the tracker product until a brand sheet line exists.
+                                  </p>
+                                ) : (
+                                  <Table>
+                                    <TableHeader>
+                                      <TableRow>
+                                        <TableHead>Variant</TableHead>
+                                        <TableHead>Sheet</TableHead>
+                                        <TableHead>RFPFs</TableHead>
+                                      </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                      {missingVariants.map((item) => (
+                                        <TableRow key={item.key}>
+                                          <TableCell className="text-sm font-medium">{item.variant}</TableCell>
+                                          <TableCell className="text-sm text-muted-foreground">
+                                            {item.sheets.length ? item.sheets.join(', ') : '—'}
+                                          </TableCell>
+                                          <TableCell className="text-sm tabular-nums">{item.orderedRfpfCount}</TableCell>
+                                        </TableRow>
+                                      ))}
+                                    </TableBody>
+                                  </Table>
+                                )}
+                              </div>
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead>RFPF</TableHead>
+                                    <TableHead>Date</TableHead>
+                                    <TableHead>Client</TableHead>
+                                    <TableHead>Shop</TableHead>
+                                    <TableHead>Variant</TableHead>
+                                    <TableHead>Payment</TableHead>
+                                    <TableHead>Issues</TableHead>
                                   </TableRow>
-                                ))}
-                              </TableBody>
-                            </Table>
-                          </AccordionContent>
-                        </AccordionItem>
-                      ))}
+                                </TableHeader>
+                                <TableBody>
+                                  {group.orders.map((po) => (
+                                    <TableRow key={po.external_po_ref}>
+                                      <TableCell className="font-mono text-sm">{orderRfpfLabel(po)}</TableCell>
+                                      <TableCell className="text-sm">{formatDateDmy(po.order_date)}</TableCell>
+                                      <TableCell className="text-sm">{po.client}</TableCell>
+                                      <TableCell className="text-sm">{po.shop || '—'}</TableCell>
+                                      <TableCell className="text-sm">{poVariantLabel(po)}</TableCell>
+                                      <TableCell><Badge variant="secondary">{po.payment_status}</Badge></TableCell>
+                                      <TableCell className="text-sm text-destructive max-w-xs">
+                                        {po.issues.length ? po.issues.slice(0, 2).join(' · ') : '—'}
+                                      </TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </AccordionContent>
+                          </AccordionItem>
+                        );
+                      })}
                     </Accordion>
                   </>
                 )}
@@ -973,43 +1706,117 @@ export function KeyAccountSalesTrackerImportPage() {
                 </p>
                 <SoftCheckOrderList orders={consignedPos} emptyLabel="No consigned RFPFs in this dry-run." showIssues />
               </TabsContent>
+              <TabsContent value="same-rfpf" className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Each product that shares a written RFPF is listed on its own row, with that same RFPF repeated.
+                  The shaded row is the one purchase order those rows become.
+                  A hyphen is part of the code, so RFPF-1200 and RFPF1200 stay two orders.
+                </p>
+                <SameRfpfTable rows={sameRfpfPos} emptyLabel="No RFPF is shared by more than one product." />
+                <SoftCheckOrderList
+                  orders={sameRfpfPos.map((row) => row.po)}
+                  emptyLabel="No shared RFPFs in this dry-run."
+                  showIssues
+                />
+              </TabsContent>
+              <TabsContent value="same-rfpf-ready" className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Same written RFPF, more than one product, and ready to import.
+                  Each product is listed with that RFPF so you can see the basis. The shaded row is the one purchase order they become.
+                  A hyphen is part of the code, so RFPF-1200 and RFPF1200 stay two orders.
+                </p>
+                <SameRfpfTable rows={sameRfpfReadyPos} emptyLabel="No shared RFPF is ready to import." />
+              </TabsContent>
+              <TabsContent value="shop-name" className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Tracker TRADE NAME and the brand-sheet Vape Shop / SHOP column. When they are the same shop, or one of them
+                  already exists under the client, that shop is used. When they differ and neither is a saved shop, choose which
+                  name to save. Chosen rows are included in Import. Run Dry-run again to move them onto Can import.
+                </p>
+                {shopNamePos.length ? (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>RFPF</TableHead>
+                        <TableHead>Client</TableHead>
+                        <TableHead>Trade name</TableHead>
+                        <TableHead>Vape shop</TableHead>
+                        <TableHead>Result</TableHead>
+                        <TableHead>Use as shop</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {shopNamePos.map((po) => {
+                        const chosen = shopChoices[po.external_po_ref] || '';
+                        const options = shopOptions(po);
+                        return (
+                          <TableRow key={po.external_po_ref}>
+                            <TableCell className="font-mono text-sm">{orderRfpfLabel(po)}</TableCell>
+                            <TableCell className="text-sm">{po.client || '—'}</TableCell>
+                            <TableCell className="text-sm">{po.trade_name || '—'}</TableCell>
+                            <TableCell className="text-sm">{(po.vape_shops || []).join(' · ') || '—'}</TableCell>
+                            <TableCell className="text-sm">
+                              {po.shop_choice_required
+                                ? (chosen ? `Will save as ${chosen}` : 'Choose which name to save')
+                                : po.will_create_shop
+                                  ? `Will create ${po.shop}`
+                                  : `Matched ${po.shop}`}
+                            </TableCell>
+                            <TableCell className="min-w-52">
+                              {po.shop_choice_required ? (
+                                <Select
+                                  value={chosen || undefined}
+                                  onValueChange={(value) => setShopChoices((prev) => ({ ...prev, [po.external_po_ref]: value }))}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Choose shop" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {options.map((name) => (
+                                      <SelectItem key={name} value={name}>{name}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              ) : (
+                                <span className="text-sm text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                ) : (
+                  <p className="text-sm text-muted-foreground py-4">Trade name and vape shop agree on every order.</p>
+                )}
+              </TabsContent>
             </Tabs>
           </CardContent>
         </Card>
       ) : null}
 
-      {importResults.length > 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Import result</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>RFPF</TableHead>
-                  <TableHead>System PO</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {importResults.map((row) => (
-                  <TableRow key={row.external_po_ref}>
-                    <TableCell className="font-mono text-sm">
-                      {displayRfpfCode(row.external_po_ref) || row.external_po_ref}
-                    </TableCell>
-                    <TableCell className="font-mono">{row.po_number || '—'}</TableCell>
-                    <TableCell>
-                      {row.ok
-                        ? <Badge>Imported</Badge>
-                        : <span className="text-sm text-destructive">{row.issues?.join(' · ') || 'Failed'}</span>}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+      {importResults.length > 0 || missingShopPos.length > 0 ? (
+        <ImportResultCard
+          imported={importResults.filter((row) => row.ok)}
+          failed={importResults.filter((row) => !row.ok && !isAlreadyImportedResult(row))}
+          failedOrders={failedImportOrders(
+            importResults.filter((row) => !row.ok && !isAlreadyImportedResult(row)),
+            dryRun?.purchase_orders || []
+          )}
+          already={[
+            ...alreadyImportedPos.map((po) => ({
+              external_po_ref: po.external_po_ref,
+              ok: false,
+              po_number: existingPoLabel(po) || undefined,
+              issues: po.issues,
+              already_imported: true,
+            })),
+            ...importResults.filter((row) => !row.ok && isAlreadyImportedResult(row)),
+          ].filter((row, index, list) => list.findIndex((item) => item.external_po_ref === row.external_po_ref) === index)}
+          missingShops={missingShopPos}
+          shopChoices={shopChoices}
+          onChooseShop={(ref, shopName) => setShopChoices((prev) => ({ ...prev, [ref]: shopName }))}
+        />
       ) : null}
     </div>
   );
