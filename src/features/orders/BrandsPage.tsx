@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Edit, Trash2, Loader2, Package } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Loader2, Package, Download } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
@@ -66,6 +66,7 @@ export default function BrandsPage() {
   const [variants, setVariants] = useState<Variant[]>([]);
   const [variantTypes, setVariantTypes] = useState<VariantType[]>([]);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState<'columns' | 'stacked' | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBrand, setSelectedBrand] = useState<string>('');
   // Variant panel: search and type filter (when a brand is open)
@@ -222,6 +223,25 @@ export default function BrandsPage() {
       v.variant_type?.toLowerCase() === variantTypeFilter;
     return matchSearch && matchType;
   });
+
+  const handleExport = async (layout: 'columns' | 'stacked') => {
+    if (exporting || loading || !user?.company_id || brands.length === 0) return;
+    setExporting(layout);
+    try {
+      const { exportBrandsAndVariantsExcel } = await import('./utils/exportBrandsAndVariantsExcel');
+      await exportBrandsAndVariantsExcel(brands, variants, layout);
+      toast({ title: 'Export successful', description: 'Brands and variants exported to Excel.' });
+    } catch (error) {
+      console.error('Error exporting brands and variants:', error);
+      toast({
+        title: 'Export failed',
+        description: error instanceof Error ? error.message : 'Failed to export brands and variants.',
+        variant: 'destructive',
+      });
+    } finally {
+      setExporting(null);
+    }
+  };
 
   // Create Brand
   const handleCreateBrand = async () => {
@@ -588,12 +608,12 @@ export default function BrandsPage() {
 
   return (
     <div className="p-8 space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-wrap justify-between items-center gap-4">
         <div>
           <h1 className="text-3xl font-bold">Brand Management</h1>
           <p className="text-muted-foreground">Manage brands and their product variants</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <PageGettingStartedDialog />
           <PageManualDialog
             title="Brands & Variants Manual"
@@ -602,6 +622,24 @@ export default function BrandsPage() {
             <BrandsAndVariantsManual embedded />
           </PageManualDialog>
           {user?.role === 'warehouse' && <ReferenceNamingCatalogDialog />}
+          <Button
+            variant="outline"
+            onClick={() => handleExport('columns')}
+            disabled={!!exporting || loading || !user?.company_id || brands.length === 0}
+            title="Export all active brands and variants to Excel"
+          >
+            {exporting === 'columns' ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
+            {exporting === 'columns' ? 'Exporting...' : 'Export Brands & Variants'}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => handleExport('stacked')}
+            disabled={!!exporting || loading || !user?.company_id || brands.length === 0}
+            title="Export brands and variants vertically with the title Brand & Variant OMA"
+          >
+            {exporting === 'stacked' ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
+            {exporting === 'stacked' ? 'Exporting...' : 'Export OMA (Vertical)'}
+          </Button>
           <Button onClick={() => setCreateBrandDialogOpen(true)}>
             <Plus className="h-4 w-4 mr-2" />
             Create Brand
