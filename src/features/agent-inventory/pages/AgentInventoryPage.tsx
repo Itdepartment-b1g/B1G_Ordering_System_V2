@@ -3,10 +3,15 @@ import AgentInventoryList from '@/features/agent-inventory/components/AgentInven
 import {
   UNASSIGNED_TEAM_ID,
   getPersonTeamId,
+  fetchCompanyAgentInventory,
   useCompanyAgentInventory,
   type AccountingAgentSummary,
 } from '@/features/agent-inventory/hooks/useCompanyAgentInventory';
 import { exportAgentInventoryExcel } from '@/features/agent-inventory/utils/exportAgentInventoryExcel';
+import { exportDetailedInventoryExcel } from '@/features/agent-inventory/utils/exportDetailedInventoryExcel';
+import { fetchCompanyInventorySales } from '@/features/agent-inventory/hooks/fetchCompanyInventorySales';
+import { useAuth } from '@/features/auth';
+import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
@@ -179,6 +184,7 @@ function matchesTeamFilter(person: AccountingAgentSummary, teamId: string, role:
 }
 
 export default function AgentInventoryPage() {
+  const { user } = useAuth();
   const { data, isLoading } = useCompanyAgentInventory();
   const { toast } = useToast();
   const people = data?.people ?? [];
@@ -190,6 +196,7 @@ export default function AgentInventoryPage() {
   const [teamFilter, setTeamFilter] = useState('all');
   const [brandFilter, setBrandFilter] = useState('all');
   const [exporting, setExporting] = useState(false);
+  const [exportingDetailed, setExportingDetailed] = useState(false);
 
   const teamOptions = useMemo(() => {
     const teams = new Map<string, string>();
@@ -336,6 +343,32 @@ export default function AgentInventoryPage() {
     }
   };
 
+  const handleExportDetailed = async () => {
+    if (!user?.company_id || exportingDetailed) return;
+    setExportingDetailed(true);
+    try {
+      const [inventory, company, soldVariants] = await Promise.all([
+        fetchCompanyAgentInventory(user.company_id, { strictAssignments: true }),
+        supabase.from('companies').select('company_name').eq('id', user.company_id).single(),
+        fetchCompanyInventorySales(user.company_id),
+      ]);
+      if (company.error) throw company.error;
+      await exportDetailedInventoryExcel(inventory.people, {
+        companyLabel: company.data.company_name,
+        soldVariants,
+      });
+      toast({ title: 'Export complete', description: 'Detailed inventory report exported with six sheets.' });
+    } catch (error) {
+      toast({
+        title: 'Export failed',
+        description: error instanceof Error ? error.message : 'Could not export detailed inventory report.',
+        variant: 'destructive',
+      });
+    } finally {
+      setExportingDetailed(false);
+    }
+  };
+
   const selectRole = (role: RoleFilter) => {
     setSelectedRole(role);
     setStatusFilter('all');
@@ -390,15 +423,27 @@ export default function AgentInventoryPage() {
             Field stock held by team leaders and mobile sales — view only
           </p>
         </div>
-        <Button
-          variant="outline"
-          className="h-10 gap-2 shrink-0"
-          onClick={() => void handleExportExcel()}
-          disabled={exporting || filteredPeople.length === 0}
-        >
-          {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
-          Export Excel
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            className="h-10 gap-2 shrink-0"
+            onClick={() => void handleExportExcel()}
+            disabled={exporting || filteredPeople.length === 0}
+          >
+            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
+            Export Excel
+          </Button>
+          <Button
+            variant="outline"
+            className="h-10 gap-2 shrink-0"
+            onClick={() => void handleExportDetailed()}
+            disabled={exportingDetailed || isLoading || !user?.company_id}
+            title="Export current inventory for the full company across all statuses"
+          >
+            {exportingDetailed ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
+            Export Detailed Inventory Report
+          </Button>
+        </div>
       </div>
 
       <div className="flex flex-col lg:flex-row gap-2">

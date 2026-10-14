@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { canViewCompanyAgentInventory } from '@/lib/roleUtils';
+import { fetchAllPaginated } from '@/lib/supabasePaginate';
 
 export const COMPANY_AGENT_INVENTORY_QUERY_KEY = 'company-agent-inventory';
 
@@ -9,6 +10,7 @@ const SALES_ROLES = ['team_leader', 'mobile_sales'] as const;
 
 export interface AccountingInventoryItem {
   id: string;
+  variantId: string;
   variantName: string;
   variantType: string;
   brandId: string;
@@ -66,19 +68,22 @@ export interface AccountingBrandOption {
 }
 
 export async function fetchCompanyAgentInventory(
-  companyId: string
+  companyId: string,
+  options: { strictAssignments?: boolean } = {}
 ): Promise<{ people: AccountingAgentSummary[]; brands: AccountingBrandOption[] }> {
   const [teamsRes, profilesRes, inventoryRes, brandsRes] = await Promise.all([
-    supabase
+    fetchAllPaginated(async (from, to) => supabase
       .from('leader_teams')
       .select('agent_id, leader_id')
-      .eq('company_id', companyId),
-    supabase
+      .eq('company_id', companyId)
+      .order('agent_id').order('leader_id').range(from, to)),
+    fetchAllPaginated(async (from, to) => supabase
       .from('profiles')
       .select('id, full_name, role, status')
       .eq('company_id', companyId)
-      .in('role', [...SALES_ROLES]),
-    supabase
+      .in('role', [...SALES_ROLES])
+      .order('id').range(from, to)),
+    fetchAllPaginated(async (from, to) => supabase
       .from('agent_inventory')
       .select(`
         id,
@@ -97,28 +102,28 @@ export async function fetchCompanyAgentInventory(
         )
       `)
       .eq('company_id', companyId)
-      .gt('stock', 0),
-    supabase
+      .gt('stock', 0)
+      .order('id').range(from, to)),
+    fetchAllPaginated(async (from, to) => supabase
       .from('brands')
       .select('id, name')
       .eq('company_id', companyId)
-      .order('name'),
+      .order('name').order('id').range(from, to)),
   ]);
 
-  if (teamsRes.error) throw teamsRes.error;
-  if (profilesRes.error) throw profilesRes.error;
-  if (inventoryRes.error) throw inventoryRes.error;
-  if (brandsRes.error) throw brandsRes.error;
-
-  const profileMap = new Map((profilesRes.data || []).map((p) => [p.id, p]));
+  const profileMap = new Map(profilesRes.map((p) => [p.id, p]));
   const agentLeaderMap = new Map<string, string>();
-  for (const row of teamsRes.data || []) {
+  for (const row of teamsRes) {
+    if (options.strictAssignments && agentLeaderMap.has(row.agent_id) &&
+        agentLeaderMap.get(row.agent_id) !== row.leader_id) {
+      throw new Error('Conflicting team assignments found. Resolve them before exporting.');
+    }
     agentLeaderMap.set(row.agent_id, row.leader_id);
   }
 
   const inventoryByAgent = new Map<string, AccountingInventoryItem[]>();
 
-  for (const raw of (inventoryRes.data || []) as AgentInventoryRow[]) {
+  for (const raw of inventoryRes as AgentInventoryRow[]) {
     const profile = profileMap.get(raw.agent_id);
     if (!profile) continue;
 
@@ -132,6 +137,7 @@ export async function fetchCompanyAgentInventory(
     const items = inventoryByAgent.get(raw.agent_id) ?? [];
     items.push({
       id: raw.id,
+      variantId: variant.id,
       variantName: variant.name,
       variantType: variant.variant_type,
       brandId: brand.id,
@@ -170,7 +176,7 @@ export async function fetchCompanyAgentInventory(
       if (b.totalStock !== a.totalStock) return b.totalStock - a.totalStock;
       return a.agentName.localeCompare(b.agentName);
     }),
-    brands: (brandsRes.data || []).map((brand) => ({ id: brand.id, name: brand.name })),
+    brands: brandsRes.map((brand) => ({ id: brand.id, name: brand.name })),
   };
 }
 
