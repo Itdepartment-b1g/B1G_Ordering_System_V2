@@ -63,6 +63,7 @@ export async function getKAAnalyticsDataset(ctx: UserContext): Promise<KAAnalyti
           `
           id,
           po_number,
+          rfpf_number,
           order_date,
           total_amount,
           subtotal,

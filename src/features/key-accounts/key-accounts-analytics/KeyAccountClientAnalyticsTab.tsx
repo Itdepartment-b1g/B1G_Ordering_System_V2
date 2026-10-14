@@ -90,6 +90,7 @@ interface ClientOption {
 interface ClientAnalyticsOrder {
   id: string;
   po_number: string;
+  rfpf_number?: string | null;
   order_date: string;
   total_amount: number | null;
   status: string | null;
@@ -1682,6 +1683,7 @@ export default function KeyAccountClientAnalyticsTab({
                       <TableHeader>
                         <TableRow>
                           <TableHead>PO #</TableHead>
+                          <TableHead>RFPF</TableHead>
                           <TableHead>Order date</TableHead>
                           <TableHead className="text-right">PO total</TableHead>
                           <TableHead className="text-right">Remaining</TableHead>
@@ -1691,7 +1693,7 @@ export default function KeyAccountClientAnalyticsTab({
                       <TableBody>
                         {storyPeriodOrders.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={5} className="text-center text-muted-foreground py-6">
+                            <TableCell colSpan={6} className="text-center text-muted-foreground py-6">
                               No purchase orders in this month for this client.
                             </TableCell>
                           </TableRow>
@@ -1708,6 +1710,9 @@ export default function KeyAccountClientAnalyticsTab({
                             return (
                               <TableRow key={order.id}>
                                 <TableCell className="font-medium">{order.po_number}</TableCell>
+                                <TableCell className="font-mono font-medium">
+                                  {order.rfpf_number?.trim()?.toUpperCase() || '—'}
+                                </TableCell>
                                 <TableCell>
                                   {order.order_date
                                     ? new Date(order.order_date).toLocaleDateString()
