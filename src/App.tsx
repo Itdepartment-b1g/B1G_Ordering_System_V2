@@ -40,7 +40,7 @@ import PaymentSettingsPage from "@/features/finance/PaymentSettingsPage";
 import SystemAdminPage from "@/features/system-admin/SystemAdminPage";
 import ManagementPortal from "@/features/system-admin/ManagementPortal";
 import { WarRoomPage } from "@/features/war-room";
-import { KeyAccountsDashboardWrapper, ClientHierarchyPage, ClientAssignmentPage, KeyAccountTeamPage, KeyAccountUserManagementPage, KeyAccountPurchaseOrderPage, KeyAccountPurchaseOrdersPage, KeyAccountAnalyticsPage, KeyAccountClientAnalyticsPage, KeyAccountRebatesPage, KeyAccountCreateRebatePage, KeyAccountPaymentSettingsPage, KeyAccountPaymentTermsPage, KeyAccountHistoricalImportPage, KeyAccountSalesRecordImportPage, KeyAccountSalesOrderImportPage, KeyAccountSalesTrackerImportPage, KeyAccountSalesTargetsPage} from "@/features/key-accounts";
+import { KeyAccountsDashboardWrapper, ClientHierarchyPage, ClientAssignmentPage, KeyAccountTeamPage, KeyAccountUserManagementPage, KeyAccountPurchaseOrderPage, KeyAccountPurchaseOrdersPage, KeyAccountAnalyticsPage, KeyAccountClientAnalyticsPage, KeyAccountRebatesPage, KeyAccountCreateRebatePage, KeyAccountPaymentSettingsPage, KeyAccountPaymentTermsPage, KeyAccountHistoricalImportPage, KeyAccountSalesRecordImportPage, KeyAccountSalesOrderImportPage, KeyAccountSalesTrackerImportPage, KeyAccountSalesTrackerImportV2Page, KeyAccountSalesTargetsPage} from "@/features/key-accounts";
 import NotFound from "@/features/shared/NotFound";
 import { AgentRemittanceReminder } from "@/features/shared/components/AgentRemittanceReminder";
 import { PriceChangeConfirmGate } from "@/features/inventory/PriceChangeConfirmGate";
@@ -446,6 +446,14 @@ const App = () => (
                       element={
                         <ProtectedRoute allowedRoles={['sales_head', 'sales_admin']}>
                           <KeyAccountSalesTrackerImportPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/key-accounts/sales-tracker-import-v2"
+                      element={
+                        <ProtectedRoute allowedRoles={['sales_head', 'sales_admin']}>
+                          <KeyAccountSalesTrackerImportV2Page />
                         </ProtectedRoute>
                       }
                     />

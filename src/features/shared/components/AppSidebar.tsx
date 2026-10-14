@@ -183,6 +183,7 @@ const salesAdminMenuItems: MenuItem[] = [
       { title: 'Sales Record Import', url: '/key-accounts/sales-record-import', icon: FileSpreadsheet },
       { title: 'Sales Order Import', url: '/key-accounts/sales-order-import', icon: FileSpreadsheet },
       { title: 'Sales Tracker Import', url: '/key-accounts/sales-tracker-import', icon: FileSpreadsheet },
+      { title: 'Sales Tracker Import v2', url: '/key-accounts/sales-tracker-import-v2', icon: FileSpreadsheet },
       // { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
     ]
   },
@@ -226,6 +227,7 @@ const salesHeadMenuItems: MenuItem[] = [
       { title: 'Sales Record Import', url: '/key-accounts/sales-record-import', icon: FileSpreadsheet },
       { title: 'Sales Order Import', url: '/key-accounts/sales-order-import', icon: FileSpreadsheet },
       { title: 'Sales Tracker Import', url: '/key-accounts/sales-tracker-import', icon: FileSpreadsheet },
+      { title: 'Sales Tracker Import v2', url: '/key-accounts/sales-tracker-import-v2', icon: FileSpreadsheet },
       // { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
     ]
   },
