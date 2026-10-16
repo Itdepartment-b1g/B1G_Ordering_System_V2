@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -27,6 +28,7 @@ import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import { sendNotification } from '@/features/shared/lib/notification.helpers';
+import { refetchSuperAdminAllocationHistory } from '@/features/sales-agents/components/super-admin-allocation-history/hooks/useSuperAdminAllocationHistory';
 
 // --- Interfaces ---
 
@@ -92,6 +94,7 @@ interface GroupedRequest {
 type ReviewAction = 'approve' | 'deny' | null;
 
 export default function AdminRequestsPage() {
+  const queryClient = useQueryClient();
   const { user } = useAuth();
   const { toast } = useToast();
 
@@ -268,19 +271,24 @@ export default function AdminRequestsPage() {
     setProcessing(true);
     try {
         let successCount = 0;
-        for (const item of selectedGroup.items) {
-           if (reviewAction === 'approve') {
-               const { data, error } = await supabase.rpc('admin_approve_stock_request', {
-                   p_request_id: item.id,
-                   p_admin_id: user.id,
-                   p_notes: notes || null
-               });
-               if (error) throw error;
-               if (data && (data as { success?: boolean }).success === false) {
-                 throw new Error((data as { message?: string }).message || 'Failed to approve request');
-               }
-               successCount++;
-           } else if (reviewAction === 'deny') {
+        if (reviewAction === 'approve') {
+            const { data, error } = await supabase.rpc('admin_approve_stock_requests_batch', {
+                p_request_ids: selectedGroup.items.map((item) => item.id),
+                p_admin_id: user.id,
+                p_notes: notes || null,
+            });
+            if (error) throw error;
+            if (data && (data as { success?: boolean }).success === false) {
+              throw new Error((data as { message?: string }).message || 'Failed to approve request');
+            }
+            successCount = selectedGroup.items.length;
+            try {
+              await refetchSuperAdminAllocationHistory(queryClient, user);
+            } catch (refreshError) {
+              console.error('Failed to refresh allocation history', refreshError);
+            }
+        } else {
+            for (const item of selectedGroup.items) {
                const { data, error } = await supabase.rpc('admin_reject_stock_request', {
                   p_request_id: item.id,
                   p_admin_id: user.id,
@@ -291,7 +299,7 @@ export default function AdminRequestsPage() {
                  throw new Error((data as { message?: string }).message || 'Failed to reject request');
                }
                successCount++;
-           }
+            }
         }
         toast({ title: 'Success', description: `Processed ${successCount} items.` });
         setDetailDialogOpen(false);
