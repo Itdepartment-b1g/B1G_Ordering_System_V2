@@ -12,6 +12,8 @@ export type KAAnalyticsPaidBrandRow = {
   remaining: number;
   quantity: number;
   orderCount: number;
+  /** Purchase order ids contributing to this brand row (for drill-down). */
+  orderIds?: string[];
   status: 'unpaid' | 'partial' | 'paid';
 };
 

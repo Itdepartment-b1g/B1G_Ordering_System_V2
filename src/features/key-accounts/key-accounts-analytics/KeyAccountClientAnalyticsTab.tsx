@@ -5,6 +5,7 @@ import {
   fetchKAAnalyticsPoPaymentHistory,
   fetchKAAnalyticsRebateSource,
   fetchKAClientBrandCollections,
+  type KAAnalyticsPaidBrandRow,
 } from '@/store/slices/key-accounts/analytics';
 import {
   Bar,
@@ -285,6 +286,54 @@ function formatMonthYear(date: Date) {
   return date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
 }
 
+/** Why a PO appears in a month view — keep labels short for table badges. */
+function MonthReasonBadges({
+  orderedThisMonth,
+  collectedThisMonth,
+}: {
+  orderedThisMonth: boolean;
+  collectedThisMonth: boolean;
+}) {
+  if (!orderedThisMonth && !collectedThisMonth) return null;
+  return (
+    <>
+      {orderedThisMonth ? (
+        <Badge
+          variant="outline"
+          className="text-[10px] font-normal border-violet-300 text-violet-800 bg-violet-50 px-1.5 py-0"
+        >
+          Ordered this month
+        </Badge>
+      ) : null}
+      {collectedThisMonth ? (
+        <Badge
+          variant="outline"
+          className="text-[10px] font-normal border-emerald-300 text-emerald-800 bg-emerald-50 px-1.5 py-0"
+        >
+          Collected this month
+        </Badge>
+      ) : null}
+    </>
+  );
+}
+
+/** Local calendar yyyy-MM-dd — avoids UTC month shift from Date.toISOString(). */
+function toLocalDateKey(date: Date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function parseLocalDateKey(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value || '').trim());
+  if (match) {
+    return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  }
+  const fallback = new Date(value);
+  return Number.isNaN(fallback.getTime()) ? new Date() : fallback;
+}
+
 function formatLongDate(date: Date) {
   return date.toLocaleDateString(undefined, { month: 'short', day: '2-digit', year: 'numeric' });
 }
@@ -463,6 +512,7 @@ export default function KeyAccountClientAnalyticsTab({
   const [dialogPaymentCount, setDialogPaymentCount] = useState(0);
   const [dialogPaymentLoading, setDialogPaymentLoading] = useState(false);
   const paymentRequestIdRef = useRef(0);
+  const [brandPosDialog, setBrandPosDialog] = useState<KAAnalyticsPaidBrandRow | null>(null);
   const [dialogRebateSource, setDialogRebateSource] = useState<{
     rebate_number: string;
     source_po_number: string;
@@ -633,7 +683,7 @@ export default function KeyAccountClientAnalyticsTab({
     return periods.map((period) => {
       return {
         month: period.label,
-        periodStart: period.start.toISOString(),
+        periodStart: toLocalDateKey(period.start),
         ...computePaymentSummary(productRevenueOrders, { from: period.start, to: period.end }),
       };
     });
@@ -657,6 +707,7 @@ export default function KeyAccountClientAnalyticsTab({
       const poKind = String(order.po_order_kind || '');
       return [
         order.po_number,
+        order.rfpf_number || '',
         order.order_date,
         client?.client_name || '',
         paymentStatus,
@@ -747,7 +798,7 @@ export default function KeyAccountClientAnalyticsTab({
     return clientOptions
       .map((client) => {
         const clientOrders = productRevenueOrders.filter((order) => order.key_account_client_id === client.id);
-        const monthStart = new Date(selectedPeriodRow.periodStart);
+        const monthStart = parseLocalDateKey(selectedPeriodRow.periodStart);
         const payment = computePaymentSummary(clientOrders, {
           from: startOfMonth(monthStart),
           to: endOfMonth(monthStart),
@@ -919,7 +970,7 @@ export default function KeyAccountClientAnalyticsTab({
     const clientId = selectedClient === 'all' ? null : selectedClient;
     setStoryClientId(clientId);
     if (clientId) {
-      const monthStart = new Date(row.periodStart);
+      const monthStart = parseLocalDateKey(row.periodStart);
       void dispatch(
         fetchKAClientBrandCollections({
           clientId,
@@ -937,7 +988,7 @@ export default function KeyAccountClientAnalyticsTab({
     }
     setStoryClientId(clientId);
     if (!selectedPeriodRow) return;
-    const monthStart = new Date(selectedPeriodRow.periodStart);
+    const monthStart = parseLocalDateKey(selectedPeriodRow.periodStart);
     void dispatch(
       fetchKAClientBrandCollections({
         clientId,
@@ -949,6 +1000,7 @@ export default function KeyAccountClientAnalyticsTab({
 
   const closeClientStory = () => {
     setStoryClientId(null);
+    setBrandPosDialog(null);
   };
 
   const storyClientLabel = useMemo(() => {
@@ -957,27 +1009,126 @@ export default function KeyAccountClientAnalyticsTab({
     return match ? formatClientLabel(match) : 'Client';
   }, [clientOptions, storyClientId]);
 
+  const ordersById = useMemo(() => {
+    const map = new Map<string, ClientAnalyticsOrder>();
+    orders.forEach((order) => {
+      if (!order.analytics_only) map.set(order.id, order);
+    });
+    return map;
+  }, [orders]);
+
+  /**
+   * Standard POs: order-date month.
+   * Consignment POs: order-date month (Billed story) and/or cash/discount this month
+   * (Collected story). Badges explain which reason applies.
+   */
   const storyPeriodOrders = useMemo(() => {
     if (!selectedPeriodRow || !storyClientId) return [];
-    const monthStart = new Date(selectedPeriodRow.periodStart);
+    const monthStart = parseLocalDateKey(selectedPeriodRow.periodStart);
     const period = { from: startOfMonth(monthStart), to: endOfMonth(monthStart) };
-    return productRevenueOrders.filter((order) => {
-      if (order.key_account_client_id !== storyClientId) return false;
-      return computePaymentSummary([order], period).totalRevenue > 0;
-    });
-  }, [productRevenueOrders, selectedPeriodRow, storyClientId]);
+    return productRevenueOrders
+      .filter((order) => {
+        if (order.key_account_client_id !== storyClientId) return false;
 
-  const storyTotals = useMemo(() => {
-    return clientBrandCollections.brands.reduce(
-      (acc, row) => ({
-        billed: acc.billed + row.billed,
-        paid: acc.paid + row.paid,
-        discount: acc.discount + row.discount,
-        remaining: acc.remaining + row.remaining,
-      }),
-      { billed: 0, paid: 0, discount: 0, remaining: 0 }
-    );
-  }, [clientBrandCollections.brands]);
+        if (!isKeyAccountConsignmentOrder(order)) {
+          return inRange(order.order_date, period);
+        }
+
+        if (inRange(order.order_date, period)) return true;
+
+        const totalAmount = Number(order.total_amount) || 0;
+        const chunks = getCappedConsignmentPaymentChunks(
+          totalAmount,
+          paymentsByOrderId.get(order.id) || []
+        );
+        const paidInMonth = chunks.reduce(
+          (sum, chunk) => (inRange(chunk.created_at, period) ? sum + chunk.amount : sum),
+          0
+        );
+        const discountInMonth = chunks.reduce(
+          (sum, chunk) =>
+            inRange(chunk.created_at, period) ? sum + chunk.settlement_discount : sum,
+          0
+        );
+        return paidInMonth > 0 || discountInMonth > 0;
+      })
+      .sort(
+        (a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime()
+      );
+  }, [productRevenueOrders, selectedPeriodRow, storyClientId, paymentsByOrderId]);
+
+  /** Kid-friendly Brands story: Billed (order month) vs Collected (cash month). */
+  const brandsMonthStory = useMemo(() => {
+    if (!selectedPeriodRow || !storyClientId) {
+      return {
+        billed: 0,
+        collected: 0,
+        orderedPoCount: 0,
+        collectedPoCount: 0,
+      };
+    }
+    const monthStart = parseLocalDateKey(selectedPeriodRow.periodStart);
+    const period = { from: startOfMonth(monthStart), to: endOfMonth(monthStart) };
+    const orderIdSet = new Set<string>();
+    clientBrandCollections.brands.forEach((brand) => {
+      (brand.orderIds || []).forEach((id) => orderIdSet.add(id));
+    });
+
+    let orderedPoCount = 0;
+    let collectedPoCount = 0;
+    orderIdSet.forEach((id) => {
+      const order = ordersById.get(id);
+      if (!order) return;
+      const ordered = inRange(order.order_date, period);
+      if (ordered) orderedPoCount += 1;
+
+      const totalAmount = Number(order.total_amount) || 0;
+      const chunks = getCappedConsignmentPaymentChunks(
+        totalAmount,
+        paymentsByOrderId.get(order.id) || []
+      );
+      const isConsignment = isKeyAccountConsignmentOrder(order);
+      const paidInMonth = isConsignment
+        ? chunks.reduce(
+            (sum, chunk) => (inRange(chunk.created_at, period) ? sum + chunk.amount : sum),
+            0
+          )
+        : ordered
+          ? chunks.reduce((sum, chunk) => sum + chunk.amount, 0)
+          : 0;
+      const discountInMonth = isConsignment
+        ? chunks.reduce(
+            (sum, chunk) =>
+              inRange(chunk.created_at, period) ? sum + chunk.settlement_discount : sum,
+            0
+          )
+        : ordered
+          ? chunks.reduce((sum, chunk) => sum + chunk.settlement_discount, 0)
+          : 0;
+      if (paidInMonth > 0 || discountInMonth > 0) collectedPoCount += 1;
+    });
+
+    const billed = clientBrandCollections.brands.reduce((sum, row) => sum + row.billed, 0);
+    const collected = clientBrandCollections.brands.reduce((sum, row) => sum + row.paid, 0);
+    return { billed, collected, orderedPoCount, collectedPoCount };
+  }, [
+    clientBrandCollections.brands,
+    ordersById,
+    paymentsByOrderId,
+    selectedPeriodRow,
+    storyClientId,
+  ]);
+
+  const brandPosDialogOrders = useMemo(() => {
+    if (!brandPosDialog) return [] as ClientAnalyticsOrder[];
+    const ids = brandPosDialog.orderIds || [];
+    return ids
+      .map((id) => ordersById.get(id))
+      .filter((order): order is ClientAnalyticsOrder => !!order)
+      .sort(
+        (a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime()
+      );
+  }, [brandPosDialog, ordersById]);
 
   return (
     <div className="space-y-4">
@@ -1401,7 +1552,10 @@ export default function KeyAccountClientAnalyticsTab({
         open={periodDetailOpen}
         onOpenChange={(open) => {
           setPeriodDetailOpen(open);
-          if (!open) setStoryClientId(null);
+          if (!open) {
+            setStoryClientId(null);
+            setBrandPosDialog(null);
+          }
         }}
       >
         <DialogContent className="max-w-5xl w-[calc(100vw-2rem)] max-h-[85vh] overflow-y-auto">
@@ -1410,8 +1564,8 @@ export default function KeyAccountClientAnalyticsTab({
             <DialogDescription>
               {selectedClientLabel}
               {' · '}Paid, remaining balance (partial + unpaid), consignment, and settlement discount
-              for this month. Click a client to see POs, brands bought, billed, collected, discount,
-              and remaining.
+              for this month. Click a client to see brands bought and POs (Rem. vs Cons. like the
+              dashboard).
             </DialogDescription>
           </DialogHeader>
           {selectedPeriodRow && (
@@ -1540,25 +1694,17 @@ export default function KeyAccountClientAnalyticsTab({
                         {storyClientLabel} — {selectedPeriodRow.month}
                       </p>
                       <p className="text-xs text-muted-foreground mt-1">
-                      {clientBrandCollectionsStatus === 'loading'
-                        ? 'Loading brand collections…'
-                        : `${storyClientLabel} had ${
-                            clientBrandCollections.poCount || storyPeriodOrders.length
-                          } purchase order${
-                            (clientBrandCollections.poCount || storyPeriodOrders.length) === 1
-                              ? ''
-                              : 's'
-                          } across ${clientBrandCollections.brands.length} brand${
-                            clientBrandCollections.brands.length === 1 ? '' : 's'
-                          } this month. Billed ${formatMoney(storyTotals.billed)}, collected ${formatMoney(
-                            storyTotals.paid
-                          )}, discount ${formatMoney(storyTotals.discount)}, remaining ${formatMoney(
-                            storyTotals.remaining
-                          )}.`}
-                    </p>
-                    {clientBrandCollectionsError ? (
-                      <p className="text-xs text-destructive mt-1">{clientBrandCollectionsError}</p>
-                    ) : null}
+                        {clientBrandCollectionsStatus === 'loading'
+                          ? 'Loading brand collections…'
+                          : `${storyClientLabel} had ${storyPeriodOrders.length} purchase order${
+                              storyPeriodOrders.length === 1 ? '' : 's'
+                            } across ${clientBrandCollections.brands.length} brand${
+                              clientBrandCollections.brands.length === 1 ? '' : 's'
+                            } this month. Top cards use Paid / Remaining / Consignment.`}
+                      </p>
+                      {clientBrandCollectionsError ? (
+                        <p className="text-xs text-destructive mt-1">{clientBrandCollectionsError}</p>
+                      ) : null}
                     </div>
                     <Button
                       type="button"
@@ -1572,39 +1718,30 @@ export default function KeyAccountClientAnalyticsTab({
                     </Button>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-                    <div className="rounded-md border p-3">
-                      <p className="text-muted-foreground text-xs">Purchase orders</p>
-                      <p className="text-lg font-semibold">
-                        {clientBrandCollections.poCount || storyPeriodOrders.length}
-                      </p>
-                    </div>
-                    <div className="rounded-md border p-3">
-                      <p className="text-muted-foreground text-xs">Billed</p>
-                      <p className="text-lg font-semibold tabular-nums">{formatMoney(storyTotals.billed)}</p>
-                    </div>
-                    <div className="rounded-md border bg-emerald-50/70 dark:bg-emerald-950/30 p-3">
-                      <p className="text-muted-foreground text-xs">Collected</p>
-                      <p className="text-lg font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
-                        {formatMoney(storyTotals.paid)}
-                      </p>
-                    </div>
-                    <div className="rounded-md border p-3">
-                      <p className="text-muted-foreground text-xs">Discount</p>
-                      <p className="text-lg font-semibold tabular-nums">{formatMoney(storyTotals.discount)}</p>
-                    </div>
-                    <div className="rounded-md border bg-orange-50/70 dark:bg-orange-950/30 p-3">
-                      <p className="text-muted-foreground text-xs">Remaining</p>
-                      <p className="text-lg font-semibold tabular-nums text-orange-600 dark:text-orange-400">
-                        {formatMoney(storyTotals.remaining)}
-                      </p>
-                    </div>
-                  </div>
-
                   <div className="rounded-md border overflow-x-auto">
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 pt-3 pb-2">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 pt-3 pb-1">
                       Brands bought
                     </p>
+                    {clientBrandCollectionsStatus !== 'loading' &&
+                    clientBrandCollections.brands.length > 0 ? (
+                      <p className="text-[11px] text-muted-foreground px-3 pb-2 leading-relaxed">
+                        <span className="font-medium text-foreground">Billed</span> and{' '}
+                        <span className="font-medium text-foreground">Collected</span> are different
+                        clocks:{' '}
+                        <span className="text-violet-700 dark:text-violet-300">
+                          Billed {formatMoney(brandsMonthStory.billed)}
+                        </span>{' '}
+                        from {brandsMonthStory.orderedPoCount} PO
+                        {brandsMonthStory.orderedPoCount === 1 ? '' : 's'} ordered this month
+                        {' · '}
+                        <span className="text-emerald-700 dark:text-emerald-300">
+                          Collected {formatMoney(brandsMonthStory.collected)}
+                        </span>{' '}
+                        from {brandsMonthStory.collectedPoCount} PO
+                        {brandsMonthStory.collectedPoCount === 1 ? '' : 's'} paid this month. Click
+                        POs to see each row&apos;s reason badge.
+                      </p>
+                    ) : null}
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -1614,7 +1751,7 @@ export default function KeyAccountClientAnalyticsTab({
                           <TableHead className="text-right">Billed</TableHead>
                           <TableHead className="text-right">Collected</TableHead>
                           <TableHead className="text-right">Discount</TableHead>
-                          <TableHead className="text-right">Remaining</TableHead>
+                          <TableHead className="text-right">Balance</TableHead>
                           <TableHead>Status</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -1641,7 +1778,20 @@ export default function KeyAccountClientAnalyticsTab({
                               <TableCell className="text-right tabular-nums">
                                 {row.quantity.toLocaleString()}
                               </TableCell>
-                              <TableCell className="text-right tabular-nums">{row.orderCount}</TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {row.orderCount > 0 ? (
+                                  <Button
+                                    type="button"
+                                    variant="link"
+                                    className="h-auto p-0 text-sm font-medium tabular-nums"
+                                    onClick={() => setBrandPosDialog(row)}
+                                  >
+                                    {row.orderCount}
+                                  </Button>
+                                ) : (
+                                  0
+                                )}
+                              </TableCell>
                               <TableCell className="text-right tabular-nums">
                                 {formatMoney(row.billed)}
                               </TableCell>
@@ -1679,6 +1829,11 @@ export default function KeyAccountClientAnalyticsTab({
                     <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 pt-3 pb-2">
                       Purchase orders this month
                     </p>
+                    <p className="text-[11px] text-muted-foreground px-3 pb-2">
+                      Paid = cash in this month (matches the Paid card). Consignment POs appear when
+                      ordered this month (Billed) and/or collected this month — see the violet/green
+                      badges. Rem. = standard balance only. Cons. = open float in the order month.
+                    </p>
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -1686,30 +1841,90 @@ export default function KeyAccountClientAnalyticsTab({
                           <TableHead>RFPF</TableHead>
                           <TableHead>Order date</TableHead>
                           <TableHead className="text-right">PO total</TableHead>
-                          <TableHead className="text-right">Remaining</TableHead>
+                          <TableHead className="text-right">Paid</TableHead>
+                          <TableHead className="text-right">Rem.</TableHead>
+                          <TableHead className="text-right">Cons.</TableHead>
                           <TableHead></TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {storyPeriodOrders.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={6} className="text-center text-muted-foreground py-6">
+                            <TableCell colSpan={8} className="text-center text-muted-foreground py-6">
                               No purchase orders in this month for this client.
                             </TableCell>
                           </TableRow>
                         ) : (
                           storyPeriodOrders.map((order) => {
+                            const isConsignment = isKeyAccountConsignmentOrder(order);
+                            const totalAmount = Number(order.total_amount) || 0;
+                            const paymentRowsForOrder = paymentsByOrderId.get(order.id) || [];
+                            const chunks = getCappedConsignmentPaymentChunks(
+                              totalAmount,
+                              paymentRowsForOrder
+                            );
+                            const paidTotal = chunks.reduce((sum, chunk) => sum + chunk.amount, 0);
+                            const discountTotal = chunks.reduce(
+                              (sum, chunk) => sum + chunk.settlement_discount,
+                              0
+                            );
                             const remainingBalance = Math.max(
                               0,
-                              Math.round(
-                                ((Number(order.total_amount) || 0) -
-                                  (appliedByOrderId.get(order.id) || 0)) *
-                                  100
-                              ) / 100
+                              Math.round((totalAmount - paidTotal - discountTotal) * 100) / 100
                             );
+                            const monthStart = parseLocalDateKey(selectedPeriodRow.periodStart);
+                            const period = {
+                              from: startOfMonth(monthStart),
+                              to: endOfMonth(monthStart),
+                            };
+                            const paidInMonth = isConsignment
+                              ? chunks.reduce(
+                                  (sum, chunk) =>
+                                    inRange(chunk.created_at, period)
+                                      ? sum + chunk.amount
+                                      : sum,
+                                  0
+                                )
+                              : // Standard: all cash is attributed to the order month
+                                paidTotal;
+                            const discountInMonth = isConsignment
+                              ? chunks.reduce(
+                                  (sum, chunk) =>
+                                    inRange(chunk.created_at, period)
+                                      ? sum + chunk.settlement_discount
+                                      : sum,
+                                  0
+                                )
+                              : discountTotal;
+                            const consignmentInMonth =
+                              isConsignment && inRange(order.order_date, period)
+                                ? remainingBalance
+                                : 0;
+                            const showLifetimePaidNote =
+                              isConsignment &&
+                              Math.round(paidTotal * 100) !== Math.round(paidInMonth * 100) &&
+                              paidTotal > 0;
+                            const orderedThisMonth = inRange(order.order_date, period);
+                            const collectedThisMonth = paidInMonth > 0 || discountInMonth > 0;
                             return (
                               <TableRow key={order.id}>
-                                <TableCell className="font-medium">{order.po_number}</TableCell>
+                                <TableCell className="font-medium">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span>{order.po_number}</span>
+                                    {isConsignment ? (
+                                      <Badge
+                                        variant="outline"
+                                        className="text-xs font-normal border-amber-300 text-amber-800 bg-amber-50"
+                                      >
+                                        Consignment
+                                      </Badge>
+                                    ) : null}
+                                    <MonthReasonBadges
+                                      orderedThisMonth={orderedThisMonth}
+                                      collectedThisMonth={collectedThisMonth}
+                                    />
+                                  </div>
+                                </TableCell>
                                 <TableCell className="font-mono font-medium">
                                   {order.rfpf_number?.trim()?.toUpperCase() || '—'}
                                 </TableCell>
@@ -1719,10 +1934,30 @@ export default function KeyAccountClientAnalyticsTab({
                                     : '—'}
                                 </TableCell>
                                 <TableCell className="text-right tabular-nums">
-                                  {formatCurrency(Number(order.total_amount) || 0)}
+                                  {formatCurrency(totalAmount)}
                                 </TableCell>
-                                <TableCell className="text-right tabular-nums">
-                                  {formatCurrency(remainingBalance)}
+                                <TableCell className="text-right tabular-nums text-emerald-700 dark:text-emerald-400">
+                                  <div>{formatCurrency(paidInMonth)}</div>
+                                  {showLifetimePaidNote ? (
+                                    <p className="text-[11px] text-muted-foreground font-normal mt-0.5">
+                                      {formatCurrency(paidTotal)} paid overall
+                                    </p>
+                                  ) : null}
+                                  {discountInMonth > 0 ? (
+                                    <p className="text-[11px] text-muted-foreground font-normal mt-0.5">
+                                      +{formatCurrency(discountInMonth)} disc.
+                                    </p>
+                                  ) : null}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums text-orange-600 dark:text-orange-400">
+                                  {isConsignment ? '—' : formatCurrency(remainingBalance)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums text-sky-600 dark:text-sky-400">
+                                  {isConsignment
+                                    ? consignmentInMonth > 0
+                                      ? formatCurrency(consignmentInMonth)
+                                      : '—'
+                                    : '—'}
                                 </TableCell>
                                 <TableCell className="text-right">
                                   <Button
@@ -1766,7 +2001,7 @@ export default function KeyAccountClientAnalyticsTab({
             <Input
               value={poHistorySearch}
               onChange={(event) => setPoHistorySearch(event.target.value)}
-              placeholder="Search PO #, client, payment status, workflow..."
+              placeholder="Search PO #, RFPF, client, payment status, workflow..."
               className="max-w-md"
             />
           </div>
@@ -1775,10 +2010,12 @@ export default function KeyAccountClientAnalyticsTab({
               <TableHeader>
                 <TableRow>
                   <TableHead>PO #</TableHead>
+                  <TableHead>RFPF</TableHead>
                   <TableHead>Order date</TableHead>
                   <TableHead>Client</TableHead>
                   <TableHead className="text-right">Net amount</TableHead>
-                  <TableHead className="text-right">Remaining balance</TableHead>
+                  <TableHead className="text-right">Rem.</TableHead>
+                  <TableHead className="text-right">Cons.</TableHead>
                   <TableHead>Payment status</TableHead>
                   <TableHead>Workflow</TableHead>
                   <TableHead className="text-right w-[100px]">Actions</TableHead>
@@ -1787,7 +2024,7 @@ export default function KeyAccountClientAnalyticsTab({
               <TableBody>
                 {filteredPoHistory.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
                       No purchase orders found for the selected filters/search.
                     </TableCell>
                   </TableRow>
@@ -1795,6 +2032,7 @@ export default function KeyAccountClientAnalyticsTab({
                   paginatedPoHistory.map((order) => {
                     const client = firstRelation(order.client);
                     const paymentStatus = order.key_account_payment_status || 'unpaid';
+                    const isConsignment = isKeyAccountConsignmentOrder(order);
                     const amountRevenue = getKeyAccountOrderNetRevenueFromAttribution(
                       orderRevenueById.get(order.id)
                     );
@@ -1816,7 +2054,7 @@ export default function KeyAccountClientAnalyticsTab({
                               <Badge variant="secondary" className="text-xs font-normal">
                                 Rebate top-up
                               </Badge>
-                            ) : String(order.po_order_kind || '') === 'consignment' ? (
+                            ) : isConsignment ? (
                               <Badge
                                 variant="outline"
                                 className="text-xs font-normal border-amber-300 text-amber-800 bg-amber-50"
@@ -1825,6 +2063,9 @@ export default function KeyAccountClientAnalyticsTab({
                               </Badge>
                             ) : null}
                           </div>
+                        </TableCell>
+                        <TableCell className="font-mono font-medium">
+                          {order.rfpf_number?.trim()?.toUpperCase() || '—'}
                         </TableCell>
                         <TableCell>
                           {order.order_date
@@ -1840,8 +2081,11 @@ export default function KeyAccountClientAnalyticsTab({
                             </p>
                           )}
                         </TableCell>
-                        <TableCell className="text-right">
-                          {formatCurrency(remainingBalance)}
+                        <TableCell className="text-right tabular-nums text-orange-600 dark:text-orange-400">
+                          {isConsignment ? '—' : formatCurrency(remainingBalance)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-sky-600 dark:text-sky-400">
+                          {isConsignment ? formatCurrency(remainingBalance) : '—'}
                         </TableCell>
                         <TableCell>
                           <Badge className={paymentStatusBadgeClass(String(paymentStatus))}>
@@ -1880,6 +2124,165 @@ export default function KeyAccountClientAnalyticsTab({
           </div>
         </CardContent>
       </Card>
+
+      <Dialog
+        open={!!brandPosDialog}
+        onOpenChange={(open) => {
+          if (!open) setBrandPosDialog(null);
+        }}
+      >
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto z-[80]">
+          <DialogHeader>
+            <DialogTitle>
+              {brandPosDialog?.brandName || 'Brand'} — purchase orders
+            </DialogTitle>
+            <DialogDescription>
+              {storyClientLabel || 'Client'}
+              {selectedPeriodRow ? ` · ${selectedPeriodRow.month}` : ''}
+              {' · '}
+              {brandPosDialogOrders.length} PO
+              {brandPosDialogOrders.length === 1 ? '' : 's'} for this brand (same set as the POs
+              count).{' '}
+              <span className="text-violet-700 dark:text-violet-300">Ordered this month</span> =
+              counts in Billed.{' '}
+              <span className="text-emerald-700 dark:text-emerald-300">Collected this month</span> =
+              cash landed in this month (may be an older order date).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-md border overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>PO #</TableHead>
+                  <TableHead>RFPF</TableHead>
+                  <TableHead>Order date</TableHead>
+                  <TableHead className="text-right">PO total</TableHead>
+                  <TableHead className="text-right">Paid</TableHead>
+                  <TableHead className="text-right">Rem.</TableHead>
+                  <TableHead className="text-right">Cons.</TableHead>
+                  <TableHead></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {!brandPosDialog || brandPosDialogOrders.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
+                      {(brandPosDialog?.orderIds?.length || 0) > 0
+                        ? 'PO details are not in the loaded analytics set.'
+                        : 'No purchase orders for this brand.'}
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  brandPosDialogOrders.map((order) => {
+                    const isConsignment = isKeyAccountConsignmentOrder(order);
+                    const totalAmount = Number(order.total_amount) || 0;
+                    const chunks = getCappedConsignmentPaymentChunks(
+                      totalAmount,
+                      paymentsByOrderId.get(order.id) || []
+                    );
+                    const paidTotal = chunks.reduce((sum, chunk) => sum + chunk.amount, 0);
+                    const discountTotal = chunks.reduce(
+                      (sum, chunk) => sum + chunk.settlement_discount,
+                      0
+                    );
+                    const remainingBalance = Math.max(
+                      0,
+                      Math.round((totalAmount - paidTotal - discountTotal) * 100) / 100
+                    );
+                    const monthStart = selectedPeriodRow
+                      ? parseLocalDateKey(selectedPeriodRow.periodStart)
+                      : null;
+                    const period = monthStart
+                      ? { from: startOfMonth(monthStart), to: endOfMonth(monthStart) }
+                      : undefined;
+                    const orderedThisMonth = !!(period && inRange(order.order_date, period));
+                    const paidInMonth = isConsignment
+                      ? chunks.reduce(
+                          (sum, chunk) =>
+                            period && inRange(chunk.created_at, period)
+                              ? sum + chunk.amount
+                              : sum,
+                          0
+                        )
+                      : paidTotal;
+                    const discountInMonth = isConsignment
+                      ? chunks.reduce(
+                          (sum, chunk) =>
+                            period && inRange(chunk.created_at, period)
+                              ? sum + chunk.settlement_discount
+                              : sum,
+                          0
+                        )
+                      : discountTotal;
+                    const collectedThisMonth = paidInMonth > 0 || discountInMonth > 0;
+                    const consignmentInMonth =
+                      isConsignment && orderedThisMonth ? remainingBalance : 0;
+                    return (
+                      <TableRow key={order.id}>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span>{order.po_number}</span>
+                            {isConsignment ? (
+                              <Badge
+                                variant="outline"
+                                className="text-xs font-normal border-amber-300 text-amber-800 bg-amber-50"
+                              >
+                                Consignment
+                              </Badge>
+                            ) : null}
+                            <MonthReasonBadges
+                              orderedThisMonth={orderedThisMonth}
+                              collectedThisMonth={collectedThisMonth}
+                            />
+                          </div>
+                        </TableCell>
+                        <TableCell className="font-mono font-medium">
+                          {order.rfpf_number?.trim()?.toUpperCase() || '—'}
+                        </TableCell>
+                        <TableCell>
+                          {order.order_date
+                            ? new Date(order.order_date).toLocaleDateString()
+                            : '—'}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatCurrency(totalAmount)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-emerald-700 dark:text-emerald-400">
+                          {formatCurrency(paidInMonth)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-orange-600 dark:text-orange-400">
+                          {isConsignment ? '—' : formatCurrency(remainingBalance)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-sky-600 dark:text-sky-400">
+                          {isConsignment
+                            ? consignmentInMonth > 0
+                              ? formatCurrency(consignmentInMonth)
+                              : '—'
+                            : '—'}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            onClick={() => {
+                              setBrandPosDialog(null);
+                              void openItemsDialog(order);
+                            }}
+                          >
+                            Payments
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={!!itemsDialogOrder}

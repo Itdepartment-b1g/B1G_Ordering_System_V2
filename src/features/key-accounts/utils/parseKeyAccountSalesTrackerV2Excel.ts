@@ -531,24 +531,6 @@ function parseTrackerHeaders(matrix: unknown[][]): TrackerHeader[] {
   return out;
 }
 
-function fillDownRfpf(matrix: unknown[][], headerRow: number, rfpfCol: number) {
-  let last = '';
-  for (let i = headerRow + 1; i < matrix.length; i++) {
-    const cells = matrix[i] || [];
-    const raw = String(cells[rfpfCol] ?? '').trim();
-    if (raw) {
-      last = raw;
-      continue;
-    }
-    if (!last) continue;
-    const hasParty =
-      String(cells[0] ?? '').trim() ||
-      // keep fill-down only when the row looks like an order line
-      (cells.length > 4 && cells.slice(4, 8).some((cell) => String(cell ?? '').trim()));
-    if (hasParty) cells[rfpfCol] = last;
-  }
-}
-
 function brandSheetLines(name: string, matrix: unknown[][]): BrandLine[] {
   const headerRow = findHeaderRow(matrix);
   if (headerRow < 0) return [];
@@ -556,8 +538,8 @@ function brandSheetLines(name: string, matrix: unknown[][]): BrandLine[] {
   if (isTrackerSheet(name, headers)) return [];
 
   const columns: Col[] = headers.map((header, index) => ({ index, header, ...classify(header) }));
-  const rfpfCol = columns.find((col) => col.role === 'identity' && col.field === 'rfpf_number');
-  if (rfpfCol) fillDownRfpf(matrix, headerRow, rfpfCol.index);
+  // Do not copy the previous RFPF into blank cells. A brand-sheet breakdown with no
+  // RFPF is not part of the order above (e.g. 6,240 RFPF must not pick up 755,040).
 
   const groups = buildGroups(columns);
   const brand = brandFromSheet(name);
