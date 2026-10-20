@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   Loader2,
+  MoreVertical,
   Printer,
   RotateCcw,
   ThumbsDown,
@@ -17,6 +18,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   Dialog,
   DialogContent,
@@ -172,6 +179,45 @@ function ReturnDetails({ row }: { row: AgentReturn }) {
       )}
       <BrandReturnTables items={row.items} />
     </div>
+  );
+}
+
+function ReturnActionsMenu({
+  row,
+  onApprove,
+  onReject,
+}: {
+  row: AgentReturn;
+  onApprove: (row: AgentReturn) => void;
+  onReject: (row: AgentReturn) => void;
+}) {
+  if (row.status !== 'pending') return null;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          aria-label="Return actions"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <MoreVertical className="h-4 w-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-40">
+        <DropdownMenuItem onClick={() => onApprove(row)}>
+          <ThumbsUp className="mr-2 h-4 w-4" />
+          Approve
+        </DropdownMenuItem>
+        <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => onReject(row)}>
+          <ThumbsDown className="mr-2 h-4 w-4" />
+          Reject
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -473,25 +519,14 @@ export default function LeaderAgentReturnsPage() {
                             </TableCell>
                             <TableCell>{statusBadge(row.status)}</TableCell>
                             <TableCell className="text-right" onClick={(event) => event.stopPropagation()}>
-                              <div className="flex justify-end gap-2">
-                                {row.status === 'pending' && (
-                                  <>
-                                    <Button type="button" size="sm" onClick={() => openApprove(row)}>
-                                      <ThumbsUp className="h-4 w-4" />
-                                      Approve
-                                    </Button>
-                                    <Button type="button" size="sm" variant="destructive" onClick={() => openReject(row)}>
-                                      <ThumbsDown className="h-4 w-4" />
-                                      Reject
-                                    </Button>
-                                  </>
-                                )}
+                              <div className="flex items-center justify-end gap-2">
                                 {row.status === 'approved' && (
                                   <Button type="button" variant="outline" size="sm" onClick={() => printReturn(row)}>
                                     <Printer className="h-4 w-4" />
                                     Print
                                   </Button>
                                 )}
+                                <ReturnActionsMenu row={row} onApprove={openApprove} onReject={openReject} />
                               </div>
                             </TableCell>
                           </TableRow>
@@ -524,26 +559,17 @@ export default function LeaderAgentReturnsPage() {
                             {row.variantCount} variants · {row.totalQuantity.toLocaleString()} qty
                           </p>
                         </div>
-                        {statusBadge(row.status)}
+                        <div className="flex items-center gap-1">
+                          {statusBadge(row.status)}
+                          <ReturnActionsMenu row={row} onApprove={openApprove} onReject={openReject} />
+                        </div>
                       </div>
-                      <div className="flex gap-2">
-                        {row.status === 'pending' && (
-                          <>
-                            <Button type="button" size="sm" className="flex-1" onClick={() => openApprove(row)}>
-                              Approve
-                            </Button>
-                            <Button type="button" size="sm" variant="destructive" className="flex-1" onClick={() => openReject(row)}>
-                              Reject
-                            </Button>
-                          </>
-                        )}
-                        {row.status === 'approved' && (
-                          <Button type="button" variant="outline" size="sm" onClick={() => printReturn(row)}>
-                            <Printer className="h-4 w-4" />
-                            Print
-                          </Button>
-                        )}
-                      </div>
+                      {row.status === 'approved' && (
+                        <Button type="button" variant="outline" size="sm" onClick={() => printReturn(row)}>
+                          <Printer className="h-4 w-4" />
+                          Print
+                        </Button>
+                      )}
                       <Button
                         type="button"
                         variant="ghost"
