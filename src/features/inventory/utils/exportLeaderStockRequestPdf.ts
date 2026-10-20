@@ -111,7 +111,6 @@ function itemRowsHtml(lines: LeaderStockRequestPdfLine[]): string {
       <tr>
         <td class="col-desc">${escapeHtml(name)}</td>
         <td class="col-qty">${fmtQty(line.requestedQuantity)}</td>
-        <td class="col-qty">&nbsp;</td>
       </tr>`;
   });
 
@@ -119,7 +118,6 @@ function itemRowsHtml(lines: LeaderStockRequestPdfLine[]): string {
     rows.push(`
       <tr>
         <td class="col-desc">&nbsp;</td>
-        <td class="col-qty">&nbsp;</td>
         <td class="col-qty">&nbsp;</td>
       </tr>`);
   }
@@ -342,13 +340,12 @@ function buildLeaderRequestHtml(
         <tr>
           <th class="col-desc">Description</th>
           <th class="col-qty">Requested</th>
-          <th class="col-qty">Released</th>
         </tr>
       </thead>
       <tbody>${itemRowsHtml(input.lines)}</tbody>
     </table>
     <div class="totals-note">
-      Total requested: ${fmtQty(totalRequested)} unit(s). Released is left blank for handwriting.
+      Total requested: ${fmtQty(totalRequested)} unit(s).
     </div>
     <div class="delivery-section">
       <div class="section-label">Request Details:</div>
