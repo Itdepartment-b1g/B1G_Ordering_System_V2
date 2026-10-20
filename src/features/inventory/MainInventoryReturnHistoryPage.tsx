@@ -400,6 +400,7 @@ function AgentToLeaderReturns({
     exportMainInventoryReturnPdf({
       returnedBy: row.returnedBy,
       returnedAt: row.returnedAt,
+      status: row.status === 'approved' ? 'Approved' : row.status === 'rejected' ? 'Rejected' : 'Pending',
       reason: row.reason,
       lines: row.items.map((item) => ({
         brandName: item.brandName,

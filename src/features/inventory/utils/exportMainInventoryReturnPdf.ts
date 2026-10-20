@@ -9,6 +9,7 @@ export type MainInventoryReturnPdfInput = {
   returnedBy: string;
   returnedAt: string;
   reason?: string | null;
+  status?: string | null;
   lines: MainInventoryReturnPdfLine[];
 };
 
@@ -98,6 +99,7 @@ function buildReturnHtml(input: MainInventoryReturnPdfInput): string {
   const reason = input.reason?.trim()
     ? escapeHtml(input.reason.trim())
     : '<span class="muted">—</span>';
+  const status = input.status?.trim() ? escapeHtml(input.status.trim()) : '';
 
   return `<!doctype html>
 <html lang="en">
@@ -230,6 +232,10 @@ function buildReturnHtml(input: MainInventoryReturnPdfInput): string {
       <span class="label">DATE:</span>
       <span class="value">${when}</span>
     </div>
+    ${status ? `<div class="meta-row">
+      <span class="label">STATUS:</span>
+      <span class="value">${status}</span>
+    </div>` : ''}
     <table class="items-table">
       <thead>
         <tr>
@@ -245,6 +251,7 @@ function buildReturnHtml(input: MainInventoryReturnPdfInput): string {
       <div class="section-label">Return Details:</div>
       ${detailField('RETURNED BY:', returnedBy)}
       ${detailField('DATE:', when)}
+      ${status ? detailField('STATUS:', status) : ''}
       ${detailField('REASON:', reason)}
       ${detailField('SIGNATURE:', '<span class="sline"></span>')}
     </div>

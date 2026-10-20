@@ -182,7 +182,13 @@ function ReturnDetails({ row }: { row: AgentReturn }) {
   );
 }
 
-function ReturnActionsMenu({
+function returnStatusLabel(status: AgentReturn['status']): string {
+  if (status === 'approved') return 'Approved';
+  if (status === 'rejected') return 'Rejected';
+  return 'Pending';
+}
+
+function ReturnRowActions({
   row,
   onApprove,
   onReject,
@@ -191,33 +197,34 @@ function ReturnActionsMenu({
   onApprove: (row: AgentReturn) => void;
   onReject: (row: AgentReturn) => void;
 }) {
-  if (row.status !== 'pending') return null;
-
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          aria-label="Return actions"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <MoreVertical className="h-4 w-4" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-40">
-        <DropdownMenuItem onClick={() => onApprove(row)}>
-          <ThumbsUp className="mr-2 h-4 w-4" />
-          Approve
-        </DropdownMenuItem>
-        <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => onReject(row)}>
-          <ThumbsDown className="mr-2 h-4 w-4" />
-          Reject
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <div className="flex items-center justify-end gap-2" onClick={(event) => event.stopPropagation()}>
+      {row.status === 'pending' && (
+        <>
+          <Button type="button" size="sm" onClick={() => onApprove(row)}>
+            <ThumbsUp className="h-4 w-4" />
+            Accept
+          </Button>
+          <Button type="button" size="sm" variant="destructive" onClick={() => onReject(row)}>
+            <ThumbsDown className="h-4 w-4" />
+            Reject
+          </Button>
+        </>
+      )}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label="Return actions">
+            <MoreVertical className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-40">
+          <DropdownMenuItem onClick={() => printReturn(row)}>
+            <Printer className="mr-2 h-4 w-4" />
+            Print
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   );
 }
 
@@ -225,6 +232,7 @@ function printReturn(row: AgentReturn) {
   exportMainInventoryReturnPdf({
     returnedBy: row.returnedBy,
     returnedAt: row.returnedAt,
+    status: returnStatusLabel(row.status),
     reason: row.reason,
     lines: row.items.map((item) => ({
       brandName: item.brandName,
@@ -518,16 +526,8 @@ export default function LeaderAgentReturnsPage() {
                               {row.totalQuantity.toLocaleString()}
                             </TableCell>
                             <TableCell>{statusBadge(row.status)}</TableCell>
-                            <TableCell className="text-right" onClick={(event) => event.stopPropagation()}>
-                              <div className="flex items-center justify-end gap-2">
-                                {row.status === 'approved' && (
-                                  <Button type="button" variant="outline" size="sm" onClick={() => printReturn(row)}>
-                                    <Printer className="h-4 w-4" />
-                                    Print
-                                  </Button>
-                                )}
-                                <ReturnActionsMenu row={row} onApprove={openApprove} onReject={openReject} />
-                              </div>
+                            <TableCell className="text-right">
+                              <ReturnRowActions row={row} onApprove={openApprove} onReject={openReject} />
                             </TableCell>
                           </TableRow>
                           {open && (
@@ -559,17 +559,9 @@ export default function LeaderAgentReturnsPage() {
                             {row.variantCount} variants · {row.totalQuantity.toLocaleString()} qty
                           </p>
                         </div>
-                        <div className="flex items-center gap-1">
-                          {statusBadge(row.status)}
-                          <ReturnActionsMenu row={row} onApprove={openApprove} onReject={openReject} />
-                        </div>
+                        {statusBadge(row.status)}
                       </div>
-                      {row.status === 'approved' && (
-                        <Button type="button" variant="outline" size="sm" onClick={() => printReturn(row)}>
-                          <Printer className="h-4 w-4" />
-                          Print
-                        </Button>
-                      )}
+                      <ReturnRowActions row={row} onApprove={openApprove} onReject={openReject} />
                       <Button
                         type="button"
                         variant="ghost"
