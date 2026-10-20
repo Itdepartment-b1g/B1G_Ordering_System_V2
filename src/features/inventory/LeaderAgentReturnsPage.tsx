@@ -164,6 +164,36 @@ function BrandReturnTables({ items }: { items: ReturnItem[] }) {
   );
 }
 
+function ReturnPreview({ row }: { row: AgentReturn }) {
+  return (
+    <div className="space-y-3 rounded-md border bg-muted/30 p-3">
+      <div className="grid grid-cols-2 gap-2 text-sm">
+        <div>
+          <p className="text-xs text-muted-foreground">Returned by</p>
+          <p className="font-medium">{row.returnedBy}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Date</p>
+          <p className="font-medium">{format(new Date(row.returnedAt), 'MMM d, yyyy h:mm a')}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Variant qty</p>
+          <p className="font-medium tabular-nums">{row.variantCount}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Total qty</p>
+          <p className="font-medium tabular-nums">{row.totalQuantity.toLocaleString()}</p>
+        </div>
+      </div>
+      <p className="text-sm">
+        <span className="font-medium">Reason of returned:</span>{' '}
+        <span className="text-muted-foreground">{row.reason || '—'}</span>
+      </p>
+      <BrandReturnTables items={row.items} />
+    </div>
+  );
+}
+
 function ReturnDetails({ row }: { row: AgentReturn }) {
   return (
     <div>
@@ -583,13 +613,14 @@ export default function LeaderAgentReturnsPage() {
       </Card>
 
       <Dialog open={approveOpen} onOpenChange={setApproveOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Approve Return Request</DialogTitle>
             <DialogDescription>
-              Approving will transfer the inventory from {selected?.returnedBy} to you.
+              Review this return before approving. Approving will transfer the inventory from {selected?.returnedBy} to you.
             </DialogDescription>
           </DialogHeader>
+          {selected && <ReturnPreview row={selected} />}
           <div className="flex items-start gap-3 py-4">
             <Checkbox
               id="acknowledge-return"
@@ -613,13 +644,14 @@ export default function LeaderAgentReturnsPage() {
       </Dialog>
 
       <AlertDialog open={rejectOpen} onOpenChange={setRejectOpen}>
-        <AlertDialogContent>
+        <AlertDialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <AlertDialogHeader>
             <AlertDialogTitle>Reject Return Request</AlertDialogTitle>
             <AlertDialogDescription>
-              Rejecting will keep the inventory with {selected?.returnedBy}. You can optionally provide a reason.
+              Review this return before rejecting. Rejecting will keep the inventory with {selected?.returnedBy}.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {selected && <ReturnPreview row={selected} />}
           <div className="py-4">
             <Label htmlFor="rejection-reason" className="text-sm">Reason (optional)</Label>
             <Textarea

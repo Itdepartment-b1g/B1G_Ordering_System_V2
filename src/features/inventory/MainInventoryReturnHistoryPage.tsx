@@ -443,6 +443,7 @@ function AgentToLeaderReturns({
                     <TableHead className="text-right">Variant Qty</TableHead>
                     <TableHead className="text-right">Total Qty</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead>Notes</TableHead>
                     <TableHead className="text-right">Print</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -480,6 +481,9 @@ function AgentToLeaderReturns({
                             {row.totalQuantity.toLocaleString()}
                           </TableCell>
                           <TableCell>{agentStatusBadge(row.status)}</TableCell>
+                          <TableCell className="max-w-[220px] truncate text-sm text-muted-foreground" title={row.reason || undefined}>
+                            {row.reason?.trim() || '—'}
+                          </TableCell>
                           <TableCell className="text-right" onClick={(event) => event.stopPropagation()}>
                             {row.status === 'approved' ? (
                               <Button type="button" variant="outline" size="sm" onClick={() => printReturn(row)}>
@@ -493,7 +497,7 @@ function AgentToLeaderReturns({
                         </TableRow>
                         {open && (
                           <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
-                            <TableCell colSpan={8} className="p-4">
+                            <TableCell colSpan={9} className="p-4">
                               <p className="mb-3 text-sm">
                                 <span className="font-medium">Reason of returned:</span>{' '}
                                 <span className="text-muted-foreground">{row.reason || '—'}</span>
@@ -754,6 +758,7 @@ export default function MainInventoryReturnHistoryPage() {
                       <TableHead>Date</TableHead>
                       <TableHead className="text-right">Variant Qty</TableHead>
                       <TableHead className="text-right">Total Qty</TableHead>
+                      <TableHead>Notes</TableHead>
                       <TableHead className="text-right">Print</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -798,6 +803,9 @@ export default function MainInventoryReturnHistoryPage() {
                             <TableCell className="text-right font-medium tabular-nums">
                               {group.totalQuantity.toLocaleString()}
                             </TableCell>
+                            <TableCell className="max-w-[220px] truncate text-sm text-muted-foreground" title={group.reason || undefined}>
+                              {group.reason?.trim() || '—'}
+                            </TableCell>
                             <TableCell className="text-right" onClick={(event) => event.stopPropagation()}>
                               <Button type="button" variant="outline" size="sm" onClick={() => printGroup(group)}>
                                 <Printer className="h-4 w-4" />
@@ -807,7 +815,7 @@ export default function MainInventoryReturnHistoryPage() {
                           </TableRow>
                           {open && (
                             <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
-                              <TableCell colSpan={6} className="p-4">
+                              <TableCell colSpan={7} className="p-4">
                                 <ReturnDetails group={group} />
                               </TableCell>
                             </TableRow>
