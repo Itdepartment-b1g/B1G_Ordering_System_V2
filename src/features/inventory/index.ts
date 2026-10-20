@@ -6,6 +6,7 @@ export { default as SubWarehouseStockRequestPage } from './SubWarehouseStockRequ
 export { default as MainWarehouseSubStockRequestsPage } from './MainWarehouseSubStockRequestsPage';
 export { default as StockAllocationsPage } from './StockAllocationsPage';
 export { default as LeaderInventoryPage } from './LeaderInventoryPage';
+export { default as LeaderAgentReturnsPage } from './LeaderAgentReturnsPage';
 export { default as MyInventoryPage } from './MyInventoryPage';
 export { default as RemittedStocksPage } from './RemittedStocksPage';
 export { default as WarehouseDisposalsPage } from './WarehouseDisposalsPage';
