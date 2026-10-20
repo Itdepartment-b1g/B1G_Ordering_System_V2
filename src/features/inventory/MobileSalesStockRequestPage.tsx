@@ -1,8 +1,6 @@
-
 import { useState, useMemo } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import {
   Package,
@@ -11,76 +9,65 @@ import {
   XCircle,
   Loader2,
   Plus,
-  Search,
 } from 'lucide-react';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
-import { useMyRequests, useMainInventorySummary, useMyLeader, Request, GroupedRequest, useLeaderInventorySummary } from './requestHooks';
-import { useQueryClient } from '@tanstack/react-query';
+import { useMyRequests, useMyLeader, GroupedRequest, useLeaderInventorySummary } from './requestHooks';
 import { CreateStockRequestDialog } from './components/CreateStockRequestDialog';
+import { StockRequestHistoryList } from './components/StockRequestHistoryList';
+import { exportMobileSalesStockRequestPdf } from './utils/exportMobileSalesStockRequestPdf';
 
 export default function MobileSalesStockRequestPage() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const queryClient = useQueryClient();
 
   const { data: requests = [], isLoading: requestsLoading, refetch: refetchRequests } = useMyRequests();
   const { data: leaderData } = useMyLeader();
-  // Use Leader's inventory instead of Main Inventory for Mobile Sales
   const { data: inventorySummary, isLoading: summaryLoading } = useLeaderInventorySummary(leaderData?.leaderId || null);
 
   const brands = inventorySummary?.brands || [];
   const variants = inventorySummary?.variants || [];
   const loading = summaryLoading || requestsLoading;
 
-  const [searchQuery, setSearchQuery] = useState('');
   const [formOpen, setFormOpen] = useState(false);
 
-
-
-
-  // Group requests helper
   const groupedRequests = useMemo(() => {
-    // ... (rest of logic)
-    const groups: { [key: string]: Request[] } = {};
+    const groups: { [key: string]: typeof requests } = {};
 
     requests.forEach(request => {
-      // Group by request_number if available, otherwise fallback to timestamp
       const key = request.request_number || `${new Date(request.requested_at).getTime()}-${request.requester_notes || 'no-notes'}`;
-      
+
       if (!groups[key]) {
         groups[key] = [];
       }
       groups[key].push(request);
     });
 
-    return Object.entries(groups).map(([key, requests]) => {
-      const firstRequest = requests[0];
-      const allSameStatus = requests.every(r => r.status === firstRequest.status);
+    return Object.entries(groups).map(([key, groupRequests]) => {
+      const firstRequest = groupRequests[0];
+      const allSameStatus = groupRequests.every(r => r.status === firstRequest.status);
 
       return {
         id: key,
         requested_at: firstRequest.requested_at,
         status: allSameStatus ? firstRequest.status : 'mixed',
-        productCount: requests.length,
-        totalQuantity: requests.reduce((sum, r) => sum + r.requested_quantity, 0),
-        requests: requests,
+        productCount: groupRequests.length,
+        totalQuantity: groupRequests.reduce((sum, r) => sum + r.requested_quantity, 0),
+        requests: groupRequests,
         requester_notes: firstRequest.requester_notes
       } as GroupedRequest;
     }).sort((a, b) => new Date(b.requested_at).getTime() - new Date(a.requested_at).getTime());
   }, [requests]);
 
-  // Statistics
   const stats = useMemo(() => {
     return {
       total: groupedRequests.length,
-      pending: groupedRequests.filter(g => g.status === 'approved_by_leader' || g.status === 'pending').length, 
+      pending: groupedRequests.filter(g => g.status === 'approved_by_leader' || g.status === 'pending').length,
       approved: groupedRequests.filter(g => g.status === 'approved_by_admin' || g.status === 'fulfilled').length,
       denied: groupedRequests.filter(g => g.status === 'rejected').length,
     };
   }, [groupedRequests]);
 
-  // Helper for Status Badge
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'pending':
@@ -97,6 +84,37 @@ export default function MobileSalesStockRequestPage() {
     }
   };
 
+  const handlePrint = (group: GroupedRequest) => {
+    try {
+      const first = group.requests[0];
+      const denialReason = group.requests
+        .map(req => req.denial_reason?.trim())
+        .find(Boolean) ?? null;
+
+      exportMobileSalesStockRequestPdf({
+        requestNumber: group.id.startsWith('SR-') ? group.id : '—',
+        status: group.status,
+        requestedAt: group.requested_at,
+        requestedByName: first?.requested_by_name || user?.full_name || null,
+        requestedFromName: first?.requested_from_name || leaderData?.leaderName || null,
+        approvedByName: first?.approved_by_name || null,
+        notes: group.requester_notes,
+        denialReason,
+        lines: group.requests.map(req => ({
+          brandName: req.variant?.brand?.name ?? null,
+          variantName: req.variant?.name ?? null,
+          requestedQuantity: req.requested_quantity,
+        })),
+      });
+    } catch (error) {
+      toast({
+        title: 'Could not open print view',
+        description: error instanceof Error ? error.message : 'Try again.',
+        variant: 'destructive',
+      });
+    }
+  };
+
   if (loading && requests.length === 0) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -107,7 +125,6 @@ export default function MobileSalesStockRequestPage() {
 
   return (
     <div className="w-full p-4 md:p-6 space-y-4 md:space-y-6">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Mobile Sales Stock</h1>
@@ -120,8 +137,8 @@ export default function MobileSalesStockRequestPage() {
           <span className="hidden sm:inline">New Stock Request</span>
           <span className="sm:hidden">New Request</span>
         </Button>
-        <CreateStockRequestDialog 
-          open={formOpen} 
+        <CreateStockRequestDialog
+          open={formOpen}
           onOpenChange={setFormOpen}
           products={variants}
           brands={brands}
@@ -135,7 +152,6 @@ export default function MobileSalesStockRequestPage() {
         />
       </div>
 
-      {/* Stats Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
         <Card className="hover:shadow-md transition-shadow">
           <CardContent className="p-4 flex items-center gap-4">
@@ -175,77 +191,13 @@ export default function MobileSalesStockRequestPage() {
         </Card>
       </div>
 
-      {/* Requests List */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>My Request History</CardTitle>
-              <CardDescription>View status of your stock requests</CardDescription>
-            </div>
-            <div className="flex gap-2">
-               <div className="relative w-full sm:w-64">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input 
-                  placeholder="Search requests..." 
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9 h-9"
-                />
-              </div>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            {groupedRequests.length === 0 ? (
-               <div className="text-center py-12 text-muted-foreground">
-                 <Package className="h-12 w-12 mx-auto mb-3 opacity-20" />
-                 <p>No stock requests found</p>
-               </div>
-            ) : (
-              groupedRequests
-                .filter(group => {
-                   if (!searchQuery) return true;
-                   const searchLower = searchQuery.toLowerCase();
-                   return group.requester_notes?.toLowerCase().includes(searchLower) || group.status.toLowerCase().includes(searchLower);
-                })
-                .map((group) => (
-                <Card key={group.id} className="border border-border/50">
-                  <div className="p-4 flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center">
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        {getStatusBadge(group.status)}
-                        <span className="text-xs text-muted-foreground">
-                          {new Date(group.requested_at).toLocaleDateString()} at {new Date(group.requested_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                        </span>
-                      </div>
-                      <p className="font-medium text-sm">
-                        Requesting {group.totalQuantity} items across {group.productCount} products
-                        {group.id.startsWith('SR-') && <span className="text-xs text-muted-foreground ml-2">({group.id})</span>}
-                      </p>
-                      {group.requester_notes && (
-                        <p className="text-xs text-muted-foreground mt-1 line-clamp-1">"{group.requester_notes}"</p>
-                      )}
-                    </div>
-                    {/* Edit button removed as per user request */}
-                  </div>
-                   <div className="px-4 pb-4 pt-0 border-t bg-muted/20 mt-2">
-                       <div className="pt-2 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                         {group.requests.map(req => (
-                           <div key={req.id} className="text-xs flex justify-between p-2 bg-background rounded border">
-                              <span className="truncate pr-2">{req.variant?.brand?.name} - {req.variant?.name}</span>
-                              <span className="font-semibold">{req.requested_quantity}</span>
-                           </div>
-                         ))}
-                       </div>
-                   </div>
-                </Card>
-              ))
-            )}
-          </div>
-        </CardContent>
-      </Card>
+      <StockRequestHistoryList
+        groups={groupedRequests}
+        renderStatus={getStatusBadge}
+        onPrint={handlePrint}
+        title="My Request History"
+        description="View status of your stock requests"
+      />
     </div>
   );
 }

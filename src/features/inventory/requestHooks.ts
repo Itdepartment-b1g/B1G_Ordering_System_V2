@@ -14,6 +14,9 @@ export interface Request {
     requester_notes: string | null;
     approver_notes: string | null;
     denial_reason: string | null;
+    requested_by_name?: string | null;
+    requested_from_name?: string | null;
+    approved_by_name?: string | null;
     variant?: {
         id: string;
         name: string;
@@ -53,9 +56,16 @@ export function useMyRequests() {
           requested_quantity,
           requested_at,
           status,
+          leader_id,
+          agent_id,
+          leader_approved_by,
           leader_notes,
           admin_notes,
           rejection_reason,
+          agent:profiles!stock_requests_agent_id_fkey(full_name),
+          leader:profiles!stock_requests_leader_id_fkey(full_name),
+          leader_approver:profiles!stock_requests_leader_approved_by_fkey(full_name),
+          admin_approver:profiles!stock_requests_admin_approved_by_fkey(full_name),
           variant:variants(
             id,
             name,
@@ -68,7 +78,23 @@ export function useMyRequests() {
 
             if (error) throw error;
 
-            return (data || []).map((row: any) => ({
+            return (data || []).map((row: any) => {
+                const profileName = (value: unknown): string | null => {
+                    const record = Array.isArray(value) ? value[0] : value;
+                    const name = (record as { full_name?: string | null } | null)?.full_name?.trim();
+                    return name || null;
+                };
+                const requestedByName = profileName(row.agent);
+                const leaderName = profileName(row.leader);
+                const leaderApproverName = profileName(row.leader_approver);
+                const adminApproverName = profileName(row.admin_approver);
+                const requestedFromName = row.leader_id && row.leader_id !== row.agent_id
+                    ? leaderName
+                    : null;
+                const approvedByName = adminApproverName
+                    || (row.leader_approved_by && row.leader_approved_by !== row.agent_id ? leaderApproverName : null);
+
+                return {
                 id: row.id,
                 request_number: row.request_number, // Added
                 variant_id: row.variant_id,
@@ -78,8 +104,12 @@ export function useMyRequests() {
                 requester_notes: row.leader_notes || null,
                 approver_notes: row.admin_notes || null,
                 denial_reason: row.rejection_reason || null,
+                requested_by_name: requestedByName,
+                requested_from_name: requestedFromName,
+                approved_by_name: approvedByName,
                 variant: row.variant || undefined,
-            })) as Request[];
+            };
+            }) as Request[];
         },
         staleTime: 1000 * 60 * 5, // 5 minutes
     });
