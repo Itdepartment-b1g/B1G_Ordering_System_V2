@@ -126,7 +126,6 @@ export default function LeaderStockRequestPage() {
         statusLabel: printStatusLabel(group.status),
         requestedAt: group.requested_at,
         requestedByName: group.requests[0]?.requested_by_name || user?.full_name || null,
-        approvedByName: group.requests[0]?.approved_by_name || null,
         notes: group.requester_notes,
         denialReason,
         lines: group.requests.map(req => ({

@@ -11,8 +11,6 @@ export type MobileSalesStockRequestPdfInput = {
   requestedByName?: string | null;
   /** Person the stock is requested from. Blank when no person is stored. */
   requestedFromName?: string | null;
-  /** Person who approved the request. Blank until someone has approved it. */
-  approvedByName?: string | null;
   leaderName?: string | null;
   notes?: string | null;
   denialReason?: string | null;
@@ -121,9 +119,6 @@ function buildRequestHtml(input: MobileSalesStockRequestPdfInput): string {
   const requestNo = escapeHtml(input.requestNumber?.trim() || '—');
   const requestedFromRaw = input.requestedFromName?.trim() || input.leaderName?.trim() || '';
   const leader = requestedFromRaw ? escapeHtml(requestedFromRaw) : '—';
-  const approvedBy = input.approvedByName?.trim()
-    ? escapeHtml(input.approvedByName.trim())
-    : '<span class="muted">—</span>';
   const status = escapeHtml(input.statusLabel?.trim() || mobileSalesRequestStatusLabel(input.status));
   const toolbarTitle = escapeHtml(input.toolbarTitle?.trim() || 'Stock Request');
   const documentTitle = escapeHtml(input.documentTitle?.trim() || 'STOCK REQUEST');
@@ -377,7 +372,6 @@ function buildRequestHtml(input: MobileSalesStockRequestPdfInput): string {
       <div class="section-label">Request Details:</div>
       ${detailField('REQUESTED FROM:', leader)}
       ${detailField('REQUESTED BY:', requestedBy)}
-      ${detailField('APPROVED BY:', approvedBy)}
       ${detailField('REQUESTED AT:', escapeHtml(formatDateTime(input.requestedAt)))}
       ${detailField('NOTES:', notes)}
       ${denialBlock}

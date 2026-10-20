@@ -12,7 +12,6 @@ export type LeaderStockRequestPdfInput = {
   statusLabel?: string | null;
   requestedAt: string;
   requestedByName?: string | null;
-  approvedByName?: string | null;
   notes?: string | null;
   denialReason?: string | null;
   lines: LeaderStockRequestPdfLine[];
@@ -144,7 +143,6 @@ function buildLeaderRequestHtml(
   const requestNo = escapeHtml(input.requestNumber?.trim() || '—');
   const requestedFrom = nameOrDash(requestedFromName);
   const requestedBy = nameOrDash(input.requestedByName);
-  const approvedBy = nameOrDash(input.approvedByName);
   const status = escapeHtml(input.statusLabel?.trim() || 'Submitted');
   const notes = input.notes?.trim()
     ? escapeHtml(input.notes.trim())
@@ -356,7 +354,6 @@ function buildLeaderRequestHtml(
       <div class="section-label">Request Details:</div>
       ${detailField('REQUESTED FROM:', requestedFrom)}
       ${detailField('REQUESTED BY:', requestedBy)}
-      ${detailField('APPROVED BY:', approvedBy)}
       ${detailField('REQUESTED AT:', escapeHtml(formatDateTime(input.requestedAt)))}
       ${detailField('NOTES:', notes)}
       ${denialBlock}

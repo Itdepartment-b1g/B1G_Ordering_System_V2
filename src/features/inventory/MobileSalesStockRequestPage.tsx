@@ -97,7 +97,6 @@ export default function MobileSalesStockRequestPage() {
         requestedAt: group.requested_at,
         requestedByName: first?.requested_by_name || user?.full_name || null,
         requestedFromName: first?.requested_from_name || leaderData?.leaderName || null,
-        approvedByName: first?.approved_by_name || null,
         notes: group.requester_notes,
         denialReason,
         lines: group.requests.map(req => ({
