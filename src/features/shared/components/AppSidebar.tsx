@@ -300,6 +300,7 @@ const leaderMenuItems: MenuItem[] = [
       { title: 'My Inventory', url: '/my-inventory', icon: Package },
       { title: 'Request Stock', url: '/leader-inventory/request', icon: Send },
       { title: 'Teams Inventory', url: '/leader-inventory', icon: Crown },
+      { title: 'Team Returns', url: '/inventory/leader/returns', icon: RotateCcw },
       { title: 'Pending Requests', url: '/inventory/pending-requests', icon: Send },
       { title: 'Team Remittances', url: '/inventory/team-remittances', icon: ArrowLeft },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: DollarSign },
@@ -395,6 +396,7 @@ const managerMenuItems: MenuItem[] = [
     hasSubmenu: true,
     submenu: [
       { title: 'Team Inventory', url: '/manager-inventory', icon: Crown },
+      { title: 'Team Returns', url: '/inventory/leader/returns', icon: RotateCcw },
       { title: 'Team Requests', url: '/manager-requests', icon: Send },
       { title: 'Team Remittances', url: '/manager-remittances', icon: ArrowLeft },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: DollarSign },

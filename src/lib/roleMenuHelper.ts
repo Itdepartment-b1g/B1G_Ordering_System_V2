@@ -64,6 +64,7 @@ const leaderMenuItems: MenuItem[] = [
   { title: 'Inventory', url: '/inventory', description: 'Leader-level inventory and stock controls.', hasSubmenu: true, submenu: [
     { title: 'My Inventory', url: '/my-inventory', description: 'View stock allocated directly to you as a leader.' },
     { title: 'Teams Inventory', url: '/leader-inventory', description: 'See and manage inventory held by your team members.' },
+    { title: 'Team Returns', url: '/inventory/leader/returns', description: 'Review stock mobile sales returned to you. Approve, reject, and print approved returns.' },
     { title: 'Pending Requests', url: '/inventory/pending-requests', description: 'Approve or reject inventory requests from your agents.' },
     { title: 'Team Remittances', url: '/inventory/team-remittances', description: 'Review stock and cash remittances submitted by your team.' },
     { title: 'Cash Deposits', url: '/inventory/cash-deposits', description: 'Record and review cash/cheque deposits for your team.' },
@@ -95,6 +96,7 @@ const managerMenuItems: MenuItem[] = [
   { title: 'My Team', url: '/manager-teams', description: 'See all leaders and agents reporting to you.' },
   { title: 'Inventory', url: '/inventory', description: 'Manager-level overview of team inventory and flows.', hasSubmenu: true, submenu: [
     { title: 'Team Inventory', url: '/manager-inventory', description: 'Monitor inventory across all your teams.' },
+    { title: 'Team Returns', url: '/inventory/leader/returns', description: 'Review stock mobile sales returned to you. Approve, reject, and print approved returns.' },
     { title: 'Team Requests', url: '/manager-requests', description: 'Review and manage stock requests at the manager level.' },
     { title: 'Team Remittances', url: '/manager-remittances', description: 'Oversee stock and cash remittances from teams.' },
     { title: 'Cash Deposits', url: '/inventory/cash-deposits', description: 'Track deposits impacting your teams and orders.' },
