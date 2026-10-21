@@ -2,8 +2,16 @@ import ExcelJS from 'exceljs';
 import { downloadExcelWorkbook } from '@/lib/excel.helpers';
 
 type ExportBrand = { id: string; name: string };
-type ExportVariant = { brand_id: string; name: string; variant_type?: string | null };
-export type BrandsAndVariantsLayout = 'columns' | 'stacked';
+type ExportVariant = {
+  brand_id: string;
+  name: string;
+  variant_type?: string | null;
+  sku?: string | null;
+};
+export type BrandsAndVariantsLayout = 'columns' | 'stacked' | 'flat';
+
+/** Flat catalog columns used for warehouse sync (standard company → warehouse). */
+export const CATALOG_SYNC_HEADERS = ['brand_name', 'variant_name', 'variant_type', 'sku'] as const;
 
 export function buildBrandsAndVariantsWorkbook(
   brands: ExportBrand[],
@@ -25,7 +33,39 @@ export function buildBrandsAndVariantsWorkbook(
   if (rowCount > 1048575) throw new Error('Too many variants for one Excel worksheet.');
 
   const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet('Brands & Variants');
+  const worksheet = workbook.addWorksheet(layout === 'flat' ? 'Catalog Sync' : 'Brands & Variants');
+
+  if (layout === 'flat') {
+    const header = worksheet.addRow([...CATALOG_SYNC_HEADERS]);
+    header.font = { bold: true };
+    header.eachCell((cell) => {
+      cell.border = { bottom: { style: 'thin' } };
+    });
+    for (const brand of sortedBrands) {
+      const brandVariants = (variantsByBrand.get(brand.id) || []).sort((a, b) =>
+        a.name.localeCompare(b.name)
+      );
+      if (brandVariants.length === 0) {
+        worksheet.addRow([brand.name, '', '', '']);
+        continue;
+      }
+      for (const variant of brandVariants) {
+        worksheet.addRow([
+          brand.name,
+          variant.name,
+          variant.variant_type ?? '',
+          variant.sku ?? '',
+        ]);
+      }
+    }
+    worksheet.getColumn(1).width = 28;
+    worksheet.getColumn(2).width = 36;
+    worksheet.getColumn(3).width = 14;
+    worksheet.getColumn(4).width = 18;
+    worksheet.views = [{ state: 'frozen', ySplit: 1 }];
+    return workbook;
+  }
+
   if (layout === 'stacked') {
     const totalRows = 2 + columns.reduce((count, column) => count + column.length + 2, 0);
     if (totalRows > 1048576) throw new Error('Too many brands and variants for one Excel worksheet.');
@@ -85,5 +125,11 @@ export async function exportBrandsAndVariantsExcel(
   layout: BrandsAndVariantsLayout = 'columns'
 ): Promise<void> {
   const workbook = buildBrandsAndVariantsWorkbook(brands, variants, layout);
-  await downloadExcelWorkbook(workbook, layout === 'stacked' ? 'Brand_and_Variant_OMA.xlsx' : 'Brands_and_Variants.xlsx');
+  const filename =
+    layout === 'stacked'
+      ? 'Brand_and_Variant_OMA.xlsx'
+      : layout === 'flat'
+        ? 'Catalog_Sync_Brand_Variant_Type.xlsx'
+        : 'Brands_and_Variants.xlsx';
+  await downloadExcelWorkbook(workbook, filename);
 }
