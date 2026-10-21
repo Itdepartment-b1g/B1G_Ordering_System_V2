@@ -41,6 +41,47 @@ export function writeExcelExportTitleRow(
   return startRow + 2;
 }
 
+const EXCEL_WRAPPED_LINE_HEIGHT = 15;
+const EXCEL_WRAPPED_ROW_PADDING = 4;
+
+export function countExcelWrappedLines(text: string, colWidth: number): number {
+  if (!text) return 0;
+  const maxChars = Math.max(8, Math.floor(colWidth));
+  let total = 0;
+  for (const line of text.split(/\r?\n/)) {
+    const remainingStart = line.trim();
+    if (!remainingStart) {
+      total += 1;
+      continue;
+    }
+    let remaining = remainingStart;
+    while (remaining.length > 0) {
+      if (remaining.length <= maxChars) {
+        total += 1;
+        break;
+      }
+      const slice = remaining.slice(0, maxChars + 1);
+      const lastSpace = slice.lastIndexOf(' ');
+      const cut = lastSpace > maxChars * 0.4 ? lastSpace : maxChars;
+      remaining = remaining.slice(cut).trimStart();
+      total += 1;
+    }
+  }
+  return total;
+}
+
+export function excelWrappedRowHeight(
+  texts: Array<{ text: string; width: number }>,
+  minHeight = 18
+): number {
+  const lines = Math.max(
+    1,
+    ...texts.map(({ text, width }) => countExcelWrappedLines(text, width))
+  );
+  if (lines <= 1) return minHeight;
+  return Math.min(120, EXCEL_WRAPPED_ROW_PADDING + lines * EXCEL_WRAPPED_LINE_HEIGHT);
+}
+
 export function writeExcelExportMetaRow(
   worksheet: ExcelJS.Worksheet,
   rowIndex: number,
