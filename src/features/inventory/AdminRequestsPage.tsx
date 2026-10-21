@@ -21,6 +21,7 @@ import {
   Clock,
   ChevronLeft,
   ChevronRight,
+  Printer,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { supabase } from '@/lib/supabase';
@@ -29,6 +30,22 @@ import { useToast } from '@/hooks/use-toast';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import { sendNotification } from '@/features/shared/lib/notification.helpers';
 import { refetchSuperAdminAllocationHistory } from '@/features/sales-agents/components/super-admin-allocation-history/hooks/useSuperAdminAllocationHistory';
+import { exportLeaderStockRequestPdf } from './utils/exportLeaderStockRequestPdf';
+
+function adminRequestStatusLabel(status: string): string {
+  switch (status) {
+    case 'approved_by_leader':
+      return 'Pending';
+    case 'approved_by_admin':
+      return 'Approved';
+    case 'fulfilled':
+      return 'Fulfilled';
+    case 'rejected':
+      return 'Rejected';
+    default:
+      return status?.trim() || 'Submitted';
+  }
+}
 
 // --- Interfaces ---
 
@@ -120,9 +137,11 @@ export default function AdminRequestsPage() {
   const PAGE_SIZE = 10;
   const [pendingPage, setPendingPage] = useState(1);
   const [historyPage, setHistoryPage] = useState(1);
+  const [allPage, setAllPage] = useState(1);
 
   // History status filter: all | approved_by_admin | fulfilled | rejected
   const [historyStatusFilter, setHistoryStatusFilter] = useState<string>('all');
+  const [allStatusFilter, setAllStatusFilter] = useState<string>('all');
 
   useEffect(() => {
     if (user?.id) {
@@ -257,6 +276,35 @@ export default function AdminRequestsPage() {
     }
   };
 
+  const handlePrint = async (group: GroupedRequest) => {
+    try {
+      const denialReason = group.items
+        .map((item) => item.rejection_reason?.trim())
+        .find(Boolean) ?? null;
+
+      await exportLeaderStockRequestPdf({
+        companyId: user?.company_id,
+        requestNumber: group.request_number,
+        statusLabel: adminRequestStatusLabel(group.status),
+        requestedAt: group.requested_at,
+        requestedByName: group.requester_name,
+        notes: group.notes,
+        denialReason,
+        lines: group.items.map((item) => ({
+          brandName: item.variant?.brand?.name ?? null,
+          variantName: item.variant?.name ?? null,
+          requestedQuantity: item.requested_quantity + (item.leader_additional_quantity || 0),
+        })),
+      });
+    } catch (error) {
+      toast({
+        title: 'Could not open print view',
+        description: error instanceof Error ? error.message : 'Try again.',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const handleOpenDetail = (group: GroupedRequest, isHistory: boolean) => {
      setSelectedGroup(group);
      setIsHistoryView(isHistory);
@@ -322,6 +370,14 @@ export default function AdminRequestsPage() {
 
   const filteredPending = getFilteredGroups(groupedPending);
   const filteredHistory = getFilteredGroups(groupedHistory);
+  const filteredAll = useMemo(() => {
+    const merged = [...groupedPending, ...groupedHistory].sort(
+      (a, b) => new Date(b.requested_at).getTime() - new Date(a.requested_at).getTime()
+    );
+    const searched = getFilteredGroups(merged);
+    if (allStatusFilter === 'all') return searched;
+    return searched.filter((group) => group.status === allStatusFilter);
+  }, [groupedPending, groupedHistory, searchQuery, allStatusFilter]);
 
   // History filtered by status (after search) — hooks must run before any early return
   const historyFilteredByStatus = useMemo(() => {
@@ -331,6 +387,7 @@ export default function AdminRequestsPage() {
 
   const totalPendingPages = Math.max(1, Math.ceil(filteredPending.length / PAGE_SIZE));
   const totalHistoryPages = Math.max(1, Math.ceil(historyFilteredByStatus.length / PAGE_SIZE));
+  const totalAllPages = Math.max(1, Math.ceil(filteredAll.length / PAGE_SIZE));
   const paginatedPending = useMemo(
     () => filteredPending.slice((pendingPage - 1) * PAGE_SIZE, pendingPage * PAGE_SIZE),
     [filteredPending, pendingPage]
@@ -339,6 +396,10 @@ export default function AdminRequestsPage() {
     () => historyFilteredByStatus.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE),
     [historyFilteredByStatus, historyPage]
   );
+  const paginatedAll = useMemo(
+    () => filteredAll.slice((allPage - 1) * PAGE_SIZE, allPage * PAGE_SIZE),
+    [filteredAll, allPage]
+  );
 
   useEffect(() => {
     setPendingPage(1);
@@ -346,6 +407,9 @@ export default function AdminRequestsPage() {
   useEffect(() => {
     setHistoryPage(1);
   }, [searchQuery, historyStatusFilter]);
+  useEffect(() => {
+    setAllPage(1);
+  }, [searchQuery, allStatusFilter]);
 
   // UI Components
   const StatusBadge = ({ status }: { status: string }) => {
@@ -434,6 +498,9 @@ export default function AdminRequestsPage() {
             />
           </div>
           <TabsList className="bg-muted/30 p-1 border h-auto w-full sm:w-auto">
+            <TabsTrigger value="all" className="px-4 py-2 gap-2 data-[state=active]:bg-background data-[state=active]:shadow-sm flex-1 sm:flex-none">
+              All
+            </TabsTrigger>
             <TabsTrigger value="pending" className="px-4 py-2 gap-2 data-[state=active]:bg-background data-[state=active]:shadow-sm flex-1 sm:flex-none">
               <Clock className="w-4 h-4" /> Pending
               {groupedPending.length > 0 && (
@@ -501,9 +568,15 @@ export default function AdminRequestsPage() {
                       </TableCell>
                       <TableCell><StatusBadge status={group.status} /></TableCell>
                       <TableCell className="text-right pr-6">
-                        <Button size="sm" onClick={() => handleOpenDetail(group, false)}>
-                          Review <ArrowRight className="w-3 h-3 ml-1" />
-                        </Button>
+                        <div className="flex justify-end gap-2">
+                          <Button size="sm" variant="outline" onClick={() => handlePrint(group)}>
+                            <Printer className="w-3 h-3" />
+                            Print
+                          </Button>
+                          <Button size="sm" onClick={() => handleOpenDetail(group, false)}>
+                            Review <ArrowRight className="w-3 h-3 ml-1" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))
@@ -577,9 +650,15 @@ export default function AdminRequestsPage() {
                       </TableCell>
                       <TableCell><StatusBadge status={group.status} /></TableCell>
                       <TableCell className="text-right pr-6">
-                        <Button variant="ghost" size="sm" onClick={() => handleOpenDetail(group, true)}>
-                          View Details
-                        </Button>
+                        <div className="flex justify-end gap-2">
+                          <Button size="sm" variant="outline" onClick={() => handlePrint(group)}>
+                            <Printer className="w-3 h-3" />
+                            Print
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => handleOpenDetail(group, true)}>
+                            View Details
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))
@@ -592,6 +671,106 @@ export default function AdminRequestsPage() {
               totalItems={historyFilteredByStatus.length}
               onPrev={() => setHistoryPage((p) => Math.max(1, p - 1))}
               onNext={() => setHistoryPage((p) => Math.min(totalHistoryPages, p + 1))}
+              pageSize={PAGE_SIZE}
+            />
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="all" className="mt-0">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+            <span className="text-sm text-muted-foreground">Filter by status:</span>
+            <Select value={allStatusFilter} onValueChange={setAllStatusFilter}>
+              <SelectTrigger className="w-full sm:w-[180px]">
+                <SelectValue placeholder="All statuses" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All statuses</SelectItem>
+                <SelectItem value="approved_by_leader">Pending</SelectItem>
+                <SelectItem value="approved_by_admin">Approved</SelectItem>
+                <SelectItem value="fulfilled">Fulfilled</SelectItem>
+                <SelectItem value="rejected">Rejected</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <Card className="border rounded-lg overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/30 hover:bg-muted/30">
+                  <TableHead className="pl-6">Request</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Items / Stocks</TableHead>
+                  <TableHead>Stock</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right pr-6">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {paginatedAll.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="h-32 text-center text-muted-foreground">
+                      No stock requests found.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  paginatedAll.map((group) => (
+                    <TableRow key={group.group_id} className="hover:bg-muted/5">
+                      <TableCell className="pl-6">
+                        <div className="flex items-center gap-3">
+                          <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center text-sm font-semibold text-primary">
+                            {group.requester_name.charAt(0)}
+                          </div>
+                          <div>
+                            <div className="font-medium">{group.requester_name}</div>
+                            <div className="text-xs text-muted-foreground font-mono">{group.request_number}</div>
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                        {format(new Date(group.requested_at), 'MMM dd, yyyy HH:mm')}
+                      </TableCell>
+                      <TableCell>
+                        <span className="font-medium">{group.total_items}</span> items · <span className="font-medium">{group.total_quantity}</span> units
+                      </TableCell>
+                      <TableCell>
+                        {group.status !== 'approved_by_leader' ? (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        ) : group.is_fully_stocked ? (
+                          <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">In stock</Badge>
+                        ) : (
+                          <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
+                            {group.missing_stock_count} short
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell><StatusBadge status={group.status} /></TableCell>
+                      <TableCell className="text-right pr-6">
+                        <div className="flex justify-end gap-2">
+                          <Button size="sm" variant="outline" onClick={() => handlePrint(group)}>
+                            <Printer className="w-3 h-3" />
+                            Print
+                          </Button>
+                          {group.status === 'approved_by_leader' ? (
+                            <Button size="sm" onClick={() => handleOpenDetail(group, false)}>
+                              Review <ArrowRight className="w-3 h-3 ml-1" />
+                            </Button>
+                          ) : (
+                            <Button variant="ghost" size="sm" onClick={() => handleOpenDetail(group, true)}>
+                              View Details
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+            <PaginationBar
+              currentPage={allPage}
+              totalPages={totalAllPages}
+              totalItems={filteredAll.length}
+              onPrev={() => setAllPage((p) => Math.max(1, p - 1))}
+              onNext={() => setAllPage((p) => Math.min(totalAllPages, p + 1))}
               pageSize={PAGE_SIZE}
             />
           </Card>
@@ -614,7 +793,15 @@ export default function AdminRequestsPage() {
                             Requested by <span className="font-semibold text-foreground underline decoration-dotted">{selectedGroup?.requester_name}</span>
                         </DialogDescription>
                     </div>
-                    {selectedGroup && <StatusBadge status={selectedGroup.status} />}
+                    <div className="flex items-center gap-2">
+                      {selectedGroup && (
+                        <Button size="sm" variant="outline" onClick={() => handlePrint(selectedGroup)}>
+                          <Printer className="w-3 h-3" />
+                          Print
+                        </Button>
+                      )}
+                      {selectedGroup && <StatusBadge status={selectedGroup.status} />}
+                    </div>
                 </div>
             </DialogHeader>
 
