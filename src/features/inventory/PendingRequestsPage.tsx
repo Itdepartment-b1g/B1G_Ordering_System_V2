@@ -88,6 +88,9 @@ function isApprovedRequestStatus(status: string): boolean {
   return status === 'approved_by_admin' || status === 'fulfilled';
 }
 
+const queueColumns =
+  'grid grid-cols-[1.25rem_minmax(8rem,1.15fr)_minmax(14rem,1.7fr)_6.5rem_11.5rem_7.5rem_13.5rem] items-center gap-x-3 px-3';
+
 function buildRequestGroups(requests: AgentRequest[], source: 'team' | 'leader'): GroupedRequest[] {
   return requests.reduce((acc: GroupedRequest[], req) => {
     const agentId = req.requester?.id || req.agent_id || '';
@@ -973,8 +976,9 @@ export default function PendingRequestsPage() {
 
     return (
       <div className="overflow-x-auto">
-        <div className="min-w-[72rem] space-y-2">
-        <div className="grid grid-cols-[minmax(8rem,1.1fr)_minmax(16rem,1.5fr)_5.5rem_9.5rem_7.5rem_auto] gap-3 pl-10 pr-4 text-xs font-medium text-muted-foreground">
+        <div className="min-w-[72rem] overflow-hidden rounded-lg border bg-card">
+        <div className={`${queueColumns} border-b py-2 text-xs font-medium text-muted-foreground`}>
+          <span aria-hidden />
           <button type="button" className="inline-flex items-center gap-1 text-left" onClick={() => handleTeamSort('agentName')}>
             Agent {sortIcon('agentName')}
           </button>
@@ -990,29 +994,24 @@ export default function PendingRequestsPage() {
           <span>Status</span>
           <span className="text-right">Actions</span>
         </div>
-        <Accordion type="multiple" className="rounded-lg border bg-card">
+        <Accordion type="multiple">
           {groups.map((group) => {
             const lines = requestLines(group);
             const rowKey = `${group.source}-${group.id}`;
             return (
-              <AccordionItem key={rowKey} value={rowKey} className="border-b px-3 last:border-b-0">
-                <div className="flex items-center">
-                  <div className="min-w-0 flex-1">
-                    <AccordionTrigger className="flex-row-reverse justify-start gap-3 py-3 hover:no-underline">
-                      <div className="grid min-w-0 flex-1 grid-cols-[minmax(8rem,1.1fr)_minmax(16rem,1.5fr)_5.5rem_9.5rem_7.5rem] items-center gap-3 pr-3 text-left">
-                        <span className="truncate font-medium">{group.agentName}</span>
-                        <span className="truncate text-sm text-muted-foreground">
-                          {lines.length === 1 ? formatProductName(lines[0]) : `${lines.length} products`}
-                        </span>
-                        <span className="text-right text-sm font-semibold">{group.totalQuantity} units</span>
-                        <span className="whitespace-nowrap text-sm text-muted-foreground">
-                          {format(new Date(group.requested_at), 'MMM dd, yyyy HH:mm')}
-                        </span>
-                        <span className="justify-self-start">{queueStatusBadge(group.status)}</span>
-                      </div>
-                    </AccordionTrigger>
-                  </div>
-                  <div className="shrink-0">{renderRequestActions(group)}</div>
+              <AccordionItem key={rowKey} value={rowKey} className="border-b last:border-b-0">
+                <div className={queueColumns}>
+                  <AccordionTrigger className="h-10 w-5 justify-center p-0 hover:no-underline" />
+                  <span className="truncate font-medium">{group.agentName}</span>
+                  <span className="truncate text-sm text-muted-foreground">
+                    {lines.length === 1 ? formatProductName(lines[0]) : `${lines.length} products`}
+                  </span>
+                  <span className="text-right text-sm font-semibold">{group.totalQuantity} units</span>
+                  <span className="whitespace-nowrap text-sm text-muted-foreground">
+                    {format(new Date(group.requested_at), 'MMM dd, yyyy HH:mm')}
+                  </span>
+                  <span className="justify-self-start">{queueStatusBadge(group.status)}</span>
+                  <div className="flex justify-end">{renderRequestActions(group)}</div>
                 </div>
                 <AccordionContent className="pb-3">
                   {renderRequestDetails(group, lines)}
