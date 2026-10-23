@@ -1,4 +1,4 @@
-import type { AllocationHistoryGroup } from './allocationHistoryMappers';
+import type { AllocationHistoryGroup, AllocationHistoryLine } from './allocationHistoryMappers';
 import { allocationTypeLabel, formatManilaDateTime } from '../table/TableRow';
 
 function escapeHtml(value: unknown): string {
@@ -29,8 +29,26 @@ function detailField(label: string, valueHtml: string): string {
       </div>`;
 }
 
+function linesGroupedByBrand(lines: AllocationHistoryLine[]): AllocationHistoryLine[] {
+  return [...lines].sort((a, b) => {
+    const brandCmp = (a.brandName || '').localeCompare(b.brandName || '', undefined, {
+      sensitivity: 'base',
+    });
+    if (brandCmp !== 0) return brandCmp;
+
+    const variantCmp = (a.variantName || '').localeCompare(b.variantName || '', undefined, {
+      sensitivity: 'base',
+    });
+    if (variantCmp !== 0) return variantCmp;
+
+    return (a.variantType || '').localeCompare(b.variantType || '', undefined, {
+      sensitivity: 'base',
+    });
+  });
+}
+
 function itemRowsHtml(group: AllocationHistoryGroup): string {
-  const rows = group.lines.map((line) => {
+  const rows = linesGroupedByBrand(group.lines).map((line) => {
     const type = typeLabel(line.variantType);
     const name = `${line.brandName ? `${line.brandName} — ` : ''}${line.variantName || 'Item'}${type ? ` (${type})` : ''}`;
     return `
