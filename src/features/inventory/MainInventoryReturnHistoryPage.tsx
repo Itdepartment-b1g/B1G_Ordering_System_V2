@@ -30,7 +30,7 @@ import {
 } from '@/components/ui/table';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
-import { SUPABASE_PAGE_SIZE } from '@/lib/supabasePaginate';
+import { fetchAllPaginated, SUPABASE_PAGE_SIZE } from '@/lib/supabasePaginate';
 import { isAdmin } from '@/lib/roleUtils';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import { exportMainInventoryReturnPdf } from './utils/exportMainInventoryReturnPdf';
@@ -327,6 +327,90 @@ type AgentToLeaderReturn = {
   items: AgentReturnItem[];
 };
 
+type AgentReturnHeaderRow = {
+  id: string;
+  return_reason: string | null;
+  reason_notes: string | null;
+  rejection_reason: string | null;
+  created_at: string;
+  status: string | null;
+  agent: { full_name: string | null } | { full_name: string | null }[] | null;
+  receiver: { full_name: string | null } | { full_name: string | null }[] | null;
+};
+
+type AgentReturnItemRow = {
+  id: string;
+  return_id: string;
+  variant_id: string;
+  quantity: number | null;
+  variant:
+    | {
+        name: string | null;
+        variant_type: string | null;
+        brand: { name: string | null } | { name: string | null }[] | null;
+      }
+    | {
+        name: string | null;
+        variant_type: string | null;
+        brand: { name: string | null } | { name: string | null }[] | null;
+      }[]
+    | null;
+};
+
+/** Keep `.in(return_id)` URLs short, then page each chunk past the 1,000-row cap. */
+const RETURN_ID_CHUNK = 80;
+
+const STOCK_RETURN_QUERY_OPTIONS = {
+  staleTime: 0,
+  refetchOnMount: 'always' as const,
+};
+
+async function fetchAllAgentReturns(companyId: string): Promise<AgentReturnHeaderRow[]> {
+  return fetchAllPaginated(async (from, to) => {
+    const { data, error } = await supabase
+      .from('inventory_returns')
+      .select(`
+        id,
+        return_reason,
+        reason_notes,
+        rejection_reason,
+        created_at,
+        status,
+        agent:profiles!inventory_returns_agent_id_fkey(full_name),
+        receiver:profiles!inventory_returns_receiver_id_fkey(full_name)
+      `)
+      .eq('company_id', companyId)
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(from, to);
+    return { data: (data ?? null) as AgentReturnHeaderRow[] | null, error };
+  });
+}
+
+async function fetchAllAgentReturnItems(returnIds: string[]): Promise<AgentReturnItemRow[]> {
+  const items: AgentReturnItemRow[] = [];
+  for (let index = 0; index < returnIds.length; index += RETURN_ID_CHUNK) {
+    const chunk = returnIds.slice(index, index + RETURN_ID_CHUNK);
+    const page = await fetchAllPaginated(async (from, to) => {
+      const { data, error } = await supabase
+        .from('inventory_return_items')
+        .select(`
+          id,
+          return_id,
+          variant_id,
+          quantity,
+          variant:variants(name, variant_type, brand:brands(name))
+        `)
+        .in('return_id', chunk)
+        .order('id', { ascending: true })
+        .range(from, to);
+      return { data: (data ?? null) as AgentReturnItemRow[] | null, error };
+    });
+    items.push(...page);
+  }
+  return items;
+}
+
 function agentStatusBadge(status: AgentReturnStatus) {
   if (status === 'approved') return <Badge>Approved</Badge>;
   if (status === 'rejected') return <Badge variant="destructive">Rejected</Badge>;
@@ -403,43 +487,21 @@ function AgentToLeaderReturns({
 
   const { data: returns = [], isLoading } = useQuery({
     queryKey: ['agent-to-leader-return-history', companyId],
+    ...STOCK_RETURN_QUERY_OPTIONS,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('inventory_returns')
-        .select(`
-          id,
-          return_reason,
-          reason_notes,
-          rejection_reason,
-          created_at,
-          status,
-          agent:profiles!inventory_returns_agent_id_fkey(full_name),
-          receiver:profiles!inventory_returns_receiver_id_fkey(full_name)
-        `)
-        .eq('company_id', companyId)
-        .order('created_at', { ascending: false })
-        .limit(200);
-
-      if (error) {
+      let data: AgentReturnHeaderRow[] = [];
+      try {
+        data = await fetchAllAgentReturns(companyId);
+      } catch (error) {
         toast({ title: 'Error', description: 'Failed to load team leader returns', variant: 'destructive' });
         throw error;
       }
-      if (!data?.length) return [];
+      if (!data.length) return [];
 
-      const { data: itemsData, error: itemsError } = await supabase
-        .from('inventory_return_items')
-        .select(`
-          return_id,
-          variant_id,
-          quantity,
-          variant:variants(name, variant_type, brand:brands(name))
-        `)
-        .in('return_id', data.map((row) => row.id));
-
-      if (itemsError) throw itemsError;
+      const itemsData = await fetchAllAgentReturnItems(data.map((row) => row.id));
 
       const itemsByReturn = new Map<string, AgentReturnItem[]>();
-      (itemsData || []).forEach((row) => {
+      itemsData.forEach((row) => {
         const variant = Array.isArray(row.variant) ? row.variant[0] : row.variant;
         const brand = variant?.brand
           ? Array.isArray(variant.brand) ? variant.brand[0] : variant.brand
@@ -710,6 +772,7 @@ export default function MainInventoryReturnHistoryPage() {
 
   const { data: groups = [], isLoading } = useQuery({
     queryKey: ['main-inventory-return-history', user?.company_id, membership.locationId, isMainWarehouseUser],
+    ...STOCK_RETURN_QUERY_OPTIONS,
     enabled: !!user?.company_id,
     queryFn: async () => {
       if (!user?.company_id) return [];
