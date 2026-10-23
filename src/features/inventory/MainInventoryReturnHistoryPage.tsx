@@ -378,11 +378,13 @@ function AgentToLeaderReturns({
   searchQuery,
   rangeStart,
   rangeEnd,
+  statusFilter,
 }: {
   companyId: string;
   searchQuery: string;
   rangeStart?: Date;
   rangeEnd?: Date;
+  statusFilter: 'all' | 'pending' | 'approved';
 }) {
   const { toast } = useToast();
   const [openId, setOpenId] = useState<string | null>(null);
@@ -469,6 +471,7 @@ function AgentToLeaderReturns({
   const visible = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     return returns.filter((row) => {
+      if (statusFilter !== 'all' && row.status !== statusFilter) return false;
       if (!isDateInRange(row.returnedAt, rangeStart, rangeEnd)) return false;
       if (!query) return true;
       return (
@@ -483,11 +486,11 @@ function AgentToLeaderReturns({
         )
       );
     });
-  }, [returns, searchQuery, rangeStart, rangeEnd]);
+  }, [returns, searchQuery, rangeStart, rangeEnd, statusFilter]);
 
   useEffect(() => {
     setPage(0);
-  }, [searchQuery, rangeStart, rangeEnd, pageSize]);
+  }, [searchQuery, rangeStart, rangeEnd, pageSize, statusFilter]);
 
   const { pageCount, safePage, pagedItems } = getListPaginationSlice(visible, page, pageSize);
 
@@ -690,11 +693,10 @@ export default function MainInventoryReturnHistoryPage() {
   const isWarehouse = user?.role === 'warehouse';
   const { membership } = useWarehouseLocationMembership({ userId: user?.id, isWarehouse });
   const isMainWarehouseUser = membership.isMain;
-  const [openId, setOpenId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
+  const [statusTab, setStatusTab] = useState<'all' | 'pending' | 'approved'>('all');
   const [historyPage, setHistoryPage] = useState(0);
-  const [leaderPage, setLeaderPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
 
   const { data: groups = [], isLoading } = useQuery({
@@ -822,15 +824,9 @@ export default function MainInventoryReturnHistoryPage() {
     });
   }, [groups, searchQuery, dateRange.start, dateRange.end]);
 
-  const leaderGroups = useMemo(
-    () => filteredGroups.filter((group) => !group.isSubWarehouseReturn),
-    [filteredGroups]
-  );
-
   useEffect(() => {
     setHistoryPage(0);
-    setLeaderPage(0);
-  }, [searchQuery, dateRange.start, dateRange.end, pageSize]);
+  }, [searchQuery, dateRange.start, dateRange.end, pageSize, statusTab]);
 
   const renderHistoryCard = (
     cardGroups: ReturnGroup[],
@@ -1009,46 +1005,43 @@ export default function MainInventoryReturnHistoryPage() {
         />
       </div>
 
-      {canViewAgentReturns && user?.company_id ? (
-        <Tabs defaultValue="all" className="space-y-4">
-          <TabsList className="h-auto flex-wrap justify-start">
-            <TabsTrigger value="all">All</TabsTrigger>
-            <TabsTrigger value="leader">Team Leader to Super Admin</TabsTrigger>
-            <TabsTrigger value="agent">Mobile Sales to Team Leader</TabsTrigger>
-          </TabsList>
-          <TabsContent value="all" className="space-y-4">
-            {renderHistoryCard(
-              filteredGroups,
-              historyPage,
-              setHistoryPage,
-              'Returns to main inventory'
-            )}
-            <AgentToLeaderReturns
-              companyId={user.company_id}
-              searchQuery={searchQuery}
-              rangeStart={dateRange.start}
-              rangeEnd={dateRange.end}
-            />
-          </TabsContent>
-          <TabsContent value="leader">
-            {renderHistoryCard(
-              leaderGroups,
-              leaderPage,
-              setLeaderPage,
-              'Team Leader to Super Admin'
-            )}
-          </TabsContent>
-          <TabsContent value="agent">
-            <AgentToLeaderReturns
-              companyId={user.company_id}
-              searchQuery={searchQuery}
-              rangeStart={dateRange.start}
-              rangeEnd={dateRange.end}
-            />
-          </TabsContent>
-        </Tabs>
-      ) : (
-        renderHistoryCard(filteredGroups, historyPage, setHistoryPage, 'Return history')
+      <Tabs
+        value={statusTab}
+        onValueChange={(value) => setStatusTab(value as 'all' | 'pending' | 'approved')}
+        className="space-y-4"
+      >
+        <TabsList className="grid h-auto w-full grid-cols-3">
+          <TabsTrigger value="all">All</TabsTrigger>
+          <TabsTrigger value="pending">Pending</TabsTrigger>
+          <TabsTrigger value="approved">Approved</TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      {statusTab !== 'pending' &&
+        renderHistoryCard(
+          filteredGroups,
+          historyPage,
+          setHistoryPage,
+          isTeamLeader ? 'Return history' : 'Returns to main inventory'
+        )}
+
+      {statusTab === 'pending' && !canViewAgentReturns && (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
+            <RotateCcw className="mb-3 h-10 w-10 opacity-40" />
+            <p className="font-medium text-foreground">No pending returns</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {canViewAgentReturns && user?.company_id && (
+        <AgentToLeaderReturns
+          companyId={user.company_id}
+          searchQuery={searchQuery}
+          rangeStart={dateRange.start}
+          rangeEnd={dateRange.end}
+          statusFilter={statusTab}
+        />
       )}
     </div>
   );

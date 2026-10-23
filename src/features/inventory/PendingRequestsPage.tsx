@@ -17,7 +17,18 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Package, CheckCircle2, XCircle, ArrowUp, ArrowDown, ArrowUpDown, AlertCircle, Loader2, Printer, MoreVertical } from 'lucide-react';
+import { Package, CheckCircle2, XCircle, ArrowUp, ArrowDown, ArrowUpDown, AlertCircle, Loader2, Printer, MoreVertical, Search } from 'lucide-react';
+import {
+  DateRangeFilterPopover,
+  type DateRangeFilterValue,
+} from '@/features/shared/components/DateRangeFilterPopover';
+import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
+import {
+  DEFAULT_PAGE_SIZE,
+  getListPaginationSlice,
+  ListPagination,
+  type PageSize,
+} from '@/features/shared/components/ListPagination';
 import { exportMobileSalesStockRequestPdf } from './utils/exportMobileSalesStockRequestPdf';
 import { exportLeaderStockRequestPdf } from './utils/exportLeaderStockRequestPdf';
 import { format } from 'date-fns';
@@ -178,6 +189,9 @@ export default function PendingRequestsPage() {
 
   // Simple filters/search for scalability
   const [teamSearch, setTeamSearch] = useState('');
+  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
+  const [queuePage, setQueuePage] = useState(0);
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [teamSortState, setTeamSortState] =
     useState<TableSortCycleState<TeamGroupedRequestSortKey>>(createInitialTableSortCycle);
 
@@ -882,9 +896,24 @@ export default function PendingRequestsPage() {
       return (a.variant?.variant_type || '').localeCompare(b.variant?.variant_type || '', undefined, { sensitivity: 'base' });
     });
 
+  const dateRange = useMemo(
+    () =>
+      getDateRangeFromPreset(
+        dateRangeFilter.preset,
+        dateRangeFilter.customStart,
+        dateRangeFilter.customEnd
+      ),
+    [dateRangeFilter]
+  );
+
+  useEffect(() => {
+    setQueuePage(0);
+  }, [teamSearch, dateRange.start, dateRange.end, pageSize]);
+
   const visibleQueue = (statuses: string[] | null) => {
     const filtered = queueGroups.filter((group) => {
       if (statuses && !statuses.includes(group.status)) return false;
+      if (!isDateInRange(group.requested_at, dateRange.start, dateRange.end)) return false;
       if (!teamSearch.trim()) return true;
       const query = teamSearch.toLowerCase();
       const matchesAgent = group.agentName.toLowerCase().includes(query);
@@ -987,7 +1016,9 @@ export default function PendingRequestsPage() {
   };
 
   const renderQueue = (groups: GroupedRequest[]) => {
-    if (groups.length === 0) {
+    const { pageCount, safePage, pagedItems } = getListPaginationSlice(groups, queuePage, pageSize);
+
+    if (pagedItems.length === 0) {
       return (
         <div className="text-center py-8 text-muted-foreground">
           <Package className="h-10 w-10 mx-auto mb-2 opacity-50" />
@@ -1006,7 +1037,7 @@ export default function PendingRequestsPage() {
     return (
       <>
       <Accordion type="multiple" className="space-y-2 md:hidden">
-        {groups.map((group) => {
+        {pagedItems.map((group) => {
           const lines = requestLines(group);
           const rowKey = `mobile-${group.source}-${group.id}`;
           return (
@@ -1056,7 +1087,7 @@ export default function PendingRequestsPage() {
           <span className="text-right">Actions</span>
         </div>
         <Accordion type="multiple">
-          {groups.map((group) => {
+          {pagedItems.map((group) => {
             const lines = requestLines(group);
             const rowKey = `${group.source}-${group.id}`;
             return (
@@ -1083,6 +1114,14 @@ export default function PendingRequestsPage() {
         </Accordion>
         </div>
       </div>
+      <ListPagination
+        pageSize={pageSize}
+        safePage={safePage}
+        pageCount={pageCount}
+        onPageSizeChange={setPageSize}
+        onPrevious={() => setQueuePage((current) => Math.max(0, current - 1))}
+        onNext={() => setQueuePage((current) => Math.min(pageCount - 1, current + 1))}
+      />
       </>
     );
   };
@@ -1111,14 +1150,16 @@ export default function PendingRequestsPage() {
           <Card className="shadow-none border-dashed">
             <CardContent className="py-2 md:py-3 px-2 md:px-4">
               <p className="text-[10px] md:text-xs text-muted-foreground truncate">All</p>
-              <p className="text-lg md:text-xl font-semibold">{queueGroups.length}</p>
+              <p className="text-lg md:text-xl font-semibold">
+                {queueGroups.filter((group) => isDateInRange(group.requested_at, dateRange.start, dateRange.end)).length}
+              </p>
             </CardContent>
           </Card>
           <Card className="shadow-none border-dashed">
             <CardContent className="py-2 md:py-3 px-2 md:px-4">
-              <p className="text-[10px] md:text-xs text-muted-foreground truncate">Rejected</p>
-              <p className="text-lg md:text-xl font-semibold text-red-600">
-                {queueGroups.filter((group) => group.status === 'rejected').length}
+              <p className="text-[10px] md:text-xs text-muted-foreground truncate">Pending</p>
+              <p className="text-lg md:text-xl font-semibold text-amber-600">
+                {queueGroups.filter((group) => group.status === 'pending' && isDateInRange(group.requested_at, dateRange.start, dateRange.end)).length}
               </p>
             </CardContent>
           </Card>
@@ -1126,7 +1167,7 @@ export default function PendingRequestsPage() {
             <CardContent className="py-2 md:py-3 px-2 md:px-4">
               <p className="text-[10px] md:text-xs text-muted-foreground truncate">Approved</p>
               <p className="text-lg md:text-xl font-semibold text-green-600">
-                {queueGroups.filter((group) => isApprovedRequestStatus(group.status)).length}
+                {queueGroups.filter((group) => isApprovedRequestStatus(group.status) && isDateInRange(group.requested_at, dateRange.start, dateRange.end)).length}
               </p>
             </CardContent>
           </Card>
@@ -1138,24 +1179,37 @@ export default function PendingRequestsPage() {
           <CardTitle className="text-base md:text-lg">Request Queue</CardTitle>
         </CardHeader>
         <CardContent className="p-4 md:p-6">
-          <Tabs defaultValue="all" className="space-y-3 md:space-y-4">
+          <Tabs
+            defaultValue="all"
+            className="space-y-3 md:space-y-4"
+            onValueChange={() => setQueuePage(0)}
+          >
             <TabsList className="grid w-full grid-cols-3 h-auto">
               <TabsTrigger value="all" className="text-[10px] md:text-sm py-2 md:py-2.5 px-1 md:px-3">All</TabsTrigger>
-              <TabsTrigger value="rejected" className="text-[10px] md:text-sm py-2 md:py-2.5 px-1 md:px-3">Rejected</TabsTrigger>
+              <TabsTrigger value="pending" className="text-[10px] md:text-sm py-2 md:py-2.5 px-1 md:px-3">Pending</TabsTrigger>
               <TabsTrigger value="approved" className="text-[10px] md:text-sm py-2 md:py-2.5 px-1 md:px-3">Approved</TabsTrigger>
             </TabsList>
 
-            <div className="mb-3">
-              <Input
-                placeholder="Search agent or product..."
-                value={teamSearch}
-                onChange={(e) => setTeamSearch(e.target.value)}
-                className="h-9 md:h-10 text-sm"
+            <div className="mb-3 flex flex-col gap-2 sm:flex-row">
+              <div className="relative flex-1">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search agent or product..."
+                  value={teamSearch}
+                  onChange={(e) => setTeamSearch(e.target.value)}
+                  className="h-9 md:h-10 pl-9 text-sm"
+                />
+              </div>
+              <DateRangeFilterPopover
+                value={dateRangeFilter}
+                onChange={setDateRangeFilter}
+                triggerClassName="h-9 w-full justify-between sm:h-10 sm:w-[220px] shrink-0"
+                align="end"
               />
             </div>
 
             <TabsContent value="all">{renderQueue(visibleQueue(null))}</TabsContent>
-            <TabsContent value="rejected">{renderQueue(visibleQueue(['rejected']))}</TabsContent>
+            <TabsContent value="pending">{renderQueue(visibleQueue(['pending']))}</TabsContent>
             <TabsContent value="approved">
               {renderQueue(visibleQueue(['approved_by_admin', 'fulfilled']))}
             </TabsContent>
