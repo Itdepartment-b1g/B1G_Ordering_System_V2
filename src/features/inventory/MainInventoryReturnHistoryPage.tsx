@@ -1,14 +1,14 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
-import { Building2, ChevronDown, ChevronRight, Eye, Loader2, MoreVertical, Printer, RotateCcw, Search, Users } from 'lucide-react';
+import { Building2, Eye, Loader2, MoreVertical, Printer, RotateCcw, Search, Users } from 'lucide-react';
 import { useAuth } from '@/features/auth';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -153,39 +153,80 @@ function groupReturns(lines: ReturnLine[]): ReturnGroup[] {
   );
 }
 
+type DetailLine = {
+  id: string;
+  brandName: string;
+  variantName: string;
+  variantType: string | null;
+  quantity: number;
+};
+
+function ReturnItemGroups({ lines }: { lines: DetailLine[] }) {
+  const brands = useMemo(() => {
+    const map = new Map<string, DetailLine[]>();
+    lines.forEach((line) => {
+      const name = line.brandName?.trim() || 'Unknown brand';
+      const list = map.get(name) ?? [];
+      list.push(line);
+      map.set(name, list);
+    });
+    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [lines]);
+
+  if (brands.length === 0) {
+    return <p className="text-sm text-muted-foreground">No items on this return.</p>;
+  }
+
+  return (
+    <div className="min-w-0 space-y-3">
+      {brands.map(([brandName, brandLines]) => (
+        <div key={brandName} className="min-w-0 overflow-hidden rounded-md border bg-background">
+          <div className="border-b bg-muted/40 px-3 py-2 text-sm font-semibold">{brandName}</div>
+          <ul>
+            {brandLines.map((line) => {
+              const label = variantTypeLabel(line.variantType);
+              return (
+                <li
+                  key={line.id}
+                  className="flex items-start justify-between gap-3 border-b px-3 py-2.5 last:border-b-0"
+                >
+                  <div className="min-w-0">
+                    <p className="break-words text-sm font-medium leading-snug">{line.variantName}</p>
+                    {label ? (
+                      <Badge variant="outline" className={`mt-1 text-[10px] ${variantTypeBadgeClass(line.variantType)}`}>
+                        {label}
+                      </Badge>
+                    ) : null}
+                  </div>
+                  <span className="shrink-0 pt-0.5 text-sm font-semibold tabular-nums">
+                    {line.quantity.toLocaleString()}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ReturnDetails({ group }: { group: ReturnGroup }) {
   return (
-    <div className="space-y-3 rounded-md border bg-muted/30 p-3">
-      <p className="text-sm">
+    <div className="min-w-0 space-y-3">
+      <p className="break-words text-sm">
         <span className="font-medium">Reason of returned: </span>
         <span className="text-muted-foreground">{group.reason?.trim() || '—'}</span>
       </p>
-      <div className="space-y-2 md:hidden">
-        {group.lines.map((line) => (
-          <div key={line.id} className="rounded-md border bg-background p-2 text-sm">
-            <div className="font-medium leading-snug">{returnLineLabel(line)}</div>
-            <div className="mt-1 text-right text-xs font-semibold">{line.quantity.toLocaleString()}</div>
-          </div>
-        ))}
-      </div>
-      <div className="hidden overflow-x-auto md:block">
-        <Table className="min-w-[36rem]">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Product</TableHead>
-              <TableHead className="text-right">Qty</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {group.lines.map((line) => (
-              <TableRow key={line.id}>
-                <TableCell className="whitespace-nowrap font-medium">{returnLineLabel(line)}</TableCell>
-                <TableCell className="text-right tabular-nums">{line.quantity.toLocaleString()}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+      <ReturnItemGroups
+        lines={group.lines.map((line) => ({
+          id: line.id,
+          brandName: line.brandName,
+          variantName: line.variantName,
+          variantType: line.variantType,
+          quantity: line.quantity,
+        }))}
+      />
     </div>
   );
 }
@@ -405,63 +446,18 @@ async function fetchAllAgentReturnItems(returnIds: string[]): Promise<AgentRetur
   }
   return items;
 }
-
-function agentStatusBadge(status: AgentReturnStatus) {
-  if (status === 'approved') return <Badge>Approved</Badge>;
-  if (status === 'rejected') return <Badge variant="destructive">Rejected</Badge>;
-  return <Badge variant="secondary">Pending</Badge>;
+//use return for the status label since return to main(superadmin) doesnt have approval
+function agentStatusLabel(status: AgentReturnStatus): string {
+  if (status === 'approved') return 'Returned';
+  if (status === 'rejected') return 'Rejected';
+  return 'Pending';
 }
 
-function AgentReturnBrandTables({ items }: { items: AgentReturnItem[] }) {
-  const brands = useMemo(() => {
-    const map = new Map<string, AgentReturnItem[]>();
-    items.forEach((item) => {
-      const name = item.brandName?.trim() || 'Unknown brand';
-      const list = map.get(name) ?? [];
-      list.push(item);
-      map.set(name, list);
-    });
-    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [items]);
-
-  return (
-    <div className="space-y-4">
-      {brands.map(([brandName, brandItems]) => (
-        <div key={brandName} className="overflow-hidden rounded-md border bg-white">
-          <div className="border-b bg-muted/40 px-4 py-2.5 font-semibold">{brandName}</div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Variant</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead className="text-right">Qty</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {brandItems.map((item) => {
-                const label = variantTypeLabel(item.variantType);
-                return (
-                  <TableRow key={`${brandName}-${item.variantId}`}>
-                    <TableCell>{item.variantName}</TableCell>
-                    <TableCell>
-                      {label ? (
-                        <Badge variant="outline" className={`text-[10px] ${variantTypeBadgeClass(item.variantType)}`}>
-                          {label}
-                        </Badge>
-                      ) : (
-                        '—'
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{item.quantity.toLocaleString()}</TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
-      ))}
-    </div>
-  );
+function agentStatusBadge(status: AgentReturnStatus) {
+  const label = agentStatusLabel(status);
+  if (status === 'approved') return <Badge>{label}</Badge>;
+  if (status === 'rejected') return <Badge variant="destructive">{label}</Badge>;
+  return <Badge variant="secondary">{label}</Badge>;
 }
 
 function AgentToLeaderReturns({
@@ -469,16 +465,14 @@ function AgentToLeaderReturns({
   searchQuery,
   rangeStart,
   rangeEnd,
-  statusFilter,
 }: {
   companyId: string;
   searchQuery: string;
   rangeStart?: Date;
   rangeEnd?: Date;
-  statusFilter: 'all' | 'pending' | 'approved';
 }) {
   const { toast } = useToast();
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [detailReturn, setDetailReturn] = useState<AgentToLeaderReturn | null>(null);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
 
@@ -540,14 +534,13 @@ function AgentToLeaderReturns({
   const visible = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     return returns.filter((row) => {
-      if (statusFilter !== 'all' && row.status !== statusFilter) return false;
       if (!isDateInRange(row.returnedAt, rangeStart, rangeEnd)) return false;
       if (!query) return true;
       return (
         row.returnedBy.toLowerCase().includes(query) ||
         row.returnedTo.toLowerCase().includes(query) ||
         row.reason.toLowerCase().includes(query) ||
-        row.status.includes(query) ||
+        agentStatusLabel(row.status).toLowerCase().includes(query) ||
         row.items.some(
           (item) =>
             item.brandName.toLowerCase().includes(query) ||
@@ -555,11 +548,11 @@ function AgentToLeaderReturns({
         )
       );
     });
-  }, [returns, searchQuery, rangeStart, rangeEnd, statusFilter]);
+  }, [returns, searchQuery, rangeStart, rangeEnd]);
 
   useEffect(() => {
     setPage(0);
-  }, [searchQuery, rangeStart, rangeEnd, pageSize, statusFilter]);
+  }, [searchQuery, rangeStart, rangeEnd, pageSize]);
 
   const { pageCount, safePage, pagedItems } = getListPaginationSlice(visible, page, pageSize);
 
@@ -568,7 +561,7 @@ function AgentToLeaderReturns({
       returnedBy: row.returnedBy,
       returnedTo: row.returnedTo,
       returnedAt: row.returnedAt,
-      status: row.status === 'approved' ? 'Approved' : row.status === 'rejected' ? 'Rejected' : 'Pending',
+      status: agentStatusLabel(row.status),
       reason: row.reason,
       lines: row.items.map((item) => ({
         brandName: item.brandName,
@@ -580,6 +573,7 @@ function AgentToLeaderReturns({
   };
 
   return (
+    <>
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
@@ -604,7 +598,6 @@ function AgentToLeaderReturns({
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-10" />
                     <TableHead>Returned by</TableHead>
                     <TableHead>Returned to</TableHead>
                     <TableHead>Date</TableHead>
@@ -615,140 +608,82 @@ function AgentToLeaderReturns({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {pagedItems.map((row) => {
-                    const open = openId === row.id;
-                    return (
-                      <Fragment key={row.id}>
-                        <TableRow
-                          className="cursor-pointer hover:bg-muted/40"
-                          onClick={() => setOpenId(open ? null : row.id)}
-                        >
-                          <TableCell>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              aria-label={open ? 'Collapse return' : 'Expand return'}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                setOpenId(open ? null : row.id);
-                              }}
-                            >
-                              {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                  {pagedItems.map((row) => (
+                    <TableRow key={row.id}>
+                      <TableCell className="font-medium">{row.returnedBy}</TableCell>
+                      <TableCell>{row.returnedTo}</TableCell>
+                      <TableCell className="whitespace-nowrap text-sm">
+                        {format(new Date(row.returnedAt), 'MMM d, yyyy h:mm a')}
+                      </TableCell>
+                      <TableCell className="text-right font-medium tabular-nums">
+                        {row.totalQuantity.toLocaleString()}
+                      </TableCell>
+                      <TableCell>{agentStatusBadge(row.status)}</TableCell>
+                      <TableCell className="max-w-[220px] truncate text-sm text-muted-foreground" title={row.reason || undefined}>
+                        {row.reason?.trim() || '—'}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label="Return actions">
+                              <MoreVertical className="h-4 w-4" />
                             </Button>
-                          </TableCell>
-                          <TableCell className="font-medium">{row.returnedBy}</TableCell>
-                          <TableCell>{row.returnedTo}</TableCell>
-                          <TableCell className="whitespace-nowrap text-sm">
-                            {format(new Date(row.returnedAt), 'MMM d, yyyy h:mm a')}
-                          </TableCell>
-                          <TableCell className="text-right font-medium tabular-nums">
-                            {row.totalQuantity.toLocaleString()}
-                          </TableCell>
-                          <TableCell>{agentStatusBadge(row.status)}</TableCell>
-                          <TableCell className="max-w-[220px] truncate text-sm text-muted-foreground" title={row.reason || undefined}>
-                            {row.reason?.trim() || '—'}
-                          </TableCell>
-                          <TableCell className="text-right" onClick={(event) => event.stopPropagation()}>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label="Return actions">
-                                  <MoreVertical className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="w-40">
-                                <DropdownMenuItem onClick={() => setOpenId(open ? null : row.id)}>
-                                  <Eye className="mr-2 h-4 w-4" />
-                                  {open ? 'Hide details' : 'View details'}
-                                </DropdownMenuItem>
-                                {row.status === 'approved' && (
-                                  <DropdownMenuItem onClick={() => printReturn(row)}>
-                                    <Printer className="mr-2 h-4 w-4" />
-                                    Print
-                                  </DropdownMenuItem>
-                                )}
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </TableCell>
-                        </TableRow>
-                        {open && (
-                          <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
-                            <TableCell colSpan={8} className="p-4">
-                              <p className="mb-3 text-sm">
-                                <span className="font-medium">Reason of returned:</span>{' '}
-                                <span className="text-muted-foreground">{row.reason || '—'}</span>
-                              </p>
-                              {row.status === 'rejected' && row.rejectionReason && (
-                                <p className="mb-3 text-sm">
-                                  <span className="font-medium">Rejection reason:</span>{' '}
-                                  <span className="text-muted-foreground">{row.rejectionReason}</span>
-                                </p>
-                              )}
-                              <AgentReturnBrandTables items={row.items} />
-                            </TableCell>
-                          </TableRow>
-                        )}
-                      </Fragment>
-                    );
-                  })}
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-40">
+                            <DropdownMenuItem onClick={() => setDetailReturn(row)}>
+                              <Eye className="mr-2 h-4 w-4" />
+                              View details
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => printReturn(row)}>
+                              <Printer className="mr-2 h-4 w-4" />
+                              Print
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))}
                 </TableBody>
               </Table>
             </div>
 
             <div className="md:hidden space-y-3">
-              {pagedItems.map((row) => {
-                const open = openId === row.id;
-                return (
-                  <div key={row.id} className="rounded-lg border p-3 space-y-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="font-medium text-sm">{row.returnedBy}</p>
-                        <p className="text-xs text-muted-foreground mt-1">To {row.returnedTo}</p>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {format(new Date(row.returnedAt), 'MMM d, yyyy h:mm a')}
-                        </p>
-                        <p className="text-xs mt-1">
-                          {row.variantCount} variants · {row.totalQuantity.toLocaleString()} qty
-                        </p>
-                      </div>
-                      <div className="flex flex-col items-end gap-2">
-                        {agentStatusBadge(row.status)}
-                        {row.status === 'approved' && (
-                          <Button type="button" variant="outline" size="sm" onClick={() => printReturn(row)}>
-                            <Printer className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </div>
+              {pagedItems.map((row) => (
+                <div key={row.id} className="rounded-lg border p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{row.returnedBy}</p>
+                      <p className="mt-1 truncate text-xs text-muted-foreground">To {row.returnedTo}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {format(new Date(row.returnedAt), 'MMM d, yyyy h:mm a')}
+                      </p>
+                      <p className="mt-1 text-xs">
+                        {row.variantCount} variants · {row.totalQuantity.toLocaleString()} qty
+                      </p>
                     </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="w-full justify-between"
-                      onClick={() => setOpenId(open ? null : row.id)}
-                    >
-                      {open ? 'Hide items' : 'View items'}
-                      {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                    </Button>
-                    {open && (
-                      <div>
-                        <p className="mb-3 text-sm">
-                          <span className="font-medium">Reason of returned:</span>{' '}
-                          <span className="text-muted-foreground">{row.reason || '—'}</span>
-                        </p>
-                        {row.status === 'rejected' && row.rejectionReason && (
-                          <p className="mb-3 text-sm">
-                            <span className="font-medium">Rejection reason:</span>{' '}
-                            <span className="text-muted-foreground">{row.rejectionReason}</span>
-                          </p>
-                        )}
-                        <AgentReturnBrandTables items={row.items} />
-                      </div>
-                    )}
+                    <div className="flex shrink-0 flex-col items-end gap-2">
+                      {agentStatusBadge(row.status)}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label="Return actions">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-40">
+                          <DropdownMenuItem onClick={() => setDetailReturn(row)}>
+                            <Eye className="mr-2 h-4 w-4" />
+                            View details
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => printReturn(row)}>
+                            <Printer className="mr-2 h-4 w-4" />
+                            Print
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
             <ListPagination
               pageSize={pageSize}
@@ -762,6 +697,50 @@ function AgentToLeaderReturns({
         )}
       </CardContent>
     </Card>
+
+    <Dialog open={!!detailReturn} onOpenChange={(open) => { if (!open) setDetailReturn(null); }}>
+      <DialogContent className="max-h-[85vh] w-[calc(100%-1.5rem)] max-w-lg overflow-x-hidden overflow-y-auto [&>*]:min-w-0">
+        <DialogHeader>
+          <DialogTitle>Return details</DialogTitle>
+          <DialogDescription className="break-words">
+            {detailReturn
+              ? `${detailReturn.returnedBy} to ${detailReturn.returnedTo} · ${format(new Date(detailReturn.returnedAt), 'MMM d, yyyy h:mm a')}`
+              : 'Return items'}
+          </DialogDescription>
+        </DialogHeader>
+        {detailReturn && (
+          <div className="min-w-0 space-y-3">
+            <div className="flex items-center gap-2">
+              {agentStatusBadge(detailReturn.status)}
+            </div>
+            <p className="break-words text-sm">
+              <span className="font-medium">Reason of returned: </span>
+              <span className="text-muted-foreground">{detailReturn.reason?.trim() || '—'}</span>
+            </p>
+            {detailReturn.status === 'rejected' && detailReturn.rejectionReason && (
+              <p className="break-words text-sm">
+                <span className="font-medium">Rejection reason: </span>
+                <span className="text-muted-foreground">{detailReturn.rejectionReason}</span>
+              </p>
+            )}
+            <ReturnItemGroups
+              lines={detailReturn.items.map((item) => ({
+                id: `${detailReturn.id}-${item.variantId}`,
+                brandName: item.brandName,
+                variantName: item.variantName,
+                variantType: item.variantType,
+                quantity: item.quantity,
+              }))}
+            />
+            <Button type="button" className="w-full" onClick={() => printReturn(detailReturn)}>
+              <Printer className="mr-2 h-4 w-4" />
+              Print
+            </Button>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
 
@@ -773,7 +752,7 @@ export default function MainInventoryReturnHistoryPage() {
   const isMainWarehouseUser = membership.isMain;
   const [searchQuery, setSearchQuery] = useState('');
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
-  const [statusTab, setStatusTab] = useState<'all' | 'pending' | 'approved'>('all');
+  const [returnTab, setReturnTab] = useState<'all' | 'main' | 'mobile'>('all');
   const [historyPage, setHistoryPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [detailGroup, setDetailGroup] = useState<ReturnGroup | null>(null);
@@ -912,7 +891,7 @@ export default function MainInventoryReturnHistoryPage() {
 
   useEffect(() => {
     setHistoryPage(0);
-  }, [searchQuery, dateRange.start, dateRange.end, pageSize, statusTab]);
+  }, [searchQuery, dateRange.start, dateRange.end, pageSize, returnTab]);
 
   const renderHistoryCard = (
     cardGroups: ReturnGroup[],
@@ -1025,7 +1004,7 @@ export default function MainInventoryReturnHistoryPage() {
                           <span className="text-right text-sm font-semibold tabular-nums">
                             {group.totalQuantity.toLocaleString()}
                           </span>
-                          <span><Badge>Approved</Badge></span>
+                          <span><Badge>Returned</Badge></span>
                           <span className="truncate text-sm text-muted-foreground" title={group.reason || undefined}>
                             {group.reason?.trim() || '—'}
                           </span>
@@ -1114,19 +1093,27 @@ export default function MainInventoryReturnHistoryPage() {
         />
       </div>
 
-      <Tabs
-        value={statusTab}
-        onValueChange={(value) => setStatusTab(value as 'all' | 'pending' | 'approved')}
-        className="space-y-4"
-      >
-        <TabsList className="grid h-auto w-full grid-cols-3">
-          <TabsTrigger value="all">All</TabsTrigger>
-          <TabsTrigger value="pending">Pending</TabsTrigger>
-          <TabsTrigger value="approved">Approved</TabsTrigger>
-        </TabsList>
-      </Tabs>
+      {canViewAgentReturns && (
+        <Tabs
+          value={returnTab}
+          onValueChange={(value) => setReturnTab(value as 'all' | 'main' | 'mobile')}
+          className="space-y-4"
+        >
+          <TabsList className="grid h-auto w-full grid-cols-1 sm:grid-cols-3">
+            <TabsTrigger value="all" className="whitespace-normal px-2 py-2 text-center leading-tight">
+              All
+            </TabsTrigger>
+            <TabsTrigger value="main" className="whitespace-normal px-2 py-2 text-center leading-tight">
+              Team Leader to Main
+            </TabsTrigger>
+            <TabsTrigger value="mobile" className="whitespace-normal px-2 py-2 text-center leading-tight">
+              Mobile Sales to Team Leader
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+      )}
 
-      {statusTab !== 'pending' &&
+      {(!canViewAgentReturns || returnTab !== 'mobile') &&
         renderHistoryCard(
           filteredGroups,
           historyPage,
@@ -1134,30 +1121,20 @@ export default function MainInventoryReturnHistoryPage() {
           isTeamLeader ? 'Return history' : 'Returns to main inventory'
         )}
 
-      {statusTab === 'pending' && !canViewAgentReturns && (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
-            <RotateCcw className="mb-3 h-10 w-10 opacity-40" />
-            <p className="font-medium text-foreground">No pending returns</p>
-          </CardContent>
-        </Card>
-      )}
-
-      {canViewAgentReturns && user?.company_id && (
+      {canViewAgentReturns && user?.company_id && returnTab !== 'main' && (
         <AgentToLeaderReturns
           companyId={user.company_id}
           searchQuery={searchQuery}
           rangeStart={dateRange.start}
           rangeEnd={dateRange.end}
-          statusFilter={statusTab}
         />
       )}
 
       <Dialog open={!!detailGroup} onOpenChange={(open) => { if (!open) setDetailGroup(null); }}>
-        <DialogContent className="max-h-[90vh] w-[calc(100%-1.5rem)] max-w-lg overflow-y-auto">
+        <DialogContent className="max-h-[85vh] w-[calc(100%-1.5rem)] max-w-lg overflow-x-hidden overflow-y-auto [&>*]:min-w-0">
           <DialogHeader>
             <DialogTitle>Return details</DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="break-words">
               {detailGroup
                 ? `${detailGroup.returnedBy} · ${format(new Date(detailGroup.returnedAt), 'MMM d, yyyy h:mm a')}`
                 : 'Return items'}
