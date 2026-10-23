@@ -51,6 +51,7 @@ import AgentAttendancePage from "@/features/agent-attendance/page/AgentAttendanc
 import AgentAttendanceOverviewPage from "@/features/sales-agents/AgentAttendanceOverviewPage";
 import TeamAttendancesPage from "./features/team-leader/pages/TeamAttendancesPage";
 import LeaderAllocationHistoryPage from "./features/team-leader/pages/LeaderAllocationHistoryPage";
+import MobileSalesAllocationHistoryPage from "./features/inventory/MobileSalesAllocationHistoryPage";
 import LeaderManualPage from "./features/team-leader/pages/LeaderManualPage";
 import LeaderPoReceivePage from "./features/team-leader/pages/LeaderPoReceivePage";
 import SuperAdminAllocationHistoryPage from "@/features/sales-agents/SuperAdminAllocationHistoryPage";
@@ -253,6 +254,14 @@ const App = () => (
                       element={
                         <ProtectedRoute allowedRoles={['team_leader']}>
                           <LeaderAllocationHistoryPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/my-allocation-history"
+                      element={
+                        <ProtectedRoute allowedRoles={['mobile_sales', 'sales_agent']}>
+                          <MobileSalesAllocationHistoryPage />
                         </ProtectedRoute>
                       }
                     />

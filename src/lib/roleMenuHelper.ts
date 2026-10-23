@@ -49,6 +49,7 @@ const agentMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/dashboard', description: 'Personal snapshot of today’s targets, orders, and performance.' },
   { title: 'My Inventory', url: '/my-inventory', description: 'View stock currently assigned to you and its status.' },
   { title: 'Return History', url: '/inventory/my-returns', description: 'Review the stock you returned to your team leader.' },
+  { title: 'Allocation History', url: '/my-allocation-history', description: 'See the stock your team leader allocated to you.' },
   { title: 'Request Inventory', url: '/inventory/request', description: 'Submit stock requests to your team leader for approval.' },
   { title: 'Mobile Sales Stock', url: '/inventory/mobile-request', description: 'Request stock specifically for mobile sales inventory.' },
   { title: 'My Clients', url: '/my-clients', description: 'Manage your assigned clients, visit history, and details.' },

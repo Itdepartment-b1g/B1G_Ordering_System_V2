@@ -24,6 +24,7 @@ type SuperAdminAllocationHistoryTableProps = {
   pagedGroups: AllocationHistoryGroup[];
   sortState: TableSortCycleState<SuperAdminAllocationSortKey>;
   onSort: (key: SuperAdminAllocationSortKey) => void;
+  emptyMessage?: string;
 };
 
 export function SuperAdminAllocationHistoryTable({
@@ -31,9 +32,10 @@ export function SuperAdminAllocationHistoryTable({
   pagedGroups,
   sortState,
   onSort,
+  emptyMessage,
 }: SuperAdminAllocationHistoryTableProps) {
   return (
-    <div className="overflow-hidden rounded-md border">
+    <div className="overflow-x-auto rounded-md border">
       <Table>
         <TableHeader>
           <TableRow>
@@ -98,11 +100,15 @@ export function SuperAdminAllocationHistoryTable({
           {!isLoading && pagedGroups.length === 0 && (
             <TableRow>
               <TableCell colSpan={9} className="h-24 text-center">
-                No allocation history yet. Use{' '}
-                <Link to="/inventory/allocations" className="underline">
-                  Stock Allocations
-                </Link>{' '}
-                to create sessions.
+                {emptyMessage ?? (
+                  <>
+                    No allocation history yet. Use{' '}
+                    <Link to="/inventory/allocations" className="underline">
+                      Stock Allocations
+                    </Link>{' '}
+                    to create sessions.
+                  </>
+                )}
               </TableCell>
             </TableRow>
           )}
