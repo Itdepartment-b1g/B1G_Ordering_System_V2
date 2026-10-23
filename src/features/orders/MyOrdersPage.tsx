@@ -34,6 +34,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useOrders, type Order, type OrderItem, type PaymentSplit } from './OrderContext';
+import { OrderCashDepositAttachment } from './components/OrderCashDepositAttachment';
 import { generateAndOpenOrderReceiptFromOrder } from './generateOrderReceiptPdf';
 import { getDatePresetLabel, getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import {
@@ -4513,6 +4514,8 @@ export default function MyOrdersPage() {
                   )}
                 </div>
               )}
+
+              <OrderCashDepositAttachment order={orderToView} />
 
               {/* Client Signature */}
               {orderToView.signatureUrl && (
