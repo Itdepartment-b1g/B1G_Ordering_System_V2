@@ -51,6 +51,8 @@ import {
 
 interface AgentRequest {
   id: string;
+  request_number?: string | null;
+  approved_by_name?: string | null;
   agent_id?: string;
   variant_id: string;
   requested_quantity: number;
@@ -77,6 +79,8 @@ interface AgentRequest {
 
 interface GroupedRequest {
   id: string; // Use first request ID as group ID
+  requestNumber: string | null;
+  approvedByName: string | null;
   agentId: string;
   agentName: string;
   requested_at: string;
@@ -100,7 +104,7 @@ function isApprovedRequestStatus(status: string): boolean {
 }
 
 const queueColumns =
-  'grid grid-cols-[1.25rem_minmax(8rem,1.15fr)_minmax(14rem,1.7fr)_6.5rem_11.5rem_7.5rem_13.5rem] items-center gap-x-3 px-3';
+  'grid grid-cols-[1.25rem_minmax(9rem,1.15fr)_minmax(8rem,1fr)_minmax(8rem,1fr)_minmax(8rem,1fr)_7.5rem_11rem_6.5rem_6.5rem_13.5rem] items-center gap-x-3 px-3';
 
 function buildRequestGroups(requests: AgentRequest[], source: 'team' | 'leader'): GroupedRequest[] {
   return requests.reduce((acc: GroupedRequest[], req) => {
@@ -109,6 +113,10 @@ function buildRequestGroups(requests: AgentRequest[], source: 'team' | 'leader')
     const status = req.status || 'pending';
     const lineQuantity = req.requested_quantity + (req.leader_additional_quantity || 0);
     const existingGroup = acc.find((group) => {
+      if (req.request_number && group.requestNumber === req.request_number && group.status === status) {
+        return true;
+      }
+      if (req.request_number || group.requestNumber) return false;
       const timeDiff = Math.abs(new Date(group.requested_at).getTime() - new Date(req.requested_at).getTime());
       return group.agentId === agentId && group.status === status && timeDiff < 1000;
     });
@@ -117,11 +125,16 @@ function buildRequestGroups(requests: AgentRequest[], source: 'team' | 'leader')
       existingGroup.requests.push(req);
       existingGroup.totalQuantity += lineQuantity;
       existingGroup.productCount += 1;
+      if (!existingGroup.approvedByName && req.approved_by_name?.trim()) {
+        existingGroup.approvedByName = req.approved_by_name.trim();
+      }
       return acc;
     }
 
     acc.push({
       id: req.id,
+      requestNumber: req.request_number?.trim() || null,
+      approvedByName: req.approved_by_name?.trim() || null,
       agentId,
       agentName,
       requested_at: req.requested_at,
@@ -138,6 +151,8 @@ function buildRequestGroups(requests: AgentRequest[], source: 'team' | 'leader')
 
 interface ForwardedRequest {
   id: string;
+  request_number?: string | null;
+  approved_by_name?: string | null;
   agent_id?: string;
   variant_id: string;
   requested_quantity: number;
@@ -275,6 +290,27 @@ export default function PendingRequestsPage() {
     };
   }, [user?.id]);
 
+  const profileName = (value: unknown): string | null => {
+    const record = Array.isArray(value) ? value[0] : value;
+    const name = (record as { full_name?: string | null } | null)?.full_name?.trim();
+    return name || null;
+  };
+
+  const approvedByFromRow = (row: {
+    status?: string | null;
+    leader_approver?: unknown;
+    admin_approver?: unknown;
+    rejected_by_user?: unknown;
+  }): string | null => {
+    const leader = profileName(row.leader_approver);
+    const admin = profileName(row.admin_approver);
+    const rejected = profileName(row.rejected_by_user);
+    if (!row.status || row.status === 'pending') return null;
+    if (row.status === 'rejected') return rejected;
+    if (row.status === 'approved_by_admin') return admin || leader;
+    return leader || admin;
+  };
+
   const fetchRequests = async () => {
     if (!user?.id) return;
 
@@ -302,6 +338,7 @@ export default function PendingRequestsPage() {
           .from('stock_requests')
           .select(`
             id,
+            request_number,
             agent_id,
             leader_id,
             variant_id,
@@ -312,6 +349,9 @@ export default function PendingRequestsPage() {
             admin_notes,
             rejection_reason,
             agent:profiles!stock_requests_agent_id_fkey(id, full_name),
+            leader_approver:profiles!stock_requests_leader_approved_by_fkey(full_name),
+            admin_approver:profiles!stock_requests_admin_approved_by_fkey(full_name),
+            rejected_by_user:profiles!stock_requests_rejected_by_fkey(full_name),
             variant:variants(
               id,
               name,
@@ -328,6 +368,8 @@ export default function PendingRequestsPage() {
 
         const requests: AgentRequest[] = (rawRequests || []).map((row: any) => ({
           id: row.id,
+          request_number: row.request_number,
+          approved_by_name: approvedByFromRow(row),
           agent_id: row.agent_id,
           variant_id: row.variant_id,
           requested_quantity: row.requested_quantity,
@@ -416,6 +458,7 @@ export default function PendingRequestsPage() {
           .from('stock_requests')
           .select(`
             id,
+            request_number,
             agent_id,
             leader_id,
             variant_id,
@@ -427,6 +470,9 @@ export default function PendingRequestsPage() {
             admin_notes,
             rejection_reason,
             agent:profiles!stock_requests_agent_id_fkey(id, full_name),
+            leader_approver:profiles!stock_requests_leader_approved_by_fkey(full_name),
+            admin_approver:profiles!stock_requests_admin_approved_by_fkey(full_name),
+            rejected_by_user:profiles!stock_requests_rejected_by_fkey(full_name),
             variant:variants(
               id,
               name,
@@ -443,6 +489,8 @@ export default function PendingRequestsPage() {
 
         const forwarded: ForwardedRequest[] = (rawForwarded || []).map((row: any) => ({
           id: row.id,
+          request_number: row.request_number,
+          approved_by_name: approvedByFromRow(row),
           agent_id: row.agent_id,
           variant_id: row.variant_id,
           requested_quantity: row.requested_quantity,
@@ -702,7 +750,7 @@ export default function PendingRequestsPage() {
         try {
           await exportLeaderStockRequestPdf({
             companyId: user?.company_id,
-            requestNumber: '—',
+            requestNumber: group.requestNumber || '—',
             statusLabel: forwardedStatusLabel(group.status),
             requestedAt: group.requested_at,
             requestedByName: user?.full_name || null,
@@ -738,7 +786,7 @@ export default function PendingRequestsPage() {
   const handlePrintTeamGroup = (group: GroupedRequest) => {
     try {
       exportMobileSalesStockRequestPdf({
-        requestNumber: '—',
+        requestNumber: group.requestNumber || '—',
         status: group.status === 'approved_by_admin' ? 'approved_by_admin' : 'pending',
         statusLabel: group.status === 'approved_by_admin' ? 'Approved' : 'Pending',
         requestedAt: group.requested_at,
@@ -761,7 +809,7 @@ export default function PendingRequestsPage() {
   const handlePrintReady = (request: AgentRequest) => {
     try {
       exportMobileSalesStockRequestPdf({
-        requestNumber: '—',
+        requestNumber: request.request_number?.trim() || '—',
         status: request.status || 'approved_by_admin',
         requestedAt: request.requested_at,
         requestedByName: request.requester?.full_name || null,
@@ -810,6 +858,8 @@ export default function PendingRequestsPage() {
   const queueGroups = useMemo(() => {
     const history: AgentRequest[] = forwardedRequests.map((request) => ({
       id: request.id,
+      request_number: request.request_number,
+      approved_by_name: request.approved_by_name,
       agent_id: request.agent_id,
       variant_id: request.variant_id,
       requested_quantity: request.requested_quantity,
@@ -898,12 +948,12 @@ export default function PendingRequestsPage() {
               <Printer className="mr-2 h-4 w-4" />
               Print
             </DropdownMenuItem>
-            {pending && (
+            {/* {pending && (
               <DropdownMenuItem onClick={() => openReview(group, 'forward')}>
                 <ArrowUp className="mr-2 h-4 w-4" />
                 Forward to admin
               </DropdownMenuItem>
-            )}
+            )} */}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -944,8 +994,9 @@ export default function PendingRequestsPage() {
       if (!teamSearch.trim()) return true;
       const query = teamSearch.toLowerCase();
       const matchesAgent = group.agentName.toLowerCase().includes(query);
+      const matchesNumber = (group.requestNumber || '').toLowerCase().includes(query);
       const matchesProduct = group.requests.some((request) => formatProductName(request).toLowerCase().includes(query));
-      return matchesAgent || matchesProduct;
+      return matchesAgent || matchesNumber || matchesProduct;
     });
     return sortTeamGroupedRequests(filtered, teamSortKey, teamSortDirection);
   };
@@ -955,7 +1006,13 @@ export default function PendingRequestsPage() {
 
   const renderRequestDetails = (group: GroupedRequest, lines: AgentRequest[]) => {
     const denial = lines.find((request) => request.denial_reason)?.denial_reason;
-    const showLeaderQty = lines.some((request) => (request.leader_additional_quantity || 0) > 0);
+    const brands = new Map<string, AgentRequest[]>();
+    lines.forEach((request) => {
+      const brandName = request.variant?.brand?.name?.trim() || 'Unknown brand';
+      const brandLines = brands.get(brandName) ?? [];
+      brandLines.push(request);
+      brands.set(brandName, brandLines);
+    });
 
     return (
       <div className="space-y-3 rounded-md border bg-muted/30 p-3">
@@ -977,66 +1034,30 @@ export default function PendingRequestsPage() {
             {denial}
           </p>
         )}
-        <div className="space-y-2 md:hidden">
-          {lines.map((request) => (
-            <div key={request.id} className="rounded-md border bg-background p-2 text-sm">
-              <div className="font-medium leading-snug">{formatProductName(request)}</div>
-              <dl className="mt-2 grid grid-cols-2 gap-y-1 text-xs">
-                <dt className="text-muted-foreground">Agent qty</dt>
-                <dd className="text-right">{request.requested_quantity}</dd>
-                {showLeaderQty && (
-                  <>
-                    <dt className="text-muted-foreground">Your qty</dt>
-                    <dd className="text-right">{request.leader_additional_quantity || 0}</dd>
-                  </>
-                )}
-                <dt className="text-muted-foreground">Total</dt>
-                <dd className="text-right font-semibold">{lineQuantity(request)}</dd>
-                {group.status === 'pending' && (
-                  <>
-                    <dt className="text-muted-foreground">Your stock</dt>
-                    <dd
-                      className={`text-right font-semibold ${(request.leader_stock || 0) >= request.requested_quantity ? 'text-green-600' : 'text-red-600'}`}
-                    >
-                      {request.leader_stock || 0}
-                    </dd>
-                  </>
-                )}
-              </dl>
+        <div className="space-y-3">
+          {Array.from(brands.entries()).map(([brandName, brandLines]) => (
+            <div key={brandName} className="overflow-hidden rounded-md border bg-background">
+              <div className="border-b bg-muted/40 px-3 py-2 text-sm font-semibold">{brandName}</div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Variant</TableHead>
+                    <TableHead>Variant Type</TableHead>
+                    <TableHead className="text-right">Qty</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {brandLines.map((request) => (
+                    <TableRow key={request.id}>
+                      <TableCell>{request.variant?.name?.trim() || 'Item'}</TableCell>
+                      <TableCell>{variantTypeLabel(request.variant?.variant_type) || '—'}</TableCell>
+                      <TableCell className="text-right tabular-nums">{lineQuantity(request).toLocaleString()}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
           ))}
-        </div>
-        <div className="hidden overflow-x-auto md:block">
-          <Table className="min-w-[40rem]">
-            <TableHeader>
-              <TableRow>
-                <TableHead>Product</TableHead>
-                <TableHead className="text-right">Agent qty</TableHead>
-                {showLeaderQty && <TableHead className="text-right">Your qty</TableHead>}
-                <TableHead className="text-right">Total</TableHead>
-                {group.status === 'pending' && <TableHead className="text-right">Your stock</TableHead>}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {lines.map((request) => (
-                <TableRow key={request.id}>
-                  <TableCell className="whitespace-nowrap font-medium">{formatProductName(request)}</TableCell>
-                  <TableCell className="text-right">{request.requested_quantity}</TableCell>
-                  {showLeaderQty && (
-                    <TableCell className="text-right">{request.leader_additional_quantity || 0}</TableCell>
-                  )}
-                  <TableCell className="text-right font-semibold">{lineQuantity(request)}</TableCell>
-                  {group.status === 'pending' && (
-                    <TableCell
-                      className={`text-right font-semibold ${(request.leader_stock || 0) >= request.requested_quantity ? 'text-green-600' : 'text-red-600'}`}
-                    >
-                      {request.leader_stock || 0}
-                    </TableCell>
-                  )}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
         </div>
       </div>
     );
@@ -1074,12 +1095,13 @@ export default function PendingRequestsPage() {
                 <div className="min-w-0 flex-1 py-3">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-medium">{group.agentName}</div>
+                      <div className="truncate text-sm font-medium">{group.requestNumber || '—'}</div>
                       <div className="truncate text-xs text-muted-foreground">
-                        {lines.length === 1 ? formatProductName(lines[0]) : `${lines.length} products`}
+                        {group.agentName}
+                        {lines.length === 1 ? ` · ${formatProductName(lines[0])}` : ` · ${lines.length} products`}
                       </div>
                       <div className="mt-1 text-xs text-muted-foreground">
-                        {group.totalQuantity} units · {format(new Date(group.requested_at), 'MMM dd, yyyy HH:mm')}
+                        {group.productCount} SKUs · {group.totalQuantity.toLocaleString()} qty · {format(new Date(group.requested_at), 'MMM dd, yyyy HH:mm')}
                       </div>
                     </div>
                     {queueStatusBadge(group.status)}
@@ -1094,23 +1116,27 @@ export default function PendingRequestsPage() {
           );
         })}
       </Accordion>
+      <p className="mb-2 hidden rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 md:block">
+        Scroll horizontally to see the action buttons.
+      </p>
       <div className="hidden overflow-x-auto md:block">
-        <div className="min-w-[72rem] overflow-hidden rounded-lg border bg-card">
+        <div className="min-w-[96rem] overflow-hidden rounded-lg border bg-card">
         <div className={`${queueColumns} border-b py-2 text-xs font-medium text-muted-foreground`}>
           <span aria-hidden />
-          <button type="button" className="inline-flex items-center gap-1 text-left" onClick={() => handleTeamSort('agentName')}>
-            Agent {sortIcon('agentName')}
-          </button>
-          <button type="button" className="inline-flex items-center gap-1 text-left" onClick={() => handleTeamSort('products')}>
-            Products {sortIcon('products')}
-          </button>
-          <button type="button" className="inline-flex items-center justify-end gap-1" onClick={() => handleTeamSort('totalQuantity')}>
-            Total {sortIcon('totalQuantity')}
-          </button>
-          <button type="button" className="inline-flex items-center gap-1 text-left" onClick={() => handleTeamSort('requestedDate')}>
-            Requested {sortIcon('requestedDate')}
-          </button>
+          <span>SR Number</span>
+          <span>Requested by</span>
+          <span>Requested to</span>
+          <span>Approved by</span>
           <span>Status</span>
+          <button type="button" className="inline-flex items-center gap-1 text-left" onClick={() => handleTeamSort('requestedDate')}>
+            Date {sortIcon('requestedDate')}
+          </button>
+          <button type="button" className="inline-flex w-full items-center justify-end gap-1" onClick={() => handleTeamSort('products')}>
+            Total SKUs {sortIcon('products')}
+          </button>
+          <button type="button" className="inline-flex w-full items-center justify-end gap-1" onClick={() => handleTeamSort('totalQuantity')}>
+            Total Qty {sortIcon('totalQuantity')}
+          </button>
           <span className="text-right">Actions</span>
         </div>
         <Accordion type="multiple">
@@ -1121,15 +1147,16 @@ export default function PendingRequestsPage() {
               <AccordionItem key={rowKey} value={rowKey} className="border-b last:border-b-0">
                 <div className={queueColumns}>
                   <AccordionTrigger className="h-10 w-5 justify-center p-0 hover:no-underline" />
-                  <span className="truncate font-medium">{group.agentName}</span>
-                  <span className="truncate text-sm text-muted-foreground">
-                    {lines.length === 1 ? formatProductName(lines[0]) : `${lines.length} products`}
-                  </span>
-                  <span className="text-right text-sm font-semibold">{group.totalQuantity} units</span>
+                  <span className="truncate font-medium">{group.requestNumber || '—'}</span>
+                  <span className="truncate">{group.agentName}</span>
+                  <span className="truncate">{user?.full_name?.trim() || 'Team Leader'}</span>
+                  <span className="truncate text-muted-foreground">{group.approvedByName || '—'}</span>
+                  <span className="justify-self-start">{queueStatusBadge(group.status)}</span>
                   <span className="whitespace-nowrap text-sm text-muted-foreground">
                     {format(new Date(group.requested_at), 'MMM dd, yyyy HH:mm')}
                   </span>
-                  <span className="justify-self-start">{queueStatusBadge(group.status)}</span>
+                  <span className="text-right tabular-nums">{group.productCount.toLocaleString()}</span>
+                  <span className="text-right tabular-nums">{group.totalQuantity.toLocaleString()}</span>
                   <div className="flex justify-end">{renderRequestActions(group)}</div>
                 </div>
                 <AccordionContent className="pb-3">
@@ -1221,7 +1248,7 @@ export default function PendingRequestsPage() {
               <div className="relative flex-1">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Search agent or product..."
+                  placeholder="Search SR number, agent, or product..."
                   value={teamSearch}
                   onChange={(e) => setTeamSearch(e.target.value)}
                   className="h-9 md:h-10 pl-9 text-sm"
@@ -1363,7 +1390,7 @@ export default function PendingRequestsPage() {
 
                 {/* Action Buttons - Only Show if No Action Selected */}
                 {!reviewAction && (
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-4 border-t">
+                  <div className="grid grid-cols-1 gap-3 border-t pt-4 sm:grid-cols-2">
                     <Button
                       variant="outline"
                       className="h-auto py-4 flex flex-col gap-2 hover:bg-green-50 hover:text-green-700 hover:border-green-200 transition-colors"
@@ -1377,7 +1404,7 @@ export default function PendingRequestsPage() {
                       </span>
                     </Button>
 
-                    <Button
+                    {/* <Button
                       variant="outline"
                       className="h-auto py-4 flex flex-col gap-2 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 transition-colors"
                       onClick={() => setReviewAction('forward')}
@@ -1387,7 +1414,7 @@ export default function PendingRequestsPage() {
                       <span className="text-[10px] text-muted-foreground text-center">
                         Request from Admin
                       </span>
-                    </Button>
+                    </Button> */}
 
                     <Button
                       variant="outline"
