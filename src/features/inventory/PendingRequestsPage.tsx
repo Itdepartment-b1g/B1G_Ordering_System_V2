@@ -838,14 +838,14 @@ export default function PendingRequestsPage() {
     return <Badge>{status}</Badge>;
   };
 
-  const renderRequestActions = (group: GroupedRequest) => {
+  const renderRequestActions = (group: GroupedRequest, compact = false) => {
     const pending = group.status === 'pending' && group.source === 'team';
     const canDistribute = group.status === 'approved_by_admin';
     const cannotApprove = group.requests.some((request) => !request.leader_stock);
 
     return (
       <div className="flex flex-wrap items-center justify-end gap-2">
-        {pending && (
+        {!compact && pending && (
           <>
             <Button size="sm" disabled={cannotApprove} onClick={() => openReview(group, 'approve')}>
               Approve
@@ -855,7 +855,7 @@ export default function PendingRequestsPage() {
             </Button>
           </>
         )}
-        {canDistribute && (
+        {!compact && canDistribute && (
           <Button size="sm" disabled={allocatingId === group.id} onClick={() => void handleDistributeGroup(group)}>
             {allocatingId === group.id ? 'Distributing...' : 'Accept & Distribute'}
           </Button>
@@ -867,6 +867,27 @@ export default function PendingRequestsPage() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-44">
+            {compact && pending && (
+              <>
+                <DropdownMenuItem disabled={cannotApprove} onClick={() => openReview(group, 'approve')}>
+                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                  Approve
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => openReview(group, 'deny')}>
+                  <XCircle className="mr-2 h-4 w-4" />
+                  Reject
+                </DropdownMenuItem>
+              </>
+            )}
+            {compact && canDistribute && (
+              <DropdownMenuItem
+                disabled={allocatingId === group.id}
+                onClick={() => void handleDistributeGroup(group)}
+              >
+                <CheckCircle2 className="mr-2 h-4 w-4" />
+                Accept & Distribute
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onClick={() => handlePrintGroup(group)}>
               <Printer className="mr-2 h-4 w-4" />
               Print
@@ -1057,7 +1078,7 @@ export default function PendingRequestsPage() {
                     </div>
                     {queueStatusBadge(group.status)}
                   </div>
-                  <div className="mt-2">{renderRequestActions(group)}</div>
+                  <div className="mt-2 flex justify-end">{renderRequestActions(group, true)}</div>
                 </div>
               </div>
               <AccordionContent className="pb-3">

@@ -274,6 +274,7 @@ const keyAccountManagerMenuItems: MenuItem[] = [
 const agentMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
   { title: 'My Inventory', url: '/my-inventory', icon: Package },
+  { title: 'Return History', url: '/inventory/my-returns', icon: RotateCcw },
   { title: 'Request Inventory', url: '/inventory/mobile-request', icon: Send },
   { title: 'My Clients', url: '/my-clients', icon: ShoppingBag },
   { title: 'My Orders', url: '/my-orders', icon: ShoppingCart },

@@ -21,7 +21,6 @@ import { useToast } from '@/hooks/use-toast';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import { ReturnInventoryDialog } from './components/ReturnInventoryDialog';
 import { ReturnToMainDialog } from './components/ReturnToMainDialog';
-import MyReturnRequestsSection from './components/MyReturnRequestsSection';
 import type { RemittanceOrder, BankOrderNote } from './types';
 
 const LOW_STOCK_THRESHOLD = 10;
@@ -672,15 +671,22 @@ export default function MyInventory() {
               </Button>
             </>
           ) : (
-            <Button
-              onClick={() => setReturnDialogOpen(true)}
-              variant="outline"
-              className="gap-2 flex-1 sm:flex-initial"
-              disabled={!leaderId}
-            >
-              <PackageMinus className="h-4 w-4" />
-              Return
-            </Button>
+            <>
+              <Button
+                onClick={() => setReturnDialogOpen(true)}
+                variant="outline"
+                className="gap-2 flex-1 sm:flex-initial"
+                disabled={!leaderId}
+              >
+                <PackageMinus className="h-4 w-4" />
+                Return
+              </Button>
+              {(user?.role === 'mobile_sales' || user?.role === 'sales_agent') && (
+                <Button variant="outline" className="flex-1 sm:flex-initial" asChild>
+                  <Link to="/inventory/my-returns">Your return history</Link>
+                </Button>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -926,9 +932,6 @@ export default function MyInventory() {
           </div>
         </CardContent>
       </Card>
-
-      {/* My Return Requests (mobile sales only) */}
-      {user?.role !== 'team_leader' && <MyReturnRequestsSection />}
 
       {/* Remit Inventory Dialog */}
       <Dialog open={remitDialogOpen} onOpenChange={setRemitDialogOpen}>

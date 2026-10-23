@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom';
 import {
   ChevronDown,
   ChevronRight,
+  Eye,
   Loader2,
   MoreVertical,
   Printer,
@@ -222,14 +223,18 @@ function ReturnRowActions({
   row,
   onApprove,
   onReject,
+  onView,
+  compact = false,
 }: {
   row: AgentReturn;
   onApprove: (row: AgentReturn) => void;
   onReject: (row: AgentReturn) => void;
+  onView?: (row: AgentReturn) => void;
+  compact?: boolean;
 }) {
   return (
     <div className="flex items-center justify-end gap-2" onClick={(event) => event.stopPropagation()}>
-      {row.status === 'pending' && (
+      {!compact && row.status === 'pending' && (
         <>
           <Button type="button" size="sm" onClick={() => onApprove(row)}>
             <ThumbsUp className="h-4 w-4" />
@@ -247,7 +252,25 @@ function ReturnRowActions({
             <MoreVertical className="h-4 w-4" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-40">
+        <DropdownMenuContent align="end" className="w-44">
+          {compact && onView && (
+            <DropdownMenuItem onClick={() => onView(row)}>
+              <Eye className="mr-2 h-4 w-4" />
+              View details
+            </DropdownMenuItem>
+          )}
+          {compact && row.status === 'pending' && (
+            <>
+              <DropdownMenuItem onClick={() => onApprove(row)}>
+                <ThumbsUp className="mr-2 h-4 w-4" />
+                Accept
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onReject(row)}>
+                <ThumbsDown className="mr-2 h-4 w-4" />
+                Reject
+              </DropdownMenuItem>
+            </>
+          )}
           <DropdownMenuItem onClick={() => printReturn(row)}>
             <Printer className="mr-2 h-4 w-4" />
             Print
@@ -385,6 +408,7 @@ export default function LeaderAgentReturnsPage() {
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [openId, setOpenId] = useState<string | null>(null);
+  const [detailRow, setDetailRow] = useState<AgentReturn | null>(null);
   const [selected, setSelected] = useState<AgentReturn | null>(null);
   const [approveOpen, setApproveOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
@@ -516,10 +540,11 @@ export default function LeaderAgentReturnsPage() {
                     <TableRow>
                       <TableHead className="w-10" />
                       <TableHead>Returned by</TableHead>
+                      <TableHead>Returned to</TableHead>
                       <TableHead>Date</TableHead>
-                      <TableHead className="text-right">Variant Qty</TableHead>
-                      <TableHead className="text-right">Total Qty</TableHead>
+                      <TableHead className="text-right">Total qty</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead>Notes</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -548,21 +573,24 @@ export default function LeaderAgentReturnsPage() {
                               </Button>
                             </TableCell>
                             <TableCell className="font-medium">{row.returnedBy}</TableCell>
+                            <TableCell>{user?.full_name?.trim() || 'Team Leader'}</TableCell>
                             <TableCell className="whitespace-nowrap text-sm">
                               {format(new Date(row.returnedAt), 'MMM d, yyyy h:mm a')}
                             </TableCell>
-                            <TableCell className="text-right tabular-nums">{row.variantCount}</TableCell>
                             <TableCell className="text-right font-medium tabular-nums">
                               {row.totalQuantity.toLocaleString()}
                             </TableCell>
                             <TableCell>{statusBadge(row.status)}</TableCell>
+                            <TableCell className="max-w-[220px] truncate text-sm text-muted-foreground" title={row.reason || undefined}>
+                              {row.reason?.trim() || '—'}
+                            </TableCell>
                             <TableCell className="text-right">
                               <ReturnRowActions row={row} onApprove={openApprove} onReject={openReject} />
                             </TableCell>
                           </TableRow>
                           {open && (
                             <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
-                              <TableCell colSpan={7} className="p-4">
+                              <TableCell colSpan={8} className="p-4">
                                 <ReturnDetails row={row} />
                               </TableCell>
                             </TableRow>
@@ -575,37 +603,31 @@ export default function LeaderAgentReturnsPage() {
               </div>
 
               <div className="md:hidden space-y-3">
-                {visible.map((row) => {
-                  const open = openId === row.id;
-                  return (
-                    <div key={row.id} className="rounded-lg border p-3 space-y-2">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <p className="font-medium text-sm">{row.returnedBy}</p>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            {format(new Date(row.returnedAt), 'MMM d, yyyy h:mm a')}
-                          </p>
-                          <p className="text-xs mt-1">
-                            {row.variantCount} variants · {row.totalQuantity.toLocaleString()} qty
-                          </p>
-                        </div>
-                        {statusBadge(row.status)}
+                {visible.map((row) => (
+                  <div key={row.id} className="rounded-lg border p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{row.returnedBy}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {format(new Date(row.returnedAt), 'MMM d, yyyy h:mm a')}
+                        </p>
+                        <p className="mt-1 text-xs">
+                          {row.variantCount} variants · {row.totalQuantity.toLocaleString()} qty
+                        </p>
                       </div>
-                      <ReturnRowActions row={row} onApprove={openApprove} onReject={openReject} />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="w-full justify-between"
-                        onClick={() => setOpenId(open ? null : row.id)}
-                      >
-                        {open ? 'Hide items' : 'View items'}
-                        {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                      </Button>
-                      {open && <ReturnDetails row={row} />}
+                      <div className="flex shrink-0 items-center gap-1">
+                        {statusBadge(row.status)}
+                        <ReturnRowActions
+                          row={row}
+                          compact
+                          onApprove={openApprove}
+                          onReject={openReject}
+                          onView={setDetailRow}
+                        />
+                      </div>
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
             </>
           )}
@@ -679,6 +701,20 @@ export default function LeaderAgentReturnsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={!!detailRow} onOpenChange={(open) => { if (!open) setDetailRow(null); }}>
+        <DialogContent className="max-h-[90vh] w-[calc(100%-1.5rem)] max-w-lg overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Return details</DialogTitle>
+            <DialogDescription>
+              {detailRow
+                ? `${detailRow.returnedBy} · ${format(new Date(detailRow.returnedAt), 'MMM d, yyyy h:mm a')}`
+                : 'Return items'}
+            </DialogDescription>
+          </DialogHeader>
+          {detailRow && <ReturnDetails row={detailRow} />}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

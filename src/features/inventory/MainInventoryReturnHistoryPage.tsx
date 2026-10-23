@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
-import { Building2, ChevronDown, ChevronRight, Loader2, Printer, RotateCcw, Search, Users } from 'lucide-react';
+import { Building2, ChevronDown, ChevronRight, Eye, Loader2, MoreVertical, Printer, RotateCcw, Search, Users } from 'lucide-react';
 import { useAuth } from '@/features/auth';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   DateRangeFilterPopover,
   type DateRangeFilterValue,
@@ -82,7 +89,7 @@ function returnLineLabel(line: Pick<ReturnLine, 'brandName' | 'variantName' | 'v
 }
 
 const returnColumns =
-  'grid grid-cols-[1.25rem_minmax(10rem,1.4fr)_11rem_6rem_6.5rem_minmax(8rem,1.2fr)_5.5rem] items-center gap-x-3 px-3';
+  'grid grid-cols-[1.25rem_minmax(8rem,1.1fr)_minmax(8rem,1.1fr)_11rem_6.5rem_7.5rem_minmax(8rem,1.2fr)_2.75rem] items-center gap-x-3 px-3';
 
 function variantTypeBadgeClass(type: string | null | undefined): string {
   const key = type?.trim().toLowerCase();
@@ -539,11 +546,10 @@ function AgentToLeaderReturns({
                     <TableHead>Returned by</TableHead>
                     <TableHead>Returned to</TableHead>
                     <TableHead>Date</TableHead>
-                    <TableHead className="text-right">Variant Qty</TableHead>
-                    <TableHead className="text-right">Total Qty</TableHead>
+                    <TableHead className="text-right">Total qty</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Notes</TableHead>
-                    <TableHead className="text-right">Print</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -575,7 +581,6 @@ function AgentToLeaderReturns({
                           <TableCell className="whitespace-nowrap text-sm">
                             {format(new Date(row.returnedAt), 'MMM d, yyyy h:mm a')}
                           </TableCell>
-                          <TableCell className="text-right tabular-nums">{row.variantCount}</TableCell>
                           <TableCell className="text-right font-medium tabular-nums">
                             {row.totalQuantity.toLocaleString()}
                           </TableCell>
@@ -584,19 +589,30 @@ function AgentToLeaderReturns({
                             {row.reason?.trim() || '—'}
                           </TableCell>
                           <TableCell className="text-right" onClick={(event) => event.stopPropagation()}>
-                            {row.status === 'approved' ? (
-                              <Button type="button" variant="outline" size="sm" onClick={() => printReturn(row)}>
-                                <Printer className="h-4 w-4" />
-                                Print
-                              </Button>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">—</span>
-                            )}
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label="Return actions">
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-40">
+                                <DropdownMenuItem onClick={() => setOpenId(open ? null : row.id)}>
+                                  <Eye className="mr-2 h-4 w-4" />
+                                  {open ? 'Hide details' : 'View details'}
+                                </DropdownMenuItem>
+                                {row.status === 'approved' && (
+                                  <DropdownMenuItem onClick={() => printReturn(row)}>
+                                    <Printer className="mr-2 h-4 w-4" />
+                                    Print
+                                  </DropdownMenuItem>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </TableCell>
                         </TableRow>
                         {open && (
                           <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
-                            <TableCell colSpan={9} className="p-4">
+                            <TableCell colSpan={8} className="p-4">
                               <p className="mb-3 text-sm">
                                 <span className="font-medium">Reason of returned:</span>{' '}
                                 <span className="text-muted-foreground">{row.reason || '—'}</span>
@@ -698,6 +714,7 @@ export default function MainInventoryReturnHistoryPage() {
   const [statusTab, setStatusTab] = useState<'all' | 'pending' | 'approved'>('all');
   const [historyPage, setHistoryPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
+  const [detailGroup, setDetailGroup] = useState<ReturnGroup | null>(null);
 
   const { data: groups = [], isLoading } = useQuery({
     queryKey: ['main-inventory-return-history', user?.company_id, membership.locationId, isMainWarehouseUser],
@@ -796,6 +813,12 @@ export default function MainInventoryReturnHistoryPage() {
     },
   });
 
+  const { data: superAdminName } = useQuery({
+    queryKey: ['leader-requested-from-name', user?.company_id],
+    enabled: !!user?.company_id,
+    queryFn: () => fetchLeaderRequestedFromName(user?.company_id),
+  });
+
   const canViewAgentReturns = isAdmin(user?.role);
   const isTeamLeader = user?.role === 'team_leader';
   const dateRange = useMemo(
@@ -861,54 +884,61 @@ export default function MainInventoryReturnHistoryPage() {
             </div>
           ) : (
             <>
-              <Accordion type="multiple" className="space-y-2 md:hidden">
+              <div className="space-y-2 md:hidden">
                 {pagedGroups.map((group) => (
-                  <AccordionItem key={`mobile-${group.id}`} value={`mobile-${group.id}`} className="rounded-lg border bg-card px-3">
-                    <div className="flex items-start gap-2">
-                      <AccordionTrigger className="mt-3 h-8 w-5 shrink-0 justify-center p-0 hover:no-underline" />
-                      <div className="min-w-0 flex-1 py-3">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className="flex items-center gap-1 truncate text-sm font-medium">
-                              {group.isSubWarehouseReturn ? (
-                                <Building2 className="h-3 w-3 shrink-0 text-blue-500" />
-                              ) : (
-                                <Users className="h-3 w-3 shrink-0 text-green-500" />
-                              )}
-                              {group.returnedBy}
-                            </p>
-                            <p className="mt-1 truncate text-xs text-muted-foreground">
-                              {group.lines.length === 1
-                                ? returnLineLabel(group.lines[0])
-                                : `${group.variantCount} products`}
-                            </p>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              {group.totalQuantity.toLocaleString()} units · {format(new Date(group.returnedAt), 'MMM d, yyyy h:mm a')}
-                            </p>
-                          </div>
-                          <Button type="button" variant="outline" size="sm" onClick={() => void printGroup(group, user?.company_id)}>
-                            <Printer className="h-4 w-4" />
-                          </Button>
-                        </div>
+                  <div key={`mobile-${group.id}`} className="rounded-lg border bg-card p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="flex items-center gap-1 truncate text-sm font-medium">
+                          {group.isSubWarehouseReturn ? (
+                            <Building2 className="h-3 w-3 shrink-0 text-blue-500" />
+                          ) : (
+                            <Users className="h-3 w-3 shrink-0 text-green-500" />
+                          )}
+                          {group.returnedBy}
+                        </p>
+                        <p className="mt-1 truncate text-xs text-muted-foreground">
+                          {group.lines.length === 1
+                            ? returnLineLabel(group.lines[0])
+                            : `${group.variantCount} products`}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {group.totalQuantity.toLocaleString()} units · {format(new Date(group.returnedAt), 'MMM d, yyyy h:mm a')}
+                        </p>
                       </div>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label="Return actions">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-40">
+                          <DropdownMenuItem onClick={() => setDetailGroup(group)}>
+                            <Eye className="mr-2 h-4 w-4" />
+                            View details
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => void printGroup(group, user?.company_id)}>
+                            <Printer className="mr-2 h-4 w-4" />
+                            Print
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
-                    <AccordionContent className="pb-3">
-                      <ReturnDetails group={group} />
-                    </AccordionContent>
-                  </AccordionItem>
+                  </div>
                 ))}
-              </Accordion>
+              </div>
 
               <div className="hidden overflow-x-auto md:block">
-                <div className="min-w-[68rem] overflow-hidden rounded-lg border bg-card">
+                <div className="min-w-[78rem] overflow-hidden rounded-lg border bg-card">
                   <div className={`${returnColumns} border-b py-2 text-xs font-medium text-muted-foreground`}>
                     <span aria-hidden />
                     <span>Returned by</span>
+                    <span>Returned to</span>
                     <span>Date</span>
-                    <span className="text-right">Variants</span>
-                    <span className="text-right">Total</span>
+                    <span className="text-right">Total qty</span>
+                    <span>Status</span>
                     <span>Notes</span>
-                    <span className="text-right">Print</span>
+                    <span className="text-right">Actions</span>
                   </div>
                   <Accordion type="multiple">
                     {pagedGroups.map((group) => (
@@ -923,21 +953,37 @@ export default function MainInventoryReturnHistoryPage() {
                             )}
                             {group.returnedBy}
                           </span>
+                          <span className="truncate text-sm">
+                            {group.isSubWarehouseReturn ? 'Main inventory' : superAdminName || 'Super Admin'}
+                          </span>
                           <span className="whitespace-nowrap text-sm text-muted-foreground">
                             {format(new Date(group.returnedAt), 'MMM d, yyyy h:mm a')}
                           </span>
-                          <span className="text-right text-sm tabular-nums">{group.variantCount}</span>
                           <span className="text-right text-sm font-semibold tabular-nums">
                             {group.totalQuantity.toLocaleString()}
                           </span>
+                          <span><Badge>Approved</Badge></span>
                           <span className="truncate text-sm text-muted-foreground" title={group.reason || undefined}>
                             {group.reason?.trim() || '—'}
                           </span>
                           <div className="flex justify-end">
-                            <Button type="button" variant="outline" size="sm" onClick={() => void printGroup(group, user?.company_id)}>
-                              <Printer className="h-4 w-4" />
-                              Print
-                            </Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label="Return actions">
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-40">
+                                <DropdownMenuItem onClick={() => setDetailGroup(group)}>
+                                  <Eye className="mr-2 h-4 w-4" />
+                                  View details
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => void printGroup(group, user?.company_id)}>
+                                  <Printer className="mr-2 h-4 w-4" />
+                                  Print
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                         </div>
                         <AccordionContent className="px-3 pb-3">
@@ -1043,6 +1089,28 @@ export default function MainInventoryReturnHistoryPage() {
           statusFilter={statusTab}
         />
       )}
+
+      <Dialog open={!!detailGroup} onOpenChange={(open) => { if (!open) setDetailGroup(null); }}>
+        <DialogContent className="max-h-[90vh] w-[calc(100%-1.5rem)] max-w-lg overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Return details</DialogTitle>
+            <DialogDescription>
+              {detailGroup
+                ? `${detailGroup.returnedBy} · ${format(new Date(detailGroup.returnedAt), 'MMM d, yyyy h:mm a')}`
+                : 'Return items'}
+            </DialogDescription>
+          </DialogHeader>
+          {detailGroup && (
+            <div className="space-y-3">
+              <ReturnDetails group={detailGroup} />
+              <Button type="button" className="w-full" onClick={() => void printGroup(detailGroup, user?.company_id)}>
+                <Printer className="mr-2 h-4 w-4" />
+                Print
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
