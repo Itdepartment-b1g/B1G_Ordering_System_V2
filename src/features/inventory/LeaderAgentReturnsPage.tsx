@@ -221,12 +221,14 @@ function returnStatusLabel(status: AgentReturn['status']): string {
 
 function ReturnRowActions({
   row,
+  returnedTo,
   onApprove,
   onReject,
   onView,
   compact = false,
 }: {
   row: AgentReturn;
+  returnedTo: string;
   onApprove: (row: AgentReturn) => void;
   onReject: (row: AgentReturn) => void;
   onView?: (row: AgentReturn) => void;
@@ -271,7 +273,7 @@ function ReturnRowActions({
               </DropdownMenuItem>
             </>
           )}
-          <DropdownMenuItem onClick={() => printReturn(row)}>
+          <DropdownMenuItem onClick={() => printReturn(row, returnedTo)}>
             <Printer className="mr-2 h-4 w-4" />
             Print
           </DropdownMenuItem>
@@ -281,9 +283,10 @@ function ReturnRowActions({
   );
 }
 
-function printReturn(row: AgentReturn) {
+function printReturn(row: AgentReturn, returnedTo: string) {
   exportMainInventoryReturnPdf({
     returnedBy: row.returnedBy,
+    returnedTo,
     returnedAt: row.returnedAt,
     status: returnStatusLabel(row.status),
     reason: row.reason,
@@ -417,6 +420,7 @@ export default function LeaderAgentReturnsPage() {
   const [processing, setProcessing] = useState(false);
 
   const backTo = user?.role === 'manager' ? '/manager-inventory' : '/leader-inventory';
+  const returnedToName = user?.full_name?.trim() || 'Team Leader';
 
   const { data: returns = [], isLoading } = useQuery({
     queryKey: [RETURNS_QUERY_KEY, user?.id],
@@ -585,7 +589,12 @@ export default function LeaderAgentReturnsPage() {
                               {row.reason?.trim() || '—'}
                             </TableCell>
                             <TableCell className="text-right">
-                              <ReturnRowActions row={row} onApprove={openApprove} onReject={openReject} />
+                              <ReturnRowActions
+                                row={row}
+                                returnedTo={returnedToName}
+                                onApprove={openApprove}
+                                onReject={openReject}
+                              />
                             </TableCell>
                           </TableRow>
                           {open && (
@@ -619,6 +628,7 @@ export default function LeaderAgentReturnsPage() {
                         {statusBadge(row.status)}
                         <ReturnRowActions
                           row={row}
+                          returnedTo={returnedToName}
                           compact
                           onApprove={openApprove}
                           onReject={openReject}

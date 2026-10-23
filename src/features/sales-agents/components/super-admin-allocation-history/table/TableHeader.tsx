@@ -25,6 +25,7 @@ type SuperAdminAllocationHistoryTableProps = {
   sortState: TableSortCycleState<SuperAdminAllocationSortKey>;
   onSort: (key: SuperAdminAllocationSortKey) => void;
   emptyMessage?: string;
+  detailsInDialog?: boolean;
 };
 
 export function SuperAdminAllocationHistoryTable({
@@ -33,6 +34,7 @@ export function SuperAdminAllocationHistoryTable({
   sortState,
   onSort,
   emptyMessage,
+  detailsInDialog = false,
 }: SuperAdminAllocationHistoryTableProps) {
   return (
     <div className="overflow-x-auto rounded-md border">
@@ -96,7 +98,9 @@ export function SuperAdminAllocationHistoryTable({
             </TableRow>
           )}
           {!isLoading &&
-            pagedGroups.map((group) => <AllocationGroupRow key={group.groupId} group={group} />)}
+            pagedGroups.map((group) => (
+              <AllocationGroupRow key={group.groupId} group={group} detailsInDialog={detailsInDialog} />
+            ))}
           {!isLoading && pagedGroups.length === 0 && (
             <TableRow>
               <TableCell colSpan={9} className="h-24 text-center">

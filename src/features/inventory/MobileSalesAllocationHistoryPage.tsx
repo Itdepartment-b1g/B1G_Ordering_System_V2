@@ -12,6 +12,7 @@ import { useAllocationHistoryOptions } from '@/features/sales-agents/components/
 import { useCompanyBrands } from '@/features/sales-agents/components/super-admin-allocation-history/hooks/useCompanyBrands';
 import type { CompanyRecipientOption } from '@/features/sales-agents/components/super-admin-allocation-history/hooks/useCompanyTeamLeaders';
 import { SuperAdminAllocationHistoryTable } from '@/features/sales-agents/components/super-admin-allocation-history/table/TableHeader';
+import { AllocationHistoryMobileList } from '@/features/sales-agents/components/super-admin-allocation-history/table/TableRow';
 import {
   mapAllocationHistoryRows,
   type AllocationHistoryGroup,
@@ -325,13 +326,23 @@ export default function MobileSalesAllocationHistoryPage() {
             onClearFilters={clearFilters}
           />
 
-          <SuperAdminAllocationHistoryTable
-            isLoading={isLoading}
-            pagedGroups={pagedItems}
-            sortState={sortState}
-            onSort={(key) => setSortState((current) => getNextTableSortCycleState(current, key))}
-            emptyMessage="No stock has been allocated to you yet."
-          />
+          <div className="md:hidden">
+            <AllocationHistoryMobileList
+              isLoading={isLoading}
+              groups={pagedItems}
+              emptyMessage="No stock has been allocated to you yet."
+            />
+          </div>
+          <div className="hidden md:block">
+            <SuperAdminAllocationHistoryTable
+              isLoading={isLoading}
+              pagedGroups={pagedItems}
+              sortState={sortState}
+              onSort={(key) => setSortState((current) => getNextTableSortCycleState(current, key))}
+              emptyMessage="No stock has been allocated to you yet."
+              detailsInDialog
+            />
+          </div>
 
           <ListPagination
             pageSize={pageSize}

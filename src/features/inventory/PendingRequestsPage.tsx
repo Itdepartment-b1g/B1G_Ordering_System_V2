@@ -288,7 +288,13 @@ export default function PendingRequestsPage() {
 
       if (teamError) throw teamError;
 
-      const agentIds = teamData?.map(t => t.agent_id) || [];
+      const agentIds = [
+        ...new Set(
+          (teamData ?? [])
+            .map((member) => member.agent_id)
+            .filter((id): id is string => Boolean(id) && id !== user.id)
+        ),
+      ];
 
       if (agentIds.length > 0) {
         // Fetch pending stock requests from team agents
@@ -374,6 +380,7 @@ export default function PendingRequestsPage() {
               .from('stock_requests')
               .select('requested_quantity')
               .eq('variant_id', req.variant_id)
+              .in('agent_id', agentIds)
               .eq('leader_id', user.id)
               .eq('status', 'pending')
               .neq('id', req.id);
@@ -404,7 +411,7 @@ export default function PendingRequestsPage() {
         setAgentRequests(requestsWithStock);
         setGroupedRequests(buildRequestGroups(requestsWithStock, 'team'));
 
-        // Fetch forwarded requests (leader's own requests to admin)
+        // History for this leader's team only. The leader's own requests stay off this queue.
         const { data: rawForwarded, error: forwardedError } = await supabase
           .from('stock_requests')
           .select(`
@@ -427,6 +434,7 @@ export default function PendingRequestsPage() {
               brand:brands(name)
             )
           `)
+          .in('agent_id', agentIds)
           .eq('leader_id', user.id)
           .neq('status', 'pending')
           .order('requested_at', { ascending: false });
@@ -813,12 +821,10 @@ export default function PendingRequestsPage() {
       status: request.status,
       denial_reason: request.denial_reason,
     }));
-    const teamHistory = history.filter((request) => request.agent_id !== user?.id);
-    const leaderOwn = history.filter((request) => request.agent_id === user?.id);
+    const teamHistory = history.filter((request) => request.agent_id && request.agent_id !== user?.id);
     return [
       ...groupedRequests,
       ...buildRequestGroups(teamHistory, 'team'),
-      ...buildRequestGroups(leaderOwn, 'leader'),
     ].sort((a, b) => new Date(b.requested_at).getTime() - new Date(a.requested_at).getTime());
   }, [groupedRequests, forwardedRequests, user?.id]);
 
