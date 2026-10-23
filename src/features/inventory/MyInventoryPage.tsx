@@ -9,7 +9,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Search, Package, ChevronDown, ChevronRight, ArrowLeft, FileSignature, ShoppingCart, Loader2, CheckCircle2, ClipboardCheck, PackageMinus, Info } from 'lucide-react';
+import { Search, Package, ChevronDown, ChevronRight, ArrowLeft, FileSignature, ShoppingCart, Loader2, CheckCircle2, ClipboardCheck, PackageMinus, Info, FileDown } from 'lucide-react';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -21,6 +21,7 @@ import { useToast } from '@/hooks/use-toast';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import { ReturnInventoryDialog } from './components/ReturnInventoryDialog';
 import { ReturnToMainDialog } from './components/ReturnToMainDialog';
+import { exportMyInventoryPdf } from './utils/exportMyInventoryPdf';
 import type { RemittanceOrder, BankOrderNote } from './types';
 
 const LOW_STOCK_THRESHOLD = 10;
@@ -124,6 +125,50 @@ export default function MyInventory() {
 
     return matchesSearch;
   });
+
+  const stockStatusLabel = (stock: number) => {
+    if (stock <= 0) return 'Out of stock';
+    if (isLowStock(stock)) return 'Low stock';
+    return 'In stock';
+  };
+
+  const handleExportPdf = () => {
+    const lines = filteredBrands.flatMap((brand) =>
+      Array.from(brand.variantsByType?.entries?.() ?? []).flatMap(([type, variants]) =>
+        (variants as any[]).map((variant) => ({
+          brandName: brand.name,
+          variantName: variant.name,
+          variantType: variant.variantType || type,
+          quantity: Number(variant.stock) || 0,
+          price: variant.price == null ? null : Number(variant.price),
+          dspPrice: variant.dspPrice == null ? null : Number(variant.dspPrice),
+          rspPrice: variant.rspPrice == null ? null : Number(variant.rspPrice),
+          status: stockStatusLabel(Number(variant.stock) || 0),
+        }))
+      )
+    );
+
+    if (lines.length === 0) {
+      toast({
+        title: 'Nothing to export',
+        description: searchQuery ? 'No inventory matches this search.' : 'You have no stock to print.',
+      });
+      return;
+    }
+
+    try {
+      exportMyInventoryPdf({
+        heldByName: user?.full_name,
+        lines,
+      });
+    } catch (error) {
+      toast({
+        title: 'Could not open print view',
+        description: error instanceof Error ? error.message : 'Try again.',
+        variant: 'destructive',
+      });
+    }
+  };
 
   const getTotalVariants = () => {
     let count = 0;
@@ -720,6 +765,11 @@ export default function MyInventory() {
         <CardHeader className="pb-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <h2 className="font-semibold">Inventory</h2>
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+            <Button variant="outline" className="gap-2" onClick={handleExportPdf}>
+              <FileDown className="h-4 w-4" />
+              Export PDF
+            </Button>
             <div className="relative w-full sm:w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
@@ -728,6 +778,7 @@ export default function MyInventory() {
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-10"
               />
+            </div>
             </div>
           </div>
         </CardHeader>
