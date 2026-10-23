@@ -1,6 +1,7 @@
 export type MobileSalesStockRequestPdfLine = {
   brandName?: string | null;
   variantName?: string | null;
+  variantType?: string | null;
   requestedQuantity: number;
 };
 
@@ -83,9 +84,33 @@ function openPrintableHtml(html: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
+function typeLabel(type: string | null | undefined): string {
+  if (!type?.trim()) return '';
+  const key = type.trim().toLowerCase();
+  if (key === 'foc' || key === 'posm' || key === 'ncv') return key.toUpperCase();
+  return type.charAt(0).toUpperCase() + type.slice(1);
+}
+
+function linesGroupedByBrand(lines: MobileSalesStockRequestPdfLine[]): MobileSalesStockRequestPdfLine[] {
+  return [...lines].sort((a, b) => {
+    const brandCmp = (a.brandName || '').localeCompare(b.brandName || '', undefined, {
+      sensitivity: 'base',
+    });
+    if (brandCmp !== 0) return brandCmp;
+    const variantCmp = (a.variantName || '').localeCompare(b.variantName || '', undefined, {
+      sensitivity: 'base',
+    });
+    if (variantCmp !== 0) return variantCmp;
+    return (a.variantType || '').localeCompare(b.variantType || '', undefined, {
+      sensitivity: 'base',
+    });
+  });
+}
+
 function itemRowsHtml(lines: MobileSalesStockRequestPdfLine[]): string {
-  const rows = lines.map((line) => {
-    const name = `${line.brandName ? `${line.brandName} — ` : ''}${line.variantName || 'Item'}`;
+  const rows = linesGroupedByBrand(lines).map((line) => {
+    const type = typeLabel(line.variantType);
+    const name = `${line.brandName ? `${line.brandName} — ` : ''}${line.variantName || 'Item'}${type ? ` (${type})` : ''}`;
     return `
       <tr>
         <td class="col-desc">${escapeHtml(name)}</td>
