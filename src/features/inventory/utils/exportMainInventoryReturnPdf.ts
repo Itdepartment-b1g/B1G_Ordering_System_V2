@@ -61,8 +61,24 @@ function openPrintableHtml(html: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
+function linesGroupedByBrand(lines: MainInventoryReturnPdfLine[]): MainInventoryReturnPdfLine[] {
+  return [...lines].sort((a, b) => {
+    const brandCmp = (a.brandName || '').localeCompare(b.brandName || '', undefined, {
+      sensitivity: 'base',
+    });
+    if (brandCmp !== 0) return brandCmp;
+    const variantCmp = (a.variantName || '').localeCompare(b.variantName || '', undefined, {
+      sensitivity: 'base',
+    });
+    if (variantCmp !== 0) return variantCmp;
+    return (a.variantType || '').localeCompare(b.variantType || '', undefined, {
+      sensitivity: 'base',
+    });
+  });
+}
+
 function itemRowsHtml(lines: MainInventoryReturnPdfLine[]): string {
-  const rows = lines.map((line) => {
+  const rows = linesGroupedByBrand(lines).map((line) => {
     const name = `${line.brandName ? `${line.brandName} — ` : ''}${line.variantName || 'Item'}`;
     return `
       <tr>

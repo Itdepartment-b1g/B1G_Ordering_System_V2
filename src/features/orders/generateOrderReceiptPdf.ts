@@ -47,15 +47,44 @@ function fmtQty(n: number | null | undefined): string {
   return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
 
+function typeLabel(type: string | null | undefined): string {
+  if (!type?.trim()) return '';
+  const key = type.trim().toLowerCase();
+  if (key === 'foc' || key === 'posm' || key === 'ncv') return key.toUpperCase();
+  return type.charAt(0).toUpperCase() + type.slice(1);
+}
+
+function itemsGroupedByBrand(items: OrderItem[]): OrderItem[] {
+  return [...items].sort((a, b) => {
+    const brandCmp = (a.brandName || '').localeCompare(b.brandName || '', undefined, {
+      sensitivity: 'base',
+    });
+    if (brandCmp !== 0) return brandCmp;
+
+    const variantCmp = (a.variantName || '').localeCompare(b.variantName || '', undefined, {
+      sensitivity: 'base',
+    });
+    if (variantCmp !== 0) return variantCmp;
+
+    return (a.variantType || '').localeCompare(b.variantType || '', undefined, {
+      sensitivity: 'base',
+    });
+  });
+}
+
 function itemRowsHtml(items: OrderItem[]): string {
-  const rows = items.map((item) => `
+  const rows = itemsGroupedByBrand(items).map((item) => {
+    const type = typeLabel(item.variantType);
+    const variant = `${item.variantName || '—'}${type ? ` (${type})` : ''}`;
+    return `
       <tr>
         <td class="col-brand">${escapeHtml(item.brandName || '—')}</td>
-        <td class="col-variant">${escapeHtml(item.variantName || '—')}</td>
+        <td class="col-variant">${escapeHtml(variant)}</td>
         <td class="col-qty">${fmtQty(item.quantity)}</td>
         <td class="col-qty money">₱${fmtMoney(item.unitPrice)}</td>
         <td class="col-qty money">₱${fmtMoney(item.total)}</td>
-      </tr>`);
+      </tr>`;
+  });
 
   if (rows.length === 0) {
     rows.push(`

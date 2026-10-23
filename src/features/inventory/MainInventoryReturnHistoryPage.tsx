@@ -30,6 +30,7 @@ import {
 } from '@/components/ui/table';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
+import { SUPABASE_PAGE_SIZE } from '@/lib/supabasePaginate';
 import { isAdmin } from '@/lib/roleUtils';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import { exportMainInventoryReturnPdf } from './utils/exportMainInventoryReturnPdf';
@@ -78,17 +79,25 @@ function variantTypeBadgeClass(type: string | null | undefined): string {
   return '';
 }
 
+function compareReturnLines(a: ReturnLine, b: ReturnLine): number {
+  const brandCmp = a.brandName.localeCompare(b.brandName, undefined, { sensitivity: 'base' });
+  if (brandCmp !== 0) return brandCmp;
+  const variantCmp = a.variantName.localeCompare(b.variantName, undefined, { sensitivity: 'base' });
+  if (variantCmp !== 0) return variantCmp;
+  return (a.variantType || '').localeCompare(b.variantType || '', undefined, { sensitivity: 'base' });
+}
+
 function groupReturns(lines: ReturnLine[]): ReturnGroup[] {
   const groups = new Map<string, ReturnGroup>();
 
   lines.forEach((line) => {
-    const minute = format(new Date(line.createdAt), 'yyyy-MM-dd HH:mm');
+    // One return_inventory_to_main call writes every line with the same timestamp.
     const key = [
-      minute,
-      line.performerId || line.returnedBy,
+      line.createdAt,
+      line.fromLocation || '',
+      line.performerId || '',
       line.notes || '',
       line.isSubWarehouseReturn ? 'sub' : 'leader',
-      line.fromLocation || '',
     ].join('|');
 
     const existing = groups.get(key);
@@ -114,7 +123,12 @@ function groupReturns(lines: ReturnLine[]): ReturnGroup[] {
     });
   });
 
-  return Array.from(groups.values()).sort(
+  const grouped = Array.from(groups.values());
+  grouped.forEach((group) => {
+    group.lines.sort(compareReturnLines);
+  });
+
+  return grouped.sort(
     (a, b) => new Date(b.returnedAt).getTime() - new Date(a.returnedAt).getTime()
   );
 }
@@ -181,6 +195,99 @@ function ReturnDetails({ group }: { group: ReturnGroup }) {
       <BrandReturnTables lines={group.lines} />
     </div>
   );
+}
+
+const RETURN_HISTORY_ROW_CAP = 5000;
+const AGENT_LOCATION_PREFIX = 'agent_inventory:';
+
+function agentIdFromLocation(fromLocation: string | null | undefined): string | null {
+  if (!fromLocation?.startsWith(AGENT_LOCATION_PREFIX)) return null;
+  const id = fromLocation.slice(AGENT_LOCATION_PREFIX.length).trim();
+  return id || null;
+}
+
+type ReturnTransactionRow = {
+  id: string;
+  quantity: number | null;
+  notes: string | null;
+  created_at: string;
+  from_location: string | null;
+  transaction_type: string;
+  performed_by: string | null;
+  variant:
+    | {
+        name: string | null;
+        variant_type: string | null;
+        brand: { name: string | null } | { name: string | null }[] | null;
+      }
+    | {
+        name: string | null;
+        variant_type: string | null;
+        brand: { name: string | null } | { name: string | null }[] | null;
+      }[]
+    | null;
+};
+
+async function fetchReturnTransactions(
+  companyId: string,
+  transactionType: 'return_to_main' | 'warehouse_return_from_sub'
+): Promise<ReturnTransactionRow[]> {
+  const rows: ReturnTransactionRow[] = [];
+  let offset = 0;
+  let reachedCap = false;
+
+  while (rows.length < RETURN_HISTORY_ROW_CAP) {
+    const pageEnd = Math.min(offset + SUPABASE_PAGE_SIZE, RETURN_HISTORY_ROW_CAP) - 1;
+    const { data, error } = await supabase
+      .from('inventory_transactions')
+      .select(`
+        id,
+        quantity,
+        notes,
+        created_at,
+        from_location,
+        transaction_type,
+        performed_by,
+        variant:variants!inventory_transactions_variant_id_fkey(
+          name,
+          variant_type,
+          brand:brands!variants_brand_id_fkey(name)
+        )
+      `)
+      .eq('company_id', companyId)
+      .eq('transaction_type', transactionType)
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(offset, pageEnd);
+
+    if (error) throw error;
+
+    const batch = (data ?? []) as ReturnTransactionRow[];
+    rows.push(...batch);
+    if (batch.length < pageEnd - offset + 1) break;
+    offset += batch.length;
+    if (rows.length >= RETURN_HISTORY_ROW_CAP) {
+      reachedCap = true;
+      break;
+    }
+  }
+
+  if (!reachedCap || rows.length === 0) return rows;
+  const boundary = rows[rows.length - 1].created_at;
+  return rows.filter((row) => row.created_at !== boundary);
+}
+
+async function fetchProfileNames(ids: string[]): Promise<Map<string, string>> {
+  const nameById = new Map<string, string>();
+  for (let index = 0; index < ids.length; index += 100) {
+    const chunk = ids.slice(index, index + 100);
+    const { data, error } = await supabase.from('profiles').select('id, full_name').in('id', chunk);
+    if (error) throw error;
+    for (const profile of data ?? []) {
+      nameById.set(profile.id, profile.full_name?.trim() || 'Unknown');
+    }
+  }
+  return nameById;
 }
 
 function printGroup(group: ReturnGroup) {
@@ -597,7 +704,8 @@ export default function MainInventoryReturnHistoryPage() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
-  const [page, setPage] = useState(0);
+  const [historyPage, setHistoryPage] = useState(0);
+  const [leaderPage, setLeaderPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
 
   const { data: groups = [], isLoading } = useQuery({
@@ -606,37 +714,24 @@ export default function MainInventoryReturnHistoryPage() {
     queryFn: async () => {
       if (!user?.company_id) return [];
 
-      const { data, error } = await supabase
-        .from('inventory_transactions')
-        .select(`
-          id,
-          quantity,
-          notes,
-          created_at,
-          from_location,
-          transaction_type,
-          performed_by,
-          variant:variants!inventory_transactions_variant_id_fkey(
-            name,
-            variant_type,
-            brand:brands!variants_brand_id_fkey(name)
-          ),
-          performer:profiles!inventory_transactions_performed_by_fkey(full_name)
-        `)
-        .eq('company_id', user.company_id)
-        .in('transaction_type', ['return_to_main', 'warehouse_return_from_sub'])
-        .order('created_at', { ascending: false })
-        .limit(200);
-
-      if (error) {
+      let leaderRows: ReturnTransactionRow[] = [];
+      let warehouseRows: ReturnTransactionRow[] = [];
+      try {
+        [leaderRows, warehouseRows] = await Promise.all([
+          fetchReturnTransactions(user.company_id, 'return_to_main'),
+          fetchReturnTransactions(user.company_id, 'warehouse_return_from_sub'),
+        ]);
+      } catch (error) {
         toast({ title: 'Error', description: 'Failed to load return history', variant: 'destructive' });
         throw error;
       }
 
+      const data = [...leaderRows, ...warehouseRows];
+
       const locationIds = [
         ...new Set(
-          (data || [])
-            .filter((row) => row.transaction_type === 'warehouse_return_from_sub' && row.from_location)
+          warehouseRows
+            .filter((row) => row.from_location)
             .map((row) => String(row.from_location).replace('warehouse_location:', ''))
             .filter(Boolean)
         ),
@@ -651,15 +746,27 @@ export default function MainInventoryReturnHistoryPage() {
         locations?.forEach((location) => locationNameMap.set(location.id, location.name));
       }
 
-      const lines: ReturnLine[] = (data || []).map((row) => {
+      const profileIds = [
+        ...new Set(
+          leaderRows.flatMap((row) => {
+            const ids = [row.performed_by, agentIdFromLocation(row.from_location)];
+            return ids.filter((id): id is string => Boolean(id));
+          })
+        ),
+      ];
+      const profileNames = await fetchProfileNames(profileIds);
+
+      const lines: ReturnLine[] = data.map((row) => {
         const variant = Array.isArray(row.variant) ? row.variant[0] : row.variant;
         const brand = variant?.brand
           ? Array.isArray(variant.brand) ? variant.brand[0] : variant.brand
           : null;
-        const performer = Array.isArray(row.performer) ? row.performer[0] : row.performer;
         const isSubWarehouseReturn = row.transaction_type === 'warehouse_return_from_sub';
         const locationId = row.from_location?.replace('warehouse_location:', '') || '';
         const locationName = locationNameMap.get(locationId);
+        const leaderId = agentIdFromLocation(row.from_location);
+        const leaderName = leaderId ? profileNames.get(leaderId) : undefined;
+        const performerName = row.performed_by ? profileNames.get(row.performed_by) : undefined;
 
         return {
           id: row.id,
@@ -668,7 +775,7 @@ export default function MainInventoryReturnHistoryPage() {
           createdAt: row.created_at,
           returnedBy: isSubWarehouseReturn
             ? locationName || 'Sub Warehouse'
-            : performer?.full_name || 'Unknown',
+            : leaderName || performerName || 'Unknown',
           performerId: row.performed_by,
           variantName: variant?.name || 'Unknown',
           variantType: variant?.variant_type || null,
@@ -718,22 +825,34 @@ export default function MainInventoryReturnHistoryPage() {
     });
   }, [groups, searchQuery, dateRange.start, dateRange.end]);
 
-  useEffect(() => {
-    setPage(0);
-  }, [searchQuery, dateRange.start, dateRange.end, pageSize]);
-
-  const { pageCount, safePage, pagedItems: pagedGroups } = getListPaginationSlice(
-    filteredGroups,
-    page,
-    pageSize
+  const leaderGroups = useMemo(
+    () => filteredGroups.filter((group) => !group.isSubWarehouseReturn),
+    [filteredGroups]
   );
 
-  const renderHistoryCard = () => (
+  useEffect(() => {
+    setHistoryPage(0);
+    setLeaderPage(0);
+  }, [searchQuery, dateRange.start, dateRange.end, pageSize]);
+
+  const renderHistoryCard = (
+    cardGroups: ReturnGroup[],
+    page: number,
+    setPage: (value: number | ((current: number) => number)) => void,
+    title: string
+  ) => {
+    const { pageCount, safePage, pagedItems: pagedGroups } = getListPaginationSlice(
+      cardGroups,
+      page,
+      pageSize
+    );
+
+    return (
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <RotateCcw className="h-5 w-5" />
-            {canViewAgentReturns ? 'Team Leader to Super Admin' : 'Return history'}
+            {title}
           </CardTitle>
           <CardDescription>Grouped by who returned the stock and when.</CardDescription>
         </CardHeader>
@@ -742,7 +861,7 @@ export default function MainInventoryReturnHistoryPage() {
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
-          ) : filteredGroups.length === 0 ? (
+          ) : cardGroups.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
               <RotateCcw className="h-10 w-10 mb-3 opacity-40" />
               <p className="font-medium text-foreground">No returns found</p>
@@ -880,7 +999,8 @@ export default function MainInventoryReturnHistoryPage() {
           )}
         </CardContent>
       </Card>
-  );
+    );
+  };
 
   return (
     <div className="w-full p-4 md:p-6 space-y-4">
@@ -926,7 +1046,12 @@ export default function MainInventoryReturnHistoryPage() {
             <TabsTrigger value="agent">Mobile Sales to Team Leader</TabsTrigger>
           </TabsList>
           <TabsContent value="all" className="space-y-4">
-            {renderHistoryCard()}
+            {renderHistoryCard(
+              filteredGroups,
+              historyPage,
+              setHistoryPage,
+              'Returns to main inventory'
+            )}
             <AgentToLeaderReturns
               companyId={user.company_id}
               searchQuery={searchQuery}
@@ -934,7 +1059,14 @@ export default function MainInventoryReturnHistoryPage() {
               rangeEnd={dateRange.end}
             />
           </TabsContent>
-          <TabsContent value="leader">{renderHistoryCard()}</TabsContent>
+          <TabsContent value="leader">
+            {renderHistoryCard(
+              leaderGroups,
+              leaderPage,
+              setLeaderPage,
+              'Team Leader to Super Admin'
+            )}
+          </TabsContent>
           <TabsContent value="agent">
             <AgentToLeaderReturns
               companyId={user.company_id}
@@ -945,7 +1077,7 @@ export default function MainInventoryReturnHistoryPage() {
           </TabsContent>
         </Tabs>
       ) : (
-        renderHistoryCard()
+        renderHistoryCard(filteredGroups, historyPage, setHistoryPage, 'Return history')
       )}
     </div>
   );
