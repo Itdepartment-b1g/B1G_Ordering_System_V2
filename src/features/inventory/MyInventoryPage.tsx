@@ -9,7 +9,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Search, Package, ChevronDown, ChevronRight, ArrowLeft, FileSignature, ShoppingCart, Loader2, CheckCircle2, ClipboardCheck, PackageMinus, Info, FileDown } from 'lucide-react';
+import { Search, Package, ChevronDown, ChevronRight, ArrowLeft, FileSignature, ShoppingCart, Loader2, CheckCircle2, ClipboardCheck, PackageMinus, Info, FileDown, FileSpreadsheet } from 'lucide-react';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -22,6 +22,7 @@ import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import { ReturnInventoryDialog } from './components/ReturnInventoryDialog';
 import { ReturnToMainDialog } from './components/ReturnToMainDialog';
 import { exportMyInventoryPdf } from './utils/exportMyInventoryPdf';
+import { exportMyInventoryExcel } from './utils/exportMyInventoryExcel';
 import type { RemittanceOrder, BankOrderNote } from './types';
 
 const LOW_STOCK_THRESHOLD = 10;
@@ -72,6 +73,7 @@ export default function MyInventory() {
   const [showOrderDetailsModal, setShowOrderDetailsModal] = useState(false);
   const [returnDialogOpen, setReturnDialogOpen] = useState(false);
   const [returnToMainDialogOpen, setReturnToMainDialogOpen] = useState(false);
+  const [exportingExcel, setExportingExcel] = useState(false);
 
   // Confirmation checkboxes for each section
   const [unsoldConfirmed, setUnsoldConfirmed] = useState(false);
@@ -126,27 +128,26 @@ export default function MyInventory() {
     return matchesSearch;
   });
 
-  const stockStatusLabel = (stock: number) => {
-    if (stock <= 0) return 'Out of stock';
-    if (isLowStock(stock)) return 'Low stock';
-    return 'In stock';
-  };
-
-  const handleExportPdf = () => {
-    const lines = filteredBrands.flatMap((brand) =>
+  const inventoryExportLines = () =>
+    filteredBrands.flatMap((brand) =>
       Array.from(brand.variantsByType?.entries?.() ?? []).flatMap(([type, variants]) =>
         (variants as any[]).map((variant) => ({
+          brandId: String(brand.id),
           brandName: brand.name,
           variantName: variant.name,
-          variantType: variant.variantType || type,
+          variantType: String(variant.variantType || type || ''),
           quantity: Number(variant.stock) || 0,
-          price: variant.price == null ? null : Number(variant.price),
-          dspPrice: variant.dspPrice == null ? null : Number(variant.dspPrice),
-          rspPrice: variant.rspPrice == null ? null : Number(variant.rspPrice),
-          status: stockStatusLabel(Number(variant.stock) || 0),
         }))
       )
     );
+
+  const handleExportPdf = () => {
+    const lines = inventoryExportLines().map(({ brandName, variantName, variantType, quantity }) => ({
+      brandName,
+      variantName,
+      variantType,
+      quantity,
+    }));
 
     if (lines.length === 0) {
       toast({
@@ -167,6 +168,40 @@ export default function MyInventory() {
         description: error instanceof Error ? error.message : 'Try again.',
         variant: 'destructive',
       });
+    }
+  };
+
+  const handleExportExcel = async () => {
+    const lines = inventoryExportLines();
+    if (lines.length === 0) {
+      toast({
+        title: 'Nothing to export',
+        description: searchQuery ? 'No inventory matches this search.' : 'You have no stock to export.',
+      });
+      return;
+    }
+
+    setExportingExcel(true);
+    try {
+      await exportMyInventoryExcel({
+        heldByName: user?.full_name,
+        lines: lines.map((line) => ({
+          brandId: line.brandId,
+          brandName: line.brandName,
+          variantName: line.variantName,
+          variantType: line.variantType,
+          qty: line.quantity,
+        })),
+      });
+      toast({ title: 'Export complete', description: 'Inventory exported to Excel.' });
+    } catch (error) {
+      toast({
+        title: 'Export failed',
+        description: error instanceof Error ? error.message : 'Could not export inventory to Excel.',
+        variant: 'destructive',
+      });
+    } finally {
+      setExportingExcel(false);
     }
   };
 
@@ -712,7 +747,7 @@ export default function MyInventory() {
                 Return to Main
               </Button>
               <Button variant="outline" className="flex-1 sm:flex-initial" asChild>
-                <Link to="/inventory/main/returns">Your return to main history</Link>
+                <Link to="/inventory/main/returns">Return to main history</Link>
               </Button>
             </>
           ) : (
@@ -769,6 +804,10 @@ export default function MyInventory() {
             <Button variant="outline" className="gap-2" onClick={handleExportPdf}>
               <FileDown className="h-4 w-4" />
               Export PDF
+            </Button>
+            <Button variant="outline" className="gap-2" onClick={() => void handleExportExcel()} disabled={exportingExcel}>
+              {exportingExcel ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
+              Export Excel
             </Button>
             <div className="relative w-full sm:w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
