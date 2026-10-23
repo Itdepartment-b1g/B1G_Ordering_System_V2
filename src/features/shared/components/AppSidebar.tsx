@@ -306,6 +306,7 @@ const leaderMenuItems: MenuItem[] = [
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: DollarSign },
       { title: 'PO Receiving', url: '/inventory/po-receive', icon: PackageCheck },
       { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
+      // { title: 'Returns to Super Admin', url: '/inventory/main/returns', icon: RotateCcw },
     ]
   },
   {

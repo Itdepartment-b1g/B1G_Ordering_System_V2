@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -657,14 +658,19 @@ export default function MyInventory() {
             </Button>
           )}
           {user?.role === 'team_leader' ? (
-            <Button
-              onClick={() => setReturnToMainDialogOpen(true)}
-              variant="outline"
-              className="gap-2 flex-1 sm:flex-initial"
-            >
-              <PackageMinus className="h-4 w-4" />
-              Return to Main
-            </Button>
+            <>
+              <Button
+                onClick={() => setReturnToMainDialogOpen(true)}
+                variant="outline"
+                className="gap-2 flex-1 sm:flex-initial"
+              >
+                <PackageMinus className="h-4 w-4" />
+                Return to Main
+              </Button>
+              <Button variant="outline" className="flex-1 sm:flex-initial" asChild>
+                <Link to="/inventory/main/returns">Your return to main history</Link>
+              </Button>
+            </>
           ) : (
             <Button
               onClick={() => setReturnDialogOpen(true)}

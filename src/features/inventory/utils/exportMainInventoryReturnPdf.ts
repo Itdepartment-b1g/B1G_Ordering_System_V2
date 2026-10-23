@@ -7,6 +7,7 @@ export type MainInventoryReturnPdfLine = {
 
 export type MainInventoryReturnPdfInput = {
   returnedBy: string;
+  returnedTo?: string | null;
   returnedAt: string;
   reason?: string | null;
   status?: string | null;
@@ -111,6 +112,7 @@ function detailField(label: string, valueHtml: string): string {
 function buildReturnHtml(input: MainInventoryReturnPdfInput): string {
   const total = input.lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
   const returnedBy = input.returnedBy?.trim() ? escapeHtml(input.returnedBy.trim()) : '—';
+  const returnedTo = input.returnedTo?.trim() ? escapeHtml(input.returnedTo.trim()) : '—';
   const when = escapeHtml(formatDateTime(input.returnedAt));
   const reason = input.reason?.trim()
     ? escapeHtml(input.reason.trim())
@@ -232,7 +234,7 @@ function buildReturnHtml(input: MainInventoryReturnPdfInput): string {
       </h1>
     </div>
     <div class="toolbar-center">
-      <div class="warehouse-badge">Returned by: <span>${returnedBy}</span></div>
+      <div class="warehouse-badge">RETURN BY: <span>${returnedBy}</span></div>
     </div>
     <div class="toolbar-right">
       <button type="button" onclick="window.print()">Print</button>
@@ -241,8 +243,12 @@ function buildReturnHtml(input: MainInventoryReturnPdfInput): string {
   <div class="page">
     <div class="doc-title">STOCK RETURN</div>
     <div class="meta-row">
-      <span class="label">RETURNED BY:</span>
+      <span class="label">RETURN BY:</span>
       <span class="value">${returnedBy}</span>
+    </div>
+    <div class="meta-row">
+      <span class="label">RETURN TO:</span>
+      <span class="value">${returnedTo}</span>
     </div>
     <div class="meta-row">
       <span class="label">DATE:</span>
@@ -264,8 +270,9 @@ function buildReturnHtml(input: MainInventoryReturnPdfInput): string {
     </table>
     <div class="totals-note">Total returned: ${fmtQty(total)} unit(s)</div>
     <div class="delivery-section">
-      <div class="section-label">Return Details:</div>
-      ${detailField('RETURNED BY:', returnedBy)}
+      <div class="section-label">RETURN DETAILS</div>
+      ${detailField('RETURN BY:', returnedBy)}
+      ${detailField('RETURN TO:', returnedTo)}
       ${detailField('DATE:', when)}
       ${status ? detailField('STATUS:', status) : ''}
       ${detailField('REASON:', reason)}

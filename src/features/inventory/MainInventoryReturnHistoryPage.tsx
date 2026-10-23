@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import {
   DateRangeFilterPopover,
   type DateRangeFilterValue,
@@ -34,6 +35,7 @@ import { SUPABASE_PAGE_SIZE } from '@/lib/supabasePaginate';
 import { isAdmin } from '@/lib/roleUtils';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import { exportMainInventoryReturnPdf } from './utils/exportMainInventoryReturnPdf';
+import { fetchLeaderRequestedFromName } from './utils/exportLeaderStockRequestPdf';
 
 type ReturnLine = {
   id: string;
@@ -70,6 +72,17 @@ function variantTypeLabel(type: string | null | undefined): string | null {
   if (key === 'ncv') return 'NCV';
   return type;
 }
+
+function returnLineLabel(line: Pick<ReturnLine, 'brandName' | 'variantName' | 'variantType'>): string {
+  const brand = line.brandName?.trim();
+  const variant = line.variantName?.trim() || 'Item';
+  const type = variantTypeLabel(line.variantType);
+  const name = brand && brand !== 'Unknown' ? `${brand} — ${variant}` : variant;
+  return type ? `${name} (${type})` : name;
+}
+
+const returnColumns =
+  'grid grid-cols-[1.25rem_minmax(10rem,1.4fr)_11rem_6rem_6.5rem_minmax(8rem,1.2fr)_5.5rem] items-center gap-x-3 px-3';
 
 function variantTypeBadgeClass(type: string | null | undefined): string {
   const key = type?.trim().toLowerCase();
@@ -133,66 +146,39 @@ function groupReturns(lines: ReturnLine[]): ReturnGroup[] {
   );
 }
 
-function BrandReturnTables({ lines }: { lines: ReturnLine[] }) {
-  const brands = useMemo(() => {
-    const map = new Map<string, ReturnLine[]>();
-    lines.forEach((line) => {
-      const name = line.brandName?.trim() || 'Unknown brand';
-      const list = map.get(name) ?? [];
-      list.push(line);
-      map.set(name, list);
-    });
-    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [lines]);
-
-  return (
-    <div className="space-y-4">
-      {brands.map(([brandName, brandLines]) => (
-        <div key={brandName} className="overflow-hidden rounded-md border bg-white">
-          <div className="border-b bg-muted/40 px-4 py-2.5 font-semibold">{brandName}</div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Variant</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead className="text-right">Qty</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {brandLines.map((line) => {
-                const label = variantTypeLabel(line.variantType);
-                return (
-                  <TableRow key={line.id}>
-                    <TableCell>{line.variantName}</TableCell>
-                    <TableCell>
-                      {label ? (
-                        <Badge variant="outline" className={`text-[10px] ${variantTypeBadgeClass(line.variantType)}`}>
-                          {label}
-                        </Badge>
-                      ) : (
-                        '—'
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{line.quantity.toLocaleString()}</TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function ReturnDetails({ group }: { group: ReturnGroup }) {
   return (
-    <div>
-      <p className="mb-3 text-sm">
-        <span className="font-medium">Reason of returned:</span>{' '}
+    <div className="space-y-3 rounded-md border bg-muted/30 p-3">
+      <p className="text-sm">
+        <span className="font-medium">Reason of returned: </span>
         <span className="text-muted-foreground">{group.reason?.trim() || '—'}</span>
       </p>
-      <BrandReturnTables lines={group.lines} />
+      <div className="space-y-2 md:hidden">
+        {group.lines.map((line) => (
+          <div key={line.id} className="rounded-md border bg-background p-2 text-sm">
+            <div className="font-medium leading-snug">{returnLineLabel(line)}</div>
+            <div className="mt-1 text-right text-xs font-semibold">{line.quantity.toLocaleString()}</div>
+          </div>
+        ))}
+      </div>
+      <div className="hidden overflow-x-auto md:block">
+        <Table className="min-w-[36rem]">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Product</TableHead>
+              <TableHead className="text-right">Qty</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {group.lines.map((line) => (
+              <TableRow key={line.id}>
+                <TableCell className="whitespace-nowrap font-medium">{returnLineLabel(line)}</TableCell>
+                <TableCell className="text-right tabular-nums">{line.quantity.toLocaleString()}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   );
 }
@@ -290,9 +276,11 @@ async function fetchProfileNames(ids: string[]): Promise<Map<string, string>> {
   return nameById;
 }
 
-function printGroup(group: ReturnGroup) {
+async function printGroup(group: ReturnGroup, companyId?: string | null) {
+  const returnedTo = await fetchLeaderRequestedFromName(companyId);
   exportMainInventoryReturnPdf({
     returnedBy: group.returnedBy,
+    returnedTo: returnedTo || 'Super Admin',
     returnedAt: group.returnedAt,
     reason: group.reason,
     lines: group.lines.map((line) => ({
@@ -506,6 +494,7 @@ function AgentToLeaderReturns({
   const printReturn = (row: AgentToLeaderReturn) => {
     exportMainInventoryReturnPdf({
       returnedBy: row.returnedBy,
+      returnedTo: row.returnedTo,
       returnedAt: row.returnedAt,
       status: row.status === 'approved' ? 'Approved' : row.status === 'rejected' ? 'Rejected' : 'Pending',
       reason: row.reason,
@@ -786,19 +775,27 @@ export default function MainInventoryReturnHistoryPage() {
       });
 
       const isUserSubWarehouse = !isMainWarehouseUser && !!membership.locationId;
+      const ownLeaderReturns = user.role === 'team_leader';
       const visible = isUserSubWarehouse
         ? lines.filter(
             (line) =>
               line.isSubWarehouseReturn &&
               line.fromLocation === `warehouse_location:${membership.locationId}`
           )
-        : lines;
+        : ownLeaderReturns
+          ? lines.filter(
+              (line) =>
+                !line.isSubWarehouseReturn &&
+                (agentIdFromLocation(line.fromLocation) === user.id || line.performerId === user.id)
+            )
+          : lines;
 
       return groupReturns(visible);
     },
   });
 
   const canViewAgentReturns = isAdmin(user?.role);
+  const isTeamLeader = user?.role === 'team_leader';
   const dateRange = useMemo(
     () =>
       getDateRangeFromPreset(
@@ -868,124 +865,92 @@ export default function MainInventoryReturnHistoryPage() {
             </div>
           ) : (
             <>
-              <div className="hidden md:block overflow-hidden rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-10" />
-                      <TableHead>Returned by</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead className="text-right">Variant Qty</TableHead>
-                      <TableHead className="text-right">Total Qty</TableHead>
-                      <TableHead>Notes</TableHead>
-                      <TableHead className="text-right">Print</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {pagedGroups.map((group) => {
-                      const open = openId === group.id;
-                      return (
-                        <Fragment key={group.id}>
-                          <TableRow
-                            className="cursor-pointer hover:bg-muted/40"
-                            onClick={() => setOpenId(open ? null : group.id)}
-                          >
-                            <TableCell>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                aria-label={open ? 'Collapse return' : 'Expand return'}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  setOpenId(open ? null : group.id);
-                                }}
-                              >
-                                {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                              </Button>
-                            </TableCell>
-                            <TableCell className="font-medium">
-                              <span className="flex items-center gap-1">
-                                {group.isSubWarehouseReturn ? (
-                                  <Building2 className="h-3 w-3 text-blue-500" />
-                                ) : (
-                                  <Users className="h-3 w-3 text-green-500" />
-                                )}
-                                {group.returnedBy}
-                              </span>
-                            </TableCell>
-                            <TableCell className="whitespace-nowrap text-sm">
-                              {format(new Date(group.returnedAt), 'MMM d, yyyy h:mm a')}
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">{group.variantCount}</TableCell>
-                            <TableCell className="text-right font-medium tabular-nums">
-                              {group.totalQuantity.toLocaleString()}
-                            </TableCell>
-                            <TableCell className="max-w-[220px] truncate text-sm text-muted-foreground" title={group.reason || undefined}>
-                              {group.reason?.trim() || '—'}
-                            </TableCell>
-                            <TableCell className="text-right" onClick={(event) => event.stopPropagation()}>
-                              <Button type="button" variant="outline" size="sm" onClick={() => printGroup(group)}>
-                                <Printer className="h-4 w-4" />
-                                Print
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                          {open && (
-                            <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
-                              <TableCell colSpan={7} className="p-4">
-                                <ReturnDetails group={group} />
-                              </TableCell>
-                            </TableRow>
-                          )}
-                        </Fragment>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
+              <Accordion type="multiple" className="space-y-2 md:hidden">
+                {pagedGroups.map((group) => (
+                  <AccordionItem key={`mobile-${group.id}`} value={`mobile-${group.id}`} className="rounded-lg border bg-card px-3">
+                    <div className="flex items-start gap-2">
+                      <AccordionTrigger className="mt-3 h-8 w-5 shrink-0 justify-center p-0 hover:no-underline" />
+                      <div className="min-w-0 flex-1 py-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="flex items-center gap-1 truncate text-sm font-medium">
+                              {group.isSubWarehouseReturn ? (
+                                <Building2 className="h-3 w-3 shrink-0 text-blue-500" />
+                              ) : (
+                                <Users className="h-3 w-3 shrink-0 text-green-500" />
+                              )}
+                              {group.returnedBy}
+                            </p>
+                            <p className="mt-1 truncate text-xs text-muted-foreground">
+                              {group.lines.length === 1
+                                ? returnLineLabel(group.lines[0])
+                                : `${group.variantCount} products`}
+                            </p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {group.totalQuantity.toLocaleString()} units · {format(new Date(group.returnedAt), 'MMM d, yyyy h:mm a')}
+                            </p>
+                          </div>
+                          <Button type="button" variant="outline" size="sm" onClick={() => void printGroup(group, user?.company_id)}>
+                            <Printer className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                    <AccordionContent className="pb-3">
+                      <ReturnDetails group={group} />
+                    </AccordionContent>
+                  </AccordionItem>
+                ))}
+              </Accordion>
 
-              <div className="md:hidden space-y-3">
-                {pagedGroups.map((group) => {
-                  const open = openId === group.id;
-                  return (
-                    <div key={group.id} className="rounded-lg border p-3 space-y-2">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <p className="font-medium text-sm flex items-center gap-1">
+              <div className="hidden overflow-x-auto md:block">
+                <div className="min-w-[68rem] overflow-hidden rounded-lg border bg-card">
+                  <div className={`${returnColumns} border-b py-2 text-xs font-medium text-muted-foreground`}>
+                    <span aria-hidden />
+                    <span>Returned by</span>
+                    <span>Date</span>
+                    <span className="text-right">Variants</span>
+                    <span className="text-right">Total</span>
+                    <span>Notes</span>
+                    <span className="text-right">Print</span>
+                  </div>
+                  <Accordion type="multiple">
+                    {pagedGroups.map((group) => (
+                      <AccordionItem key={group.id} value={group.id} className="border-b last:border-b-0">
+                        <div className={returnColumns}>
+                          <AccordionTrigger className="h-10 w-5 justify-center p-0 hover:no-underline" />
+                          <span className="flex min-w-0 items-center gap-1 truncate font-medium">
                             {group.isSubWarehouseReturn ? (
-                              <Building2 className="h-3 w-3 text-blue-500" />
+                              <Building2 className="h-3 w-3 shrink-0 text-blue-500" />
                             ) : (
-                              <Users className="h-3 w-3 text-green-500" />
+                              <Users className="h-3 w-3 shrink-0 text-green-500" />
                             )}
                             {group.returnedBy}
-                          </p>
-                          <p className="text-xs text-muted-foreground mt-1">
+                          </span>
+                          <span className="whitespace-nowrap text-sm text-muted-foreground">
                             {format(new Date(group.returnedAt), 'MMM d, yyyy h:mm a')}
-                          </p>
-                          <p className="text-xs mt-1">
-                            {group.variantCount} variants · {group.totalQuantity.toLocaleString()} qty
-                          </p>
+                          </span>
+                          <span className="text-right text-sm tabular-nums">{group.variantCount}</span>
+                          <span className="text-right text-sm font-semibold tabular-nums">
+                            {group.totalQuantity.toLocaleString()}
+                          </span>
+                          <span className="truncate text-sm text-muted-foreground" title={group.reason || undefined}>
+                            {group.reason?.trim() || '—'}
+                          </span>
+                          <div className="flex justify-end">
+                            <Button type="button" variant="outline" size="sm" onClick={() => void printGroup(group, user?.company_id)}>
+                              <Printer className="h-4 w-4" />
+                              Print
+                            </Button>
+                          </div>
                         </div>
-                        <Button type="button" variant="outline" size="sm" onClick={() => printGroup(group)}>
-                          <Printer className="h-4 w-4" />
-                        </Button>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="w-full justify-between"
-                        onClick={() => setOpenId(open ? null : group.id)}
-                      >
-                        {open ? 'Hide items' : 'View items'}
-                        {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                      </Button>
-                      {open && <ReturnDetails group={group} />}
-                    </div>
-                  );
-                })}
+                        <AccordionContent className="px-3 pb-3">
+                          <ReturnDetails group={group} />
+                        </AccordionContent>
+                      </AccordionItem>
+                    ))}
+                  </Accordion>
+                </div>
               </div>
               <ListPagination
                 pageSize={pageSize}
@@ -1006,17 +971,23 @@ export default function MainInventoryReturnHistoryPage() {
     <div className="w-full p-4 md:p-6 space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Stock Returns</h1>
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
+            {isTeamLeader ? 'Returns to Main' : 'Stock Returns'}
+          </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {canViewAgentReturns
-              ? 'Returns into main inventory, and returns from mobile sales to team leaders'
-              : isMainWarehouseUser
-                ? 'Returns from team leaders and sub-warehouses to main inventory'
-                : 'Your returns to main inventory'}
+            {isTeamLeader
+              ? 'Stock you returned to main'
+              : canViewAgentReturns
+                ? 'Returns into main inventory, and returns from mobile sales to team leaders'
+                : isMainWarehouseUser
+                  ? 'Returns from team leaders and sub-warehouses to main inventory'
+                  : 'Your returns to main inventory'}
           </p>
         </div>
         <Button variant="outline" asChild>
-          <Link to="/inventory/main">Back to Main Inventory</Link>
+          <Link to={isTeamLeader ? '/my-inventory' : '/inventory/main'}>
+            {isTeamLeader ? 'Back to My Inventory' : 'Back to Main Inventory'}
+          </Link>
         </Button>
       </div>
 
