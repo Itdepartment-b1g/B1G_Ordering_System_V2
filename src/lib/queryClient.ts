@@ -47,6 +47,8 @@ const NON_PERSISTED_QUERY_KEYS = new Set([
     'warehouse-stock-returns',
     'sa-stock-returns',
     'sa-client-stock-returns',
+    'main-inventory-return-history',
+    'agent-to-leader-return-history',
     'warehouse-delivery-shortages',
     // Heavy nested payloads (events + proof URLs); must stay live for allocate/request sync.
     'internal-stock-requests',
