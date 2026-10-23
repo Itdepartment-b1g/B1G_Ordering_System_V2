@@ -830,7 +830,7 @@ export default function PendingRequestsPage() {
     const cannotApprove = group.requests.some((request) => !request.leader_stock);
 
     return (
-      <div className="flex items-center justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
         {pending && (
           <>
             <Button size="sm" disabled={cannotApprove} onClick={() => openReview(group, 'approve')}>
@@ -921,7 +921,36 @@ export default function PendingRequestsPage() {
             {denial}
           </p>
         )}
-        <div className="overflow-x-auto">
+        <div className="space-y-2 md:hidden">
+          {lines.map((request) => (
+            <div key={request.id} className="rounded-md border bg-background p-2 text-sm">
+              <div className="font-medium leading-snug">{formatProductName(request)}</div>
+              <dl className="mt-2 grid grid-cols-2 gap-y-1 text-xs">
+                <dt className="text-muted-foreground">Agent qty</dt>
+                <dd className="text-right">{request.requested_quantity}</dd>
+                {showLeaderQty && (
+                  <>
+                    <dt className="text-muted-foreground">Your qty</dt>
+                    <dd className="text-right">{request.leader_additional_quantity || 0}</dd>
+                  </>
+                )}
+                <dt className="text-muted-foreground">Total</dt>
+                <dd className="text-right font-semibold">{lineQuantity(request)}</dd>
+                {group.status === 'pending' && (
+                  <>
+                    <dt className="text-muted-foreground">Your stock</dt>
+                    <dd
+                      className={`text-right font-semibold ${(request.leader_stock || 0) >= request.requested_quantity ? 'text-green-600' : 'text-red-600'}`}
+                    >
+                      {request.leader_stock || 0}
+                    </dd>
+                  </>
+                )}
+              </dl>
+            </div>
+          ))}
+        </div>
+        <div className="hidden overflow-x-auto md:block">
           <Table className="min-w-[40rem]">
             <TableHeader>
               <TableRow>
@@ -975,7 +1004,39 @@ export default function PendingRequestsPage() {
     };
 
     return (
-      <div className="overflow-x-auto">
+      <>
+      <Accordion type="multiple" className="space-y-2 md:hidden">
+        {groups.map((group) => {
+          const lines = requestLines(group);
+          const rowKey = `mobile-${group.source}-${group.id}`;
+          return (
+            <AccordionItem key={rowKey} value={rowKey} className="rounded-lg border bg-card px-3">
+              <div className="flex items-start gap-2">
+                <AccordionTrigger className="mt-3 h-8 w-5 shrink-0 justify-center p-0 hover:no-underline" />
+                <div className="min-w-0 flex-1 py-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium">{group.agentName}</div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        {lines.length === 1 ? formatProductName(lines[0]) : `${lines.length} products`}
+                      </div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {group.totalQuantity} units · {format(new Date(group.requested_at), 'MMM dd, yyyy HH:mm')}
+                      </div>
+                    </div>
+                    {queueStatusBadge(group.status)}
+                  </div>
+                  <div className="mt-2">{renderRequestActions(group)}</div>
+                </div>
+              </div>
+              <AccordionContent className="pb-3">
+                {renderRequestDetails(group, lines)}
+              </AccordionContent>
+            </AccordionItem>
+          );
+        })}
+      </Accordion>
+      <div className="hidden overflow-x-auto md:block">
         <div className="min-w-[72rem] overflow-hidden rounded-lg border bg-card">
         <div className={`${queueColumns} border-b py-2 text-xs font-medium text-muted-foreground`}>
           <span aria-hidden />
@@ -1022,6 +1083,7 @@ export default function PendingRequestsPage() {
         </Accordion>
         </div>
       </div>
+      </>
     );
   };
 
