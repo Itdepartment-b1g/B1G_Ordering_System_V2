@@ -96,6 +96,39 @@ function formatTypeName(type: string) {
   return type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
+/** Storage keys only allow a small ASCII set. "doña" becomes "dona". */
+function sanitizeStoragePathSegment(value: string): string {
+  return value
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\x00-\x7F]/g, '')
+    .replace(/[<>:"/\\|?*]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function sanitizeStorageFileExt(fileName: string): string {
+  const raw = fileName.split('.').pop() || 'jpg';
+  const ext = raw.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return ext || 'jpg';
+}
+
+/** MM-DD-YYYY and h-mmam/pm. Slashes would become extra folders; colons are unsafe in keys. */
+function paymentProofDateTime(now: Date): { dateStr: string; timeStr: string } {
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const year = now.getFullYear();
+  const hours = now.getHours();
+  const minutes = now.getMinutes();
+  const ampm = hours >= 12 ? 'pm' : 'am';
+  const displayHours = hours % 12 || 12;
+  return {
+    dateStr: `${month}-${day}-${year}`,
+    timeStr: `${displayHours}-${String(minutes).padStart(2, '0')}${ampm}`,
+  };
+}
+
 type MyOrdersStatusFilter = 'all' | 'pending' | 'approved' | 'rejected' | 'needs_revision';
 
 const MY_ORDERS_STATUS_LABELS: Record<MyOrdersStatusFilter, string> = {
@@ -1311,29 +1344,13 @@ export default function MyOrdersPage() {
       if (paymentMethod === 'BANK_TRANSFER') {
         // For bank transfer, use: bank-transfer/{bank_name}/{order_number}/filename
         if (orderNumber && selectedBank) {
-          const sanitizedBankName = selectedBank.name.replace(/[<>:"/\\|?*]/g, '').replace(/\s+/g, '-');
-          
-          // Format date: MM/DD/YYYY (e.g., "12/15/2025")
-          const now = new Date();
-          const dateStr = now.toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit'
-          }); // Format: MM/DD/YYYY
-
-          // Format time: H:MMam/pm (e.g., "1:30pm")
-          const hours = now.getHours();
-          const minutes = now.getMinutes();
-          const ampm = hours >= 12 ? 'pm' : 'am';
-          const displayHours = hours % 12 || 12; // Convert to 12-hour format, 0 becomes 12
-          const timeStr = `${displayHours}:${minutes.toString().padStart(2, '0')}${ampm}`;
-
-          // Generate filename: date_time.jpg (e.g., "12/15/2025_1:30pm.jpg")
-          const fileExt = paymentProofFile.name.split('.').pop() || 'jpg';
+          const sanitizedBankName = sanitizeStoragePathSegment(selectedBank.name).replace(/\s+/g, '-') || 'bank';
+          const { dateStr, timeStr } = paymentProofDateTime(new Date());
+          const fileExt = sanitizeStorageFileExt(paymentProofFile.name);
           fileName = `bank-transfer/${sanitizedBankName}/${orderNumber}/${dateStr}_${timeStr}.${fileExt}`;
         } else {
           // Fallback if order number not available yet
-          const fileExt = paymentProofFile.name.split('.').pop() || 'jpg';
+          const fileExt = sanitizeStorageFileExt(paymentProofFile.name);
           fileName = `BANK TRANSFER/payment-proof-${Date.now()}.${fileExt}`;
         }
       } else {
@@ -1347,39 +1364,15 @@ export default function MyOrdersPage() {
           paymentMethodFolder = 'CASH';
         }
 
-      // Sanitize client name and company for folder name
-      // Format: "Client Name _ Company Name" (with underscore separator)
-      const sanitizeForPath = (str: string) => {
-        return str
-          .trim()
-          .replace(/[<>:"/\\|?*]/g, '') // Remove invalid path characters
-          .replace(/\s+/g, ' ') // Replace multiple spaces with single space
-          .trim();
-      };
+        // Folder: "Client Name _ Company Name". Accents are folded so the key stays ASCII.
+        const cleanClientName = sanitizeStoragePathSegment(clientName) || 'client';
+        const cleanCompanyName = sanitizeStoragePathSegment(clientCompany || '');
+        const clientFolderName = cleanCompanyName
+          ? `${cleanClientName} _ ${cleanCompanyName}`
+          : cleanClientName;
 
-      const cleanClientName = sanitizeForPath(clientName);
-      const cleanCompanyName = sanitizeForPath(clientCompany || '');
-      const clientFolderName = cleanCompanyName
-        ? `${cleanClientName} _ ${cleanCompanyName}`
-        : cleanClientName;
-
-      // Format date: MM/DD/YYYY (e.g., "12/15/2025")
-      const now = new Date();
-      const dateStr = now.toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-      }); // Format: MM/DD/YYYY
-
-      // Format time: H:MMam/pm (e.g., "1:30pm")
-      const hours = now.getHours();
-      const minutes = now.getMinutes();
-      const ampm = hours >= 12 ? 'pm' : 'am';
-      const displayHours = hours % 12 || 12; // Convert to 12-hour format, 0 becomes 12
-      const timeStr = `${displayHours}:${minutes.toString().padStart(2, '0')}${ampm}`;
-
-      // Generate filename: date_time.jpg (e.g., "12/15/2025_1:30pm.jpg")
-      const fileExt = paymentProofFile.name.split('.').pop() || 'jpg';
+        const { dateStr, timeStr } = paymentProofDateTime(new Date());
+        const fileExt = sanitizeStorageFileExt(paymentProofFile.name);
         fileName = `${paymentMethodFolder}/${clientFolderName}/${dateStr}_${timeStr}.${fileExt}`;
       }
 
@@ -1550,42 +1543,20 @@ export default function MyOrdersPage() {
       let folderPath: string;
       
       if (split.method === 'BANK_TRANSFER' && split.bank) {
-        const sanitizedBankName = split.bank.replace(/[<>:"/\\|?*]/g, '').replace(/\s+/g, '-');
+        const sanitizedBankName = sanitizeStoragePathSegment(split.bank).replace(/\s+/g, '-') || 'bank';
         folderPath = `bank-transfer/${sanitizedBankName}/${orderNumber}`;
       } else {
-        // For GCASH, CASH, CHEQUE
-        const sanitizeForPath = (str: string) => {
-          return str
-            .trim()
-            .replace(/[<>:"/\\|?*]/g, '')
-            .replace(/\s+/g, ' ')
-            .trim();
-        };
-        
-        const cleanClientName = sanitizeForPath(clientName);
-        const cleanCompanyName = sanitizeForPath(clientCompany || '');
+        const cleanClientName = sanitizeStoragePathSegment(clientName) || 'client';
+        const cleanCompanyName = sanitizeStoragePathSegment(clientCompany || '');
         const clientFolderName = cleanCompanyName
           ? `${cleanClientName} _ ${cleanCompanyName}`
           : cleanClientName;
-        
+
         folderPath = `${split.method}/${clientFolderName}`;
       }
-      
-      // Format date and time
-      const now = new Date();
-      const dateStr = now.toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-      });
-      const hours = now.getHours();
-      const minutes = now.getMinutes();
-      const ampm = hours >= 12 ? 'pm' : 'am';
-      const displayHours = hours % 12 || 12;
-      const timeStr = `${displayHours}:${minutes.toString().padStart(2, '0')}${ampm}`;
-      
-      // Generate filename with split indicator
-      const fileExt = file.name.split('.').pop() || 'jpg';
+
+      const { dateStr, timeStr } = paymentProofDateTime(new Date());
+      const fileExt = sanitizeStorageFileExt(file.name);
       const fileName = `${folderPath}/${dateStr}_${timeStr}_split${index + 1}.${fileExt}`;
       
       // Convert file to blob and upload
