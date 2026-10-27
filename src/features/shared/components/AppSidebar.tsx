@@ -297,6 +297,8 @@ const keyAccountManagerMenuItems: MenuItem[] = [
 const agentMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
   { title: 'My Inventory', url: '/my-inventory', icon: Package },
+  { title: 'Return History', url: '/inventory/my-returns', icon: RotateCcw },
+  { title: 'Allocation History', url: '/my-allocation-history', icon: Package2Icon },
   { title: 'Request Inventory', url: '/inventory/mobile-request', icon: Send },
   { title: 'Price Agreements', url: '/inventory/price-agreements', icon: CheckCircle2 },
   { title: 'Price History', url: '/inventory/price-history', icon: History },
@@ -326,6 +328,7 @@ const leaderMenuItems: MenuItem[] = [
       { title: 'My Inventory', url: '/my-inventory', icon: Package },
       { title: 'Request Stock', url: '/leader-inventory/request', icon: Send },
       { title: 'Teams Inventory', url: '/leader-inventory', icon: Crown },
+      { title: 'Team Returns', url: '/inventory/leader/returns', icon: RotateCcw },
       { title: 'Pending Requests', url: '/inventory/pending-requests', icon: Send },
       { title: 'Team Remittances', url: '/inventory/team-remittances', icon: ArrowLeft },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: DollarSign },
@@ -428,6 +431,7 @@ const managerMenuItems: MenuItem[] = [
     hasSubmenu: true,
     submenu: [
       { title: 'Team Inventory', url: '/manager-inventory', icon: Crown },
+      { title: 'Team Returns', url: '/inventory/leader/returns', icon: RotateCcw },
       { title: 'Team Requests', url: '/manager-requests', icon: Send },
       { title: 'Team Remittances', url: '/manager-remittances', icon: ArrowLeft },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: DollarSign },

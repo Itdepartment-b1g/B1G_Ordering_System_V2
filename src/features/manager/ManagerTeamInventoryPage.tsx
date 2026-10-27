@@ -31,7 +31,7 @@ import {
 } from '@/components/ui/dialog';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import ReturnRequestsSection from '@/features/inventory/components/ReturnRequestsSection';
+import { LeaderAgentReturnsLink } from '@/features/inventory/LeaderAgentReturnsPage';
 
 interface DetailedInventoryItem {
     id: string;
@@ -349,8 +349,7 @@ export default function ManagerTeamInventoryPage() {
                 </Card>
             </div>
 
-            {/* Pending Return Requests (when mobile sales reports directly to manager) */}
-            <ReturnRequestsSection />
+            <LeaderAgentReturnsLink />
 
             {loading ? (
                 <div className="flex justify-center py-20">

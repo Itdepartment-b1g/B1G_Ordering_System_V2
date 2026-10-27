@@ -51,6 +51,8 @@ const adminMenuItems: MenuItem[] = [
 const agentMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/dashboard', description: 'Personal snapshot of today’s targets, orders, and performance.' },
   { title: 'My Inventory', url: '/my-inventory', description: 'View stock currently assigned to you and its status.' },
+  { title: 'Return History', url: '/inventory/my-returns', description: 'Review the stock you returned to your team leader.' },
+  { title: 'Allocation History', url: '/my-allocation-history', description: 'See the stock your team leader allocated to you.' },
   { title: 'Request Inventory', url: '/inventory/request', description: 'Submit stock requests to your team leader for approval.' },
   { title: 'Mobile Sales Stock', url: '/inventory/mobile-request', description: 'Request stock specifically for mobile sales inventory.' },
   { title: 'Price Agreements', url: '/inventory/price-agreements', description: 'Confirm company Selling / DSP / RSP changes before your bag prices update.' },
@@ -70,6 +72,7 @@ const leaderMenuItems: MenuItem[] = [
   { title: 'Inventory', url: '/inventory', description: 'Leader-level inventory and stock controls.', hasSubmenu: true, submenu: [
     { title: 'My Inventory', url: '/my-inventory', description: 'View stock allocated directly to you as a leader.' },
     { title: 'Teams Inventory', url: '/leader-inventory', description: 'See and manage inventory held by your team members.' },
+    { title: 'Team Returns', url: '/inventory/leader/returns', description: 'Review stock mobile sales returned to you. Approve, reject, and print approved returns.' },
     { title: 'Pending Requests', url: '/inventory/pending-requests', description: 'Approve or reject inventory requests from your agents.' },
     { title: 'Team Remittances', url: '/inventory/team-remittances', description: 'Review stock and cash remittances submitted by your team.' },
     { title: 'Cash Deposits', url: '/inventory/cash-deposits', description: 'Record and review cash/cheque deposits for your team.' },
@@ -79,6 +82,7 @@ const leaderMenuItems: MenuItem[] = [
     { title: 'Transfer Shortages', url: '/inventory/tl-transfer-shortages', description: 'Investigate TL-to-TL stock that was dispatched but arrived short.' },
     { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', description: 'Return your allocated stock to the linked warehouse for inspection (good/damaged + batch).' },
     { title: 'Client Order Returns', url: '/client-order-returns', description: 'History of client returns posted against ORD numbers (CR-…).' },
+    { title: 'Returns to Super Admin', url: '/inventory/main/returns', description: 'Review the stock you returned from your inventory to the super admin.' },
     { title: 'Price Agreements', url: '/inventory/price-agreements', description: 'Confirm company Selling / DSP / RSP changes before bags update.' },
     { title: 'Price History', url: '/inventory/price-history', description: 'Flattened company price change history per SKU.' },
     { title: 'How to use?', url: '/leader-manual', description: 'Open the team leader manual and usage guides.' },
@@ -108,6 +112,7 @@ const managerMenuItems: MenuItem[] = [
   { title: 'My Team', url: '/manager-teams', description: 'See all leaders and agents reporting to you.' },
   { title: 'Inventory', url: '/inventory', description: 'Manager-level overview of team inventory and flows.', hasSubmenu: true, submenu: [
     { title: 'Team Inventory', url: '/manager-inventory', description: 'Monitor inventory across all your teams.' },
+    { title: 'Team Returns', url: '/inventory/leader/returns', description: 'Review stock mobile sales returned to you. Approve, reject, and print approved returns.' },
     { title: 'Team Requests', url: '/manager-requests', description: 'Review and manage stock requests at the manager level.' },
     { title: 'Team Remittances', url: '/manager-remittances', description: 'Oversee stock and cash remittances from teams.' },
     { title: 'Cash Deposits', url: '/inventory/cash-deposits', description: 'Track deposits impacting your teams and orders.' },

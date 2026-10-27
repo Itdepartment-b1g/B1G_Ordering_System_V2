@@ -2,14 +2,14 @@ import { useMemo, useState } from 'react';
 import AgentInventoryList from '@/features/agent-inventory/components/AgentInventoryList';
 import {
   UNASSIGNED_TEAM_ID,
-  getPersonTeamId,
   fetchCompanyAgentInventory,
+  getPersonTeamId,
   useCompanyAgentInventory,
   type AccountingAgentSummary,
 } from '@/features/agent-inventory/hooks/useCompanyAgentInventory';
+import { fetchCompanyInventorySales } from '@/features/agent-inventory/hooks/fetchCompanyInventorySales';
 import { exportAgentInventoryExcel } from '@/features/agent-inventory/utils/exportAgentInventoryExcel';
 import { exportDetailedInventoryExcel } from '@/features/agent-inventory/utils/exportDetailedInventoryExcel';
-import { fetchCompanyInventorySales } from '@/features/agent-inventory/hooks/fetchCompanyInventorySales';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';

@@ -1,10 +1,13 @@
 export { default as MainInventoryPage } from './MainInventoryPage';
+export { default as MainInventoryReturnHistoryPage } from './MainInventoryReturnHistoryPage';
+export { default as MobileSalesReturnHistoryPage } from './MobileSalesReturnHistoryPage';
 export { default as WarehouseInventoryDashboardPage } from './WarehouseInventoryDashboardPage';
 export { default as SubWarehousesPage } from './SubWarehousesPage';
 export { default as SubWarehouseStockRequestPage } from './SubWarehouseStockRequestPage';
 export { default as MainWarehouseSubStockRequestsPage } from './MainWarehouseSubStockRequestsPage';
 export { default as StockAllocationsPage } from './StockAllocationsPage';
 export { default as LeaderInventoryPage } from './LeaderInventoryPage';
+export { default as LeaderAgentReturnsPage } from './LeaderAgentReturnsPage';
 export { default as MyInventoryPage } from './MyInventoryPage';
 export { default as RemittedStocksPage } from './RemittedStocksPage';
 export { default as WarehouseDisposalsPage } from './WarehouseDisposalsPage';

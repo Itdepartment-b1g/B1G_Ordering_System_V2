@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,7 +10,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Search, Package, ChevronDown, ArrowLeft, FileSignature, ShoppingCart, Loader2, CheckCircle2, ClipboardCheck, PackageMinus, Info } from 'lucide-react';
+import { Search, Package, ChevronDown, ArrowLeft, FileSignature, ShoppingCart, Loader2, CheckCircle2, ClipboardCheck, PackageMinus, Info, FileDown, FileSpreadsheet } from 'lucide-react';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -23,6 +24,8 @@ import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import { ReturnInventoryDialog } from './components/ReturnInventoryDialog';
 import { ReturnToMainDialog } from './components/ReturnToMainDialog';
 import MyReturnRequestsSection from './components/MyReturnRequestsSection';
+import { exportMyInventoryPdf } from './utils/exportMyInventoryPdf';
+import { exportMyInventoryExcel } from './utils/exportMyInventoryExcel';
 import type { AgentBrand, AgentVariant, RemittanceOrder, BankOrderNote } from './types';
 import {
   CLIENT_ORDER_RETURNS_QUERY_KEY,
@@ -244,6 +247,7 @@ export default function MyInventory() {
     totalReturned: number;
     returns: PreviewClientReturn[];
   } | null>(null);
+  const [exportingExcel, setExportingExcel] = useState(false);
 
   // Confirmation checkboxes for each section
   const [unsoldConfirmed, setUnsoldConfirmed] = useState(false);
@@ -446,6 +450,83 @@ export default function MyInventory() {
 
   const handleBrandSort = (key: InventoryBrandSortKey) => {
     setBrandSortState((current) => getNextTableSortCycleState(current, key));
+  };
+
+  const inventoryExportLines = () =>
+    filteredBrands.flatMap((brand) =>
+      Array.from(brand.variantsByType?.entries?.() ?? []).flatMap(([type, variants]) =>
+        (variants as any[]).map((variant) => ({
+          brandId: String(brand.id),
+          brandName: brand.name,
+          variantName: variant.name,
+          variantType: String(variant.variantType || type || ''),
+          quantity: Number(variant.stock) || 0,
+        }))
+      )
+    );
+
+  const handleExportPdf = () => {
+    const lines = inventoryExportLines().map(({ brandName, variantName, variantType, quantity }) => ({
+      brandName,
+      variantName,
+      variantType,
+      quantity,
+    }));
+
+    if (lines.length === 0) {
+      toast({
+        title: 'Nothing to export',
+        description: searchQuery ? 'No inventory matches this search.' : 'You have no stock to print.',
+      });
+      return;
+    }
+
+    try {
+      exportMyInventoryPdf({
+        heldByName: user?.full_name,
+        lines,
+      });
+    } catch (error) {
+      toast({
+        title: 'Could not open print view',
+        description: error instanceof Error ? error.message : 'Try again.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleExportExcel = async () => {
+    const lines = inventoryExportLines();
+    if (lines.length === 0) {
+      toast({
+        title: 'Nothing to export',
+        description: searchQuery ? 'No inventory matches this search.' : 'You have no stock to export.',
+      });
+      return;
+    }
+
+    setExportingExcel(true);
+    try {
+      await exportMyInventoryExcel({
+        heldByName: user?.full_name,
+        lines: lines.map((line) => ({
+          brandId: line.brandId,
+          brandName: line.brandName,
+          variantName: line.variantName,
+          variantType: line.variantType,
+          qty: line.quantity,
+        })),
+      });
+      toast({ title: 'Export complete', description: 'Inventory exported to Excel.' });
+    } catch (error) {
+      toast({
+        title: 'Export failed',
+        description: error instanceof Error ? error.message : 'Could not export inventory to Excel.',
+        variant: 'destructive',
+      });
+    } finally {
+      setExportingExcel(false);
+    }
   };
 
   const getTotalVariants = () => {
@@ -979,24 +1060,36 @@ export default function MyInventory() {
             </Button>
           )}
           {user?.role === 'team_leader' ? (
-            <Button
-              onClick={() => setReturnToMainDialogOpen(true)}
-              variant="outline"
-              className="gap-2 flex-1 sm:flex-initial"
-            >
-              <PackageMinus className="h-4 w-4" />
-              Return to Main
-            </Button>
+            <>
+              <Button
+                onClick={() => setReturnToMainDialogOpen(true)}
+                variant="outline"
+                className="gap-2 flex-1 sm:flex-initial"
+              >
+                <PackageMinus className="h-4 w-4" />
+                Return to Main
+              </Button>
+              <Button variant="outline" className="flex-1 sm:flex-initial" asChild>
+                <Link to="/inventory/main/returns">Return to main history</Link>
+              </Button>
+            </>
           ) : (
-            <Button
-              onClick={() => setReturnDialogOpen(true)}
-              variant="outline"
-              className="gap-2 flex-1 sm:flex-initial"
-              disabled={!leaderId}
-            >
-              <PackageMinus className="h-4 w-4" />
-              Return
-            </Button>
+            <>
+              <Button
+                onClick={() => setReturnDialogOpen(true)}
+                variant="outline"
+                className="gap-2 flex-1 sm:flex-initial"
+                disabled={!leaderId}
+              >
+                <PackageMinus className="h-4 w-4" />
+                Return
+              </Button>
+              {(user?.role === 'mobile_sales' || user?.role === 'sales_agent') && (
+                <Button variant="outline" className="flex-1 sm:flex-initial" asChild>
+                  <Link to="/inventory/my-returns">Your return history</Link>
+                </Button>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -1030,6 +1123,15 @@ export default function MyInventory() {
         <CardHeader className="pb-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <h2 className="font-semibold">Inventory</h2>
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+            <Button variant="outline" className="gap-2" onClick={handleExportPdf}>
+              <FileDown className="h-4 w-4" />
+              Export PDF
+            </Button>
+            <Button variant="outline" className="gap-2" onClick={() => void handleExportExcel()} disabled={exportingExcel}>
+              {exportingExcel ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
+              Export Excel
+            </Button>
             <div className="relative w-full sm:w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
@@ -1038,6 +1140,7 @@ export default function MyInventory() {
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-10"
               />
+            </div>
             </div>
           </div>
         </CardHeader>
@@ -1586,6 +1689,7 @@ export default function MyInventory() {
       {user?.role !== 'team_leader' && <MyReturnRequestsSection />}
 
       {/* Remit Inventory Dialog */}
+
       <Dialog open={remitDialogOpen} onOpenChange={setRemitDialogOpen}>
         <DialogContent className="w-[95vw] max-w-4xl h-[90vh] md:h-auto md:max-h-[90vh] overflow-hidden flex flex-col p-0">
           <DialogHeader className="px-4 pt-6 pb-4 md:px-6">

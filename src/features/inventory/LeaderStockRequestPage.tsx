@@ -1,31 +1,24 @@
 
 import { useState, useMemo } from 'react';
-import { sendNotification } from '@/features/shared/lib/notification.helpers';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from '@/components/ui/dialog';
 import {
   Package,
-  Send,
   Clock,
   CheckCircle2,
   XCircle,
-  ArrowUp,
   Loader2,
   Plus,
-  Search,
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { useMyRequests, useMainInventorySummary, Request, GroupedRequest } from './requestHooks';
 import { useQueryClient } from '@tanstack/react-query';
 
-import { CreateStockRequestDialog } from './components/CreateStockRequestDialog'; // New Import
+import { CreateStockRequestDialog } from './components/CreateStockRequestDialog';
+import { StockRequestHistoryList } from './components/StockRequestHistoryList';
+import { exportLeaderStockRequestPdf } from './utils/exportLeaderStockRequestPdf';
 
 export default function LeaderStockRequestPage() {
   const { user } = useAuth();
@@ -40,7 +33,6 @@ export default function LeaderStockRequestPage() {
   const loading = summaryLoading || requestsLoading;
 
 
-  const [searchQuery, setSearchQuery] = useState('');
   const [formOpen, setFormOpen] = useState(false);
 
 
@@ -103,6 +95,51 @@ export default function LeaderStockRequestPage() {
         return <Badge variant="secondary" className="bg-red-50 text-red-700 border-red-200"><XCircle className="h-3 w-3 mr-1" />Denied</Badge>;
       default:
         return <Badge>{status}</Badge>;
+    }
+  };
+
+  const printStatusLabel = (status: string) => {
+    switch (status) {
+      case 'approved_by_leader':
+        return 'Waiting for Admin';
+      case 'approved_by_admin':
+      case 'fulfilled':
+        return 'Approved';
+      case 'rejected':
+        return 'Denied';
+      case 'mixed':
+        return 'Mixed';
+      default:
+        return status?.trim() || 'Submitted';
+    }
+  };
+
+  const handlePrint = async (group: GroupedRequest) => {
+    try {
+      const denialReason = group.requests
+        .map(req => req.denial_reason?.trim())
+        .find(Boolean) ?? null;
+
+      await exportLeaderStockRequestPdf({
+        companyId: user?.company_id,
+        requestNumber: group.id.startsWith('SR-') ? group.id : '—',
+        statusLabel: printStatusLabel(group.status),
+        requestedAt: group.requested_at,
+        requestedByName: group.requests[0]?.requested_by_name || user?.full_name || null,
+        notes: group.requester_notes,
+        denialReason,
+        lines: group.requests.map(req => ({
+          brandName: req.variant?.brand?.name ?? null,
+          variantName: req.variant?.name ?? null,
+          requestedQuantity: req.requested_quantity,
+        })),
+      });
+    } catch (error) {
+      toast({
+        title: 'Could not open print view',
+        description: error instanceof Error ? error.message : 'Try again.',
+        variant: 'destructive',
+      });
     }
   };
 
@@ -192,79 +229,13 @@ export default function LeaderStockRequestPage() {
         </Card>
       </div>
 
-      {/* Requests List */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Request History</CardTitle>
-              <CardDescription>View your requests to Head Office</CardDescription>
-            </div>
-            <div className="flex gap-2">
-               <div className="relative w-full sm:w-64">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input 
-                  placeholder="Search requests..." 
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9 h-9"
-                />
-              </div>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            {groupedRequests.length === 0 ? (
-               <div className="text-center py-12 text-muted-foreground">
-                 <Package className="h-12 w-12 mx-auto mb-3 opacity-20" />
-                 <p>No stock requests found</p>
-               </div>
-            ) : (
-              groupedRequests
-                .filter(group => {
-                   if (!searchQuery) return true;
-                   const searchLower = searchQuery.toLowerCase();
-                   // Simple search on notes or status
-                   return group.requester_notes?.toLowerCase().includes(searchLower) || group.status.toLowerCase().includes(searchLower);
-                })
-                .map((group) => (
-                <Card key={group.id} className="border border-border/50">
-                  <div className="p-4 flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center">
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        {getStatusBadge(group.status)}
-                        <span className="text-xs text-muted-foreground">
-                          {new Date(group.requested_at).toLocaleDateString()} at {new Date(group.requested_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                        </span>
-                      </div>
-                      <p className="font-medium text-sm">
-                        Requesting {group.totalQuantity} items across {group.productCount} products
-                        {group.id.startsWith('SR-') && <span className="text-xs text-muted-foreground ml-2">({group.id})</span>}
-                      </p>
-                      {group.requester_notes && (
-                        <p className="text-xs text-muted-foreground mt-1 line-clamp-1">"{group.requester_notes}"</p>
-                      )}
-                    </div>
-                    {/* Edit button removed as per user request */}
-                  </div>
-                  {/* Expanded Items Preview - Optional, keeping detailed item view simple for now */}
-                   <div className="px-4 pb-4 pt-0 border-t bg-muted/20 mt-2">
-                       <div className="pt-2 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                         {group.requests.map(req => (
-                           <div key={req.id} className="text-xs flex justify-between p-2 bg-background rounded border">
-                              <span className="truncate pr-2">{req.variant?.brand?.name} - {req.variant?.name}</span>
-                              <span className="font-semibold">{req.requested_quantity}</span>
-                           </div>
-                         ))}
-                       </div>
-                   </div>
-                </Card>
-              ))
-            )}
-          </div>
-        </CardContent>
-      </Card>
+      <StockRequestHistoryList
+        groups={groupedRequests}
+        renderStatus={getStatusBadge}
+        onPrint={handlePrint}
+        title="Request History"
+        description="View your requests to Head Office"
+      />
     </div>
   );
 }
