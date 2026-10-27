@@ -371,6 +371,8 @@ export function LeaderAgentReturnsLink() {
   const { data: pendingCount = 0 } = useQuery({
     queryKey: [RETURNS_QUERY_KEY, 'pending-count', user?.id],
     enabled: !!user?.id,
+    staleTime: 0,
+    refetchOnMount: 'always',
     queryFn: async () => {
       const { count, error } = await supabase
         .from('inventory_returns')
@@ -425,13 +427,36 @@ export default function LeaderAgentReturnsPage() {
   const { data: returns = [], isLoading } = useQuery({
     queryKey: [RETURNS_QUERY_KEY, user?.id],
     enabled: !!user?.id,
+    staleTime: 0,
+    refetchOnMount: 'always',
     queryFn: () => fetchLeaderReturns(user!.id),
   });
 
   const visible = statusFilter === 'all' ? returns : returns.filter((row) => row.status === statusFilter);
 
-  const refresh = async () => {
-    await queryClient.invalidateQueries({ queryKey: [RETURNS_QUERY_KEY] });
+  const refresh = async (returnId: string, nextStatus: ReturnStatus, nextRejectionReason: string | null = null) => {
+    queryClient.setQueryData<AgentReturn[]>([RETURNS_QUERY_KEY, user?.id], (current) =>
+      (current ?? []).map((row) =>
+        row.id === returnId
+          ? {
+              ...row,
+              status: nextStatus,
+              rejectionReason: nextStatus === 'rejected' ? nextRejectionReason : row.rejectionReason,
+            }
+          : row
+      )
+    );
+    setDetailRow((current) =>
+      current?.id === returnId
+        ? {
+            ...current,
+            status: nextStatus,
+            rejectionReason: nextStatus === 'rejected' ? nextRejectionReason : current.rejectionReason,
+          }
+        : current
+    );
+    await queryClient.refetchQueries({ queryKey: [RETURNS_QUERY_KEY] });
+    await queryClient.invalidateQueries({ queryKey: ['mobile-sales-return-history'] });
   };
 
   const handleApprove = async () => {
@@ -441,8 +466,9 @@ export default function LeaderAgentReturnsPage() {
     }
     setProcessing(true);
     try {
+      const returnId = selected.id;
       const { data, error } = await supabase.rpc('approve_return_inventory_request', {
-        p_return_id: selected.id,
+        p_return_id: returnId,
         p_acknowledged: true,
       });
       if (error) throw error;
@@ -451,7 +477,7 @@ export default function LeaderAgentReturnsPage() {
       setApproveOpen(false);
       setSelected(null);
       setAcknowledged(false);
-      await refresh();
+      await refresh(returnId, 'approved');
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to approve';
       toast({ title: 'Error', description: message, variant: 'destructive' });
@@ -464,17 +490,19 @@ export default function LeaderAgentReturnsPage() {
     if (!selected) return;
     setProcessing(true);
     try {
+      const returnId = selected.id;
+      const nextRejectionReason = rejectionReason.trim() || null;
       const { data, error } = await supabase.rpc('reject_return_inventory_request', {
-        p_return_id: selected.id,
-        p_reason: rejectionReason || null,
+        p_return_id: returnId,
+        p_reason: nextRejectionReason,
       });
       if (error) throw error;
       if (data && !data.success) throw new Error(data.message);
-      toast({ title: 'Rejected', description: 'Return request rejected.' });
+      toast({ title: 'Rejected', description: data?.message || "Return request rejected. Held stock is back on the agent's sellable inventory." });
       setRejectOpen(false);
       setSelected(null);
       setRejectionReason('');
-      await refresh();
+      await refresh(returnId, 'rejected', nextRejectionReason);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to reject';
       toast({ title: 'Error', description: message, variant: 'destructive' });
@@ -649,7 +677,7 @@ export default function LeaderAgentReturnsPage() {
           <DialogHeader>
             <DialogTitle>Approve Return Request</DialogTitle>
             <DialogDescription>
-              Review this return before approving. Approving will transfer the inventory from {selected?.returnedBy} to you.
+              Review this return before approving. Approving moves the held quantity from {selected?.returnedBy} into your stock.
             </DialogDescription>
           </DialogHeader>
           {selected && <ReturnPreview row={selected} />}
@@ -680,7 +708,7 @@ export default function LeaderAgentReturnsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Reject Return Request</AlertDialogTitle>
             <AlertDialogDescription>
-              Review this return before rejecting. Rejecting will keep the inventory with {selected?.returnedBy}.
+              Review this return before rejecting. Rejecting puts the held quantity back on {selected?.returnedBy}&apos;s sellable stock.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {selected && <ReturnPreview row={selected} />}

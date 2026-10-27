@@ -9,6 +9,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/features/auth';
 import { useAgentInventory } from '../hooks';
 import { supabase } from '@/lib/supabase';
@@ -33,6 +34,7 @@ export function ReturnInventoryDialog({
   const { user } = useAuth();
   const { agentBrands } = useAgentInventory();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   // Form states
   const [returnMode, setReturnMode] = useState<'full' | 'partial'>('full');
@@ -240,7 +242,7 @@ export function ReturnInventoryDialog({
 
       toast({
         title: 'Request Submitted!',
-        description: `Return request for ${data.total_quantity} units (${data.items_returned} items) sent to ${leaderName || 'your leader'}. Inventory will transfer once approved.`,
+        description: `Return request for ${data.total_quantity} units (${data.items_returned} items) sent to ${leaderName || 'your leader'}. Those units are held and cannot be ordered unless the return is rejected.`,
         variant: 'default'
       });
 
@@ -253,6 +255,10 @@ export function ReturnInventoryDialog({
       setReasonNotes('');
       setSelectedItems([]);
       setSignatureDataUrl(null);
+
+      await queryClient.invalidateQueries({ queryKey: ['mobile-sales-return-history', user!.id] });
+      await queryClient.invalidateQueries({ queryKey: ['agent-inventory'] });
+      await queryClient.invalidateQueries({ queryKey: ['my-inventory'] });
 
       // Refresh page to update inventory
       setTimeout(() => window.location.reload(), 1000);
@@ -278,7 +284,7 @@ export function ReturnInventoryDialog({
               Submit Return Request
             </DialogTitle>
             <DialogDescription>
-              Request to return inventory to {leaderName || 'your leader'}. Your team leader must approve before items are transferred.
+              Return inventory to {leaderName || 'your leader'}. The quantity is held as soon as you submit, so it cannot be used on a new order. It is added to your team leader only after approval, and it comes back to you only if they reject the return.
             </DialogDescription>
           </DialogHeader>
 
@@ -449,7 +455,7 @@ export function ReturnInventoryDialog({
             <Alert>
               <AlertCircle className="h-4 w-4" />
               <AlertDescription>
-                Your return request will be sent to {leaderName || 'your leader'} for approval. Inventory stays with you until approved.
+                Your return request will be sent to {leaderName || 'your leader'} for approval. The quantity is held immediately and is unavailable for new orders. It returns to your sellable stock only if the request is rejected.
               </AlertDescription>
             </Alert>
           </div>

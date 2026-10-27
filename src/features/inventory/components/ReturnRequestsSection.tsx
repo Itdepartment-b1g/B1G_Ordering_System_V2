@@ -216,7 +216,7 @@ export default function ReturnRequestsSection() {
       if (error) throw error;
       if (data && !data.success) throw new Error(data.message);
 
-      toast({ title: 'Rejected', description: 'Return request rejected.' });
+      toast({ title: 'Rejected', description: data?.message || "Return request rejected. Held stock is back on the agent's sellable inventory." });
       setRejectDialogOpen(false);
       setSelectedReturn(null);
       setRejectionReason('');
@@ -367,7 +367,7 @@ export default function ReturnRequestsSection() {
           <DialogHeader>
             <DialogTitle>Approve Return Request</DialogTitle>
             <DialogDescription>
-              Approving will transfer the inventory from {selectedReturn?.agent?.full_name} to you.
+              Approving moves the held quantity from {selectedReturn?.agent?.full_name} into your stock.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -400,7 +400,7 @@ export default function ReturnRequestsSection() {
           <AlertDialogHeader>
             <AlertDialogTitle>Reject Return Request</AlertDialogTitle>
             <AlertDialogDescription>
-              Rejecting will keep the inventory with {selectedReturn?.agent?.full_name}. You can optionally provide a reason.
+              Rejecting puts the held quantity back on {selectedReturn?.agent?.full_name}&apos;s sellable stock. You can optionally provide a reason.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="py-4">

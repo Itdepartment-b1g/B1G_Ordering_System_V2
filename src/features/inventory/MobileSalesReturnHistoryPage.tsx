@@ -1,8 +1,18 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
-import { Eye, Loader2, MoreVertical, Printer, RotateCcw, Search, Users } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronRight,
+  Eye,
+  Loader2,
+  MoreVertical,
+  Printer,
+  RotateCcw,
+  Search,
+  Users,
+} from 'lucide-react';
 import { useAuth } from '@/features/auth';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -16,7 +26,6 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import {
   DateRangeFilterPopover,
   type DateRangeFilterValue,
@@ -73,6 +82,14 @@ function variantTypeLabel(type: string | null | undefined): string | null {
   return type;
 }
 
+function variantTypeBadgeClass(type: string | null | undefined): string {
+  const key = type?.trim().toLowerCase();
+  if (key === 'flavor') return 'border-purple-300 bg-purple-100 text-purple-800';
+  if (key === 'battery') return 'border-green-300 bg-green-100 text-green-800';
+  if (key === 'foc') return 'border-orange-300 bg-orange-100 text-orange-800';
+  return '';
+}
+
 function lineLabel(line: ReturnLine): string {
   const brand = line.brandName?.trim();
   const variant = line.variantName?.trim() || 'Item';
@@ -89,54 +106,121 @@ function compareLines(a: ReturnLine, b: ReturnLine): number {
   return (a.variantType || '').localeCompare(b.variantType || '', undefined, { sensitivity: 'base' });
 }
 
-function statusBadge(status: ReturnStatus) {
-  if (status === 'approved') return <Badge>Approved</Badge>;
-  if (status === 'rejected') return <Badge variant="destructive">Rejected</Badge>;
-  return <Badge variant="secondary">Pending</Badge>;
+function statusLabel(status: ReturnStatus): string {
+  if (status === 'approved') return 'Approved';
+  if (status === 'rejected') return 'Rejected';
+  return 'Pending';
 }
 
-const returnColumns =
-  'grid grid-cols-[1.25rem_minmax(8rem,1.1fr)_minmax(8rem,1.1fr)_11rem_6.5rem_7.5rem_minmax(8rem,1.2fr)_2.75rem] items-center gap-x-3 px-3';
+function statusBadge(status: ReturnStatus) {
+  const label = statusLabel(status);
+  if (status === 'approved') return <Badge>{label}</Badge>;
+  if (status === 'rejected') return <Badge variant="destructive">{label}</Badge>;
+  return <Badge variant="secondary">{label}</Badge>;
+}
+
+function BrandReturnTables({ lines }: { lines: ReturnLine[] }) {
+  const brands = useMemo(() => {
+    const map = new Map<string, ReturnLine[]>();
+    lines.forEach((line) => {
+      const name = line.brandName?.trim() || 'Unknown brand';
+      const list = map.get(name) ?? [];
+      list.push(line);
+      map.set(name, list);
+    });
+    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [lines]);
+
+  return (
+    <div className="space-y-4">
+      {brands.map(([brandName, brandLines]) => (
+        <div key={brandName} className="overflow-hidden rounded-md border bg-white">
+          <div className="border-b bg-muted/40 px-4 py-2.5 font-semibold">{brandName}</div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Variant</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead className="text-right">Qty</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {brandLines.map((line) => {
+                const label = variantTypeLabel(line.variantType);
+                return (
+                  <TableRow key={line.variantId}>
+                    <TableCell className="break-words">{line.variantName}</TableCell>
+                    <TableCell>
+                      {label ? (
+                        <Badge variant="outline" className={`text-[10px] ${variantTypeBadgeClass(line.variantType)}`}>
+                          {label}
+                        </Badge>
+                      ) : (
+                        '—'
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">{line.quantity.toLocaleString()}</TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function ReturnDetails({ row }: { row: MyReturn }) {
   return (
-    <div className="space-y-3 rounded-md border bg-muted/30 p-3">
-      <p className="text-sm">
-        <span className="font-medium">Reason of returned: </span>
-        <span className="text-muted-foreground">{row.reason.trim() || '—'}</span>
+    <div>
+      <p className="mb-3 text-sm">
+        <span className="font-medium">Reason of returned:</span>{' '}
+        <span className="text-muted-foreground">{row.reason || '—'}</span>
       </p>
       {row.status === 'rejected' && row.rejectionReason && (
-        <p className="text-sm">
-          <span className="font-medium">Rejection reason: </span>
+        <p className="mb-3 text-sm">
+          <span className="font-medium">Rejection reason:</span>{' '}
           <span className="text-muted-foreground">{row.rejectionReason}</span>
         </p>
       )}
-      <div className="space-y-2 md:hidden">
-        {row.lines.map((line) => (
-          <div key={line.variantId} className="rounded-md border bg-background p-2 text-sm">
-            <div className="font-medium leading-snug">{lineLabel(line)}</div>
-            <div className="mt-1 text-right text-xs font-semibold">{line.quantity.toLocaleString()}</div>
-          </div>
-        ))}
-      </div>
-      <div className="hidden overflow-x-auto md:block">
-        <Table className="min-w-[36rem]">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Product</TableHead>
-              <TableHead className="text-right">Qty</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {row.lines.map((line) => (
-              <TableRow key={line.variantId}>
-                <TableCell className="whitespace-nowrap font-medium">{lineLabel(line)}</TableCell>
-                <TableCell className="text-right tabular-nums">{line.quantity.toLocaleString()}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+      <BrandReturnTables lines={row.lines} />
+    </div>
+  );
+}
+
+function ReturnRowActions({
+  row,
+  onView,
+  onPrint,
+  showView = false,
+}: {
+  row: MyReturn;
+  onView?: (row: MyReturn) => void;
+  onPrint: (row: MyReturn) => void;
+  showView?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-end" onClick={(event) => event.stopPropagation()}>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label="Return actions">
+            <MoreVertical className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-40">
+          {showView && onView && (
+            <DropdownMenuItem onClick={() => onView(row)}>
+              <Eye className="mr-2 h-4 w-4" />
+              View details
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem onClick={() => onPrint(row)}>
+            <Printer className="mr-2 h-4 w-4" />
+            Print
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }
@@ -150,11 +234,14 @@ export default function MobileSalesReturnHistoryPage() {
   const [statusTab, setStatusTab] = useState<'all' | 'pending' | 'approved'>('all');
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [detailRow, setDetailRow] = useState<MyReturn | null>(null);
 
   const { data: returns = [], isLoading } = useQuery({
     queryKey: ['mobile-sales-return-history', user?.id],
     enabled: !!user?.id,
+    staleTime: 0,
+    refetchOnMount: 'always',
     queryFn: async () => {
       const { data, error } = await supabase
         .from('inventory_returns')
@@ -268,7 +355,7 @@ export default function MobileSalesReturnHistoryPage() {
       return (
         row.returnedTo.toLowerCase().includes(query) ||
         row.reason.toLowerCase().includes(query) ||
-        row.status.includes(query) ||
+        statusLabel(row.status).toLowerCase().includes(query) ||
         row.lines.some(
           (line) =>
             line.brandName.toLowerCase().includes(query) ||
@@ -286,34 +373,12 @@ export default function MobileSalesReturnHistoryPage() {
 
   const returnedByName = user?.full_name?.trim() || 'You';
 
-  const renderActions = (row: MyReturn) => (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label="Return actions">
-          <MoreVertical className="h-4 w-4" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-40">
-        <DropdownMenuItem onClick={() => setDetailRow(row)}>
-          <Eye className="mr-2 h-4 w-4" />
-          View details
-        </DropdownMenuItem>
-        {row.status === 'approved' && (
-          <DropdownMenuItem onClick={() => printReturn(row)}>
-            <Printer className="mr-2 h-4 w-4" />
-            Print
-          </DropdownMenuItem>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-
   const printReturn = (row: MyReturn) => {
     exportMainInventoryReturnPdf({
       returnedBy: user?.full_name || 'Mobile Sales',
       returnedTo: row.returnedTo,
       returnedAt: row.returnedAt,
-      status: row.status === 'approved' ? 'Approved' : row.status === 'rejected' ? 'Rejected' : 'Pending',
+      status: statusLabel(row.status),
       reason: row.reason,
       lines: row.lines.map((line) => ({
         brandName: line.brandName,
@@ -375,7 +440,7 @@ export default function MobileSalesReturnHistoryPage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <RotateCcw className="h-5 w-5" />
+            <Users className="h-5 w-5" />
             Return history
           </CardTitle>
           <CardDescription>Each return you sent to your team leader.</CardDescription>
@@ -392,75 +457,106 @@ export default function MobileSalesReturnHistoryPage() {
             </div>
           ) : (
             <>
-              <div className="space-y-2 md:hidden">
+              <div className="hidden md:block overflow-hidden rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-10" />
+                      <TableHead>Returned by</TableHead>
+                      <TableHead>Returned to</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead className="text-right">Total qty</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Notes</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pagedItems.map((row) => {
+                      const open = openId === row.id;
+                      return (
+                        <Fragment key={row.id}>
+                          <TableRow
+                            className="cursor-pointer hover:bg-muted/40"
+                            onClick={() => setOpenId(open ? null : row.id)}
+                          >
+                            <TableCell>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                aria-label={open ? 'Collapse return' : 'Expand return'}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setOpenId(open ? null : row.id);
+                                }}
+                              >
+                                {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                              </Button>
+                            </TableCell>
+                            <TableCell className="font-medium">{returnedByName}</TableCell>
+                            <TableCell>{row.returnedTo}</TableCell>
+                            <TableCell className="whitespace-nowrap text-sm">
+                              {format(new Date(row.returnedAt), 'MMM d, yyyy h:mm a')}
+                            </TableCell>
+                            <TableCell className="text-right font-medium tabular-nums">
+                              {row.totalQuantity.toLocaleString()}
+                            </TableCell>
+                            <TableCell>{statusBadge(row.status)}</TableCell>
+                            <TableCell className="max-w-[220px] truncate text-sm text-muted-foreground" title={row.reason || undefined}>
+                              {row.reason.trim() || '—'}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <ReturnRowActions row={row} onPrint={printReturn} />
+                            </TableCell>
+                          </TableRow>
+                          {open && (
+                            <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
+                              <TableCell colSpan={8} className="p-4">
+                                <ReturnDetails row={row} />
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+
+              <div className="md:hidden space-y-3">
                 {pagedItems.map((row) => (
-                  <div key={`mobile-${row.id}`} className="rounded-lg border bg-card p-3">
+                  <div key={row.id} className="rounded-lg border p-3">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="flex items-center gap-1 truncate text-sm font-medium">
-                          <Users className="h-3 w-3 shrink-0 text-green-500" />
-                          {row.returnedTo}
+                        <p className="truncate text-sm font-medium">{row.returnedTo}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {format(new Date(row.returnedAt), 'MMM d, yyyy h:mm a')}
                         </p>
                         <p className="mt-1 truncate text-xs text-muted-foreground">
                           {row.lines.length === 1
                             ? lineLabel(row.lines[0])
                             : `${row.variantCount} products`}
                         </p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {row.totalQuantity.toLocaleString()} units · {format(new Date(row.returnedAt), 'MMM d, yyyy h:mm a')}
+                        <p className="mt-1 text-xs">
+                          {row.variantCount} variants · {row.totalQuantity.toLocaleString()} qty
                         </p>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
                         {statusBadge(row.status)}
-                        {renderActions(row)}
+                        <ReturnRowActions
+                          row={row}
+                          showView
+                          onView={setDetailRow}
+                          onPrint={printReturn}
+                        />
                       </div>
                     </div>
                   </div>
                 ))}
               </div>
 
-              <div className="hidden overflow-x-auto md:block">
-                <div className="min-w-[78rem] overflow-hidden rounded-lg border bg-card">
-                  <div className={`${returnColumns} border-b py-2 text-xs font-medium text-muted-foreground`}>
-                    <span aria-hidden />
-                    <span>Returned by</span>
-                    <span>Returned to</span>
-                    <span>Date</span>
-                    <span className="text-right">Total qty</span>
-                    <span>Status</span>
-                    <span>Notes</span>
-                    <span className="text-right">Actions</span>
-                  </div>
-                  <Accordion type="multiple">
-                    {pagedItems.map((row) => (
-                      <AccordionItem key={row.id} value={row.id} className="border-b last:border-b-0">
-                        <div className={returnColumns}>
-                          <AccordionTrigger className="h-10 w-5 justify-center p-0 hover:no-underline" />
-                          <span className="truncate font-medium">{returnedByName}</span>
-                          <span className="flex min-w-0 items-center gap-1 truncate">
-                            <Users className="h-3 w-3 shrink-0 text-green-500" />
-                            {row.returnedTo}
-                          </span>
-                          <span className="whitespace-nowrap text-sm text-muted-foreground">
-                            {format(new Date(row.returnedAt), 'MMM d, yyyy h:mm a')}
-                          </span>
-                          <span className="text-right text-sm font-semibold tabular-nums">
-                            {row.totalQuantity.toLocaleString()}
-                          </span>
-                          <span>{statusBadge(row.status)}</span>
-                          <span className="truncate text-sm text-muted-foreground" title={row.reason || undefined}>
-                            {row.reason.trim() || '—'}
-                          </span>
-                          <div className="flex justify-end">{renderActions(row)}</div>
-                        </div>
-                        <AccordionContent className="px-3 pb-3">
-                          <ReturnDetails row={row} />
-                        </AccordionContent>
-                      </AccordionItem>
-                    ))}
-                  </Accordion>
-                </div>
-              </div>
               <ListPagination
                 pageSize={pageSize}
                 safePage={safePage}
@@ -475,25 +571,23 @@ export default function MobileSalesReturnHistoryPage() {
       </Card>
 
       <Dialog open={!!detailRow} onOpenChange={(open) => { if (!open) setDetailRow(null); }}>
-        <DialogContent className="max-h-[90vh] w-[calc(100%-1.5rem)] max-w-lg overflow-y-auto">
+        <DialogContent className="max-h-[85vh] w-[calc(100%-1.5rem)] max-w-2xl overflow-x-hidden overflow-y-auto [&>*]:min-w-0">
           <DialogHeader>
             <DialogTitle>Return details</DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="break-words">
               {detailRow
                 ? `${detailRow.returnedTo} · ${format(new Date(detailRow.returnedAt), 'MMM d, yyyy h:mm a')}`
                 : 'Return items'}
             </DialogDescription>
           </DialogHeader>
           {detailRow && (
-            <div className="space-y-3">
+            <div className="min-w-0 space-y-3">
               <div>{statusBadge(detailRow.status)}</div>
               <ReturnDetails row={detailRow} />
-              {detailRow.status === 'approved' && (
-                <Button type="button" className="w-full" onClick={() => printReturn(detailRow)}>
-                  <Printer className="mr-2 h-4 w-4" />
-                  Print
-                </Button>
-              )}
+              <Button type="button" className="w-full" onClick={() => printReturn(detailRow)}>
+                <Printer className="mr-2 h-4 w-4" />
+                Print
+              </Button>
             </div>
           )}
         </DialogContent>

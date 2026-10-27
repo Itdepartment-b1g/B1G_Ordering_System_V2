@@ -1,15 +1,25 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
-import { Building2, Eye, Loader2, MoreVertical, Printer, RotateCcw, Search, Users } from 'lucide-react';
+import {
+  Building2,
+  ChevronDown,
+  ChevronRight,
+  Eye,
+  Loader2,
+  MoreVertical,
+  Printer,
+  RotateCcw,
+  Search,
+  Users,
+} from 'lucide-react';
 import { useAuth } from '@/features/auth';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   DropdownMenu,
@@ -88,9 +98,6 @@ function returnLineLabel(line: Pick<ReturnLine, 'brandName' | 'variantName' | 'v
   return type ? `${name} (${type})` : name;
 }
 
-const returnColumns =
-  'grid grid-cols-[1.25rem_minmax(8rem,1.1fr)_minmax(8rem,1.1fr)_11rem_6.5rem_7.5rem_minmax(8rem,1.2fr)_2.75rem] items-center gap-x-3 px-3';
-
 function variantTypeBadgeClass(type: string | null | undefined): string {
   const key = type?.trim().toLowerCase();
   if (key === 'flavor') return 'border-purple-300 bg-purple-100 text-purple-800';
@@ -161,7 +168,7 @@ type DetailLine = {
   quantity: number;
 };
 
-function ReturnItemGroups({ lines }: { lines: DetailLine[] }) {
+function BrandReturnTables({ lines }: { lines: DetailLine[] }) {
   const brands = useMemo(() => {
     const map = new Map<string, DetailLine[]>();
     lines.forEach((line) => {
@@ -178,33 +185,39 @@ function ReturnItemGroups({ lines }: { lines: DetailLine[] }) {
   }
 
   return (
-    <div className="min-w-0 space-y-3">
+    <div className="space-y-4">
       {brands.map(([brandName, brandLines]) => (
-        <div key={brandName} className="min-w-0 overflow-hidden rounded-md border bg-background">
-          <div className="border-b bg-muted/40 px-3 py-2 text-sm font-semibold">{brandName}</div>
-          <ul>
-            {brandLines.map((line) => {
-              const label = variantTypeLabel(line.variantType);
-              return (
-                <li
-                  key={line.id}
-                  className="flex items-start justify-between gap-3 border-b px-3 py-2.5 last:border-b-0"
-                >
-                  <div className="min-w-0">
-                    <p className="break-words text-sm font-medium leading-snug">{line.variantName}</p>
-                    {label ? (
-                      <Badge variant="outline" className={`mt-1 text-[10px] ${variantTypeBadgeClass(line.variantType)}`}>
-                        {label}
-                      </Badge>
-                    ) : null}
-                  </div>
-                  <span className="shrink-0 pt-0.5 text-sm font-semibold tabular-nums">
-                    {line.quantity.toLocaleString()}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
+        <div key={brandName} className="overflow-hidden rounded-md border bg-white">
+          <div className="border-b bg-muted/40 px-4 py-2.5 font-semibold">{brandName}</div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Variant</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead className="text-right">Qty</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {brandLines.map((line) => {
+                const label = variantTypeLabel(line.variantType);
+                return (
+                  <TableRow key={line.id}>
+                    <TableCell className="break-words">{line.variantName}</TableCell>
+                    <TableCell>
+                      {label ? (
+                        <Badge variant="outline" className={`text-[10px] ${variantTypeBadgeClass(line.variantType)}`}>
+                          {label}
+                        </Badge>
+                      ) : (
+                        '—'
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">{line.quantity.toLocaleString()}</TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
         </div>
       ))}
     </div>
@@ -213,12 +226,12 @@ function ReturnItemGroups({ lines }: { lines: DetailLine[] }) {
 
 function ReturnDetails({ group }: { group: ReturnGroup }) {
   return (
-    <div className="min-w-0 space-y-3">
-      <p className="break-words text-sm">
-        <span className="font-medium">Reason of returned: </span>
+    <div>
+      <p className="mb-3 text-sm">
+        <span className="font-medium">Reason of returned:</span>{' '}
         <span className="text-muted-foreground">{group.reason?.trim() || '—'}</span>
       </p>
-      <ReturnItemGroups
+      <BrandReturnTables
         lines={group.lines.map((line) => ({
           id: line.id,
           brandName: line.brandName,
@@ -473,6 +486,7 @@ function AgentToLeaderReturns({
 }) {
   const { toast } = useToast();
   const [detailReturn, setDetailReturn] = useState<AgentToLeaderReturn | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
 
@@ -598,6 +612,7 @@ function AgentToLeaderReturns({
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-10" />
                     <TableHead>Returned by</TableHead>
                     <TableHead>Returned to</TableHead>
                     <TableHead>Date</TableHead>
@@ -608,41 +623,85 @@ function AgentToLeaderReturns({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {pagedItems.map((row) => (
-                    <TableRow key={row.id}>
-                      <TableCell className="font-medium">{row.returnedBy}</TableCell>
-                      <TableCell>{row.returnedTo}</TableCell>
-                      <TableCell className="whitespace-nowrap text-sm">
-                        {format(new Date(row.returnedAt), 'MMM d, yyyy h:mm a')}
-                      </TableCell>
-                      <TableCell className="text-right font-medium tabular-nums">
-                        {row.totalQuantity.toLocaleString()}
-                      </TableCell>
-                      <TableCell>{agentStatusBadge(row.status)}</TableCell>
-                      <TableCell className="max-w-[220px] truncate text-sm text-muted-foreground" title={row.reason || undefined}>
-                        {row.reason?.trim() || '—'}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label="Return actions">
-                              <MoreVertical className="h-4 w-4" />
+                  {pagedItems.map((row) => {
+                    const open = openId === row.id;
+                    return (
+                      <Fragment key={row.id}>
+                        <TableRow
+                          className="cursor-pointer hover:bg-muted/40"
+                          onClick={() => setOpenId(open ? null : row.id)}
+                        >
+                          <TableCell>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              aria-label={open ? 'Collapse return' : 'Expand return'}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setOpenId(open ? null : row.id);
+                              }}
+                            >
+                              {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                             </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-40">
-                            <DropdownMenuItem onClick={() => setDetailReturn(row)}>
-                              <Eye className="mr-2 h-4 w-4" />
-                              View details
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => printReturn(row)}>
-                              <Printer className="mr-2 h-4 w-4" />
-                              Print
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                          </TableCell>
+                          <TableCell className="font-medium">{row.returnedBy}</TableCell>
+                          <TableCell>{row.returnedTo}</TableCell>
+                          <TableCell className="whitespace-nowrap text-sm">
+                            {format(new Date(row.returnedAt), 'MMM d, yyyy h:mm a')}
+                          </TableCell>
+                          <TableCell className="text-right font-medium tabular-nums">
+                            {row.totalQuantity.toLocaleString()}
+                          </TableCell>
+                          <TableCell>{agentStatusBadge(row.status)}</TableCell>
+                          <TableCell className="max-w-[220px] truncate text-sm text-muted-foreground" title={row.reason || undefined}>
+                            {row.reason?.trim() || '—'}
+                          </TableCell>
+                          <TableCell className="text-right" onClick={(event) => event.stopPropagation()}>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label="Return actions">
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-40">
+                                <DropdownMenuItem onClick={() => printReturn(row)}>
+                                  <Printer className="mr-2 h-4 w-4" />
+                                  Print
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                        {open && (
+                          <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
+                            <TableCell colSpan={8} className="p-4">
+                              <p className="mb-3 text-sm">
+                                <span className="font-medium">Reason of returned:</span>{' '}
+                                <span className="text-muted-foreground">{row.reason || '—'}</span>
+                              </p>
+                              {row.status === 'rejected' && row.rejectionReason && (
+                                <p className="mb-3 text-sm">
+                                  <span className="font-medium">Rejection reason:</span>{' '}
+                                  <span className="text-muted-foreground">{row.rejectionReason}</span>
+                                </p>
+                              )}
+                              <BrandReturnTables
+                                lines={row.items.map((item) => ({
+                                  id: `${row.id}-${item.variantId}`,
+                                  brandName: item.brandName,
+                                  variantName: item.variantName,
+                                  variantType: item.variantType,
+                                  quantity: item.quantity,
+                                }))}
+                              />
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </Fragment>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
@@ -661,7 +720,7 @@ function AgentToLeaderReturns({
                         {row.variantCount} variants · {row.totalQuantity.toLocaleString()} qty
                       </p>
                     </div>
-                    <div className="flex shrink-0 flex-col items-end gap-2">
+                    <div className="flex shrink-0 items-center gap-1">
                       {agentStatusBadge(row.status)}
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -699,7 +758,7 @@ function AgentToLeaderReturns({
     </Card>
 
     <Dialog open={!!detailReturn} onOpenChange={(open) => { if (!open) setDetailReturn(null); }}>
-      <DialogContent className="max-h-[85vh] w-[calc(100%-1.5rem)] max-w-lg overflow-x-hidden overflow-y-auto [&>*]:min-w-0">
+      <DialogContent className="max-h-[85vh] w-[calc(100%-1.5rem)] max-w-2xl overflow-x-hidden overflow-y-auto [&>*]:min-w-0">
         <DialogHeader>
           <DialogTitle>Return details</DialogTitle>
           <DialogDescription className="break-words">
@@ -710,20 +769,18 @@ function AgentToLeaderReturns({
         </DialogHeader>
         {detailReturn && (
           <div className="min-w-0 space-y-3">
-            <div className="flex items-center gap-2">
-              {agentStatusBadge(detailReturn.status)}
-            </div>
-            <p className="break-words text-sm">
-              <span className="font-medium">Reason of returned: </span>
+            <div>{agentStatusBadge(detailReturn.status)}</div>
+            <p className="mb-0 text-sm">
+              <span className="font-medium">Reason of returned:</span>{' '}
               <span className="text-muted-foreground">{detailReturn.reason?.trim() || '—'}</span>
             </p>
             {detailReturn.status === 'rejected' && detailReturn.rejectionReason && (
-              <p className="break-words text-sm">
-                <span className="font-medium">Rejection reason: </span>
+              <p className="text-sm">
+                <span className="font-medium">Rejection reason:</span>{' '}
                 <span className="text-muted-foreground">{detailReturn.rejectionReason}</span>
               </p>
             )}
-            <ReturnItemGroups
+            <BrandReturnTables
               lines={detailReturn.items.map((item) => ({
                 id: `${detailReturn.id}-${item.variantId}`,
                 brandName: item.brandName,
@@ -755,6 +812,7 @@ export default function MainInventoryReturnHistoryPage() {
   const [returnTab, setReturnTab] = useState<'all' | 'main' | 'mobile'>('all');
   const [historyPage, setHistoryPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
+  const [openHistoryId, setOpenHistoryId] = useState<string | null>(null);
   const [detailGroup, setDetailGroup] = useState<ReturnGroup | null>(null);
 
   const { data: groups = [], isLoading } = useQuery({
@@ -926,9 +984,100 @@ export default function MainInventoryReturnHistoryPage() {
             </div>
           ) : (
             <>
-              <div className="space-y-2 md:hidden">
+              <div className="hidden md:block overflow-hidden rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-10" />
+                      <TableHead>Returned by</TableHead>
+                      <TableHead>Returned to</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead className="text-right">Total qty</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Notes</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pagedGroups.map((group) => {
+                      const open = openHistoryId === group.id;
+                      return (
+                        <Fragment key={group.id}>
+                          <TableRow
+                            className="cursor-pointer hover:bg-muted/40"
+                            onClick={() => setOpenHistoryId(open ? null : group.id)}
+                          >
+                            <TableCell>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                aria-label={open ? 'Collapse return' : 'Expand return'}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setOpenHistoryId(open ? null : group.id);
+                                }}
+                              >
+                                {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                              </Button>
+                            </TableCell>
+                            <TableCell>
+                              <span className="flex min-w-0 items-center gap-1 font-medium">
+                                {group.isSubWarehouseReturn ? (
+                                  <Building2 className="h-3 w-3 shrink-0 text-blue-500" />
+                                ) : (
+                                  <Users className="h-3 w-3 shrink-0 text-green-500" />
+                                )}
+                                {group.returnedBy}
+                              </span>
+                            </TableCell>
+                            <TableCell>
+                              {group.isSubWarehouseReturn ? 'Main inventory' : superAdminName || 'Super Admin'}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap text-sm">
+                              {format(new Date(group.returnedAt), 'MMM d, yyyy h:mm a')}
+                            </TableCell>
+                            <TableCell className="text-right font-medium tabular-nums">
+                              {group.totalQuantity.toLocaleString()}
+                            </TableCell>
+                            <TableCell><Badge>Returned</Badge></TableCell>
+                            <TableCell className="max-w-[220px] truncate text-sm text-muted-foreground" title={group.reason || undefined}>
+                              {group.reason?.trim() || '—'}
+                            </TableCell>
+                            <TableCell className="text-right" onClick={(event) => event.stopPropagation()}>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label="Return actions">
+                                    <MoreVertical className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-40">
+                                  <DropdownMenuItem onClick={() => void printGroup(group, user?.company_id)}>
+                                    <Printer className="mr-2 h-4 w-4" />
+                                    Print
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </TableCell>
+                          </TableRow>
+                          {open && (
+                            <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
+                              <TableCell colSpan={8} className="p-4">
+                                <ReturnDetails group={group} />
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+
+              <div className="md:hidden space-y-3">
                 {pagedGroups.map((group) => (
-                  <div key={`mobile-${group.id}`} className="rounded-lg border bg-card p-3">
+                  <div key={`mobile-${group.id}`} className="rounded-lg border p-3">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="flex items-center gap-1 truncate text-sm font-medium">
@@ -948,93 +1097,29 @@ export default function MainInventoryReturnHistoryPage() {
                           {group.totalQuantity.toLocaleString()} units · {format(new Date(group.returnedAt), 'MMM d, yyyy h:mm a')}
                         </p>
                       </div>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label="Return actions">
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-40">
-                          <DropdownMenuItem onClick={() => setDetailGroup(group)}>
-                            <Eye className="mr-2 h-4 w-4" />
-                            View details
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => void printGroup(group, user?.company_id)}>
-                            <Printer className="mr-2 h-4 w-4" />
-                            Print
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <Badge>Returned</Badge>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label="Return actions">
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-40">
+                            <DropdownMenuItem onClick={() => setDetailGroup(group)}>
+                              <Eye className="mr-2 h-4 w-4" />
+                              View details
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => void printGroup(group, user?.company_id)}>
+                              <Printer className="mr-2 h-4 w-4" />
+                              Print
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
                     </div>
                   </div>
                 ))}
-              </div>
-
-              <div className="hidden overflow-x-auto md:block">
-                <div className="min-w-[78rem] overflow-hidden rounded-lg border bg-card">
-                  <div className={`${returnColumns} border-b py-2 text-xs font-medium text-muted-foreground`}>
-                    <span aria-hidden />
-                    <span>Returned by</span>
-                    <span>Returned to</span>
-                    <span>Date</span>
-                    <span className="text-right">Total qty</span>
-                    <span>Status</span>
-                    <span>Notes</span>
-                    <span className="text-right">Actions</span>
-                  </div>
-                  <Accordion type="multiple">
-                    {pagedGroups.map((group) => (
-                      <AccordionItem key={group.id} value={group.id} className="border-b last:border-b-0">
-                        <div className={returnColumns}>
-                          <AccordionTrigger className="h-10 w-5 justify-center p-0 hover:no-underline" />
-                          <span className="flex min-w-0 items-center gap-1 truncate font-medium">
-                            {group.isSubWarehouseReturn ? (
-                              <Building2 className="h-3 w-3 shrink-0 text-blue-500" />
-                            ) : (
-                              <Users className="h-3 w-3 shrink-0 text-green-500" />
-                            )}
-                            {group.returnedBy}
-                          </span>
-                          <span className="truncate text-sm">
-                            {group.isSubWarehouseReturn ? 'Main inventory' : superAdminName || 'Super Admin'}
-                          </span>
-                          <span className="whitespace-nowrap text-sm text-muted-foreground">
-                            {format(new Date(group.returnedAt), 'MMM d, yyyy h:mm a')}
-                          </span>
-                          <span className="text-right text-sm font-semibold tabular-nums">
-                            {group.totalQuantity.toLocaleString()}
-                          </span>
-                          <span><Badge>Returned</Badge></span>
-                          <span className="truncate text-sm text-muted-foreground" title={group.reason || undefined}>
-                            {group.reason?.trim() || '—'}
-                          </span>
-                          <div className="flex justify-end">
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label="Return actions">
-                                  <MoreVertical className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="w-40">
-                                <DropdownMenuItem onClick={() => setDetailGroup(group)}>
-                                  <Eye className="mr-2 h-4 w-4" />
-                                  View details
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => void printGroup(group, user?.company_id)}>
-                                  <Printer className="mr-2 h-4 w-4" />
-                                  Print
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>
-                        </div>
-                        <AccordionContent className="px-3 pb-3">
-                          <ReturnDetails group={group} />
-                        </AccordionContent>
-                      </AccordionItem>
-                    ))}
-                  </Accordion>
-                </div>
               </div>
               <ListPagination
                 pageSize={pageSize}
@@ -1131,7 +1216,7 @@ export default function MainInventoryReturnHistoryPage() {
       )}
 
       <Dialog open={!!detailGroup} onOpenChange={(open) => { if (!open) setDetailGroup(null); }}>
-        <DialogContent className="max-h-[85vh] w-[calc(100%-1.5rem)] max-w-lg overflow-x-hidden overflow-y-auto [&>*]:min-w-0">
+        <DialogContent className="max-h-[85vh] w-[calc(100%-1.5rem)] max-w-2xl overflow-x-hidden overflow-y-auto [&>*]:min-w-0">
           <DialogHeader>
             <DialogTitle>Return details</DialogTitle>
             <DialogDescription className="break-words">
@@ -1141,7 +1226,8 @@ export default function MainInventoryReturnHistoryPage() {
             </DialogDescription>
           </DialogHeader>
           {detailGroup && (
-            <div className="space-y-3">
+            <div className="min-w-0 space-y-3">
+              <div><Badge>Returned</Badge></div>
               <ReturnDetails group={detailGroup} />
               <Button type="button" className="w-full" onClick={() => void printGroup(detailGroup, user?.company_id)}>
                 <Printer className="mr-2 h-4 w-4" />
