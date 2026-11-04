@@ -8,6 +8,7 @@ import { kaPurchaseOrderReducer } from "./key-accounts/purchase-order";
 import { kaSalesTargetsReducer } from "./key-accounts/sales-targets";
 import { kaUserManagementReducer } from "./key-accounts/user-management";
 import { motoClientReturnsReducer } from "./moto-sales/client-returns";
+import { motoRemittancesReducer } from "./moto-sales/remittances";
 import { motoReturnLeaderReducer } from "./moto-sales/return-leader";
 import { warehouseBatchViewReducer } from "./warehouse/batch-view";
 import { warehouseDisposalsReducer } from "./warehouse/disposals";
@@ -28,6 +29,7 @@ export const rootReducer = {
   kaAnalytics: kaAnalyticsReducer,
   kaDashboard: kaDashboardReducer,
   motoClientReturns: motoClientReturnsReducer,
+  motoRemittances: motoRemittancesReducer,
   motoReturnLeader: motoReturnLeaderReducer,
   warehouseLocations: warehouseLocationsReducer,
   warehouseStockRequests: warehouseStockRequestsReducer,

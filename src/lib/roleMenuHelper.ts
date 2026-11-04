@@ -51,6 +51,7 @@ const adminMenuItems: MenuItem[] = [
 const agentMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/dashboard', description: 'Personal snapshot of today’s targets, orders, and performance.' },
   { title: 'My Inventory', url: '/my-inventory', description: 'View stock currently assigned to you and its status.' },
+  { title: 'My Remittances', url: '/inventory/my-remittances', description: 'Review cash and cheque remittances you submitted to your team leader.' },
   { title: 'Return History', url: '/inventory/my-returns', description: 'Review the stock you returned to your team leader.' },
   { title: 'Allocation History', url: '/my-allocation-history', description: 'See the stock your team leader allocated to you.' },
   { title: 'Request Inventory', url: '/inventory/request', description: 'Submit stock requests to your team leader for approval.' },

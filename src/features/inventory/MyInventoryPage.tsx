@@ -1085,9 +1085,14 @@ export default function MyInventory() {
                 Return
               </Button>
               {(user?.role === 'mobile_sales' || user?.role === 'sales_agent') && (
-                <Button variant="outline" className="flex-1 sm:flex-initial" asChild>
-                  <Link to="/inventory/my-returns">Your return history</Link>
-                </Button>
+                <>
+                  <Button variant="outline" className="flex-1 sm:flex-initial" asChild>
+                    <Link to="/inventory/my-remittances">Remittance history</Link>
+                  </Button>
+                  <Button variant="outline" className="flex-1 sm:flex-initial" asChild>
+                    <Link to="/inventory/my-returns">Your return history</Link>
+                  </Button>
+                </>
               )}
             </>
           )}

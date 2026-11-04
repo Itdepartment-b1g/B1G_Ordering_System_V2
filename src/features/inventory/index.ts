@@ -9,6 +9,7 @@ export { default as StockAllocationsPage } from './StockAllocationsPage';
 export { default as LeaderInventoryPage } from './LeaderInventoryPage';
 export { default as LeaderAgentReturnsPage } from './LeaderAgentReturnsPage';
 export { default as MyInventoryPage } from './MyInventoryPage';
+export { default as MyRemittancesPage } from './MyRemittancesPage';
 export { default as RemittedStocksPage } from './RemittedStocksPage';
 export { default as WarehouseDisposalsPage } from './WarehouseDisposalsPage';
 export { default as WarehouseStockRequestsPage } from './WarehouseStockRequestsPage';

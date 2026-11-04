@@ -629,26 +629,45 @@ export default function DashboardPage() {
             </Card>
           </div>
 
-          {/* Sales Breakdown Card */}
-          <Card className="border-l-4 border-l-yellow-500">
-            <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
-              <div className="space-y-1 pr-2">
-                <CardTitle className="text-sm font-medium">Pending Sales</CardTitle>
-        
-              </div>
-              <Clock className="h-4 w-4 text-yellow-600 shrink-0" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-xl md:text-2xl font-bold text-yellow-600">₱{pendingSales.toLocaleString()}</div>
-
-              <p className="text-xs text-muted-foreground leading-snug">
+          {/* Sales Breakdown + Remittance History */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4">
+            <Card className="border-l-4 border-l-yellow-500">
+              <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+                <div className="space-y-1 pr-2">
+                  <CardTitle className="text-sm font-medium">Pending Sales</CardTitle>
+                </div>
+                <Clock className="h-4 w-4 text-yellow-600 shrink-0" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl md:text-2xl font-bold text-yellow-600">₱{pendingSales.toLocaleString()}</div>
+                <p className="text-xs text-muted-foreground leading-snug">
                   <span className="text-yellow-700/90">Pending ₱{pendingSalesPending.toLocaleString()}</span>
                   {' + '}
                   <span className="text-yellow-700/90">Needs revision ₱{pendingSalesNeedsRevision.toLocaleString()}</span>
                 </p>
-              <p className="text-xs text-muted-foreground mt-1">Awaiting approval</p>
-            </CardContent>
-          </Card>
+                <p className="text-xs text-muted-foreground mt-1">Awaiting approval</p>
+              </CardContent>
+            </Card>
+            <Card className="border-l-4 border-l-green-500">
+              <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+                <div className="space-y-1 pr-2">
+                  <CardTitle className="text-sm font-medium">Remittance History</CardTitle>
+                </div>
+                <Receipt className="h-4 w-4 text-green-600 shrink-0" />
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  View cash and cheque remittances you submitted to your team leader.
+                </p>
+                <Button variant="outline" size="sm" className="mt-3" asChild>
+                  <Link to="/inventory/my-remittances">
+                    View remittances
+                    <ArrowRight className="ml-1 h-4 w-4" />
+                  </Link>
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
 
           {/* Recent Activity Table */}
           <Card>
