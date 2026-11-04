@@ -27,6 +27,7 @@ import PageManualDialog from '@/features/inventory/warehouse-manual/components/P
 import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
 import BrandsAndVariantsManual from '@/features/inventory/warehouse-manual/components/BrandsAndVariantsManual';
 import ReferenceNamingCatalogDialog from '@/features/orders/components/ReferenceNamingCatalogDialog';
+import CatalogSyncImportDialog from '@/features/orders/components/CatalogSyncImportDialog';
 
 interface Brand {
   id: string;
@@ -66,7 +67,7 @@ export default function BrandsPage() {
   const [variants, setVariants] = useState<Variant[]>([]);
   const [variantTypes, setVariantTypes] = useState<VariantType[]>([]);
   const [loading, setLoading] = useState(true);
-  const [exporting, setExporting] = useState<'columns' | 'stacked' | null>(null);
+  const [exporting, setExporting] = useState<'columns' | 'stacked' | 'flat' | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBrand, setSelectedBrand] = useState<string>('');
   // Variant panel: search and type filter (when a brand is open)
@@ -224,13 +225,19 @@ export default function BrandsPage() {
     return matchSearch && matchType;
   });
 
-  const handleExport = async (layout: 'columns' | 'stacked') => {
+  const handleExport = async (layout: 'columns' | 'stacked' | 'flat') => {
     if (exporting || loading || !user?.company_id || brands.length === 0) return;
     setExporting(layout);
     try {
       const { exportBrandsAndVariantsExcel } = await import('./utils/exportBrandsAndVariantsExcel');
       await exportBrandsAndVariantsExcel(brands, variants, layout);
-      toast({ title: 'Export successful', description: 'Brands and variants exported to Excel.' });
+      toast({
+        title: 'Export successful',
+        description:
+          layout === 'flat'
+            ? 'Catalog sync file exported (brand, variant, type, sku).'
+            : 'Brands and variants exported to Excel.',
+      });
     } catch (error) {
       console.error('Error exporting brands and variants:', error);
       toast({
@@ -622,6 +629,24 @@ export default function BrandsPage() {
             <BrandsAndVariantsManual embedded />
           </PageManualDialog>
           {user?.role === 'warehouse' && <ReferenceNamingCatalogDialog />}
+          {user?.role === 'warehouse' && user.company_id && (
+            <CatalogSyncImportDialog
+              companyId={user.company_id}
+              onApplied={async () => {
+                invalidateWarehouseInventoryCatalog();
+                await fetchData();
+              }}
+            />
+          )}
+          <Button
+            variant="outline"
+            onClick={() => handleExport('flat')}
+            disabled={!!exporting || loading || !user?.company_id || brands.length === 0}
+            title="Export flat catalog for warehouse sync (brand_name, variant_name, variant_type, sku)"
+          >
+            {exporting === 'flat' ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
+            {exporting === 'flat' ? 'Exporting...' : 'Export Catalog Sync'}
+          </Button>
           <Button
             variant="outline"
             onClick={() => handleExport('columns')}
