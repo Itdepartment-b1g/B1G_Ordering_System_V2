@@ -327,6 +327,19 @@ function isAwaitingApprovalOrder(order: AgentOrderRow): boolean {
     );
 }
 
+/** Not yet approved by finance (final approval = admin_approved). */
+function isPendingFinanceApprovalOrder(order: AgentOrderRow): boolean {
+    if (order.stage === 'admin_approved' || order.status === 'approved') return false;
+    if (
+        order.status === 'rejected' ||
+        order.stage === 'admin_rejected' ||
+        order.stage === 'leader_rejected'
+    ) {
+        return false;
+    }
+    return true;
+}
+
 function sumAgentOrderAmounts(orders: AgentOrderRow[]): number {
     return orders.reduce((sum, order) => sum + (Number(order.total_amount) || 0), 0);
 }
@@ -336,7 +349,7 @@ export function useAgentStats() {
     const queryClient = useQueryClient();
 
     const query = useQuery({
-        queryKey: ['agent_stats', user?.id, 'v2'],
+        queryKey: ['agent_stats', user?.id, 'v3'],
         enabled: !!user?.id && (user?.role === 'sales_agent' || user?.role === 'mobile_sales'),
         queryFn: async () => {
             if (!user?.id) {
@@ -387,6 +400,16 @@ export function useAgentStats() {
             const pendingSalesPending = sumAgentOrderAmounts(awaitingApprovalOrders);
             const pendingSales = pendingSalesPending + pendingSalesNeedsRevision;
 
+            // Pending Orders card = not yet approved by finance (excl. rejected)
+            const pendingFinanceOrders = orderRows.filter(isPendingFinanceApprovalOrder);
+            const pendingOrdersPendingCount = pendingFinanceOrders.filter(
+                (o) => !isNeedsRevisionOrder(o)
+            ).length;
+            const pendingOrdersNeedsRevisionCount = pendingFinanceOrders.filter(
+                isNeedsRevisionOrder
+            ).length;
+            const pendingOrdersCount = pendingFinanceOrders.length;
+
             console.log('💰 Sales calculated:', {
                 overallSales,
                 approvedSales: approvedSales + ' (from ' + approvedOrders.length + ' orders)',
@@ -397,7 +420,7 @@ export function useAgentStats() {
                     ' + needs_revision ₱' +
                     pendingSalesNeedsRevision +
                     ' from ' +
-                    (awaitingApprovalOrders.length + needsRevisionOrders.length) +
+                    pendingOrdersCount +
                     ' orders)',
             });
 
@@ -409,6 +432,9 @@ export function useAgentStats() {
                 pendingSales,
                 pendingSalesPending,
                 pendingSalesNeedsRevision,
+                pendingOrdersCount,
+                pendingOrdersPendingCount,
+                pendingOrdersNeedsRevisionCount,
                 myCommission: 0 // Logic not implemented yet as per current code
             };
         },
@@ -418,8 +444,8 @@ export function useAgentStats() {
     useEffect(() => {
         if (!user?.id || (user.role !== 'sales_agent' && user.role !== 'mobile_sales')) return;
 
-        const channel1 = subscribeToTable('client_orders', () => queryClient.invalidateQueries({ queryKey: ['agent_stats', user.id, 'v2'] }));
-        const channel2 = subscribeToTable('clients', () => queryClient.invalidateQueries({ queryKey: ['agent_stats', user.id, 'v2'] }));
+        const channel1 = subscribeToTable('client_orders', () => queryClient.invalidateQueries({ queryKey: ['agent_stats', user.id, 'v3'] }));
+        const channel2 = subscribeToTable('clients', () => queryClient.invalidateQueries({ queryKey: ['agent_stats', user.id, 'v3'] }));
 
         return () => {
             unsubscribe(channel1);

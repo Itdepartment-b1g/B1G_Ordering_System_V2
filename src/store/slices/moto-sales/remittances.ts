@@ -47,6 +47,14 @@ export type AgentRemittanceDetail = {
   orders: AgentRemittanceOrderLine[];
 };
 
+export type AgentPendingRemittanceSummary = {
+  cashChequeOrdersCount: number;
+  cashChequeAmount: number;
+  bankOrdersCount: number;
+  bankAmount: number;
+  totalOrdersCount: number;
+};
+
 type MotoRemittancesState = {
   items: AgentRemittanceSummary[];
   listStatus: QueryStatus;
@@ -54,6 +62,9 @@ type MotoRemittancesState = {
   selectedDetail: AgentRemittanceDetail | null;
   detailStatus: QueryStatus;
   detailError: string | null;
+  pending: AgentPendingRemittanceSummary | null;
+  pendingStatus: QueryStatus;
+  pendingError: string | null;
 };
 
 const initialState: MotoRemittancesState = {
@@ -63,6 +74,9 @@ const initialState: MotoRemittancesState = {
   selectedDetail: null,
   detailStatus: 'idle',
   detailError: null,
+  pending: null,
+  pendingStatus: 'idle',
+  pendingError: null,
 };
 
 export const fetchMyRemittances = createAsyncThunk(
@@ -91,6 +105,16 @@ export const fetchMyRemittanceDetail = createAsyncThunk(
       },
     });
     return body.remittance;
+  }
+);
+
+export const fetchPendingRemittance = createAsyncThunk(
+  'motoRemittances/fetchPending',
+  async () => {
+    const body = await motoSalesRequest<{ pending: AgentPendingRemittanceSummary }>('remittances', {
+      params: { resource: 'pending' },
+    });
+    return body.pending;
   }
 );
 
@@ -134,6 +158,19 @@ const motoRemittancesSlice = createSlice({
         state.detailStatus = 'failed';
         state.detailError = action.error.message || 'Failed to load remittance detail';
         state.selectedDetail = null;
+      })
+      .addCase(fetchPendingRemittance.pending, (state) => {
+        state.pendingError = null;
+        if (state.pendingStatus !== 'succeeded') state.pendingStatus = 'loading';
+      })
+      .addCase(fetchPendingRemittance.fulfilled, (state, action) => {
+        state.pendingStatus = 'succeeded';
+        state.pending = action.payload;
+      })
+      .addCase(fetchPendingRemittance.rejected, (state, action) => {
+        state.pendingStatus = 'failed';
+        state.pendingError = action.error.message || 'Failed to load pending remittances';
+        state.pending = null;
       });
   },
 });

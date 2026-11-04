@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -217,6 +217,7 @@ export default function MyInventory() {
   const { hasWarehouseHubLink } = usePermissions();
   const showReturnedColumn = canShowClientOrderReturns(hasWarehouseHubLink, user?.role);
   const { toast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedBrands, setExpandedBrands] = useState<string[]>([]);
   const [mobileBrandDialog, setMobileBrandDialog] = useState<AgentBrand | null>(null);
@@ -683,6 +684,22 @@ export default function MyInventory() {
       setSignatureConfirmed(false);
     }
   }, [remitDialogOpen, user?.id]);
+
+  // Deep link from dashboard: /my-inventory?remit=1 opens remittance dialog
+  useEffect(() => {
+    const shouldOpenRemit = searchParams.get('remit') === '1';
+    if (!shouldOpenRemit) return;
+    if (user?.role === 'team_leader') {
+      setSearchParams({}, { replace: true });
+      return;
+    }
+    if (!leaderId) return;
+
+    setRemitDialogOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('remit');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams, leaderId, user?.role]);
 
   // Auto-confirm sold orders if there are none (optional section)
   useEffect(() => {

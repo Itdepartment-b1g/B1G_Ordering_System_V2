@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Label } from '@/components/ui/label';
 import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, CreditCard, Camera, RotateCcw, Smartphone, CheckCircle, Split, Pencil, Loader2, FileDown, Filter, Download, ChevronDown, Printer, Clock, MoreVertical } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -153,6 +153,14 @@ function paymentProofDateTime(now: Date): { dateStr: string; timeStr: string } {
 
 type MyOrdersStatusFilter = 'all' | 'pending' | 'approved' | 'rejected' | 'needs_revision';
 
+const MY_ORDERS_STATUS_FILTERS: MyOrdersStatusFilter[] = [
+  'all',
+  'pending',
+  'approved',
+  'rejected',
+  'needs_revision',
+];
+
 const MY_ORDERS_STATUS_LABELS: Record<MyOrdersStatusFilter, string> = {
   all: 'All statuses',
   pending: 'Pending',
@@ -160,6 +168,13 @@ const MY_ORDERS_STATUS_LABELS: Record<MyOrdersStatusFilter, string> = {
   rejected: 'Rejected',
   needs_revision: 'Needs revision',
 };
+
+function parseMyOrdersStatusFilter(value: string | null): MyOrdersStatusFilter {
+  if (value && (MY_ORDERS_STATUS_FILTERS as string[]).includes(value)) {
+    return value as MyOrdersStatusFilter;
+  }
+  return 'all';
+}
 
 function orderMatchesStatusFilter(order: Order, filter: MyOrdersStatusFilter): boolean {
   if (filter === 'all') return true;
@@ -180,6 +195,7 @@ const MyOrdersQuickFilterSheet = QuickFilterSheet<OrderListQuickColumn, OrderLis
 
 export default function MyOrdersPage() {
   const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { hasWarehouseHubLink } = usePermissions();
   const showClientReturns = canShowClientOrderReturns(hasWarehouseHubLink, user?.role);
   const canFileClientReturn = showClientReturns && canCreateClientOrderReturn(user?.role);
@@ -265,7 +281,9 @@ export default function MyOrdersPage() {
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'all',
   });
-  const [statusFilter, setStatusFilter] = useState<MyOrdersStatusFilter>('all');
+  const [statusFilter, setStatusFilter] = useState<MyOrdersStatusFilter>(() =>
+    parseMyOrdersStatusFilter(searchParams.get('status'))
+  );
   const [quickDateRange, setQuickDateRange] = useState(ALL_TIME_DATE_RANGE);
   const [quickStatus, setQuickStatus] = useState<OrderListQuickStatus>('all');
   const [columnClauses, setColumnClauses] = useState(() => [
@@ -280,6 +298,13 @@ export default function MyOrdersPage() {
   const [orderSortState, setOrderSortState] =
     useState<TableSortCycleState<MyOrderListSortKey>>(createInitialTableSortCycle);
   const ordersPerPage = 10;
+
+  // Dashboard deep-link: /my-orders?status=pending | needs_revision | ...
+  useEffect(() => {
+    const next = parseMyOrdersStatusFilter(searchParams.get('status'));
+    setStatusFilter(next);
+    setCurrentPage(1);
+  }, [searchParams]);
 
   // Client search state
   const [clientSearchQuery, setClientSearchQuery] = useState('');
@@ -2899,7 +2924,15 @@ export default function MyOrdersPage() {
               <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
                 <Select
                   value={statusFilter}
-                  onValueChange={(value) => setStatusFilter(value as MyOrdersStatusFilter)}
+                  onValueChange={(value) => {
+                    const next = value as MyOrdersStatusFilter;
+                    setStatusFilter(next);
+                    setCurrentPage(1);
+                    const params = new URLSearchParams(searchParams);
+                    if (next === 'all') params.delete('status');
+                    else params.set('status', next);
+                    setSearchParams(params, { replace: true });
+                  }}
                 >
                   <SelectTrigger className="h-10 w-full sm:w-[150px] gap-2">
                     <Filter className="h-4 w-4 shrink-0 text-muted-foreground" />

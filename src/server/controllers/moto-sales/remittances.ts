@@ -4,6 +4,7 @@ import { HttpError } from '../../http/errors';
 import { firstString } from '../../http/queryParams';
 import { respond } from '../../http/respond';
 import {
+  getAgentPendingRemittance,
   getAgentRemittanceDetail,
   listAgentRemittances,
 } from '../../repositories/moto-sales/remittances';
@@ -26,6 +27,12 @@ export async function getMotoSalesRemittancesHandler(req: any, res: any) {
         return {
           status: 200,
           body: await listAgentRemittances(ctx, { date }),
+        };
+      }
+      case 'pending': {
+        return {
+          status: 200,
+          body: await getAgentPendingRemittance(ctx),
         };
       }
       case 'detail': {

@@ -5,6 +5,17 @@ import { getSupabaseAdmin } from '../../db/supabaseAdmin';
 /** Orders with order_date before this are v1 imports; exclude from remittance history amounts. */
 const V1_IMPORT_ORDER_DATE_CUTOFF = '2026-02-16';
 
+/** Match MyInventory Sold/remit tab: only orders on or after this date. */
+const SOLD_TAB_ORDER_DATE_THRESHOLD = '2026-02-17';
+
+export type AgentPendingRemittanceSummary = {
+  cashChequeOrdersCount: number;
+  cashChequeAmount: number;
+  bankOrdersCount: number;
+  bankAmount: number;
+  totalOrdersCount: number;
+};
+
 export type AgentRemittanceSummary = {
   id: string;
   remittanceDate: string;
@@ -205,6 +216,84 @@ function mapOrderLine(order: Record<string, unknown>): AgentRemittanceOrderLine 
     nonCashLabel:
       portions.nonCashLabels.length > 0 ? portions.nonCashLabels.join(' + ') : undefined,
     items,
+  };
+}
+
+/**
+ * Unremitted orders awaiting agent remittance — same rules as MyInventoryPage.fetchUnremittedOrders.
+ * Dashboard "To Remit" uses cash/cheque counts; bank-only orders are included for completeness.
+ */
+export async function getAgentPendingRemittance(
+  ctx: MotoSalesContext
+): Promise<{ pending: AgentPendingRemittanceSummary }> {
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb
+    .from('client_orders')
+    .select(
+      `
+      id,
+      order_date,
+      total_amount,
+      payment_method,
+      payment_mode,
+      payment_splits,
+      deposit_id,
+      cash_deposit:cash_deposits!client_orders_deposit_id_fkey(
+        id,
+        status
+      )
+    `
+    )
+    .eq('company_id', ctx.companyId)
+    .eq('agent_id', ctx.userId)
+    .eq('remitted', false)
+    .order('created_at', { ascending: false });
+
+  if (error) throw new HttpError(500, error.message || 'Failed to load pending remittances');
+
+  let cashChequeOrdersCount = 0;
+  let cashChequeAmount = 0;
+  let bankOrdersCount = 0;
+  let bankAmount = 0;
+
+  for (const raw of data || []) {
+    const order = asRecord(raw);
+    const totalAmount = Number(order.total_amount) || 0;
+    if (totalAmount === 0) continue;
+
+    const deposit = nestedRecord(order.cash_deposit);
+    if (order.deposit_id && deposit.status === 'verified') continue;
+
+    const orderDate = order.order_date == null ? null : String(order.order_date);
+    if (!orderDate || orderDate < SOLD_TAB_ORDER_DATE_THRESHOLD) continue;
+
+    const portions = computePaymentPortions({
+      total_amount: totalAmount,
+      payment_method: order.payment_method as string | null,
+      payment_mode: order.payment_mode as string | null,
+      payment_splits: order.payment_splits,
+    });
+
+    if (portions.cashPortion > 0 || portions.chequePortion > 0) {
+      cashChequeOrdersCount += 1;
+      cashChequeAmount += portions.remittedAmount;
+    } else if (
+      order.payment_method === 'BANK_TRANSFER' ||
+      order.payment_method === 'GCASH'
+    ) {
+      bankOrdersCount += 1;
+      bankAmount += portions.nonCashPortion || totalAmount;
+    }
+  }
+
+  return {
+    pending: {
+      cashChequeOrdersCount,
+      cashChequeAmount,
+      bankOrdersCount,
+      bankAmount,
+      totalOrdersCount: cashChequeOrdersCount + bankOrdersCount,
+    },
   };
 }
 

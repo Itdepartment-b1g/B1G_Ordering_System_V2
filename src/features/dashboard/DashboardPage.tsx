@@ -24,14 +24,21 @@ import {
   useRecentActivity
 } from './dashboardHooks';
 import { FinanceDashboard } from './FinanceDashboard';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import { fetchPendingRemittance } from '@/store/slices/moto-sales/remittances';
+import { cn } from '@/lib/utils';
 
 export default function DashboardPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const dispatch = useAppDispatch();
   const isAdmin = user?.role === 'admin';
   const isLeader = user?.role === 'team_leader';
   const isAgent = user?.role === 'sales_agent' || user?.role === 'mobile_sales';
   const isFinance = user?.role === 'finance' || user?.role === 'accounting';
+
+  const pendingRemittance = useAppSelector((s) => s.motoRemittances.pending);
+  const pendingRemittanceStatus = useAppSelector((s) => s.motoRemittances.pendingStatus);
 
   // Redirect logic
   useEffect(() => {
@@ -52,6 +59,11 @@ export default function DashboardPage() {
       navigate('/key-accounts/dashboard', { replace: true });
     }
   }, [user?.role, navigate]);
+
+  useEffect(() => {
+    if (!isAgent) return;
+    void dispatch(fetchPendingRemittance());
+  }, [dispatch, isAgent]);
 
   const itemsPerPage = 5;
   const [currentPage, setCurrentPage] = useState(1);
@@ -99,7 +111,9 @@ export default function DashboardPage() {
     pendingSales = 0,
     pendingSalesPending = 0,
     pendingSalesNeedsRevision = 0,
-    myCommission = 0
+    pendingOrdersCount = 0,
+    pendingOrdersPendingCount = 0,
+    pendingOrdersNeedsRevisionCount = 0,
   } = agentStats || {};
 
   const {
@@ -629,8 +643,8 @@ export default function DashboardPage() {
             </Card>
           </div>
 
-          {/* Sales Breakdown + Remittance History */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4">
+          {/* Pending Sales (amount) + Pending Orders (count) + To Remit */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
             <Card className="border-l-4 border-l-yellow-500">
               <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
                 <div className="space-y-1 pr-2">
@@ -648,23 +662,127 @@ export default function DashboardPage() {
                 <p className="text-xs text-muted-foreground mt-1">Awaiting approval</p>
               </CardContent>
             </Card>
-            <Card className="border-l-4 border-l-green-500">
+            <Card
+              className={cn(
+                'border-l-4 border-l-amber-500 transition-colors',
+                pendingOrdersCount > 0 && 'cursor-pointer hover:bg-amber-50/40'
+              )}
+              role={pendingOrdersCount > 0 ? 'button' : undefined}
+              tabIndex={pendingOrdersCount > 0 ? 0 : undefined}
+              onClick={() => {
+                if (pendingOrdersCount > 0) navigate('/my-orders?status=pending');
+              }}
+              onKeyDown={(e) => {
+                if ((e.key === 'Enter' || e.key === ' ') && pendingOrdersCount > 0) {
+                  e.preventDefault();
+                  navigate('/my-orders?status=pending');
+                }
+              }}
+            >
               <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
                 <div className="space-y-1 pr-2">
-                  <CardTitle className="text-sm font-medium">Remittance History</CardTitle>
+                  <CardTitle className="text-sm font-medium">Pending Orders</CardTitle>
+                </div>
+                <ShoppingCart className="h-4 w-4 text-amber-600 shrink-0" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl md:text-2xl font-bold text-amber-700">{pendingOrdersCount}</div>
+                <p className="text-xs text-muted-foreground mt-1">Not yet approved by finance</p>
+                <p className="text-xs text-muted-foreground leading-snug">
+                  <button
+                    type="button"
+                    className="text-amber-700/90 hover:underline"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate('/my-orders?status=pending');
+                    }}
+                  >
+                    {pendingOrdersPendingCount} in progress
+                  </button>
+                  {pendingOrdersNeedsRevisionCount > 0 && (
+                    <>
+                      {' · '}
+                      <button
+                        type="button"
+                        className="text-amber-700/90 hover:underline"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate('/my-orders?status=needs_revision');
+                        }}
+                      >
+                        {pendingOrdersNeedsRevisionCount} needs revision
+                      </button>
+                    </>
+                  )}
+                </p>
+                {pendingOrdersCount > 0 ? (
+                  <p className="mt-3 text-xs font-medium text-amber-700 flex items-center gap-1">
+                    Click to filter orders
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </p>
+                ) : (
+                  <p className="mt-3 text-xs text-muted-foreground">No pending orders</p>
+                )}
+              </CardContent>
+            </Card>
+            <Card
+              className={cn(
+                'border-l-4 border-l-green-500 transition-colors',
+                (pendingRemittance?.cashChequeOrdersCount ?? 0) > 0 &&
+                  'cursor-pointer hover:bg-green-50/40'
+              )}
+              role={(pendingRemittance?.cashChequeOrdersCount ?? 0) > 0 ? 'button' : undefined}
+              tabIndex={(pendingRemittance?.cashChequeOrdersCount ?? 0) > 0 ? 0 : undefined}
+              onClick={() => {
+                if ((pendingRemittance?.cashChequeOrdersCount ?? 0) > 0) {
+                  navigate('/my-inventory?remit=1');
+                }
+              }}
+              onKeyDown={(e) => {
+                if (
+                  (e.key === 'Enter' || e.key === ' ') &&
+                  (pendingRemittance?.cashChequeOrdersCount ?? 0) > 0
+                ) {
+                  e.preventDefault();
+                  navigate('/my-inventory?remit=1');
+                }
+              }}
+            >
+              <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+                <div className="space-y-1 pr-2">
+                  <CardTitle className="text-sm font-medium">To Remit (Cash)</CardTitle>
                 </div>
                 <Receipt className="h-4 w-4 text-green-600 shrink-0" />
               </CardHeader>
               <CardContent>
-                <p className="text-sm text-muted-foreground">
-                  View cash and cheque remittances you submitted to your team leader.
-                </p>
-                <Button variant="outline" size="sm" className="mt-3" asChild>
-                  <Link to="/inventory/my-remittances">
-                    View remittances
-                    <ArrowRight className="ml-1 h-4 w-4" />
-                  </Link>
-                </Button>
+                {pendingRemittanceStatus === 'loading' || pendingRemittanceStatus === 'idle' ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Checking unremitted orders…
+                  </div>
+                ) : (
+                  <>
+                    <div className="text-xl md:text-2xl font-bold text-green-700">
+                      {pendingRemittance?.cashChequeOrdersCount ?? 0}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {(pendingRemittance?.cashChequeOrdersCount ?? 0) === 1
+                        ? 'order pending remittance'
+                        : 'orders pending remittance'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      ₱{(pendingRemittance?.cashChequeAmount ?? 0).toLocaleString()} cash/cheque
+                    </p>
+                    {(pendingRemittance?.cashChequeOrdersCount ?? 0) > 0 ? (
+                      <p className="mt-3 text-xs font-medium text-green-700 flex items-center gap-1">
+                        Click to open remittance
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      </p>
+                    ) : (
+                      <p className="mt-3 text-xs text-muted-foreground">Nothing to remit right now</p>
+                    )}
+                  </>
+                )}
               </CardContent>
             </Card>
           </div>
