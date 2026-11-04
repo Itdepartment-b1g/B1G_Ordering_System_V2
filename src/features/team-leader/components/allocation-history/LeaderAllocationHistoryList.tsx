@@ -74,13 +74,16 @@ export default function LeaderAllocationHistoryList() {
 
   const teamAgentIdSet = useMemo(() => new Set(teamAgentIds), [teamAgentIds]);
 
-  // Main → leader and TL → TL received by this leader, plus leader → agent to their team.
+  // Stock this leader received, TL-to-TL they sent, and leader → agent to their team.
   const leaderGroups = useMemo(() => {
     if (!user?.id) return [];
     return allGroups.filter((group) => {
+      if (group.allocationType === 'main_to_leader' && group.allocatedToId === user.id) {
+        return true;
+      }
       if (
-        (group.allocationType === 'main_to_leader' || group.allocationType === 'leader_to_leader') &&
-        group.allocatedToId === user.id
+        group.allocationType === 'leader_to_leader' &&
+        (group.allocatedToId === user.id || group.allocatedById === user.id)
       ) {
         return true;
       }
@@ -237,7 +240,7 @@ export default function LeaderAllocationHistoryList() {
           </CardHeader>
           <CardContent className="flex items-center gap-2 text-xs text-muted-foreground">
             <History className="h-3.5 w-3.5" />
-            Main to leader and leader to agent sessions
+            Main to leader, TL to TL, and leader to agent sessions
           </CardContent>
         </Card>
         <Card>
@@ -266,7 +269,7 @@ export default function LeaderAllocationHistoryList() {
         <CardHeader className="pb-3">
           <CardTitle>Leader Allocation History</CardTitle>
           <CardDescription>
-            Stock received from main inventory and allocations from your inventory to your agents.
+            Stock you received from main or another leader, TL-to-TL stock you sent, and allocations from your inventory to your agents.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -292,6 +295,7 @@ export default function LeaderAllocationHistoryList() {
             pagedGroups={pagedGroups}
             sortState={sortState}
             onSort={handleSort}
+            emptyMessage="No allocation history yet."
           />
 
           <ListPagination

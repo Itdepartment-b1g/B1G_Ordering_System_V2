@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useState } from 'react';
 import {
   AlertTriangle,
   ChevronDown,
@@ -91,43 +91,44 @@ function sortedLines(group: AllocationHistoryGroup) {
   });
 }
 
+function groupLinesByBrand(lines: AllocationHistoryGroup['lines']) {
+  const byBrand = new Map<string, AllocationHistoryGroup['lines']>();
+  for (const line of lines) {
+    const brand = line.brandName.trim() || 'Unbranded';
+    const list = byBrand.get(brand) ?? [];
+    list.push(line);
+    byBrand.set(brand, list);
+  }
+  return [...byBrand.entries()]
+    .sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+    .map(([brand, items]) => {
+      const byType = new Map<string, AllocationHistoryGroup['lines']>();
+      for (const line of items) {
+        const type = variantTypeLabel(line.variantType) || 'Other';
+        const list = byType.get(type) ?? [];
+        list.push(line);
+        byType.set(type, list);
+      }
+      return {
+        brand,
+        types: [...byType.entries()]
+          .sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+          .map(([type, typeItems]) => ({
+            type,
+            variantType: typeItems[0]?.variantType ?? null,
+            items: [...typeItems].sort((a, b) =>
+              a.variantName.localeCompare(b.variantName, undefined, { sensitivity: 'base' })
+            ),
+          })),
+      };
+    });
+}
+
 function useAllocationRecordExport(group: AllocationHistoryGroup | null) {
   const { toast } = useToast();
   const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const isExporting = isExportingExcel || isExportingPdf;
-  const linesByBrand = useMemo(() => {
-    const byBrand = new Map<string, typeof group.lines>();
-    for (const line of group.lines) {
-      const brand = line.brandName.trim() || 'Unbranded';
-      const list = byBrand.get(brand) ?? [];
-      list.push(line);
-      byBrand.set(brand, list);
-    }
-    return [...byBrand.entries()]
-      .sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
-      .map(([brand, items]) => {
-        const byType = new Map<string, typeof group.lines>();
-        for (const line of items) {
-          const type = variantTypeLabel(line.variantType) || 'Other';
-          const list = byType.get(type) ?? [];
-          list.push(line);
-          byType.set(type, list);
-        }
-        return {
-          brand,
-          types: [...byType.entries()]
-            .sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
-            .map(([type, typeItems]) => ({
-              type,
-              variantType: typeItems[0]?.variantType ?? null,
-              items: [...typeItems].sort((a, b) =>
-                a.variantName.localeCompare(b.variantName, undefined, { sensitivity: 'base' })
-              ),
-            })),
-        };
-      });
-  }, [group.lines]);
 
   const onExportExcel = async () => {
     if (!group || isExporting) return;
@@ -361,6 +362,7 @@ export function AllocationGroupRow({
   const [open, setOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const missingLines = group.lineCount === 0;
+  const linesByBrand = groupLinesByBrand(group.lines);
 
   return (
     <>
