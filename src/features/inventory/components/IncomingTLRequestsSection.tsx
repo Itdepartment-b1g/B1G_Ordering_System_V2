@@ -1,6 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
   CheckCircle2,
@@ -64,7 +63,6 @@ import {
   TL_DISPATCH_SHORTFALL_LABELS,
   TL_DISPATCH_SHORTFALL_OPTIONS,
   groupTlRequests,
-  invalidateTlTransferQueries,
   tlRemainingToDispatch,
   type TLRequestGroup,
 } from '../tl-stock-transfer/tlStockTransferShared';
@@ -72,7 +70,14 @@ import { exportTlTdrPdf, printTlStockTransferRequest, tlTdrPdfFromDispatch } fro
 import { TLTransferHistoryDialog } from '../tl-stock-transfer/TLTransferHistoryDialog';
 import { TLTransferDetailsDialog } from '../tl-stock-transfer/TLTransferDetailsDialog';
 import { TLTransferRowActionsMenu } from '../tl-stock-transfer/TLTransferRowActionsMenu';
-import { fetchIncomingTlTransfers, useTlTransferRealtime } from '../tl-stock-transfer/useTlTransferRealtime';
+import { useTlTransferRealtime } from '../tl-stock-transfer/useTlTransferRealtime';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import {
+  dispatchTlStockTransfer,
+  fetchIncomingTlTransfers,
+  refreshTlTransferLists,
+  rejectTlStockTransfer,
+} from '@/store/slices/motosales/tl-stock-transfers';
 import {
   DEFAULT_TL_TRANSFER_SORT_DIRECTION,
   DEFAULT_TL_TRANSFER_SORT_KEY,
@@ -103,7 +108,7 @@ type Props = {
 export default function IncomingTLRequestsSection({ embedded = false, listControls }: Props) {
   const { user } = useAuth();
   const { toast } = useToast();
-  const queryClient = useQueryClient();
+  const dispatch = useAppDispatch();
 
   const [dispatchOpen, setDispatchOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
@@ -124,14 +129,14 @@ export default function IncomingTLRequestsSection({ embedded = false, listContro
   const [packagePhotoError, setPackagePhotoError] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
 
-  const { data: incomingRequests = [], isLoading } = useQuery({
-    queryKey: ['incoming-tl-requests', user?.id],
-    enabled: !!user?.id && user?.role === 'team_leader',
-    staleTime: 0,
-    refetchOnMount: 'always',
-    refetchOnWindowFocus: true,
-    queryFn: () => fetchIncomingTlTransfers(user!.id),
-  });
+  const incomingRequests = useAppSelector((state) => state.motoSalesTlTransfers.incomingRequests);
+  const incomingStatus = useAppSelector((state) => state.motoSalesTlTransfers.incomingStatus);
+  const isLoading = incomingStatus === 'idle' || incomingStatus === 'loading';
+
+  useEffect(() => {
+    if (!user?.id || user.role !== 'team_leader') return;
+    void dispatch(fetchIncomingTlTransfers());
+  }, [dispatch, user?.id, user?.role]);
 
   const incomingGroups = useMemo(() => groupTlRequests(incomingRequests), [incomingRequests]);
 
@@ -330,18 +335,18 @@ export default function IncomingTLRequestsSection({ embedded = false, listContro
       let reuseRedispatchTdr: string | null = null;
       for (const row of linesToDispatch) {
         const isRedispatch = row.line.received_quantity != null;
-        const { data: result, error: rpcError } = await supabase.rpc('source_tl_dispatch_stock', {
-          p_request_id: row.line.id,
-          p_dispatched_quantity: row.qty,
-          p_signature_url: urlData.signedUrl,
-          p_signature_path: fileName,
-          p_shortfall_reason: row.short ? reasonById[row.line.id] : null,
-          p_notes: sourceNotes || null,
-          p_proof_urls: packageUpload.urls,
-          p_reuse_tdr: isRedispatch ? reuseRedispatchTdr : null,
-        });
-        if (rpcError) throw rpcError;
-        if (!result?.success) throw new Error(result?.error || 'Failed to dispatch');
+        const result = await dispatch(
+          dispatchTlStockTransfer({
+            request_id: row.line.id,
+            dispatched_quantity: row.qty,
+            signature_url: urlData.signedUrl,
+            signature_path: fileName,
+            shortfall_reason: row.short ? reasonById[row.line.id] : null,
+            notes: sourceNotes || null,
+            proof_urls: packageUpload.urls,
+            reuse_tdr: isRedispatch ? reuseRedispatchTdr : null,
+          })
+        ).unwrap();
         tdrNumber = result.tdr_number ?? tdrNumber;
         tdrKind = result.tdr_kind ?? tdrKind;
         if (isRedispatch && result.tdr_number) reuseRedispatchTdr = result.tdr_number;
@@ -384,7 +389,7 @@ export default function IncomingTLRequestsSection({ embedded = false, listContro
       setDispatchOpen(false);
       setSelectedGroup(null);
       setDispatchLines([]);
-      invalidateTlTransferQueries(queryClient);
+      void refreshTlTransferLists(dispatch);
     } catch (error: any) {
       toast({
         title: 'Could not dispatch',
@@ -407,17 +412,17 @@ export default function IncomingTLRequestsSection({ embedded = false, listContro
     setProcessing(true);
     try {
       for (const item of selectedGroup.items) {
-        const { data: result, error } = await supabase.rpc('source_tl_reject_request', {
-          p_request_id: item.id,
-          p_reason: rejectionReason,
-        });
-        if (error) throw error;
-        if (!result?.success) throw new Error(result?.error || 'Failed to reject request');
+        await dispatch(
+          rejectTlStockTransfer({
+            request_id: item.id,
+            reason: rejectionReason,
+          })
+        ).unwrap();
       }
       toast({ title: 'Request rejected' });
       setRejectOpen(false);
       setSelectedGroup(null);
-      invalidateTlTransferQueries(queryClient);
+      void refreshTlTransferLists(dispatch);
     } catch (error: any) {
       toast({
         title: 'Could not reject',

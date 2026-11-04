@@ -27,8 +27,14 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/lib/supabase';
-import { useQueryClient, useQuery } from '@tanstack/react-query';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import {
+  adminApproveTlStockTransfer,
+  adminRejectTlStockTransfer,
+  fetchAdminTlTransfers,
+  fetchTlSourceAvailability,
+  refreshTlTransferLists,
+} from '@/store/slices/motosales/tl-stock-transfers';
 import type { TLRequestWithDetails } from '@/types/tlStockRequests.types';
 import {
   DateRangeFilterPopover,
@@ -51,8 +57,6 @@ import {
 import { getDateRangeFromPreset } from '@/lib/dateRangePresets';
 import {
   groupTlRequests,
-  invalidateTlTransferQueries,
-  mapTlTransferRows,
   type TLRequestGroup,
 } from './tl-stock-transfer/tlStockTransferShared';
 import {
@@ -74,7 +78,7 @@ type SelectedGroup = Omit<TLRequestGroup, 'items'> & { items: ReviewLine[] };
 export default function AdminTLRequestsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const queryClient = useQueryClient();
+  const dispatch = useAppDispatch();
   
   const [activeTab, setActiveTab] = useState('pending');
   const [searchQuery, setSearchQuery] = useState('');
@@ -100,45 +104,22 @@ export default function AdminTLRequestsPage() {
   const [processing, setProcessing] = useState(false);
   
   // Fetch TL requests
-  const { data: requests = [], isLoading: requestsLoading } = useQuery({
-    queryKey: ['admin-tl-requests', user?.company_id],
-    queryFn: async () => {
-      if (!user?.company_id) return [];
-      
-      const { data, error } = await supabase
-        .from('tl_stock_requests')
-        .select(`
-          *,
-          requester:profiles!requester_leader_id(id, full_name, region, email),
-          source:profiles!source_leader_id(id, full_name, region, email),
-          tdrs:tl_stock_request_tdrs(tdr_number, kind, created_at),
-          items:tl_stock_request_items(
-            *,
-            variant:variants(
-              id,
-              name,
-              variant_type,
-              brand_id,
-              brand:brands(name)
-            )
-          )
-        `)
-        .eq('company_id', user.company_id)
-        .order('created_at', { ascending: false });
-      
-      if (error) throw error;
-      
-      return mapTlTransferRows(data || []);
-    },
-    enabled: !!user?.company_id && (user?.role === 'admin' || user?.role === 'super_admin'),
-    staleTime: 0,
-    refetchOnMount: 'always',
-  });
+  const requests = useAppSelector((state) => state.motoSalesTlTransfers.adminRequests);
+  const adminStatus = useAppSelector((state) => state.motoSalesTlTransfers.adminStatus);
+  const adminError = useAppSelector((state) => state.motoSalesTlTransfers.adminError);
+  const requestsLoading = adminStatus === 'idle' || adminStatus === 'loading';
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+
+  useEffect(() => {
+    if (!user?.company_id || !isAdmin) return;
+    void dispatch(fetchAdminTlTransfers(user.company_id));
+  }, [dispatch, user?.company_id, isAdmin]);
   
   useTlTransferRealtime({
     enabled: !!user?.company_id && (user?.role === 'admin' || user?.role === 'super_admin'),
     companyId: user?.company_id,
     channelKey: 'admin',
+    lists: ['admin'],
   });
   
   const groupedRequests = useMemo(() => groupTlRequests(requests), [requests]);
@@ -244,12 +225,10 @@ export default function AdminTLRequestsPage() {
     const sourceId = group.items[0]?.source_leader_id;
     let stockRows: { variant_id: string; stock: number }[] = [];
     if (sourceId && variantIds.length > 0) {
-      const { data } = await supabase
-        .from('agent_inventory')
-        .select('variant_id, stock')
-        .eq('agent_id', sourceId)
-        .in('variant_id', variantIds);
-      stockRows = (data || []) as { variant_id: string; stock: number }[];
+      const data = await dispatch(
+        fetchTlSourceAvailability({ sourceLeaderId: sourceId, variantIds })
+      ).unwrap();
+      stockRows = data.rows;
     }
 
     const stockByVariant = new Map(
@@ -290,13 +269,14 @@ export default function AdminTLRequestsPage() {
     setProcessing(true);
     try {
       await runOnPendingItems(async (item) => {
-        const { data, error } = await supabase.rpc('admin_approve_tl_request', {
-          p_request_id: item.id,
-          p_approved_quantity: item.requested_quantity,
-          p_notes: adminNotes || null,
-        });
-        if (error) throw error;
-        if (!data.success) throw new Error(data.error || 'Failed to approve request');
+        await dispatch(
+          adminApproveTlStockTransfer({
+            request_id: item.id,
+            approved_quantity: item.requested_quantity,
+            notes: adminNotes || null,
+            company_id: user?.company_id,
+          })
+        ).unwrap();
       });
       
       toast({
@@ -306,7 +286,10 @@ export default function AdminTLRequestsPage() {
       
       setApproveDialogOpen(false);
       setReviewDialogOpen(false);
-      invalidateTlTransferQueries(queryClient);
+      void refreshTlTransferLists(dispatch, {
+        lists: ['admin'],
+        companyId: user?.company_id,
+      });
     } catch (error: any) {
       console.error('Error approving request:', error);
       toast({
@@ -353,13 +336,14 @@ export default function AdminTLRequestsPage() {
     setProcessing(true);
     try {
       await runOnPendingItems(async (item) => {
-        const { data, error } = await supabase.rpc('admin_approve_tl_request', {
-          p_request_id: item.id,
-          p_approved_quantity: Number(modifiedQtyById[item.id] || 0),
-          p_notes: adminNotes || null,
-        });
-        if (error) throw error;
-        if (!data.success) throw new Error(data.error || 'Failed to approve request');
+        await dispatch(
+          adminApproveTlStockTransfer({
+            request_id: item.id,
+            approved_quantity: Number(modifiedQtyById[item.id] || 0),
+            notes: adminNotes || null,
+            company_id: user?.company_id,
+          })
+        ).unwrap();
       });
       
       toast({
@@ -369,7 +353,10 @@ export default function AdminTLRequestsPage() {
       
       setModifyDialogOpen(false);
       setReviewDialogOpen(false);
-      invalidateTlTransferQueries(queryClient);
+      void refreshTlTransferLists(dispatch, {
+        lists: ['admin'],
+        companyId: user?.company_id,
+      });
     } catch (error: any) {
       console.error('Error approving request:', error);
       toast({
@@ -395,12 +382,13 @@ export default function AdminTLRequestsPage() {
     setProcessing(true);
     try {
       await runOnPendingItems(async (item) => {
-        const { data, error } = await supabase.rpc('admin_reject_tl_request', {
-          p_request_id: item.id,
-          p_reason: rejectionReason,
-        });
-        if (error) throw error;
-        if (!data.success) throw new Error(data.error || 'Failed to reject request');
+        await dispatch(
+          adminRejectTlStockTransfer({
+            request_id: item.id,
+            reason: rejectionReason,
+            company_id: user?.company_id,
+          })
+        ).unwrap();
       });
       
       toast({
@@ -410,7 +398,10 @@ export default function AdminTLRequestsPage() {
       
       setRejectDialogOpen(false);
       setReviewDialogOpen(false);
-      invalidateTlTransferQueries(queryClient);
+      void refreshTlTransferLists(dispatch, {
+        lists: ['admin'],
+        companyId: user?.company_id,
+      });
     } catch (error: any) {
       console.error('Error rejecting request:', error);
       toast({
@@ -575,6 +566,8 @@ export default function AdminTLRequestsPage() {
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                 </div>
+              ) : adminError ? (
+                <p className="py-8 text-center text-sm text-destructive">{adminError}</p>
               ) : tabGroups.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
@@ -33,9 +32,13 @@ import { uploadPackageProofPhotos } from '@/features/orders/utils/uploadPackageP
 import type { TLDispatchShortfallReason, TLRequestWithDetails } from '@/types/tlStockRequests.types';
 import {
   TL_DISPATCH_SHORTFALL_OPTIONS,
-  invalidateTlTransferQueries,
   tlRemainingToDispatch,
 } from './tlStockTransferShared';
+import { useAppDispatch } from '@/store/store';
+import {
+  dispatchTlStockTransfer,
+  refreshTlTransferLists,
+} from '@/store/slices/motosales/tl-stock-transfers';
 
 type DispatchLine = {
   request: TLRequestWithDetails;
@@ -66,7 +69,7 @@ function dataUrlToBlob(dataUrl: string, fallbackMime = 'image/png'): Blob {
 export function TLStockDispatchDialog({ open, requests, onOpenChange }: Props) {
   const { user } = useAuth();
   const { toast } = useToast();
-  const queryClient = useQueryClient();
+  const dispatch = useAppDispatch();
   const [step, setStep] = useState<1 | 2>(1);
   const [lines, setLines] = useState<DispatchLine[]>([]);
   const [notes, setNotes] = useState('');
@@ -221,18 +224,18 @@ export function TLStockDispatchDialog({ open, requests, onOpenChange }: Props) {
       for (const line of lines) {
         const remaining = tlRemainingToDispatch(line.request);
         const isRedispatch = line.request.received_quantity != null;
-        const { data: result, error } = await supabase.rpc('source_tl_dispatch_stock', {
-          p_request_id: line.request.id,
-          p_dispatched_quantity: line.shipQty,
-          p_signature_url: signatureUrlData.signedUrl,
-          p_signature_path: signaturePath,
-          p_shortfall_reason: line.shipQty < remaining ? line.shortfallReason : null,
-          p_notes: notes.trim() || null,
-          p_proof_urls: packageUpload.urls,
-          p_reuse_tdr: isRedispatch ? reuseRedispatchTdr : null,
-        });
-        if (error) throw error;
-        if (!result?.success) throw new Error(result?.error || 'Failed to dispatch');
+        const result = await dispatch(
+          dispatchTlStockTransfer({
+            request_id: line.request.id,
+            dispatched_quantity: line.shipQty,
+            signature_url: signatureUrlData.signedUrl,
+            signature_path: signaturePath,
+            shortfall_reason: line.shipQty < remaining ? line.shortfallReason : null,
+            notes: notes.trim() || null,
+            proof_urls: packageUpload.urls,
+            reuse_tdr: isRedispatch ? reuseRedispatchTdr : null,
+          })
+        ).unwrap();
         if (isRedispatch && result.tdr_number) reuseRedispatchTdr = result.tdr_number;
       }
 
@@ -242,7 +245,7 @@ export function TLStockDispatchDialog({ open, requests, onOpenChange }: Props) {
       });
       proof.reset();
       onOpenChange(false);
-      invalidateTlTransferQueries(queryClient);
+      void refreshTlTransferLists(dispatch);
     } catch (error: any) {
       toast({
         title: 'Could not dispatch',

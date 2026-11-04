@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Loader2, PackageSearch, Search } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { Link, useSearchParams } from 'react-router-dom';
+import { AlertTriangle, Loader2, PackageSearch, Printer, Search } from 'lucide-react';
 import { useAuth } from '@/features/auth';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useToast } from '@/hooks/use-toast';
@@ -29,54 +27,103 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatShortfallReasonLabel } from '@/features/orders/deliveryDiscrepancyShared';
 import {
   TL_TRANSFER_RESOLUTION_OPTIONS,
-  invalidateTlTransferQueries,
   tlShortageStatusLabel,
 } from './tl-stock-transfer/tlStockTransferShared';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import { exportTlShortageInvestigationPdf } from './tl-stock-transfer/exportTlTransferPdfs';
+import {
+  fetchTlTransferShortages,
+  refreshTlTransferLists,
+  resolveTlStockDiscrepancy,
+  type TlShortageRow,
+} from '@/store/slices/motosales/tl-stock-transfers';
 import { useTlTransferRealtime } from './tl-stock-transfer/useTlTransferRealtime';
 import type {
   TLDiscrepancyResolution,
-  TLDiscrepancyStatus,
   TLReceiveShortfallReason,
 } from '@/types/tlStockRequests.types';
 
-type ShortageRow = {
-  id: string;
-  request_id: string;
-  quantity: number;
+type ShortageRow = TlShortageRow & {
   reason: TLReceiveShortfallReason;
-  reporter_notes: string | null;
-  status: TLDiscrepancyStatus;
-  created_at: string;
+};
+
+type ShortageGroup = {
+  key: string;
   request_number: string;
   tdr_number: string;
   requester_name: string;
-  source_leader_id: string;
-  brand_name: string;
-  variant_name: string;
+  created_at: string;
+  lines: ShortageRow[];
+  openLines: ShortageRow[];
 };
+
+function groupShortages(rows: ShortageRow[]): ShortageGroup[] {
+  const groups = new Map<string, ShortageGroup>();
+  for (const row of rows) {
+    const key = row.request_id || row.request_number;
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        key,
+        request_number: row.request_number,
+        tdr_number: row.tdr_number,
+        requester_name: row.requester_name,
+        created_at: row.created_at,
+        lines: [],
+        openLines: [],
+      };
+      groups.set(key, group);
+    }
+    group.lines.push(row);
+    if (row.status === 'open') group.openLines.push(row);
+    if (row.created_at < group.created_at) group.created_at = row.created_at;
+  }
+  return Array.from(groups.values());
+}
+
+function formatReportedAt(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function unitLabel(quantity: number) {
+  return `${quantity} unit${quantity === 1 ? '' : 's'}`;
+}
 
 export default function TLTransferShortagesPage() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const queryClient = useQueryClient();
+  const dispatch = useAppDispatch();
   const { hasWarehouseHubLink, hasWarehouseHubLinkLoading } = usePermissions();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
-  const [statusFilter, setStatusFilter] = useState<'open' | 'all'>('open');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchParams] = useSearchParams();
+  const [statusFilter, setStatusFilter] = useState<'open' | 'all'>(() =>
+    searchParams.get('status') === 'all' ? 'all' : 'open'
+  );
+  const [searchQuery, setSearchQuery] = useState(() => searchParams.get('search') || '');
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
-  const [resolveTarget, setResolveTarget] = useState<ShortageRow | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [resolveLines, setResolveLines] = useState<ShortageRow[]>([]);
   const [resolution, setResolution] = useState<TLDiscrepancyResolution | null>(null);
   const [foundChoice, setFoundChoice] = useState(false);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [printingId, setPrintingId] = useState<string | null>(null);
 
   const canUsePage =
     isAdmin || (user?.role === 'team_leader' && hasWarehouseHubLink === true);
@@ -85,59 +132,18 @@ export default function TLTransferShortagesPage() {
     enabled: canUsePage && !!user?.company_id,
     companyId: user?.company_id,
     channelKey: 'shortages',
+    lists: isAdmin ? ['shortages', 'admin'] : ['shortages'],
   });
 
-  const { data: rows = [], isLoading, error } = useQuery({
-    queryKey: ['tl-transfer-shortages', user?.company_id, user?.id, isAdmin],
-    enabled: !!user?.company_id && canUsePage,
-    queryFn: async () => {
-      const { data, error: fetchError } = await supabase
-        .from('tl_stock_request_discrepancies')
-        .select(
-          `
-          id,
-          request_id,
-          request_item_id,
-          quantity,
-          reason,
-          reporter_notes,
-          status,
-          created_at,
-          request:tl_stock_requests(
-            request_number,
-            tdr_number,
-            source_leader_id,
-            requester:profiles!requester_leader_id(full_name)
-          ),
-          item:tl_stock_request_items(
-            variant:variants(name, brand:brands(name))
-          )
-        `
-        )
-        .eq('company_id', user!.company_id)
-        .order('created_at', { ascending: false });
-      if (fetchError) throw fetchError;
+  const rows = useAppSelector((state) => state.motoSalesTlTransfers.shortages) as ShortageRow[];
+  const shortagesStatus = useAppSelector((state) => state.motoSalesTlTransfers.shortagesStatus);
+  const error = useAppSelector((state) => state.motoSalesTlTransfers.shortagesError);
+  const isLoading = shortagesStatus === 'idle' || shortagesStatus === 'loading';
 
-      const mapped = (data || []).map((row: any) => ({
-        id: row.id,
-        request_id: row.request_id,
-        quantity: row.quantity,
-        reason: row.reason,
-        reporter_notes: row.reporter_notes,
-        status: row.status,
-        created_at: row.created_at,
-        request_number: row.request?.request_number || '',
-        tdr_number: row.request?.tdr_number || '',
-        requester_name: row.request?.requester?.full_name || '',
-        source_leader_id: row.request?.source_leader_id || '',
-        brand_name: row.item?.variant?.brand?.name || '',
-        variant_name: row.item?.variant?.name || '',
-      })) as ShortageRow[];
-
-      if (isAdmin) return mapped;
-      return mapped.filter((row) => row.source_leader_id === user!.id);
-    },
-  });
+  useEffect(() => {
+    if (!user?.company_id || !canUsePage) return;
+    void dispatch(fetchTlTransferShortages());
+  }, [dispatch, user?.company_id, canUsePage]);
 
   const statusRows = useMemo(
     () => (statusFilter === 'open' ? rows.filter((row) => row.status === 'open') : rows),
@@ -175,49 +181,149 @@ export default function TLTransferShortagesPage() {
     });
   }, [statusRows, searchQuery, dateRange.start, dateRange.end]);
 
+  const groups = useMemo(() => groupShortages(filteredRows), [filteredRows]);
+
   useEffect(() => {
     setPage(0);
+    setSelectedIds(new Set());
   }, [statusFilter, searchQuery, dateRangeFilter, pageSize]);
 
-  const { pageCount, safePage, pagedItems } = useMemo(
-    () => getListPaginationSlice(filteredRows, page, pageSize),
-    [filteredRows, page, pageSize]
+  const { pageCount, safePage, pagedItems: pagedGroups } = useMemo(
+    () => getListPaginationSlice(groups, page, pageSize),
+    [groups, page, pageSize]
   );
 
   const closeResolve = () => {
-    setResolveTarget(null);
+    setResolveLines([]);
     setResolution(null);
     setFoundChoice(false);
     setNotes('');
   };
 
-  const openFound = (row: ShortageRow) => {
-    setResolveTarget(row);
+  const linesForAction = (group: ShortageGroup) => {
+    const picked = group.openLines.filter((line) => selectedIds.has(line.id));
+    return picked.length > 0 ? picked : group.openLines;
+  };
+
+  const openFound = (lines: ShortageRow[]) => {
+    if (lines.length === 0) return;
+    setResolveLines(lines);
     setResolution(null);
     setFoundChoice(true);
     setNotes('');
   };
 
-  const openResolve = (row: ShortageRow, next: TLDiscrepancyResolution) => {
-    setResolveTarget(row);
+  const openResolve = (lines: ShortageRow[], next: TLDiscrepancyResolution) => {
+    if (lines.length === 0) return;
+    setResolveLines(lines);
     setResolution(next);
     setFoundChoice(false);
     setNotes('');
   };
 
-  const handleResolve = async (next: TLDiscrepancyResolution) => {
-    if (!resolveTarget) return;
-    setSaving(true);
+  const toggleLine = (id: string, checked: boolean) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const printTransfer = (group: ShortageGroup) => {
+    const requestId = group.lines[0]?.request_id;
+    const lines = (requestId ? rows.filter((row) => row.request_id === requestId) : group.lines).slice();
+    const header = lines[0] ?? group.lines[0];
+    if (!header) return;
+    setPrintingId(group.key);
     try {
-      const { data, error: rpcError } = await supabase.rpc('resolve_tl_stock_request_discrepancy', {
-        p_discrepancy_id: resolveTarget.id,
-        p_resolution: next,
-        p_notes: notes || null,
+      exportTlShortageInvestigationPdf({
+        requestNumber: header.request_number,
+        tdrNumber: header.tdr_number,
+        requesterName: header.requester_name,
+        sourceName: header.source_name,
+        reportedAt: lines.reduce(
+          (earliest, line) => (line.created_at < earliest ? line.created_at : earliest),
+          header.created_at
+        ),
+        lines: lines.map((line) => {
+          const open = line.status === 'open';
+          return {
+            item: `${line.brand_name} · ${line.variant_name}`,
+            quantity: Number(line.quantity || 0),
+            reason: formatShortfallReasonLabel(line.reason),
+            reportNotes: line.reporter_notes,
+            result: open ? 'Open' : 'Resolved',
+            choice: open ? '—' : tlShortageStatusLabel(line.status),
+            resolutionNotes: line.resolution_notes,
+          };
+        }),
       });
-      if (rpcError) throw rpcError;
-      if (!data?.success) throw new Error(data?.error || 'Failed to resolve shortage');
+    } catch (err: any) {
       toast({
-        title: 'Shortage updated',
+        title: 'Could not print investigation',
+        description: err?.message || 'Failed to open the print view.',
+        variant: 'destructive',
+      });
+    } finally {
+      setPrintingId(null);
+    }
+  };
+
+  const toggleGroup = (group: ShortageGroup, checked: boolean) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      for (const line of group.openLines) {
+        if (checked) next.add(line.id);
+        else next.delete(line.id);
+      }
+      return next;
+    });
+  };
+
+  const handleResolve = async (next: TLDiscrepancyResolution) => {
+    if (resolveLines.length === 0) return;
+    setSaving(true);
+    let failed: string | null = null;
+    const done: string[] = [];
+    try {
+      for (const line of resolveLines) {
+        try {
+          await dispatch(
+            resolveTlStockDiscrepancy({
+              discrepancy_id: line.id,
+              resolution: next,
+              notes: notes || null,
+            })
+          ).unwrap();
+          done.push(line.id);
+        } catch (err: any) {
+          failed = err?.message || 'Failed to resolve shortage';
+          break;
+        }
+      }
+      if (done.length > 0) {
+        setSelectedIds((current) => {
+          const nextIds = new Set(current);
+          for (const id of done) nextIds.delete(id);
+          return nextIds;
+        });
+        void refreshTlTransferLists(dispatch, {
+          lists: isAdmin ? ['shortages', 'admin'] : ['shortages'],
+        });
+      }
+      if (failed) {
+        toast({
+          title: done.length > 0 ? 'Some items were not updated' : 'Could not resolve',
+          description: failed,
+          variant: 'destructive',
+        });
+        if (done.length > 0) closeResolve();
+        return;
+      }
+      const count = resolveLines.length;
+      toast({
+        title: count === 1 ? 'Shortage updated' : `${count} shortages updated`,
         description:
           next === 'write_off'
             ? 'Loss confirmed. Stock does not return to you. Transfer stays incomplete.'
@@ -228,13 +334,6 @@ export default function TLTransferShortagesPage() {
                 : 'Loss confirmed. Dispatch the replacement from Incoming on this same transfer. You can send less if you need the units.',
       });
       closeResolve();
-      invalidateTlTransferQueries(queryClient);
-    } catch (err: any) {
-      toast({
-        title: 'Could not resolve',
-        description: err.message || 'Failed to resolve shortage',
-        variant: 'destructive',
-      });
     } finally {
       setSaving(false);
     }
@@ -339,9 +438,9 @@ export default function TLTransferShortagesPage() {
             <div className="flex items-start gap-2 text-sm text-destructive py-6">
               <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
               <span>
-                {(error as Error).message.includes('tl_stock_request_discrepancies')
+                {String(error).includes('tl_stock_request_discrepancies')
                   ? 'Apply migration 20260909160000_tl_stock_transfer_dispatch_receive_shortages.sql to enable this queue.'
-                  : (error as Error).message}
+                  : error}
               </span>
             </div>
           ) : statusRows.length === 0 ? (
@@ -354,79 +453,162 @@ export default function TLTransferShortagesPage() {
             </p>
           ) : (
             <div className="space-y-4">
-            <div className="border rounded-lg overflow-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Transfer #</TableHead>
-                    <TableHead>TDR</TableHead>
-                    <TableHead>Requester</TableHead>
-                    <TableHead>Item</TableHead>
-                    <TableHead className="text-right">Qty</TableHead>
-                    <TableHead>Reason</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {pagedItems.map((row) => (
-                    <TableRow key={row.id}>
-                      <TableCell className="font-medium">{row.request_number}</TableCell>
-                      <TableCell className="font-mono text-sm">{row.tdr_number || '—'}</TableCell>
-                      <TableCell>{row.requester_name}</TableCell>
-                      <TableCell>
-                        {row.brand_name} · {row.variant_name}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">{row.quantity}</TableCell>
-                      <TableCell>
-                        {formatShortfallReasonLabel(row.reason, row.reporter_notes)}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="secondary">{tlShortageStatusLabel(row.status)}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        {row.status === 'open' ? (
-                          <div className="flex flex-wrap gap-2 justify-end">
-                            <Button size="sm" variant="outline" onClick={() => openFound(row)}>
-                              Found
+              {groups.some((group) => group.openLines.length > 1) ? (
+                <p className="text-xs text-muted-foreground">
+                  Each transfer is one group. Found, Replace, and Write off apply to every open
+                  item, or only the items you check.
+                </p>
+              ) : null}
+              {pagedGroups.map((group) => {
+                const openIds = group.openLines.map((line) => line.id);
+                const selectedInGroup = openIds.filter((id) => selectedIds.has(id));
+                const allOpenSelected =
+                  openIds.length > 1 && selectedInGroup.length === openIds.length;
+                const someOpenSelected =
+                  selectedInGroup.length > 0 && selectedInGroup.length < openIds.length;
+                const actionLines = linesForAction(group);
+                const countSuffix =
+                  selectedInGroup.length > 0 && selectedInGroup.length < group.openLines.length
+                    ? ` (${selectedInGroup.length})`
+                    : '';
+                const openQty = group.openLines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+                const resolvedCount = group.lines.length - group.openLines.length;
+                const summary =
+                  group.openLines.length === 0
+                    ? 'Resolved'
+                    : resolvedCount > 0
+                      ? `${group.openLines.length} open · ${resolvedCount} resolved`
+                      : `${group.openLines.length} open · ${unitLabel(openQty)}`;
+
+                return (
+                  <div key={group.key} className="rounded-lg border overflow-hidden">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between bg-muted/30 px-3 py-3 border-b">
+                      <div className="flex items-start gap-3 min-w-0">
+                        {group.openLines.length > 1 ? (
+                          <Checkbox
+                            className="mt-1"
+                            checked={allOpenSelected ? true : someOpenSelected ? 'indeterminate' : false}
+                            onCheckedChange={(value) => toggleGroup(group, value === true)}
+                            aria-label={`Select open items in ${group.request_number}`}
+                          />
+                        ) : (
+                          <div className="w-4 shrink-0" />
+                        )}
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-semibold">{group.request_number}</span>
+                            <span className="font-mono text-sm text-muted-foreground">
+                              {group.tdr_number || 'No TDR'}
+                            </span>
+                            <Badge variant={group.openLines.length > 0 ? 'secondary' : 'outline'}>
+                              {summary}
+                            </Badge>
+                          </div>
+                          <div className="text-xs text-muted-foreground flex flex-wrap gap-x-3 gap-y-0.5">
+                            <span>{group.requester_name || 'Unknown requester'}</span>
+                            <span>Reported {formatReportedAt(group.created_at)}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2 lg:justify-end shrink-0">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void printTransfer(group)}
+                          disabled={printingId === group.key}
+                        >
+                          {printingId === group.key ? (
+                            <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                          ) : (
+                            <Printer className="mr-1 h-4 w-4" />
+                          )}
+                          Print
+                        </Button>
+                        {group.openLines.length > 0 ? (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => openFound(actionLines)}
+                            >
+                              Found{countSuffix}
                             </Button>
                             <Button
                               size="sm"
                               variant="secondary"
-                              onClick={() => openResolve(row, 'write_off_replace')}
+                              onClick={() => openResolve(actionLines, 'write_off_replace')}
                             >
-                              Replace
+                              Replace{countSuffix}
                             </Button>
                             <Button
                               size="sm"
                               variant="destructive"
-                              onClick={() => openResolve(row, 'write_off')}
+                              onClick={() => openResolve(actionLines, 'write_off')}
                             >
-                              Write off
+                              Write off{countSuffix}
                             </Button>
-                          </div>
+                          </>
                         ) : null}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-            <ListPagination
-              pageSize={pageSize}
-              safePage={safePage}
-              pageCount={pageCount}
-              onPageSizeChange={setPageSize}
-              onPrevious={() => setPage(Math.max(0, safePage - 1))}
-              onNext={() => setPage(Math.min(pageCount - 1, safePage + 1))}
-            />
+                      </div>
+                    </div>
+                    <div className="divide-y">
+                      {group.lines.map((line) => {
+                        const isOpen = line.status === 'open';
+                        const canPick = isOpen && group.openLines.length > 1;
+                        return (
+                          <div
+                            key={line.id}
+                            className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-3 py-2.5 text-sm"
+                          >
+                            <div className="flex items-start gap-3 min-w-0">
+                              {canPick ? (
+                                <Checkbox
+                                  className="mt-0.5"
+                                  checked={selectedIds.has(line.id)}
+                                  onCheckedChange={(value) => toggleLine(line.id, value === true)}
+                                  aria-label={`Select ${line.brand_name} ${line.variant_name}`}
+                                />
+                              ) : (
+                                <div className="w-4 shrink-0" />
+                              )}
+                              <div className="min-w-0">
+                                <div className="font-medium">
+                                  {line.brand_name} · {line.variant_name}
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  {formatShortfallReasonLabel(line.reason, line.reporter_notes)}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-3 sm:justify-end pl-7 sm:pl-0 shrink-0">
+                              <span className="font-semibold tabular-nums">{line.quantity}</span>
+                              <Badge variant={isOpen ? 'secondary' : 'outline'}>
+                                {tlShortageStatusLabel(line.status)}
+                              </Badge>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+              <ListPagination
+                pageSize={pageSize}
+                safePage={safePage}
+                pageCount={pageCount}
+                onPageSizeChange={setPageSize}
+                onPrevious={() => setPage(Math.max(0, safePage - 1))}
+                onNext={() => setPage(Math.min(pageCount - 1, safePage + 1))}
+                rowsPerPageLabel="Transfers per page"
+              />
             </div>
           )}
         </CardContent>
       </Card>
 
       <Dialog
-        open={!!resolveTarget}
+        open={resolveLines.length > 0}
         onOpenChange={(open) => {
           if (!open) closeResolve();
         }}
@@ -442,13 +624,28 @@ export default function TLTransferShortagesPage() {
                 : selectedOption?.description}
             </DialogDescription>
           </DialogHeader>
-          {resolveTarget ? (
+          {resolveLines.length > 0 ? (
             <div className="space-y-3 text-sm">
               <p>
                 <span className="text-muted-foreground">Transfer</span>{' '}
-                <span className="font-medium">{resolveTarget.request_number}</span> · {resolveTarget.quantity}{' '}
-                unit{resolveTarget.quantity === 1 ? '' : 's'}
+                <span className="font-medium">{resolveLines[0].request_number}</span>
+                {' · '}
+                {resolveLines.length === 1
+                  ? unitLabel(Number(resolveLines[0].quantity || 0))
+                  : `${resolveLines.length} items · ${unitLabel(
+                      resolveLines.reduce((sum, line) => sum + Number(line.quantity || 0), 0)
+                    )}`}
               </p>
+              <ul className="rounded-md border divide-y">
+                {resolveLines.map((line) => (
+                  <li key={line.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                    <span className="min-w-0">
+                      {line.brand_name} · {line.variant_name}
+                    </span>
+                    <span className="tabular-nums font-medium">{line.quantity}</span>
+                  </li>
+                ))}
+              </ul>
               <div className="space-y-2">
                 <Label htmlFor="resolve-notes">Notes (optional)</Label>
                 <Textarea

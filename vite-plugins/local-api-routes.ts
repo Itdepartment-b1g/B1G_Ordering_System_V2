@@ -45,6 +45,20 @@ function createResProxy(res: any) {
   };
 }
 
+function withAuthorization(req: Connect.IncomingMessage) {
+  const headers: Record<string, string | string[] | undefined> = { ...(req.headers || {}) };
+  if (!headers.authorization && !headers.Authorization) {
+    const raw = req.rawHeaders || [];
+    for (let i = 0; i < raw.length; i += 2) {
+      if (raw[i]?.toLowerCase() === 'authorization' && raw[i + 1]) {
+        headers.authorization = raw[i + 1];
+        break;
+      }
+    }
+  }
+  return headers;
+}
+
 export function localApiRoutes(): Plugin {
   return {
     name: 'local-api-routes',
@@ -79,7 +93,7 @@ export function localApiRoutes(): Plugin {
 
           const reqProxy: any = {
             method: req.method,
-            headers: req.headers || {},
+            headers: withAuthorization(req),
             query: queryMap(req.url || ''),
           };
 

@@ -1,4 +1,3 @@
-import { supabase } from '@/lib/supabase';
 import { formatShortfallReasonLabel } from '@/features/orders/deliveryDiscrepancyShared';
 import type {
   TLDiscrepancyStatus,
@@ -649,9 +648,24 @@ export function dispatchEventTitle(event: TlTransferHistoryEvent): string {
   return 'Dispatched';
 }
 
-export async function fetchTlTransferHistory(
-  skuLines: TLRequestWithDetails[]
-): Promise<TlTransferHistoryPayload> {
+export function tlHistoryActorIds(skuLines: TLRequestWithDetails[]) {
+  return uniqueIds([
+    ...skuLines.map((line) => line.admin_approved_by),
+    ...skuLines.map((line) => line.source_tl_approved_by),
+    ...skuLines.map((line) => line.received_by),
+    ...skuLines.map((line) => line.rejected_by),
+  ]);
+}
+
+export function tlTransferHistoryFromBundle(
+  skuLines: TLRequestWithDetails[],
+  bundle: {
+    tdrs: TdrRow[];
+    shortages: ShortageRow[];
+    movements: MovementRow[];
+    profiles: Array<{ id: string; full_name: string | null }>;
+  }
+): TlTransferHistoryPayload {
   const header = skuLines[0];
   if (!header) {
     return {
@@ -664,79 +678,17 @@ export async function fetchTlTransferHistory(
     };
   }
 
-  const headerId = header.request_id;
-  const [{ data: tdrs, error: tdrError }, { data: discs, error: discError }, { data: txs }] =
-    await Promise.all([
-      supabase
-        .from('tl_stock_request_tdrs')
-        .select('id, tdr_number, kind, created_at')
-        .eq('request_id', headerId)
-        .order('created_at', { ascending: true }),
-      supabase
-        .from('tl_stock_request_discrepancies')
-        .select(
-          'id, request_item_id, variant_id, quantity, reason, reporter_notes, status, reported_by, resolved_by, resolved_at, resolution_notes, created_at'
-        )
-        .eq('request_id', headerId)
-        .order('created_at', { ascending: true }),
-      supabase
-        .from('inventory_transactions')
-        .select('variant_id, transaction_type, quantity, created_at, notes')
-        .eq('reference_type', 'tl_stock_request')
-        .eq('reference_id', headerId)
-        .in('transaction_type', ['tl_stock_transfer_out', 'tl_stock_transfer_in'])
-        .order('created_at', { ascending: true }),
-    ]);
-
-  if (tdrError) throw tdrError;
-  if (discError && !String(discError.message || '').includes('tl_stock_request_discrepancies')) {
-    throw discError;
-  }
-
-  const tdrRows = (tdrs || []) as Omit<TdrRow, 'items'>[];
-  let tdrItems: TdrItemRow[] = [];
-  if (tdrRows.length > 0) {
-    const { data: items } = await supabase
-      .from('tl_stock_request_tdr_items')
-      .select('tdr_id, request_item_id, dispatched_quantity, received_quantity')
-      .in(
-        'tdr_id',
-        tdrRows.map((row) => row.id)
-      );
-    tdrItems = (items || []) as TdrItemRow[];
-  }
-
-  const tdrsWithItems: TdrRow[] = tdrRows.map((tdr) => ({
-    ...tdr,
-    items: tdrItems.filter((item) => item.tdr_id === tdr.id),
-  }));
-
-  const shortages = (discs || []) as ShortageRow[];
-  const movements = (txs || []) as MovementRow[];
-
-  const profileIds = uniqueIds([
-    ...skuLines.map((line) => line.admin_approved_by),
-    ...skuLines.map((line) => line.source_tl_approved_by),
-    ...skuLines.map((line) => line.received_by),
-    ...skuLines.map((line) => line.rejected_by),
-    ...shortages.map((row) => row.reported_by),
-    ...shortages.map((row) => row.resolved_by),
-  ]);
-
   const namesById = new Map<string, string>();
-  if (profileIds.length > 0) {
-    const { data: profiles } = await supabase.from('profiles').select('id, full_name').in('id', profileIds);
-    for (const profile of profiles || []) {
-      if (profile.id && profile.full_name) namesById.set(profile.id, profile.full_name);
-    }
+  for (const profile of bundle.profiles || []) {
+    if (profile.id && profile.full_name) namesById.set(profile.id, profile.full_name);
   }
 
   return (
     buildTlTransferHistory({
       skuLines,
-      tdrs: tdrsWithItems,
-      shortages,
-      movements,
+      tdrs: bundle.tdrs,
+      shortages: bundle.shortages,
+      movements: bundle.movements,
       namesById,
     }) || {
       requestNumber: header.request_number,

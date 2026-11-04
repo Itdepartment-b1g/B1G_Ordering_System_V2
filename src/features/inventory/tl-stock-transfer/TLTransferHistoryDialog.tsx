@@ -9,7 +9,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import type { TLRequestWithDetails } from '@/types/tlStockRequests.types';
-import { fetchTlTransferHistory, type TlTransferHistoryPayload } from './tlTransferHistory';
+import { useAppDispatch } from '@/store/store';
+import { fetchTlTransferHistoryData } from '@/store/slices/motosales/tl-stock-transfers';
+import { tlHistoryActorIds, tlTransferHistoryFromBundle, type TlTransferHistoryPayload } from './tlTransferHistory';
 import { TLTransferHistoryTimeline } from './TLTransferHistoryTimeline';
 
 type Props = {
@@ -19,6 +21,7 @@ type Props = {
 };
 
 export function TLTransferHistoryDialog({ open, onOpenChange, lines }: Props) {
+  const dispatch = useAppDispatch();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [payload, setPayload] = useState<TlTransferHistoryPayload | null>(null);
@@ -38,7 +41,13 @@ export function TLTransferHistoryDialog({ open, onOpenChange, lines }: Props) {
 
     void (async () => {
       try {
-        const data = await fetchTlTransferHistory(lines);
+        const bundle = await dispatch(
+          fetchTlTransferHistoryData({
+            requestId,
+            profileIds: tlHistoryActorIds(lines),
+          })
+        ).unwrap();
+        const data = tlTransferHistoryFromBundle(lines, bundle);
         if (!cancelled) setPayload(data);
       } catch (e: unknown) {
         if (!cancelled) {
@@ -53,7 +62,7 @@ export function TLTransferHistoryDialog({ open, onOpenChange, lines }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [open, requestId, lines]); // lines identity changes with the selected transfer
+  }, [open, requestId, lines, dispatch]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

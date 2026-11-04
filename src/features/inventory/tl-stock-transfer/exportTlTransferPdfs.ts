@@ -836,3 +836,120 @@ export function exportTlLostItemsPdf(options: TlLostItemsPdfOptions): void {
   }
   openPrintableHtml('Missing / Lost Transfer Report', buildLostItemsReportHtml(options));
 }
+
+export type TlShortageInvestigationPdfLine = {
+  item: string;
+  quantity: number;
+  reason: string;
+  reportNotes: string | null;
+  result: string;
+  choice: string;
+  resolutionNotes: string | null;
+};
+
+export type TlShortageInvestigationPdfOptions = {
+  requestNumber: string;
+  tdrNumber: string;
+  requesterName: string;
+  sourceName: string;
+  reportedAt: string;
+  lines: TlShortageInvestigationPdfLine[];
+};
+
+function buildShortageInvestigationHtml(options: TlShortageInvestigationPdfOptions): string {
+  const openCount = options.lines.filter((line) => line.result === 'Open').length;
+  const resolvedCount = options.lines.length - openCount;
+  const subtitle =
+    openCount === 0
+      ? 'Resolved'
+      : resolvedCount === 0
+        ? 'Open'
+        : `${openCount} open · ${resolvedCount} resolved`;
+  const totalQty = options.lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+
+  const rows = options.lines
+    .map((line) => {
+      const notes = [
+        line.reportNotes?.trim() ? `Reported: ${line.reportNotes.trim()}` : '',
+        line.resolutionNotes?.trim() ? `Notes: ${line.resolutionNotes.trim()}` : '',
+      ].filter(Boolean);
+      const notesRow = notes.length
+        ? `<tr><td colspan="5" class="note-row">${escapeHtml(notes.join(' · '))}</td></tr>`
+        : '';
+      return `
+      <tr>
+        <td>${escapeHtml(line.item)}</td>
+        <td class="col-qty">${fmtQty(line.quantity)}</td>
+        <td>${escapeHtml(line.reason || '—')}</td>
+        <td>${escapeHtml(line.result)}</td>
+        <td>${escapeHtml(line.choice || '—')}</td>
+      </tr>
+      ${notesRow}`;
+    })
+    .join('');
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Shortage investigation — ${escapeHtml(options.requestNumber)}</title>
+<style>${sharedStyles()}
+  .note-row {
+    font-size: 10px;
+    color: #333;
+    padding-top: 0 !important;
+    border-bottom: 1px solid #ccc;
+  }
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <div class="toolbar-left">
+      <h1>Shortage investigation
+        <span class="hint">Use <b>Print</b> (Ctrl/⌘ + P), turn off <b>Headers and footers</b>, then save as PDF.</span>
+      </h1>
+    </div>
+    <div class="toolbar-center">
+      <div class="warehouse-badge">Transfer: <span>${escapeHtml(options.requestNumber)}</span></div>
+    </div>
+    <div class="toolbar-right">
+      <button type="button" onclick="window.print()">Print</button>
+    </div>
+  </div>
+  <div class="page">
+    <div class="doc-title">SHORTAGE INVESTIGATION</div>
+    <div class="doc-subtitle">${escapeHtml(subtitle)}</div>
+    <div class="dr-number-row">
+      <span class="label">TRANSFER NO:</span>
+      <span class="value">${escapeHtml(options.requestNumber)}</span>
+    </div>
+    <div class="delivery-section">
+      <div class="section-label">Investigation details</div>
+      <div class="delivery-field"><span class="flabel">TDR:</span><span class="fvalue">${escapeHtml(options.tdrNumber || '—')}</span></div>
+      <div class="delivery-field"><span class="flabel">REQUESTED BY:</span><span class="fvalue">${escapeHtml(options.requesterName || '—')}</span></div>
+      <div class="delivery-field"><span class="flabel">DISPATCHED BY:</span><span class="fvalue">${escapeHtml(options.sourceName || '—')}</span></div>
+      <div class="delivery-field"><span class="flabel">REPORTED:</span><span class="fvalue">${escapeHtml(formatDateTime(options.reportedAt))}</span></div>
+    </div>
+    <div class="total-qty-row"><span class="label">Short units:</span><span class="value">${fmtQty(totalQty)}</span></div>
+    <table class="items-table">
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th class="col-qty">Qty</th>
+          <th>Reason</th>
+          <th>Result</th>
+          <th>Choice</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <p class="footer-note">Open means the shortage is still under investigation. Choice is what the dispatcher recorded. Notes appear under the item when they were entered.</p>
+  </div>
+</body>
+</html>`;
+}
+
+export function exportTlShortageInvestigationPdf(options: TlShortageInvestigationPdfOptions): void {
+  if (options.lines.length === 0) throw new Error('Nothing to print');
+  openPrintableHtml(`Shortage investigation — ${options.requestNumber}`, buildShortageInvestigationHtml(options));
+}

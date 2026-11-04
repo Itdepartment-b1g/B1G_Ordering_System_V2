@@ -16,6 +16,7 @@ import { warehouseInternalStockRequestsReducer } from "./warehouse/internal-stoc
 import { warehouseLocationsReducer } from "./warehouse/locations";
 import { warehouseStockAdjustmentsReducer } from "./warehouse/stock-adjustments";
 import { warehouseStockRequestsReducer } from "./warehouse/stock-requests";
+import { motoSalesTlTransfersReducer } from "./motosales/tl-stock-transfers";
 import { warehouseSubWarehousesReducer } from "./warehouse/sub-warehouses";
 
 export const rootReducer = {
@@ -38,4 +39,5 @@ export const rootReducer = {
   warehouseBatchView: warehouseBatchViewReducer,
   warehouseInternalStockRequests: warehouseInternalStockRequestsReducer,
   warehouseDisposals: warehouseDisposalsReducer,
+  motoSalesTlTransfers: motoSalesTlTransfersReducer,
 };
