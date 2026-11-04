@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
@@ -44,11 +43,15 @@ import { formatShortfallReasonLabel } from '@/features/orders/deliveryDiscrepanc
 import type { TLRequestWithDetails } from '@/types/tlStockRequests.types';
 import {
   TL_RECEIVE_SHORTFALL_OPTIONS,
-  invalidateTlTransferQueries,
   tlDispatchShortfallSummary,
   tlRemainingToReceive,
   type TLReceiveShortfallReason,
 } from './tlStockTransferShared';
+import { useAppDispatch } from '@/store/store';
+import {
+  receiveTlStockTransfer,
+  refreshTlTransferLists,
+} from '@/store/slices/motosales/tl-stock-transfers';
 
 const PROOF_BUCKET = 'tl-stock-request-signatures';
 
@@ -62,7 +65,7 @@ type Props = {
 export function TLStockReceiveDialog({ open, request, allRequests = [], onOpenChange }: Props) {
   const { user } = useAuth();
   const { toast } = useToast();
-  const queryClient = useQueryClient();
+  const dispatch = useAppDispatch();
   const [qtyById, setQtyById] = useState<Record<string, number>>({});
   const [reasonById, setReasonById] = useState<Record<string, TLReceiveShortfallReason | ''>>({});
   const [notes, setNotes] = useState('');
@@ -228,25 +231,22 @@ export function TLStockReceiveDialog({ open, request, allRequests = [], onOpenCh
       let incompleteCount = 0;
       let receivedUnits = 0;
       for (const row of lineRows) {
-        const { data: result, error } = await supabase.rpc('requester_tl_receive_stock', {
-          p_request_id: row.line.id,
-          p_signature_url: sigUrlData.signedUrl,
-          p_signature_path: signaturePath,
-          p_received_quantity: row.qty,
-          p_shortfall_reason: row.shortfall > 0 ? reasonById[row.line.id] : null,
-          p_shortfall_notes:
-            row.shortfall > 0
-              ? [
-                  formatShortfallReasonLabel(reasonById[row.line.id], notes),
-                  notes.trim(),
-                ]
-                  .filter(Boolean)
-                  .join('\n')
-              : null,
-          p_proof_urls: packageUpload.urls,
-        });
-        if (error) throw error;
-        if (!result?.success) throw new Error(result?.error || 'Failed to receive stock');
+        const result = await dispatch(
+          receiveTlStockTransfer({
+            request_id: row.line.id,
+            signature_url: sigUrlData.signedUrl,
+            signature_path: signaturePath,
+            received_quantity: row.qty,
+            shortfall_reason: row.shortfall > 0 ? reasonById[row.line.id] : null,
+            shortfall_notes:
+              row.shortfall > 0
+                ? [formatShortfallReasonLabel(reasonById[row.line.id], notes), notes.trim()]
+                    .filter(Boolean)
+                    .join('\n')
+                : null,
+            proof_urls: packageUpload.urls,
+          })
+        ).unwrap();
         receivedUnits += Number(result.transferred_quantity || row.qty);
         if (result.status === 'incomplete') incompleteCount += 1;
       }
@@ -258,8 +258,7 @@ export function TLStockReceiveDialog({ open, request, allRequests = [], onOpenCh
             ? `${receivedUnits} units received. ${incompleteCount} item(s) sent to the dispatcher for investigation.`
             : `${receivedUnits} units transferred to your inventory.`,
       });
-      invalidateTlTransferQueries(queryClient);
-      queryClient.invalidateQueries({ queryKey: ['tl-transfer-shortages'] });
+      void refreshTlTransferLists(dispatch);
       handleClose(false);
     } catch (error: any) {
       toast({

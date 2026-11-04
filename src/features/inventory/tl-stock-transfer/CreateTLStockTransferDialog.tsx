@@ -1,7 +1,5 @@
-import { useMemo, useState, Fragment } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useState, Fragment } from 'react';
 import { Loader2, Package, Search } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -36,13 +34,13 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { exportTlStockTransferRequestPdf } from './exportTlTransferPdfs';
-import { invalidateTlTransferQueries } from './tlStockTransferShared';
-
-type TeamLeaderOption = {
-  id: string;
-  full_name: string;
-  region: string | null;
-};
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import {
+  fetchTlSourceStock,
+  fetchTlTransferLeaders,
+  refreshTlTransferLists,
+  submitTlStockTransfer,
+} from '@/store/slices/motosales/tl-stock-transfers';
 
 type SourceStockRow = {
   variant_id: string;
@@ -61,7 +59,7 @@ type Props = {
 export function CreateTLStockTransferDialog({ open, onOpenChange, onSubmitted }: Props) {
   const { user } = useAuth();
   const { toast } = useToast();
-  const queryClient = useQueryClient();
+  const dispatch = useAppDispatch();
   const [sourceTlId, setSourceTlId] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [qtyByVariant, setQtyByVariant] = useState<Record<string, number>>({});
@@ -69,53 +67,26 @@ export function CreateTLStockTransferDialog({ open, onOpenChange, onSubmitted }:
   const [submitting, setSubmitting] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const { data: teamLeaders = [], isLoading: leadersLoading } = useQuery({
-    queryKey: ['tl-transfer-leaders', user?.company_id, user?.id],
-    enabled: open && !!user?.company_id && !!user?.id,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('id, full_name, region')
-        .eq('company_id', user!.company_id)
-        .eq('role', 'team_leader')
-        .eq('status', 'active')
-        .neq('id', user!.id)
-        .order('full_name');
-      if (error) throw error;
-      return (data || []) as TeamLeaderOption[];
-    },
-  });
+  const teamLeaders = useAppSelector((state) => state.motoSalesTlTransfers.leaders);
+  const leadersStatus = useAppSelector((state) => state.motoSalesTlTransfers.leadersStatus);
+  const leadersLoading = open && (leadersStatus === 'idle' || leadersStatus === 'loading');
+  const sourceStockLeaderId = useAppSelector((state) => state.motoSalesTlTransfers.sourceStockLeaderId);
+  const storedSourceStock = useAppSelector((state) => state.motoSalesTlTransfers.sourceStock);
+  const sourceStockStatus = useAppSelector((state) => state.motoSalesTlTransfers.sourceStockStatus);
+  const sourceStock = sourceStockLeaderId === sourceTlId ? storedSourceStock : [];
+  const stockLoading =
+    !!sourceTlId &&
+    (sourceStockLeaderId !== sourceTlId || sourceStockStatus === 'idle' || sourceStockStatus === 'loading');
 
-  const { data: sourceStock = [], isLoading: stockLoading } = useQuery({
-    queryKey: ['tl-transfer-source-stock', sourceTlId],
-    enabled: open && !!sourceTlId,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('agent_inventory')
-        .select(
-          `
-          stock,
-          variant_id,
-          variant:variants(
-            id,
-            name,
-            variant_type,
-            brand:brands(name)
-          )
-        `
-        )
-        .eq('agent_id', sourceTlId)
-        .gt('stock', 0);
-      if (error) throw error;
-      return (data || []).map((row: any) => ({
-        variant_id: row.variant_id,
-        variant_name: row.variant?.name || '',
-        variant_type: row.variant?.variant_type || '',
-        brand_name: row.variant?.brand?.name || '',
-        stock: Number(row.stock || 0),
-      })) as SourceStockRow[];
-    },
-  });
+  useEffect(() => {
+    if (!open || !user?.company_id || !user?.id) return;
+    void dispatch(fetchTlTransferLeaders());
+  }, [dispatch, open, user?.company_id, user?.id]);
+
+  useEffect(() => {
+    if (!open || !sourceTlId) return;
+    void dispatch(fetchTlSourceStock(sourceTlId));
+  }, [dispatch, open, sourceTlId]);
 
   const filteredStock = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -226,19 +197,16 @@ export function CreateTLStockTransferDialog({ open, onOpenChange, onSubmitted }:
 
     setSubmitting(true);
     try {
-        const { data, error } = await supabase.rpc('submit_tl_stock_request', {
-          p_company_id: user.company_id,
-          p_source_leader_id: sourceTlId,
-          p_items: selectedLines.map((line) => ({
-            variant_id: line.variant_id,
-            quantity: line.qty,
-          })),
-          p_notes: notes.trim() || null,
-        });
-        if (error) throw error;
-        if (!data?.success) {
-          throw new Error(data?.error || 'Failed to submit transfer');
-        }
+        const data = await dispatch(
+          submitTlStockTransfer({
+            source_leader_id: sourceTlId,
+            items: selectedLines.map((line) => ({
+              variant_id: line.variant_id,
+              quantity: line.qty,
+            })),
+            notes: notes.trim() || null,
+          })
+        ).unwrap();
 
       const requestNumber = String(data.request_number || '');
       const printOptions = requestNumber
@@ -264,7 +232,7 @@ export function CreateTLStockTransferDialog({ open, onOpenChange, onSubmitted }:
           ? `${requestNumber} · ${selectedLines.length} item(s) sent to Super Admin for approval.`
           : `${selectedLines.length} item(s) sent to Super Admin for approval.`,
       });
-      invalidateTlTransferQueries(queryClient);
+      void refreshTlTransferLists(dispatch);
       onSubmitted?.();
       handleOpenChange(false);
       if (printOptions) {

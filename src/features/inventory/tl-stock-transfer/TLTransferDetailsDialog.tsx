@@ -1,9 +1,7 @@
-import { Fragment, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Expand, History, Loader2, Printer } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import {
   Dialog,
@@ -33,6 +31,11 @@ import {
 } from './tlStockTransferShared';
 import { exportTlTdrPdf, printTlStockTransferRequest } from './exportTlTransferPdfs';
 import { TLTransferHistoryDialog } from './TLTransferHistoryDialog';
+import { useAppDispatch } from '@/store/store';
+import {
+  fetchTlTransferTdrDetails,
+  type TlTdrDetails,
+} from '@/store/slices/motosales/tl-stock-transfers';
 
 type Props = {
   open: boolean;
@@ -285,6 +288,7 @@ function lineQtyTotal(rows: TdrDisplayLine[]) {
 
 export function TLTransferDetailsDialog({ open, onOpenChange, request, allRequests = [] }: Props) {
   const { toast } = useToast();
+  const dispatch = useAppDispatch();
   const [fullImage, setFullImage] = useState<{ url: string; title: string } | null>(null);
   const [printing, setPrinting] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -340,74 +344,26 @@ export function TLTransferDetailsDialog({ open, onOpenChange, request, allReques
   const headerId = headerRequest?.request_id || null;
   const displayStatus = useMemo(() => tlRollupItemStatus(lines), [lines]);
 
-  const { data: tdrQuery } = useQuery({
-    queryKey: ['tl-transfer-tdr-details', headerId],
-    enabled: open && !!headerId,
-    queryFn: async () => {
-      const { data: tdrs, error: tdrError } = await supabase
-        .from('tl_stock_request_tdrs')
-        .select('id, tdr_number, kind, created_at')
-        .eq('request_id', headerId)
-        .order('created_at', { ascending: true });
-      if (tdrError) throw tdrError;
-      const rows = tdrs || [];
-      if (rows.length === 0) {
-        return { tdrs: [] as any[], shortages: [] as TdrShortage[], movements: [] as TdrMovement[] };
-      }
+  const [tdrQuery, setTdrQuery] = useState<TlTdrDetails | null>(null);
 
-      const [{ data: tdrItems, error: itemError }, { data: discs }, { data: txs }] = await Promise.all([
-        supabase
-          .from('tl_stock_request_tdr_items')
-          .select(
-            `
-            tdr_id,
-            request_item_id,
-            dispatched_quantity,
-            received_quantity,
-            variant:variants(
-              id,
-              name,
-              brand:brands(name)
-            )
-          `
-          )
-          .in(
-            'tdr_id',
-            rows.map((row) => row.id)
-          ),
-        supabase
-          .from('tl_stock_request_discrepancies')
-          .select('request_item_id, quantity, created_at')
-          .eq('request_id', headerId)
-          .order('created_at', { ascending: true }),
-        supabase
-          .from('inventory_transactions')
-          .select('variant_id, transaction_type, quantity, created_at, notes')
-          .eq('reference_type', 'tl_stock_request')
-          .eq('reference_id', headerId)
-          .in('transaction_type', ['tl_stock_transfer_out', 'tl_stock_transfer_in'])
-          .order('created_at', { ascending: true }),
-      ]);
-
-      const itemsByTdr = new Map<string, any[]>();
-      if (!itemError) {
-        for (const item of tdrItems || []) {
-          const list = itemsByTdr.get(item.tdr_id) ?? [];
-          list.push(item);
-          itemsByTdr.set(item.tdr_id, list);
-        }
-      }
-
-      return {
-        tdrs: rows.map((tdr) => ({
-          ...tdr,
-          items: itemsByTdr.get(tdr.id) || [],
-        })),
-        shortages: (discs || []) as TdrShortage[],
-        movements: (txs || []) as TdrMovement[],
-      };
-    },
-  });
+  useEffect(() => {
+    if (!open || !headerId) {
+      setTdrQuery(null);
+      return;
+    }
+    let cancelled = false;
+    void dispatch(fetchTlTransferTdrDetails(headerId))
+      .unwrap()
+      .then((data) => {
+        if (!cancelled) setTdrQuery(data);
+      })
+      .catch(() => {
+        if (!cancelled) setTdrQuery(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dispatch, open, headerId]);
 
   const tdrDisplays = useMemo((): TdrDisplay[] => {
     const fetchedTdrs = tdrQuery?.tdrs || [];

@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
 import { Loader2, Package, Plus, Search } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useToast } from '@/hooks/use-toast';
@@ -30,7 +28,7 @@ import {
   resolveTableSortDirection,
   type TableSortCycleState,
 } from '@/features/shared/utils/tableSortCycle';
-import { getDatePresetLabel, getDateRangeFromPreset } from '@/lib/dateRangePresets';
+import { getDateRangeFromPreset } from '@/lib/dateRangePresets';
 import type { TLRequestStatus, TLRequestWithDetails } from '@/types/tlStockRequests.types';
 import { CreateTLStockTransferDialog } from './tl-stock-transfer/CreateTLStockTransferDialog';
 import { TLStockReceiveDialog } from './tl-stock-transfer/TLStockReceiveDialog';
@@ -38,15 +36,19 @@ import { TLTransferDetailsDialog } from './tl-stock-transfer/TLTransferDetailsDi
 import { TLTransferHistoryDialog } from './tl-stock-transfer/TLTransferHistoryDialog';
 import IncomingTLRequestsSection from './components/IncomingTLRequestsSection';
 import {
-  TL_REQUEST_SELECT,
   groupTlRequests,
-  mapTlTransferRows,
   tlDispatchShortfallSummary,
   tlRemainingToReceive,
   tlStatusLabel,
   type TLRequestGroup,
 } from './tl-stock-transfer/tlStockTransferShared';
-import { fetchIncomingTlTransfers, useTlTransferRealtime } from './tl-stock-transfer/useTlTransferRealtime';
+import { useTlTransferRealtime } from './tl-stock-transfer/useTlTransferRealtime';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import {
+  fetchDispatchedTlTransfers,
+  fetchIncomingTlTransfers,
+  fetchMyTlTransfers,
+} from '@/store/slices/motosales/tl-stock-transfers';
 import { TLTransferLostItemsPanel } from './tl-stock-transfer/TLTransferLostItemsPanel';
 import { useTlLostItemTabCount } from './tl-stock-transfer/tlTransferLostItems';
 import { TLTransferRowActionsMenu } from './tl-stock-transfer/TLTransferRowActionsMenu';
@@ -255,61 +257,24 @@ export default function TLStockRequestPage() {
   const [sortState, setSortState] =
     useState<TableSortCycleState<TlTransferListSortKey>>(createInitialTableSortCycle);
 
-  const { data: myRequests = [], isLoading, error: myRequestsError } = useQuery({
-    queryKey: ['my-tl-requests', user?.id],
-    enabled: !!user?.id && hasWarehouseHubLink,
-    staleTime: 0,
-    refetchOnMount: 'always',
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('tl_stock_requests')
-        .select(TL_REQUEST_SELECT)
-        .eq('requester_leader_id', user!.id)
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      return mapTlTransferRows(data || []);
-    },
-  });
+  const dispatch = useAppDispatch();
+  const myRequests = useAppSelector((state) => state.motoSalesTlTransfers.myRequests);
+  const incomingRequests = useAppSelector((state) => state.motoSalesTlTransfers.incomingRequests);
+  const dispatchedRequests = useAppSelector((state) => state.motoSalesTlTransfers.dispatchedRequests);
+  const myStatus = useAppSelector((state) => state.motoSalesTlTransfers.myStatus);
+  const dispatchedStatus = useAppSelector((state) => state.motoSalesTlTransfers.dispatchedStatus);
+  const myRequestsError = useAppSelector((state) => state.motoSalesTlTransfers.myError);
+  const isLoading = myStatus === 'idle' || myStatus === 'loading';
+  const dispatchedLoading = dispatchedStatus === 'idle' || dispatchedStatus === 'loading';
 
-  const { data: incomingRequests = [] } = useQuery({
-    queryKey: ['incoming-tl-requests', user?.id],
-    enabled: !!user?.id && hasWarehouseHubLink && user?.role === 'team_leader',
-    staleTime: 0,
-    refetchOnMount: 'always',
-    refetchOnWindowFocus: true,
-    queryFn: () => fetchIncomingTlTransfers(user!.id),
-  });
-
-  const { data: dispatchedRequests = [], isLoading: dispatchedLoading } = useQuery({
-    queryKey: ['dispatched-tl-requests', user?.id],
-    enabled: !!user?.id && hasWarehouseHubLink && user?.role === 'team_leader',
-    staleTime: 0,
-    refetchOnMount: 'always',
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('tl_stock_requests')
-        .select(TL_REQUEST_SELECT)
-        .eq('source_leader_id', user!.id)
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      return mapTlTransferRows(data || []).filter((row) => {
-        if (
-          row.status === 'pending_source_tl' ||
-          row.status === 'admin_approved' ||
-          row.status === 'pending_admin'
-        ) {
-          return false;
-        }
-        return (
-          row.status === 'pending_receipt' ||
-          row.status === 'completed' ||
-          row.status === 'incomplete' ||
-          row.status === 'source_tl_rejected' ||
-          Number(row.dispatched_quantity || 0) > 0
-        );
-      });
-    },
-  });
+  useEffect(() => {
+    if (!user?.id || !hasWarehouseHubLink) return;
+    void dispatch(fetchMyTlTransfers());
+    if (user.role === 'team_leader') {
+      void dispatch(fetchIncomingTlTransfers());
+      void dispatch(fetchDispatchedTlTransfers());
+    }
+  }, [dispatch, user?.id, user?.role, hasWarehouseHubLink]);
 
   useTlTransferRealtime({
     enabled: !!user?.company_id && hasWarehouseHubLink,
@@ -357,16 +322,6 @@ export default function TLStockRequestPage() {
       ),
     [dateRangeFilter]
   );
-  const dateRangeLabel = useMemo(
-    () =>
-      getDatePresetLabel(
-        dateRangeFilter.preset,
-        dateRangeFilter.customStart,
-        dateRangeFilter.customEnd
-      ),
-    [dateRangeFilter]
-  );
-
   const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
     () =>
       resolveTableSortDirection(
@@ -545,8 +500,8 @@ export default function TLStockRequestPage() {
               <CardDescription>
                 Incoming is stock Super Admin approved for you to dispatch. Dispatched is stock you
                 already sent. My transfer request lists the requests you created — receive them when they are in
-                transit. Lost groups SKUs that arrived short or were written off; click an item to
-                see the transfer numbers.{' '}
+                transit. Lost lists SKUs that arrived short or were written off. The dispatcher can
+                investigate that transfer on the shortage page.{' '}
                 <Link
                   to="/inventory/tl-transfer-shortages"
                   className="text-primary underline-offset-4 hover:underline"
@@ -690,7 +645,7 @@ export default function TLStockRequestPage() {
                 </div>
               ) : myRequestsError ? (
                 <p className="py-10 text-center text-sm text-destructive">
-                  {(myRequestsError as Error).message || 'Could not load your transfers.'}
+                  {myRequestsError || 'Could not load your transfers.'}
                 </p>
               ) : myGroups.length === 0 ? (
                 <div className="text-center py-10 text-muted-foreground">
@@ -732,13 +687,12 @@ export default function TLStockRequestPage() {
 
             <TabsContent value="lost" className="mt-0">
               <p className="mb-3 text-sm text-muted-foreground">
-                SKUs that went missing in transit or were written off. Click an item to see which
-                transfer numbers they came from.
+                SKUs that went missing in transit or were written off. Investigate is only for the
+                team leader who dispatched that transfer.
               </p>
               <TLTransferLostItemsPanel
                 searchQuery={searchQuery}
                 dateRange={dateRange}
-                dateRangeLabel={dateRangeLabel}
                 page={page}
                 pageSize={pageSize}
                 onPageChange={setPage}
