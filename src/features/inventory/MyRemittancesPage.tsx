@@ -47,6 +47,19 @@ function formatMoney(amount: number) {
   return `₱${amount.toLocaleString()}`;
 }
 
+/** Fallback if an older API response has no remittanceNumber yet. */
+function remittanceNumberOf(row: { id: string; remittanceNumber?: string; remittanceDate?: string }) {
+  if (row.remittanceNumber) return row.remittanceNumber;
+  const datePart = String(row.remittanceDate || '')
+    .slice(0, 10)
+    .replace(/-/g, '');
+  const shortId = String(row.id || '')
+    .replace(/-/g, '')
+    .slice(0, 8)
+    .toUpperCase();
+  return `REMIT-${datePart || '--------'}-${shortId || '--------'}`;
+}
+
 function RemittanceDetailBody({
   compact,
 }: {
@@ -86,6 +99,12 @@ function RemittanceDetailBody({
   return (
     <div className="space-y-4">
       <div className={cn('grid grid-cols-2 gap-2 rounded-lg bg-muted p-3', textXs)}>
+        <div className="col-span-2">
+          <p className="text-muted-foreground">Remittance #</p>
+          <p className={cn('font-semibold font-mono tracking-tight break-all', titleSm)}>
+            {remittanceNumberOf(detail)}
+          </p>
+        </div>
         <div>
           <p className="text-muted-foreground">Date</p>
           <p className={cn('font-semibold', titleSm)}>
@@ -363,6 +382,7 @@ export default function MyRemittancesPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead>Remittance #</TableHead>
                       <TableHead>Date & time</TableHead>
                       <TableHead className="text-right">Items</TableHead>
                       <TableHead className="text-right">Orders</TableHead>
@@ -374,6 +394,11 @@ export default function MyRemittancesPage() {
                   <TableBody>
                     {pagedItems.map((row) => (
                       <TableRow key={row.id}>
+                        <TableCell>
+                          <div className="font-mono text-sm font-medium tracking-tight">
+                            {remittanceNumberOf(row)}
+                          </div>
+                        </TableCell>
                         <TableCell>
                           <div className="font-medium">
                             {format(new Date(row.remittedAt), 'MMM dd, yyyy')}
@@ -422,11 +447,12 @@ export default function MyRemittancesPage() {
                     className="w-full rounded-lg border p-3 text-left transition hover:bg-muted/40"
                   >
                     <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="font-medium">
-                          {format(new Date(row.remittedAt), 'MMM dd, yyyy')}
+                      <div className="min-w-0">
+                        <p className="font-mono text-sm font-medium tracking-tight truncate">
+                          {remittanceNumberOf(row)}
                         </p>
                         <p className="text-xs text-muted-foreground">
+                          {format(new Date(row.remittedAt), 'MMM dd, yyyy')} ·{' '}
                           {format(new Date(row.remittedAt), 'hh:mm a')} · {row.ordersCount} orders
                         </p>
                       </div>

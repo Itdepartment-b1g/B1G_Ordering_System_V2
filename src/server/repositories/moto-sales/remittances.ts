@@ -18,6 +18,7 @@ export type AgentPendingRemittanceSummary = {
 
 export type AgentRemittanceSummary = {
   id: string;
+  remittanceNumber: string;
   remittanceDate: string;
   remittedAt: string;
   itemsRemitted: number;
@@ -51,6 +52,7 @@ export type AgentRemittanceOrderLine = {
 
 export type AgentRemittanceDetail = {
   id: string;
+  remittanceNumber: string;
   remittanceDate: string;
   remittedAt: string;
   itemsRemitted: number;
@@ -60,6 +62,18 @@ export type AgentRemittanceDetail = {
   signatureUrl: string | null;
   orders: AgentRemittanceOrderLine[];
 };
+
+/** Display number for remittance batches, e.g. REMIT-20261104-A1B2C3D4 */
+export function formatRemittanceNumber(id: string, remittanceDate: string): string {
+  const datePart = String(remittanceDate || '')
+    .slice(0, 10)
+    .replace(/-/g, '');
+  const shortId = String(id || '')
+    .replace(/-/g, '')
+    .slice(0, 8)
+    .toUpperCase();
+  return `REMIT-${datePart || '--------'}-${shortId || '--------'}`;
+}
 
 type PaymentSplit = {
   method?: string;
@@ -369,9 +383,12 @@ export async function listAgentRemittances(
         0
       );
 
+      const id = String(row.id);
+      const remittanceDate = String(row.remittance_date);
       return {
-        id: String(row.id),
-        remittanceDate: String(row.remittance_date),
+        id,
+        remittanceNumber: formatRemittanceNumber(id, remittanceDate),
+        remittanceDate,
         remittedAt: String(row.remitted_at),
         itemsRemitted: Number(row.items_remitted) || 0,
         totalUnits: Number(row.total_units) || 0,
@@ -427,10 +444,14 @@ export async function getAgentRemittanceDetail(
 
   const remittedAmount = orders.reduce((sum, o) => sum + o.remittedAmount, 0);
 
+  const id = String(row.id);
+  const remittanceDate = String(row.remittance_date);
+
   return {
     remittance: {
-      id: String(row.id),
-      remittanceDate: String(row.remittance_date),
+      id,
+      remittanceNumber: formatRemittanceNumber(id, remittanceDate),
+      remittanceDate,
       remittedAt: String(row.remitted_at),
       itemsRemitted: Number(row.items_remitted) || 0,
       totalUnits: Number(row.total_units) || 0,

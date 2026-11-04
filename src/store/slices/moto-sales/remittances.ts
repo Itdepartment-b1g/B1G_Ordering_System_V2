@@ -5,6 +5,7 @@ type QueryStatus = 'idle' | 'loading' | 'succeeded' | 'failed';
 
 export type AgentRemittanceSummary = {
   id: string;
+  remittanceNumber: string;
   remittanceDate: string;
   remittedAt: string;
   itemsRemitted: number;
@@ -37,6 +38,7 @@ export type AgentRemittanceOrderLine = {
 
 export type AgentRemittanceDetail = {
   id: string;
+  remittanceNumber: string;
   remittanceDate: string;
   remittedAt: string;
   itemsRemitted: number;
