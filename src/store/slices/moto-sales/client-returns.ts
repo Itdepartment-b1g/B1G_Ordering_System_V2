@@ -1,6 +1,10 @@
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
 import type { PackageProofPhotoItem } from '@/features/shared/components/MultiProofPhotoField';
-import type { ClientReturnStockFate, PreviewChangeItemSku } from '@/features/orders/client-returns/clientReturnPreview';
+import type {
+  ClientReturnStockFate,
+  PreviewChangeItemSku,
+  PreviewClientReturn,
+} from '@/features/orders/client-returns/clientReturnPreview';
 import {
   uploadClientOrderReturnProof,
   uploadClientOrderReturnSignature,
@@ -16,6 +20,9 @@ export type CreateClientReturnResult = {
 };
 
 type MotoClientReturnsState = {
+  returns: PreviewClientReturn[];
+  listStatus: QueryStatus;
+  listError: string | null;
   postedQtyByOrderId: Record<string, Record<string, number>>;
   postedQtyStatus: QueryStatus;
   postedQtyError: string | null;
@@ -26,9 +33,14 @@ type MotoClientReturnsState = {
   createStatus: QueryStatus;
   createError: string | null;
   lastCreated: CreateClientReturnResult | null;
+  mutationStatus: QueryStatus;
+  mutationError: string | null;
 };
 
 const initialState: MotoClientReturnsState = {
+  returns: [],
+  listStatus: 'idle',
+  listError: null,
   postedQtyByOrderId: {},
   postedQtyStatus: 'idle',
   postedQtyError: null,
@@ -39,6 +51,8 @@ const initialState: MotoClientReturnsState = {
   createStatus: 'idle',
   createError: null,
   lastCreated: null,
+  mutationStatus: 'idle',
+  mutationError: null,
 };
 
 async function uploadReturnPhotoAttachments(
@@ -75,6 +89,19 @@ async function uploadReturnPhotoAttachments(
   }
   return attachments;
 }
+
+export const fetchClientOrderReturns = createAsyncThunk(
+  'motoClientReturns/fetchList',
+  async (orderId: string | void = undefined) => {
+    const body = await motoSalesRequest<{ returns: PreviewClientReturn[] }>('client-returns', {
+      params: {
+        resource: 'list',
+        ...(typeof orderId === 'string' && orderId ? { orderId } : {}),
+      },
+    });
+    return body.returns || [];
+  }
+);
 
 export const fetchPostedReturnedQty = createAsyncThunk(
   'motoClientReturns/fetchPostedQty',
@@ -148,6 +175,46 @@ export const createClientOrderReturn = createAsyncThunk(
   }
 );
 
+export const approveClientOrderReturn = createAsyncThunk(
+  'motoClientReturns/approve',
+  async (input: { returnId: string; companyId?: string; payoutPhotos?: PackageProofPhotoItem[] }) => {
+    let payout_attachments:
+      | Awaited<ReturnType<typeof uploadReturnPhotoAttachments>>
+      | undefined;
+    if (input.payoutPhotos?.length) {
+      if (!input.companyId) throw new Error('companyId is required for payout proof');
+      payout_attachments = await uploadReturnPhotoAttachments(
+        input.payoutPhotos,
+        input.companyId
+      );
+    }
+    await motoSalesRequest<{ success: boolean }>('client-returns', {
+      method: 'POST',
+      body: {
+        action: 'approve',
+        return_id: input.returnId,
+        ...(payout_attachments ? { payout_attachments } : {}),
+      },
+    });
+    return input.returnId;
+  }
+);
+
+export const rejectClientOrderReturn = createAsyncThunk(
+  'motoClientReturns/reject',
+  async (input: { returnId: string; note?: string }) => {
+    await motoSalesRequest<{ success: boolean }>('client-returns', {
+      method: 'POST',
+      body: {
+        action: 'reject',
+        return_id: input.returnId,
+        note: input.note ?? null,
+      },
+    });
+    return input.returnId;
+  }
+);
+
 const motoClientReturnsSlice = createSlice({
   name: 'motoClientReturns',
   initialState,
@@ -164,6 +231,19 @@ const motoClientReturnsSlice = createSlice({
   },
   extraReducers(builder) {
     builder
+      .addCase(fetchClientOrderReturns.pending, (state) => {
+        state.listError = null;
+        if (state.listStatus !== 'succeeded') state.listStatus = 'loading';
+      })
+      .addCase(fetchClientOrderReturns.fulfilled, (state, action) => {
+        state.listStatus = 'succeeded';
+        state.returns = action.payload;
+      })
+      .addCase(fetchClientOrderReturns.rejected, (state, action) => {
+        state.listStatus = 'failed';
+        state.listError = action.error.message || 'Failed to load client returns';
+        state.returns = [];
+      })
       .addCase(fetchPostedReturnedQty.pending, (state) => {
         state.postedQtyError = null;
         if (state.postedQtyStatus !== 'succeeded') state.postedQtyStatus = 'loading';
@@ -202,6 +282,28 @@ const motoClientReturnsSlice = createSlice({
       .addCase(createClientOrderReturn.rejected, (state, action) => {
         state.createStatus = 'failed';
         state.createError = action.error.message || 'Failed to create client return';
+      })
+      .addCase(approveClientOrderReturn.pending, (state) => {
+        state.mutationError = null;
+        state.mutationStatus = 'loading';
+      })
+      .addCase(approveClientOrderReturn.fulfilled, (state) => {
+        state.mutationStatus = 'succeeded';
+      })
+      .addCase(approveClientOrderReturn.rejected, (state, action) => {
+        state.mutationStatus = 'failed';
+        state.mutationError = action.error.message || 'Failed to approve client return';
+      })
+      .addCase(rejectClientOrderReturn.pending, (state) => {
+        state.mutationError = null;
+        state.mutationStatus = 'loading';
+      })
+      .addCase(rejectClientOrderReturn.fulfilled, (state) => {
+        state.mutationStatus = 'succeeded';
+      })
+      .addCase(rejectClientOrderReturn.rejected, (state, action) => {
+        state.mutationStatus = 'failed';
+        state.mutationError = action.error.message || 'Failed to reject client return';
       });
   },
 });

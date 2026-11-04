@@ -451,6 +451,22 @@ export function canReviewReturnLeaderAsSuperAdmin(
   return role === 'super_admin' && !!handover && handover.status === 'pending_super_admin';
 }
 
+/** Pending RL badge: reviewers count actionable rows; submitters count their own open RLs. */
+export function countsTowardPendingReturnLeaderBadge(
+  role: string | null | undefined,
+  userId: string | null | undefined,
+  row: ReturnLeaderHandover
+): boolean {
+  if (canReviewReturnLeaderAsLeader(role, row, userId)) return true;
+  if (canReviewReturnLeaderAsSuperAdmin(role, row)) return true;
+
+  const isSubmitter =
+    role === 'mobile_sales' || role === 'sales_agent' || role === 'team_leader';
+  if (!isSubmitter || !userId) return false;
+  if (row.submittedBy !== userId && row.fromHolderId !== userId) return false;
+  return row.status === 'pending_leader' || row.status === 'pending_super_admin';
+}
+
 export function getReturnLeaderLineQty(handover: ReturnLeaderHandover): number {
   return handover.lines.reduce((sum, line) => sum + line.quantity, 0);
 }

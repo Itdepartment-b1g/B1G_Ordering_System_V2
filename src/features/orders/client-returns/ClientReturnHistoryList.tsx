@@ -1,6 +1,12 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
+import { useAppDispatch } from '@/store/store';
+import {
+  approveClientOrderReturn,
+  fetchClientOrderReturns,
+  rejectClientOrderReturn,
+} from '@/store/slices/moto-sales/client-returns';
 import {
   Check,
   ChevronDown,
@@ -68,11 +74,6 @@ import {
   type PreviewClientReturn,
   type PreviewClientReturnStatus,
 } from './clientReturnPreview';
-import {
-  CLIENT_ORDER_RETURNS_QUERY_KEY,
-  approveClientOrderReturn,
-  rejectClientOrderReturn,
-} from './clientReturnApi';
 import { BrandReturnedTable, groupLinesByBrand } from './ClientReturnBrandTable';
 import { ClientReturnExpandedMeta } from './ClientReturnExpandedMeta';
 import { ClientReturnViewDialog } from './ClientReturnViewDialog';
@@ -551,6 +552,7 @@ export function ClientReturnHistoryList({
 }: ClientReturnHistoryListProps) {
   const { user } = useAuth();
   const { toast } = useToast();
+  const dispatch = useAppDispatch();
   const queryClient = useQueryClient();
   const { orders } = useOrders();
 
@@ -919,9 +921,11 @@ export function ClientReturnHistoryList({
     const sendingToFinance = isRefund && actionRow.status === 'pending_super_admin';
     setActing(true);
     try {
-      await approveClientOrderReturn(actionRow.id);
-      await queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] });
-      await queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      await dispatch(approveClientOrderReturn({ returnId: actionRow.id })).unwrap();
+      await Promise.all([
+        dispatch(fetchClientOrderReturns()),
+        queryClient.invalidateQueries({ queryKey: ['inventory'] }),
+      ]);
       toast({
         title: sendingToFinance ? 'Refund sent to finance' : isRefund ? 'Refund posted' : 'Return approved',
         description: sendingToFinance
@@ -946,8 +950,10 @@ export function ClientReturnHistoryList({
     const isRefund = actionRow.returnType === 'refund';
     setActing(true);
     try {
-      await rejectClientOrderReturn(actionRow.id, note);
-      await queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] });
+      await dispatch(
+        rejectClientOrderReturn({ returnId: actionRow.id, note })
+      ).unwrap();
+      await dispatch(fetchClientOrderReturns());
       toast({
         title: isRefund ? 'Refund rejected' : 'Return rejected',
         description: `${actionRow.returnNumber} is closed. Agent can file a new CR on the same ORD.`,

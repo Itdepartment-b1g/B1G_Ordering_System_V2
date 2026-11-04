@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Check, ChevronDown, Loader2, PenTool, Search, X } from 'lucide-react';
+import { useAppDispatch } from '@/store/store';
+import { createReturnLeaderHandover } from '@/store/slices/moto-sales/return-leader';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -32,7 +34,6 @@ import {
 import { cn } from '@/lib/utils';
 import type { ReturnedInventoryRow } from './clientReturnApi';
 import { formatVariantType, variantTypeBadgeClass } from './ClientReturnBrandTable';
-import { createReturnLeaderHandover } from './returnLeaderApi';
 
 const ROW_COLS = 'grid grid-cols-[2.25rem_minmax(0,1fr)_5.75rem] items-center gap-3';
 const QTY_CELL = 'flex w-full items-center justify-end';
@@ -161,6 +162,7 @@ export function BulkReturnDialog({
   submitterName = '',
   onSubmitted,
 }: BulkReturnDialogProps) {
+  const dispatch = useAppDispatch();
   const [step, setStep] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [selected, setSelected] = useState<Map<string, SelectedItem>>(new Map());
@@ -310,13 +312,15 @@ export function BulkReturnDialog({
         brandId: item.row.brandId,
         quantity: item.qty,
       }));
-      await createReturnLeaderHandover({
-        companyId: companyId!,
-        items,
-        notes,
-        photos,
-        signatureDataUrl: agentSignatureDataUrl,
-      });
+      await dispatch(
+        createReturnLeaderHandover({
+          companyId: companyId!,
+          items,
+          notes,
+          photos,
+          signatureDataUrl: agentSignatureDataUrl,
+        })
+      ).unwrap();
       setShowNameConfirm(false);
       onOpenChange(false);
       onSubmitted?.();

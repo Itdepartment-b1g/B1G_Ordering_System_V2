@@ -10,6 +10,7 @@ import { useAppDispatch, useAppSelector } from '@/store/store';
 import {
   createClientOrderReturn,
   fetchChangeItemCatalog,
+  fetchClientOrderReturns,
   fetchPostedReturnedQty,
 } from '@/store/slices/moto-sales/client-returns';
 import { Button } from '@/components/ui/button';
@@ -1076,6 +1077,7 @@ export function ReturnClientOrderDialog({
         queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] }),
         queryClient.invalidateQueries({ queryKey: ['inventory'] }),
         dispatch(fetchPostedReturnedQty(orderId)),
+        dispatch(fetchClientOrderReturns()),
       ]);
       onSuccess?.();
 

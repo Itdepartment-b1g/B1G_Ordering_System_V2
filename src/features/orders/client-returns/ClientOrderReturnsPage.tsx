@@ -1,16 +1,21 @@
-import { useMemo, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
 import { ClipboardList, Loader2, Package, Truck } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import { fetchClientOrderReturns } from '@/store/slices/moto-sales/client-returns';
 import {
-  CLIENT_ORDER_RETURNS_QUERY_KEY,
+  approveReturnLeaderHandover,
+  fetchClientReturnStockHolds,
+  fetchReturnLeaderHandovers,
+  rejectReturnLeaderHandover,
+} from '@/store/slices/moto-sales/return-leader';
+import {
   buildReturnedInventoryRows,
   canShowClientOrderReturns,
-  fetchClientOrderReturns,
   type ReturnedInventoryRow,
 } from './clientReturnApi';
 import { ClientReturnHistoryList } from './ClientReturnHistoryList';
@@ -19,15 +24,10 @@ import { ReturnedStockDetailDialog } from './ReturnedStockDetailDialog';
 import { ReturnLeaderViewDialog } from './ReturnLeaderViewDialog';
 import { ReturnToLeaderPanel } from './ReturnToLeaderPanel';
 import {
-  approveReturnLeaderHandover,
   canCreateReturnLeader,
   canReviewReturnLeaderAsLeader,
   canReviewReturnLeaderAsSuperAdmin,
-  CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY,
-  fetchClientReturnStockHolds,
-  fetchReturnLeaderHandovers,
-  rejectReturnLeaderHandover,
-  RETURN_LEADER_HANDOVERS_QUERY_KEY,
+  countsTowardPendingReturnLeaderBadge,
   type ReturnLeaderHandover,
 } from './returnLeaderApi';
 import type { PackageProofPhotoItem } from '@/features/shared/components/MultiProofPhotoField';
@@ -38,25 +38,19 @@ type RlConfirmKind = 'approve' | 'reject' | null;
 export default function ClientOrderReturnsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const queryClient = useQueryClient();
+  const dispatch = useAppDispatch();
   const { hasWarehouseHubLink } = usePermissions();
   const isLeader = user?.role === 'team_leader';
   const isSuperAdmin = user?.role === 'super_admin';
   const canBulkReturn = canCreateReturnLeader(user?.role);
   const showReturns = canShowClientOrderReturns(hasWarehouseHubLink, user?.role);
 
-  const {
-    data: rows = [],
-    isLoading,
-    isError,
-    error,
-  } = useQuery({
-    queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY, user?.company_id],
-    enabled: showReturns && !!user?.company_id,
-    staleTime: 0,
-    refetchOnMount: 'always',
-    queryFn: fetchClientOrderReturns,
-  });
+  const rows = useAppSelector((state) => state.motoClientReturns.returns);
+  const listStatus = useAppSelector((state) => state.motoClientReturns.listStatus);
+  const listError = useAppSelector((state) => state.motoClientReturns.listError);
+  const isLoading = listStatus === 'loading' || listStatus === 'idle';
+  const isError = listStatus === 'failed';
+  const error = listError ? new Error(listError) : null;
 
   const [pageTab, setPageTab] = useState<PageTab>('history');
   const [inventoryRow, setInventoryRow] = useState<ReturnedInventoryRow | null>(null);
@@ -70,42 +64,31 @@ export default function ClientOrderReturnsPage() {
       ? user.id
       : undefined;
 
-  const {
-    data: holdRows = [],
-    isLoading: holdsLoading,
-    isError: holdsError,
-  } = useQuery({
-    queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY, user?.company_id, holderId],
-    enabled: showReturns && !!holderId,
-    staleTime: 0,
-    refetchOnMount: 'always',
-    queryFn: async () => {
-      try {
-        return await fetchClientReturnStockHolds(holderId!);
-      } catch {
-        return [];
-      }
-    },
-  });
+  const holdRows = useAppSelector((state) =>
+    holderId ? state.motoReturnLeader.holdsByHolderId[holderId] || [] : []
+  );
+  const holdsStatus = useAppSelector((state) => state.motoReturnLeader.holdsStatus);
+  const holdsErrorMsg = useAppSelector((state) => state.motoReturnLeader.holdsError);
+  const holdsLoading = !!holderId && (holdsStatus === 'loading' || holdsStatus === 'idle');
+  const holdsError = !!holdsErrorMsg;
 
-  const {
-    data: rlRows = [],
-    isLoading: rlLoading,
-    isError: rlIsError,
-    error: rlError,
-  } = useQuery({
-    queryKey: [RETURN_LEADER_HANDOVERS_QUERY_KEY, user?.company_id],
-    enabled: showReturns && !!user?.company_id,
-    staleTime: 0,
-    refetchOnMount: 'always',
-    queryFn: async () => {
-      try {
-        return await fetchReturnLeaderHandovers();
-      } catch {
-        return [];
-      }
-    },
-  });
+  const rlRows = useAppSelector((state) => state.motoReturnLeader.handovers);
+  const rlStatus = useAppSelector((state) => state.motoReturnLeader.handoversStatus);
+  const rlErrorMsg = useAppSelector((state) => state.motoReturnLeader.handoversError);
+  const rlLoading = rlStatus === 'loading' || rlStatus === 'idle';
+  const rlIsError = rlStatus === 'failed';
+  const rlError = rlErrorMsg ? new Error(rlErrorMsg) : null;
+
+  useEffect(() => {
+    if (!showReturns || !user?.company_id) return;
+    void dispatch(fetchClientOrderReturns());
+    void dispatch(fetchReturnLeaderHandovers());
+  }, [showReturns, user?.company_id, dispatch]);
+
+  useEffect(() => {
+    if (!showReturns || !holderId) return;
+    void dispatch(fetchClientReturnStockHolds(holderId));
+  }, [showReturns, holderId, dispatch]);
 
   const inventoryRows = useMemo(() => {
     // MS: only their own posted CRs. TL: any posted CRs they can see (team), so detail still
@@ -134,15 +117,9 @@ export default function ClientOrderReturnsPage() {
 
   const pendingRlCount = useMemo(
     () =>
-      rlRows.filter((row) => {
-        if (row.status === 'pending_leader' && canReviewReturnLeaderAsLeader(user?.role, row, user?.id)) {
-          return true;
-        }
-        if (row.status === 'pending_super_admin' && canReviewReturnLeaderAsSuperAdmin(user?.role, row)) {
-          return true;
-        }
-        return false;
-      }).length,
+      rlRows.filter((row) =>
+        countsTowardPendingReturnLeaderBadge(user?.role, user?.id, row)
+      ).length,
     [rlRows, user?.id, user?.role]
   );
 
@@ -158,13 +135,25 @@ export default function ClientOrderReturnsPage() {
     setRlConfirmKind('reject');
   };
 
+  const refreshInventoryQueries = async () => {
+    await Promise.all([
+      dispatch(fetchReturnLeaderHandovers()),
+      holderId ? dispatch(fetchClientReturnStockHolds(holderId)) : Promise.resolve(),
+    ]);
+  };
+
   const handleRlApproveConfirm = async (photos: PackageProofPhotoItem[]) => {
     if (!rlActionRow || rlActing || !user?.company_id) return;
     setRlActing(true);
     try {
-      await approveReturnLeaderHandover(rlActionRow.id, photos, user.company_id);
-      await queryClient.invalidateQueries({ queryKey: [RETURN_LEADER_HANDOVERS_QUERY_KEY] });
-      await queryClient.invalidateQueries({ queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY] });
+      await dispatch(
+        approveReturnLeaderHandover({
+          handoverId: rlActionRow.id,
+          photos,
+          companyId: user.company_id,
+        })
+      ).unwrap();
+      await refreshInventoryQueries();
       toast({
         title: 'Return confirmed',
         description: `${rlActionRow.returnNumber} received. Stock moved to your Returned Items.`,
@@ -186,9 +175,13 @@ export default function ClientOrderReturnsPage() {
     if (!rlActionRow || rlActing) return;
     setRlActing(true);
     try {
-      await rejectReturnLeaderHandover(rlActionRow.id, note);
-      await queryClient.invalidateQueries({ queryKey: [RETURN_LEADER_HANDOVERS_QUERY_KEY] });
-      await queryClient.invalidateQueries({ queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY] });
+      await dispatch(
+        rejectReturnLeaderHandover({
+          handoverId: rlActionRow.id,
+          note,
+        })
+      ).unwrap();
+      await refreshInventoryQueries();
       toast({
         title: 'Return rejected',
         description: `${rlActionRow.returnNumber} was rejected.`,
@@ -204,11 +197,6 @@ export default function ClientOrderReturnsPage() {
     } finally {
       setRlActing(false);
     }
-  };
-
-  const refreshInventoryQueries = async () => {
-    await queryClient.invalidateQueries({ queryKey: [RETURN_LEADER_HANDOVERS_QUERY_KEY] });
-    await queryClient.invalidateQueries({ queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY] });
   };
 
   if (!showReturns) {
