@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import React from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -217,10 +217,10 @@ export default function MyInventory() {
   const { hasWarehouseHubLink } = usePermissions();
   const showReturnedColumn = canShowClientOrderReturns(hasWarehouseHubLink, user?.role);
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedBrands, setExpandedBrands] = useState<string[]>([]);
-  const [mobileBrandDialog, setMobileBrandDialog] = useState<AgentBrand | null>(null);
   const [brandPage, setBrandPage] = useState(0);
   const [brandPageSize, setBrandPageSize] = useState<PageSize>(INVENTORY_PAGE_SIZE);
   const [brandSortState, setBrandSortState] =
@@ -444,10 +444,6 @@ export default function MyInventory() {
   useEffect(() => {
     setBrandPage(0);
   }, [searchQuery, brandPageSize, brandSortState]);
-
-  const openMobileBrandDialog = (brand: AgentBrand) => {
-    setMobileBrandDialog(brand);
-  };
 
   const handleBrandSort = (key: InventoryBrandSortKey) => {
     setBrandSortState((current) => getNextTableSortCycleState(current, key));
@@ -1224,7 +1220,7 @@ export default function MyInventory() {
                         variant="outline"
                         size="sm"
                         className="w-full mt-3"
-                        onClick={() => openMobileBrandDialog(brand)}
+                        onClick={() => navigate(`/my-inventory/${brand.id}`)}
                       >
                         Show Details
                       </Button>
@@ -1582,130 +1578,6 @@ export default function MyInventory() {
           ) : null}
         </CardContent>
       </Card>
-
-      {/* Mobile brand details: Brand → Type (bordered) → Variants */}
-      <Dialog
-        open={!!mobileBrandDialog}
-        onOpenChange={(open) => {
-          if (!open) setMobileBrandDialog(null);
-        }}
-      >
-        <DialogContent className="w-[95vw] max-w-lg max-h-[85vh] overflow-hidden flex flex-col p-0">
-          {mobileBrandDialog ? (
-            <>
-              <DialogHeader className="px-4 pt-5 pb-3 border-b shrink-0">
-                <DialogTitle>{mobileBrandDialog.name}</DialogTitle>
-                <DialogDescription>
-                  {(mobileBrandDialog.allVariants || []).length} item
-                  {(mobileBrandDialog.allVariants || []).length === 1 ? '' : 's'} ·{' '}
-                  {getTotalStock(mobileBrandDialog)} in stock
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
-                {sortedVariantTypeEntries(mobileBrandDialog.variantsByType).map(([type, variants]) => {
-                  const colors = getVariantTypeColor(type);
-                  const typeStock = getTypeStock(variants);
-                  return (
-                    <div
-                      key={type}
-                      className={`rounded-lg border overflow-hidden bg-background ${colors.headerBg}`}
-                    >
-                      <div className="flex items-center gap-2 px-3 py-2.5">
-                        <span className={`text-sm font-semibold ${colors.header}`}>
-                          {formatVariantTypeLabel(type, true)}
-                        </span>
-                        <span className="text-[11px] text-muted-foreground tabular-nums">
-                          {variants.length}
-                        </span>
-                        <span
-                          className={`ml-auto text-sm font-semibold tabular-nums ${
-                            variants.some((v) => isLowStock(v.stock) && v.stock > 0)
-                              ? 'text-amber-600'
-                              : ''
-                          }`}
-                        >
-                          {typeStock}
-                        </span>
-                      </div>
-
-                      <div className="border-t divide-y bg-background">
-                        {variants.map((v: any) => {
-                          const returned = showReturnedColumn ? getReturnedStock(v.id) : null;
-                          return (
-                            <div key={v.id} className="px-3 py-2.5 space-y-1.5">
-                              <div className="flex items-start justify-between gap-3">
-                                <p className="min-w-0 flex-1 text-sm font-medium leading-snug break-words">
-                                  {v.name}
-                                </p>
-                                <div
-                                  className={`shrink-0 text-base font-semibold tabular-nums leading-none ${
-                                    isLowStock(v.stock) ? 'text-amber-600' : ''
-                                  }`}
-                                >
-                                  {v.stock}
-                                </div>
-                              </div>
-
-                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                                <span className="tabular-nums">
-                                  Price{' '}
-                                  <span className="font-medium text-foreground">
-                                    ₱{Number(v.price || 0).toFixed(2)}
-                                  </span>
-                                </span>
-                                <span className="tabular-nums">
-                                  DSP{' '}
-                                  <span className="font-medium text-foreground">
-                                    {typeof v.dspPrice === 'number'
-                                      ? `₱${v.dspPrice.toFixed(2)}`
-                                      : '—'}
-                                  </span>
-                                </span>
-                                <span className="tabular-nums">
-                                  RSP{' '}
-                                  <span className="font-medium text-foreground">
-                                    {typeof v.rspPrice === 'number'
-                                      ? `₱${v.rspPrice.toFixed(2)}`
-                                      : '—'}
-                                  </span>
-                                </span>
-                              </div>
-
-                              {returned ? (
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  className={`h-8 gap-1.5 px-2.5 text-xs ${
-                                    returned.qty > 0
-                                      ? 'border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800'
-                                      : 'text-muted-foreground'
-                                  }`}
-                                  onClick={() =>
-                                    openReturnedDialog(
-                                      mobileBrandDialog.name,
-                                      v.name,
-                                      returned.qty,
-                                      returned.returns
-                                    )
-                                  }
-                                >
-                                  <PackageMinus className="h-3.5 w-3.5" />
-                                  Returned{returned.qty > 0 ? ` · ${returned.qty}` : ''}
-                                </Button>
-                              ) : null}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          ) : null}
-        </DialogContent>
-      </Dialog>
 
       {/* My Return Requests (mobile sales only) */}
       {user?.role !== 'team_leader' && <MyReturnRequestsSection />}
