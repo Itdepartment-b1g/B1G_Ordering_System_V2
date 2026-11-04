@@ -162,6 +162,18 @@ function sharedStyles(): string {
     border-bottom: 1px solid #ccc;
     vertical-align: top;
   }
+  .items-table tr.brand-row td {
+    background: #f3f4f6;
+    font-weight: 800;
+    border-bottom: 1px solid #000;
+    padding: 6px 4px;
+  }
+  .items-table .brand-count {
+    font-weight: 600;
+    font-size: 10px;
+    color: #444;
+    margin-left: 8px;
+  }
   .items-table .col-qty {
     text-align: right;
     font-variant-numeric: tabular-nums;
@@ -270,14 +282,9 @@ function sharedStyles(): string {
 `;
 }
 
-function variantLabel(line: {
-  variant?: { name?: string | null; brand_name?: string | null };
-}): string {
-  return [line.variant?.brand_name, line.variant?.name].filter(Boolean).join(' · ') || 'Item';
-}
-
 export type TlStockTransferRequestPdfLine = {
   label: string;
+  brand?: string | null;
   requested: number;
   approved?: number | null;
 };
@@ -314,20 +321,64 @@ export type TlTdrPdfOptions = {
   lines: TlTdrPdfLine[];
 };
 
+function requestLineBrand(line: TlStockTransferRequestPdfLine): string {
+  const explicit = line.brand?.trim();
+  if (explicit) return explicit;
+  const parts = line.label.split(' · ');
+  if (parts.length > 1 && parts[0].trim()) return parts[0].trim();
+  return 'Unbranded';
+}
+
+function requestLineLabel(line: TlStockTransferRequestPdfLine): string {
+  if (line.brand?.trim()) return line.label;
+  const parts = line.label.split(' · ');
+  if (parts.length > 1) return parts.slice(1).join(' · ').trim() || line.label;
+  return line.label;
+}
+
+function groupRequestLinesByBrand(lines: TlStockTransferRequestPdfLine[]) {
+  const map = new Map<string, TlStockTransferRequestPdfLine[]>();
+  for (const line of lines) {
+    const brand = requestLineBrand(line);
+    const list = map.get(brand) ?? [];
+    list.push(line);
+    map.set(brand, list);
+  }
+  return [...map.entries()]
+    .sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+    .map(([brand, items]) => ({
+      brand,
+      items: [...items].sort((a, b) =>
+        requestLineLabel(a).localeCompare(requestLineLabel(b), undefined, { sensitivity: 'base' })
+      ),
+    }));
+}
+
 function buildTransferRequestHtml(options: TlStockTransferRequestPdfOptions): string {
   const requestNo = escapeHtml(options.requestNumber);
   const totalRequested = options.lines.reduce((sum, line) => sum + Math.max(0, line.requested), 0);
   const showApproved = options.lines.some((line) => line.approved != null);
+  const qtyCols = showApproved ? 3 : 2;
+  const groups = groupRequestLinesByBrand(options.lines);
   const itemRows =
-    options.lines
-      .map(
-        (line) => `
+    groups
+      .map((group) => {
+        const header = `
+      <tr class="brand-row">
+        <td colspan="${qtyCols}">${escapeHtml(group.brand)}<span class="brand-count">${group.items.length} item${group.items.length === 1 ? '' : 's'}</span></td>
+      </tr>`;
+        const rows = group.items
+          .map(
+            (line) => `
       <tr>
-        <td>${escapeHtml(line.label)}</td>
+        <td>${escapeHtml(requestLineLabel(line))}</td>
         <td class="col-qty">${fmtQty(line.requested)}</td>
         ${showApproved ? `<td class="col-qty">${line.approved == null ? '—' : fmtQty(line.approved)}</td>` : ''}
       </tr>`
-      )
+          )
+          .join('');
+        return header + rows;
+      })
       .join('') ||
     `<tr><td>&nbsp;</td><td class="col-qty">&nbsp;</td>${showApproved ? '<td class="col-qty">&nbsp;</td>' : ''}</tr>`;
 
@@ -563,7 +614,8 @@ export function tlTransferRequestPdfFromLines(
     sourceRegion: header.source?.region,
     notes: header.requester_notes,
     lines: lines.map((line) => ({
-      label: variantLabel(line),
+      brand: line.variant?.brand_name?.trim() || 'Unbranded',
+      label: line.variant?.name || 'Item',
       requested: Number(line.requested_quantity || 0),
       approved: line.admin_approved_quantity,
     })),

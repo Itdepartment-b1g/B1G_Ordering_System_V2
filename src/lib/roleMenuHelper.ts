@@ -82,9 +82,9 @@ const leaderMenuItems: MenuItem[] = [
     { title: 'Transfer Shortages', url: '/inventory/tl-transfer-shortages', description: 'Investigate TL-to-TL stock that was dispatched but arrived short.' },
     { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', description: 'Return your allocated stock to the linked warehouse for inspection (good/damaged + batch).' },
     { title: 'Client Order Returns', url: '/client-order-returns', description: 'History of client returns posted against ORD numbers (CR-…).' },
+    { title: 'Returns to Super Admin', url: '/inventory/main/returns', description: 'Review the stock you returned from your inventory to the super admin.' },
     { title: 'Price Agreements', url: '/inventory/price-agreements', description: 'Confirm company Selling / DSP / RSP changes before bags update.' },
     { title: 'Price History', url: '/inventory/price-history', description: 'Flattened company price change history per SKU.' },
-    { title: 'Returns to Super Admin', url: '/inventory/main/returns', description: 'Review the stock you returned from your inventory to the super admin.' },
     { title: 'How to use?', url: '/leader-manual', description: 'Open the team leader manual and usage guides.' },
   ]},
   { title: 'Tasks', url: '/tasks', description: 'Assign and monitor daily tasks for your team.', hasSubmenu: true, submenu: [

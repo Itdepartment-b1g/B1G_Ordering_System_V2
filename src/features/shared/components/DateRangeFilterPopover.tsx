@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Calendar, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -64,7 +65,14 @@ export function DateRangeFilterPopover({
           <ChevronDown className="h-4 w-4 opacity-50 shrink-0 ml-2" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className={className ?? 'w-[360px] p-0'} align={align}>
+      <PopoverContent
+        align={align}
+        collisionPadding={12}
+        className={cn('w-[360px] overflow-y-auto p-0', className)}
+        style={{
+          maxHeight: 'min(32rem, var(--radix-popover-content-available-height, 70vh))',
+        }}
+      >
         <div className="p-4 space-y-4">
           <div className="space-y-3">
             <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">

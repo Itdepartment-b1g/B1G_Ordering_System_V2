@@ -28,6 +28,7 @@ export type KASalesRecordLineInput = {
   city?: string;
   brand_name?: string;
   variant_name?: string;
+  variant_type?: 'flavor' | 'battery' | string;
   sku?: string;
   quantity?: number | string;
   unit_price?: number | string;
@@ -57,6 +58,15 @@ export type KASalesRecordPreviewItem = {
   brand: string;
   variant: string;
   sku: string | null;
+  variant_type?: string | null;
+  /** Type Excel/import wants (flavor | battery). */
+  excel_variant_type?: string | null;
+  warehouse_company_id?: string | null;
+  hub_brand_id?: string | null;
+  hub_variant_id?: string | null;
+  hub_variant_type?: string | null;
+  /** True when a same-name hub variant exists but its type does not match Excel. */
+  type_fix_needed?: boolean;
   quantity: number;
   unit_price: number;
   line_total: number;
@@ -104,6 +114,11 @@ export type KASalesRecordPendingMaster = {
 
 export type KASalesRecordImportOptions = {
   createMissing?: boolean;
+  /**
+   * Sales Tracker v2 only. Allocates the Excel header discount onto PO lines
+   * so brand remaining closes when the order is paid. Existing imports omit this.
+   */
+  applySettlementDiscount?: boolean;
 };
 
 export type KASalesRecordImportPoResult = {
@@ -151,7 +166,14 @@ type CatalogAddr = {
 };
 type CatalogKam = { id: string; email: string; role: string; status: string };
 type CatalogBrand = { id: string; name: string; is_active: boolean };
-type CatalogVariant = { id: string; name: string; sku: string | null; brand_id: string; is_active: boolean };
+type CatalogVariant = {
+  id: string;
+  name: string;
+  sku: string | null;
+  brand_id: string;
+  is_active: boolean;
+  variant_type?: string | null;
+};
 type CatalogLoc = { id: string; name: string; is_main: boolean };
 
 type Catalog = {
@@ -284,7 +306,7 @@ async function loadCatalog(companyId: string): Promise<Catalog> {
     variants = await fetchAllPaginated<CatalogVariant>(async (from, to) => {
       const { data, error } = await sb
         .from('variants')
-        .select('id, name, sku, brand_id, is_active')
+        .select('id, name, sku, brand_id, is_active, variant_type')
         .eq('company_id', hubId)
         .range(from, to);
       return { data: (data as CatalogVariant[] | null) ?? null, error };
@@ -557,6 +579,15 @@ type ResolvedLine = {
   shopChoiceRequired: boolean;
   tradeName: string;
   vapeShops: string[];
+  typeFix?: {
+    warehouseCompanyId: string;
+    brandId: string;
+    brandName: string;
+    variantId: string;
+    variantName: string;
+    currentType: string;
+    wantedType: string;
+  };
 };
 
 function resolveLine(
@@ -565,6 +596,7 @@ function resolveLine(
   options: { createMissing: boolean }
 ): ResolvedLine {
   const errors: string[] = [];
+  let typeFix: ResolvedLine['typeFix'];
   const qty = Number(row.quantity);
   const unitPrice = Number(row.unit_price);
   const lineTotal =
@@ -670,16 +702,52 @@ function resolveLine(
     if (!brandPick.ok) errors.push(pickError(brandPick));
     else {
       brand = brandPick.row;
-      const brandVars = catalog.variants.filter((v) => v.brand_id === brand!.id && v.is_active !== false);
+      const wantType = String(row.variant_type || '').trim().toLowerCase();
+      const typed = wantType === 'flavor' || wantType === 'battery';
+      const brandVars = catalog.variants.filter((v) => {
+        if (v.brand_id !== brand!.id || v.is_active === false) return false;
+        if (!typed) return true;
+        return String(v.variant_type || '').trim().toLowerCase() === wantType;
+      });
       const varPick = pickByName(
         brandVars,
         (v) => v.name,
         variantName,
-        `hub variant not found under ${brand.name}: ${variantName}`,
+        typed
+          ? `hub ${wantType} variant not found under ${brand.name}: ${variantName}`
+          : `hub variant not found under ${brand.name}: ${variantName}`,
         (hits) => `hub variant ambiguous: ${hits.map((v) => v.name).join(', ')}`
       );
       if (varPick.ok) variant = varPick.row;
-      else errors.push(pickError(varPick));
+      else {
+        errors.push(pickError(varPick));
+        if (typed && catalog.hubId) {
+          const anyTypeVars = catalog.variants.filter(
+            (v) => v.brand_id === brand!.id && v.is_active !== false
+          );
+          const wrongType = pickByName(
+            anyTypeVars,
+            (v) => v.name,
+            variantName,
+            '',
+            () => ''
+          );
+          if (wrongType.ok) {
+            const currentType = String(wrongType.row.variant_type || '').trim().toLowerCase();
+            if (currentType && currentType !== wantType) {
+              typeFix = {
+                warehouseCompanyId: catalog.hubId,
+                brandId: brand.id,
+                brandName: brand.name,
+                variantId: wrongType.row.id,
+                variantName: wrongType.row.name,
+                currentType,
+                wantedType: wantType,
+              };
+            }
+          }
+        }
+      }
     }
   }
 
@@ -705,6 +773,7 @@ function resolveLine(
     shopChoiceRequired: shopDecision.choiceRequired,
     tradeName: shopDecision.tradeName,
     vapeShops: shopDecision.vapeShops,
+    typeFix,
   };
 }
 
@@ -786,18 +855,42 @@ function assertRole(ctx: UserContext) {
   }
 }
 
+function pricedOrder(
+  lineTotals: number,
+  headerDiscount: number,
+  paid: number,
+  excelStatus: string,
+  applySettlementDiscount: boolean
+) {
+  const subtotal = money(lineTotals);
+  const header = money(headerDiscount);
+  // V2 keeps the billed sheet total and records the tracker discount on the payment.
+  // Reducing the PO total as well would make cash + settlement discount exceed the balance.
+  const settle = applySettlementDiscount && header > 0.001;
+  const discount = settle ? 0 : header;
+  const total = settle ? subtotal : money(subtotal - header);
+  const settlement = settle ? money(Math.min(header, Math.max(0, total - paid))) : 0;
+  const status = paymentStatus(total, money(paid + settlement), excelStatus);
+  return { subtotal, discount, total, settlement, status };
+}
+
 function previewFromGroup(
   ref: string,
   lines: KASalesRecordLineInput[],
   resolved: ResolvedLine[],
   issues: string[],
-  pay: ReturnType<typeof summarizePayment>
+  pay: ReturnType<typeof summarizePayment>,
+  applySettlementDiscount = false
 ): KASalesRecordPoPreview {
   const first = resolved.find((r) => r.client) || resolved[0];
-  const subtotal = money(resolved.reduce((s, r) => s + r.lineTotal, 0));
-  const discount = money(lines[0]?.discount || 0);
-  const total = money(subtotal - discount);
-  const status = paymentStatus(total, pay.paid, pay.excelStatus);
+  const priced = pricedOrder(
+    resolved.reduce((s, r) => s + r.lineTotal, 0),
+    Number(lines[0]?.discount || 0),
+    pay.paid,
+    pay.excelStatus,
+    applySettlementDiscount
+  );
+  const { subtotal, discount, total, status } = priced;
   const commissioned = status === 'paid' && pay.comm;
   const willCreateClient = resolved.some((r) => r.wouldCreateClient);
   const willCreateShop = resolved.some((r) => r.wouldCreateShop);
@@ -841,6 +934,13 @@ function previewFromGroup(
       brand: r.brand?.name || String(r.source.brand_name || ''),
       variant: r.variant?.name || String(r.source.variant_name || ''),
       sku: r.variant?.sku || r.source.sku || null,
+      variant_type: r.variant?.variant_type || r.source.variant_type || null,
+      excel_variant_type: r.source.variant_type || null,
+      warehouse_company_id: r.typeFix?.warehouseCompanyId || null,
+      hub_brand_id: r.typeFix?.brandId || r.brand?.id || null,
+      hub_variant_id: r.typeFix?.variantId || r.variant?.id || null,
+      hub_variant_type: r.typeFix?.currentType || r.variant?.variant_type || null,
+      type_fix_needed: Boolean(r.typeFix),
       quantity: r.qty,
       unit_price: r.unitPrice,
       line_total: r.lineTotal,
@@ -1063,7 +1163,9 @@ export async function dryRunKASalesRecordImport(
     }
     const uniqueIssues = [...new Set(issues)];
     if (uniqueIssues.length) blocking += 1;
-    purchase_orders.push(previewFromGroup(ref, lines, resolved, uniqueIssues, pay));
+    purchase_orders.push(
+      previewFromGroup(ref, lines, resolved, uniqueIssues, pay, options.applySettlementDiscount === true)
+    );
   }
 
   return {
@@ -1074,9 +1176,34 @@ export async function dryRunKASalesRecordImport(
     ready_to_import: blocking === 0,
     blocking_pos: blocking,
     create_missing: createMissing,
+    warehouse_company_id: catalog.hubId,
     pending_master: collectPendingMaster(pendingResolved),
     purchase_orders,
   };
+}
+
+function spreadCashAndDiscount(
+  items: { id: string; total_price: number }[],
+  cash: number,
+  discount: number
+) {
+  let cashLeft = money(cash);
+  let discountLeft = money(discount);
+  const out: { purchaseOrderItemId: string; amount: number; discount: number }[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const billed = money(Number(items[i].total_price) || 0);
+    const isLast = i === items.length - 1;
+    let takeCash = money(Math.min(cashLeft, Math.max(billed, 0)));
+    const room = money(Math.max(0, billed - takeCash));
+    const takeDiscount = money(Math.min(discountLeft, room));
+    if (isLast && money(cashLeft - takeCash) > 0.001) takeCash = cashLeft;
+    cashLeft = money(cashLeft - takeCash);
+    discountLeft = money(discountLeft - takeDiscount);
+    if (takeCash > 0 || takeDiscount > 0) {
+      out.push({ purchaseOrderItemId: items[i].id, amount: takeCash, discount: takeDiscount });
+    }
+  }
+  return out;
 }
 
 function spreadPay(items: { id: string; total_price: number }[], cash: number) {
@@ -1105,7 +1232,8 @@ async function importOne(
   ctx: UserContext,
   catalog: Catalog,
   ref: string,
-  lines: KASalesRecordLineInput[]
+  lines: KASalesRecordLineInput[],
+  options: KASalesRecordImportOptions = {}
 ): Promise<KASalesRecordImportPoResult> {
   const displayRef = String(lines[0]?.external_po_ref || ref);
   const previewIssues: string[] = [];
@@ -1131,10 +1259,14 @@ async function importOne(
   const pay = summarizePayment(lines);
   const orderDate = String(lines[0].order_date || '').slice(0, 10);
   const deliveryDate = String(lines[0].expected_delivery_date || orderDate).slice(0, 10);
-  const subtotal = money(resolved.reduce((s, r) => s + r.lineTotal, 0));
-  const discount = money(lines[0]?.discount || 0);
-  const total = money(subtotal - discount);
-  const status = paymentStatus(total, pay.paid, pay.excelStatus);
+  const priced = pricedOrder(
+    resolved.reduce((s, r) => s + r.lineTotal, 0),
+    Number(lines[0]?.discount || 0),
+    pay.paid,
+    pay.excelStatus,
+    options.applySettlementDiscount === true
+  );
+  const { subtotal, discount, total, settlement, status } = priced;
   const commissioned = status === 'paid' && pay.comm;
   const rfpfNumber = String(lines[0].rfpf_number || displayRef).trim() || null;
   const extraNote = String(lines[0].notes || '').trim();
@@ -1204,7 +1336,7 @@ async function importOne(
       .select('id, total_price');
     if (itemsErr) throw itemsErr;
 
-    if (pay.paid > 0.05) {
+    if (pay.paid > 0.05 || settlement > 0.05) {
       if (!ctx.accessToken) throw new HttpError(401, 'Missing access token');
       const userSb = getSupabaseUser(ctx.accessToken);
       const payMethod = pay.method === 'BANK_TRANSFER' || pay.method === 'GCASH' || pay.method === 'CHEQUE' || pay.method === 'CASH'
@@ -1216,7 +1348,8 @@ async function importOne(
           purchase_order_id: poId,
           company_id: ctx.companyId,
           amount: pay.paid,
-          settlement_discount: 0,
+          settlement_discount: settlement,
+          settlement_discount_reason: settlement > 0.05 ? 'Imported from B1G Sales Tracker discount' : null,
           payment_method: payMethod,
           bank_type: payMethod === 'BANK_TRANSFER' ? pay.bank : null,
           proof_storage_path: null,
@@ -1236,7 +1369,13 @@ async function importOne(
         );
         if (linkErr) throw linkErr;
       }
-      const splits = spreadPay((insertedItems || []) as { id: string; total_price: number }[], pay.paid);
+      const splits = settlement > 0.001
+        ? spreadCashAndDiscount(
+            (insertedItems || []) as { id: string; total_price: number }[],
+            pay.paid,
+            settlement
+          )
+        : spreadPay((insertedItems || []) as { id: string; total_price: number }[], pay.paid);
       if (payment?.id && splits.length) {
         await insertPaymentAllocations(ctx.companyId, payment.id, splits, { includeDiscount: true });
       }
@@ -1300,7 +1439,7 @@ export async function importKASalesRecordPos(
   }
   const results: KASalesRecordImportPoResult[] = [];
   for (const [ref, lines] of grouped) {
-    results.push(await importOne(ctx, catalog, ref, lines));
+    results.push(await importOne(ctx, catalog, ref, lines, options));
   }
   return {
     dry_run: false as const,

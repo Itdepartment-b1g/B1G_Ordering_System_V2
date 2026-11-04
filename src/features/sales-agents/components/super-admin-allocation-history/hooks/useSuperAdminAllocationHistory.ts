@@ -30,7 +30,8 @@ async function fetchAllocationHistory(user: FetchUser): Promise<AllocationHistor
       allocated_to,
       allocated_by,
       brand_id,
-      allocation_type
+      allocation_type,
+      tl_stock_request:tl_stock_requests!allocation_history_tl_stock_request_id_fkey ( request_number )
     `
     )
     .order('created_at', { ascending: false })
@@ -115,7 +116,7 @@ async function fetchAllocationHistory(user: FetchUser): Promise<AllocationHistor
         `
         )
         .eq('reference_type', 'allocation_history')
-        .eq('transaction_type', 'allocated_to_agent')
+        .in('transaction_type', ['allocated_to_agent', 'tl_stock_transfer_in'])
         .in('reference_id', sessionIds)
         .order('created_at', { ascending: true })
         .order('id', { ascending: true })

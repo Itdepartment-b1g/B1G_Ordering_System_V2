@@ -157,6 +157,34 @@ export function CreateTLStockTransferDialog({ open, onOpenChange, onSubmitted }:
     [sourceStock, qtyByVariant]
   );
 
+  const selectedLinesByBrand = useMemo(() => {
+    const map = new Map<string, typeof selectedLines>();
+    for (const line of selectedLines) {
+      const brand = line.brand_name.trim() || 'Unbranded';
+      const list = map.get(brand) ?? [];
+      list.push(line);
+      map.set(brand, list);
+    }
+    return [...map.entries()]
+      .sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+      .map(([brand, items]) => ({
+        brand,
+        items: [...items].sort((a, b) =>
+          a.variant_name.localeCompare(b.variant_name, undefined, { sensitivity: 'base' })
+        ),
+      }));
+  }, [selectedLines]);
+
+  const fillAllStock = () => {
+    setQtyByVariant(
+      Object.fromEntries(sourceStock.map((item) => [item.variant_id, item.stock]))
+    );
+  };
+
+  const clearQuantities = () => {
+    setQtyByVariant({});
+  };
+
   const reset = () => {
     setSourceTlId('');
     setSearchQuery('');
@@ -224,7 +252,8 @@ export function CreateTLStockTransferDialog({ open, onOpenChange, onSubmitted }:
             sourceRegion: selectedTl?.region,
             notes: notes.trim() || null,
             lines: selectedLines.map((line) => ({
-              label: `${line.brand_name} · ${line.variant_name}`,
+              brand: line.brand_name.trim() || 'Unbranded',
+              label: line.variant_name,
               requested: line.qty,
             })),
           }
@@ -244,7 +273,7 @@ export function CreateTLStockTransferDialog({ open, onOpenChange, onSubmitted }:
         } catch (printError: any) {
           toast({
             title: 'Transfer saved, print failed',
-            description: printError?.message || 'Open the transfer from My transfers to print it.',
+            description: printError?.message || 'Open the transfer from My transfer request to print it.',
             variant: 'destructive',
           });
         }
@@ -310,16 +339,35 @@ export function CreateTLStockTransferDialog({ open, onOpenChange, onSubmitted }:
 
           {sourceTlId ? (
             <div className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
+              <div className="space-y-2">
                 <Label>Stock held by {selectedTl?.full_name}</Label>
-                <div className="relative w-56">
-                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search items..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-8"
-                  />
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="relative w-56">
+                    <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search items..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pl-8"
+                    />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      onClick={fillAllStock}
+                      disabled={stockLoading || sourceStock.length === 0}
+                    >
+                      Get all stock
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={clearQuantities}
+                      disabled={selectedLines.length === 0}
+                    >
+                      Clear quantities
+                    </Button>
+                  </div>
                 </div>
               </div>
 
@@ -427,15 +475,15 @@ export function CreateTLStockTransferDialog({ open, onOpenChange, onSubmitted }:
     </Dialog>
 
     <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-      <AlertDialogContent className="max-w-lg">
-        <AlertDialogHeader>
+      <AlertDialogContent className="flex max-h-[90vh] max-w-lg flex-col overflow-hidden">
+        <AlertDialogHeader className="shrink-0">
           <AlertDialogTitle>Are you sure you want to request this transfer?</AlertDialogTitle>
           <AlertDialogDescription>
             Super Admin must approve it before {selectedTl?.full_name || 'the other team leader'} can
             dispatch.
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <div className="space-y-3 text-sm">
+        <div className="min-h-0 space-y-3 overflow-y-auto text-sm">
           <div className="rounded-md bg-muted/50 p-3">
             <p className="text-muted-foreground">Request from</p>
             <p className="font-medium">
@@ -452,16 +500,28 @@ export function CreateTLStockTransferDialog({ open, onOpenChange, onSubmitted }:
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {selectedLines.map((line) => (
-                  <TableRow key={line.variant_id}>
-                    <TableCell>
-                      <p className="font-medium">
-                        {line.brand_name} · {line.variant_name}
-                      </p>
-                      <p className="text-muted-foreground">{line.variant_type}</p>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums font-medium">{line.qty}</TableCell>
-                  </TableRow>
+                {selectedLinesByBrand.map((group) => (
+                  <Fragment key={group.brand}>
+                    <TableRow className="bg-muted/50 hover:bg-muted/50">
+                      <TableCell colSpan={2} className="py-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold">{group.brand}</span>
+                          <Badge variant="outline" className="text-[10px] font-normal">
+                            {group.items.length} item{group.items.length === 1 ? '' : 's'}
+                          </Badge>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                    {group.items.map((line) => (
+                      <TableRow key={line.variant_id}>
+                        <TableCell>
+                          <p className="font-medium">{line.variant_name}</p>
+                          <p className="text-muted-foreground">{line.variant_type}</p>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums font-medium">{line.qty}</TableCell>
+                      </TableRow>
+                    ))}
+                  </Fragment>
                 ))}
               </TableBody>
             </Table>
@@ -477,7 +537,7 @@ export function CreateTLStockTransferDialog({ open, onOpenChange, onSubmitted }:
             </div>
           ) : null}
         </div>
-        <AlertDialogFooter>
+        <AlertDialogFooter className="shrink-0">
           <AlertDialogCancel disabled={submitting}>Go back</AlertDialogCancel>
           <AlertDialogAction
             onClick={(e) => {

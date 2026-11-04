@@ -22,6 +22,7 @@ export type KAAnalyticsPaidBrandRow = {
   remaining: number;
   quantity: number;
   orderCount: number;
+  orderIds: string[];
   status: 'unpaid' | 'partial' | 'paid';
 };
 
@@ -345,6 +346,7 @@ export async function getKAProductPaidByBrand(
   const brands = [...brandMap.values()]
     .map((brand) => {
       brand.orderIds.forEach((id) => allOrderIds.add(id));
+      const orderIds = [...brand.orderIds];
       return {
         brandId: brand.brandId,
         brandName: brand.brandName,
@@ -353,7 +355,8 @@ export async function getKAProductPaidByBrand(
         discount: brand.discount,
         remaining: brand.remaining,
         quantity: brand.quantity,
-        orderCount: brand.orderIds.size,
+        orderCount: orderIds.length,
+        orderIds,
         status: paymentStatus(brand.paid, brand.discount, brand.remaining),
       };
     })

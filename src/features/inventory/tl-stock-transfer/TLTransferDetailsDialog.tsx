@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Expand, History, Loader2, Printer } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -89,15 +89,23 @@ function lineNotes(line: TLRequestWithDetails) {
   return notes;
 }
 
-function variantLabel(line: {
-  variant?: { name?: string | null; brand_name?: string | null; brand?: { name?: string | null } | null };
+function lineBrandName(line: {
+  variant?: { brand_name?: string | null; brand?: { name?: string | null } | null };
 }) {
   const brand =
     line.variant?.brand_name ||
     (line.variant?.brand && typeof line.variant.brand === 'object' && !Array.isArray(line.variant.brand)
       ? line.variant.brand.name
       : null);
-  return [brand, line.variant?.name].filter(Boolean).join(' · ') || 'Item';
+  return brand?.trim() || 'Unbranded';
+}
+
+function variantLabel(line: {
+  variant?: { name?: string | null; brand_name?: string | null; brand?: { name?: string | null } | null };
+}) {
+  const brand = lineBrandName(line);
+  const name = line.variant?.name;
+  return [brand === 'Unbranded' ? null : brand, name].filter(Boolean).join(' · ') || 'Item';
 }
 
 type TdrDisplayLine = {
@@ -285,6 +293,24 @@ export function TLTransferDetailsDialog({ open, onOpenChange, request, allReques
     const grouped = allRequests.filter((row) => row.request_number === request.request_number);
     return grouped.length > 0 ? grouped : [request];
   }, [allRequests, request]);
+
+  const linesByBrand = useMemo(() => {
+    const map = new Map<string, TLRequestWithDetails[]>();
+    for (const line of lines) {
+      const brand = lineBrandName(line);
+      const list = map.get(brand) ?? [];
+      list.push(line);
+      map.set(brand, list);
+    }
+    return [...map.entries()]
+      .sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+      .map(([brand, items]) => ({
+        brand,
+        items: [...items].sort((a, b) =>
+          (a.variant?.name || '').localeCompare(b.variant?.name || '', undefined, { sensitivity: 'base' })
+        ),
+      }));
+  }, [lines]);
 
   const totals = useMemo(
     () =>
@@ -695,44 +721,56 @@ export function TLTransferDetailsDialog({ open, onOpenChange, request, allReques
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {lines.map((line) => {
-                    const notes = lineNotes(line);
-                    return (
-                      <TableRow key={line.id}>
-                        <TableCell>
-                          <p className="font-medium">
-                            {line.variant.brand_name} · {line.variant.name}
-                          </p>
-                          <p className="text-xs text-muted-foreground">{line.variant.type}</p>
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {line.requested_quantity}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {qtyDisplay(line.admin_approved_quantity)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {line.dispatched_quantity == null && !line.dispatched_at
-                            ? '—'
-                            : tlDispatchedQty(line)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {qtyDisplay(line.received_quantity)}
-                        </TableCell>
-                        <TableCell>
-                          {notes.length > 0 ? (
-                            <div className="space-y-1 text-xs text-muted-foreground">
-                              {notes.map((note) => (
-                                <p key={note}>{note}</p>
-                              ))}
-                            </div>
-                          ) : (
-                            <span className="text-muted-foreground">—</span>
-                          )}
+                  {linesByBrand.map((group) => (
+                    <Fragment key={group.brand}>
+                      <TableRow className="bg-muted/50 hover:bg-muted/50">
+                        <TableCell colSpan={6} className="py-2">
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold">{group.brand}</span>
+                            <Badge variant="outline" className="text-[10px] font-normal">
+                              {group.items.length} item{group.items.length === 1 ? '' : 's'}
+                            </Badge>
+                          </div>
                         </TableCell>
                       </TableRow>
-                    );
-                  })}
+                      {group.items.map((line) => {
+                        const notes = lineNotes(line);
+                        return (
+                          <TableRow key={line.id}>
+                            <TableCell>
+                              <p className="font-medium">{line.variant.name}</p>
+                              <p className="text-xs text-muted-foreground">{line.variant.type}</p>
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {line.requested_quantity}
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {qtyDisplay(line.admin_approved_quantity)}
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {line.dispatched_quantity == null && !line.dispatched_at
+                                ? '—'
+                                : tlDispatchedQty(line)}
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {qtyDisplay(line.received_quantity)}
+                            </TableCell>
+                            <TableCell>
+                              {notes.length > 0 ? (
+                                <div className="space-y-1 text-xs text-muted-foreground">
+                                  {notes.map((note) => (
+                                    <p key={note}>{note}</p>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </Fragment>
+                  ))}
                 </TableBody>
                 <TableFooter>
                   <TableRow>

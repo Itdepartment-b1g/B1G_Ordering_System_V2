@@ -74,11 +74,14 @@ export default function LeaderAllocationHistoryList() {
 
   const teamAgentIdSet = useMemo(() => new Set(teamAgentIds), [teamAgentIds]);
 
-  // Main → leader (received by this leader) and leader → agent (to agents on their team only).
+  // Main → leader and TL → TL received by this leader, plus leader → agent to their team.
   const leaderGroups = useMemo(() => {
     if (!user?.id) return [];
     return allGroups.filter((group) => {
-      if (group.allocationType === 'main_to_leader' && group.allocatedToId === user.id) {
+      if (
+        (group.allocationType === 'main_to_leader' || group.allocationType === 'leader_to_leader') &&
+        group.allocatedToId === user.id
+      ) {
         return true;
       }
       return (

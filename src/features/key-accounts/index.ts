@@ -30,6 +30,7 @@ export { KeyAccountHistoricalImportPage } from './pages/KeyAccountHistoricalImpo
 export { KeyAccountSalesRecordImportPage } from './pages/KeyAccountSalesRecordImportPage';
 export { KeyAccountSalesOrderImportPage } from './pages/KeyAccountSalesOrderImportPage';
 export { KeyAccountSalesTrackerImportPage } from './pages/KeyAccountSalesTrackerImportPage';
+export { KeyAccountSalesTrackerImportV2Page } from './pages/KeyAccountSalesTrackerImportV2Page';
 
 // Future exports (Phase 3+):
 // - KAMOrderPage: Create purchase orders

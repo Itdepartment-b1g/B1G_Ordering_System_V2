@@ -31,6 +31,7 @@ interface KeyAccountClient {
 interface ClientOrderRow {
   id: string;
   po_number: string;
+  rfpf_number?: string | null;
   order_date: string;
   total_amount: number | null;
   status: string | null;
@@ -124,7 +125,7 @@ export default function KeyAccountClientAnalyticsPage() {
           .single(),
         supabase
           .from('purchase_orders')
-          .select('id, po_number, order_date, total_amount, status, workflow_status, po_order_kind, source_rebate_id')
+          .select('id, po_number, rfpf_number, order_date, total_amount, status, workflow_status, po_order_kind, source_rebate_id')
           .eq('company_id', user.company_id)
           .eq('company_account_type', 'Key Accounts')
           .eq('key_account_client_id', clientId)

@@ -21,6 +21,8 @@ export type KASalesRecordExcelRow = {
   city?: string;
   brand_name?: string;
   variant_name?: string;
+  /** Sales Tracker v2: pod columns are flavor, device columns are battery. */
+  variant_type?: 'flavor' | 'battery';
   sku?: string;
   quantity?: number;
   unit_price?: number;

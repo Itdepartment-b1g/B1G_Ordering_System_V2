@@ -11,13 +11,12 @@ import { DashboardPage, SysAdDashboardPage, SuperAdminDashboardPage } from "@/fe
 import ExecutiveDashboardPage from "@/features/dashboard/ExecutiveDashboardPage";
 import { SystemHistoryPage } from "@/features/system-history";
 import { ProfilePage } from "@/features/profile";
-import MobileSalesReturnHistoryPage from "@/features/inventory/MobileSalesReturnHistoryPage";
 import { SystemSettingsPage } from "@/features/settings";
 import { OrdersPage, PurchaseOrdersPage, MyOrdersPage, ClientOrderReturnsPage, FinanceRefundsPage, OrderProvider, PurchaseOrderProvider } from "@/features/orders";
 import BrandsPage from "@/features/orders/BrandsPage";
 import VariantTypesPage from "@/features/orders/VariantTypesPage";
 import SuppliersPage from "@/features/orders/SuppliersPage";
-import {WarehouseDeliveryShortagesPage, MainInventoryPage, MainInventoryReturnHistoryPage, LeaderAgentReturnsPage, WarehouseInventoryDashboardPage, SubWarehousesPage, SubWarehouseStockRequestPage, MainWarehouseSubStockRequestsPage, WarehouseDisposalsPage, WarehouseStockRequestsPage, WarehouseStockReturnsPage, WarehouseClientStockReturnsPage, StandardAccountReturnToWarehousePage, WarehouseStockAdjustmentsPage, WarehouseAllocationHistoryPage, BatchViewPage, PhysicalCountPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, RemittedStocksPage, AdminTeamRemittancesPage, LeaderRemittancePage, LeaderCashDepositsPage, PendingRequestsPage, AdminRequestsPage, LeaderStockRequestPage, MobileSalesStockRequestPage, PriceAgreementPage, PriceHistoryPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
+import {WarehouseDeliveryShortagesPage, MainInventoryPage, MainInventoryReturnHistoryPage, MobileSalesReturnHistoryPage, LeaderAgentReturnsPage, WarehouseInventoryDashboardPage, SubWarehousesPage, SubWarehouseStockRequestPage, MainWarehouseSubStockRequestsPage, WarehouseDisposalsPage, WarehouseStockRequestsPage, WarehouseStockReturnsPage, WarehouseClientStockReturnsPage, StandardAccountReturnToWarehousePage, WarehouseStockAdjustmentsPage, WarehouseAllocationHistoryPage, BatchViewPage, PhysicalCountPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, RemittedStocksPage, AdminTeamRemittancesPage, LeaderRemittancePage, LeaderCashDepositsPage, PendingRequestsPage, AdminRequestsPage, LeaderStockRequestPage, MobileSalesStockRequestPage, PriceAgreementPage, PriceHistoryPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
 import TLStockRequestPage from "@/features/inventory/TLStockRequestPage";
 import TLTransferShortagesPage from "@/features/inventory/TLTransferShortagesPage";
 import AdminTLRequestsPage from "@/features/inventory/AdminTLRequestsPage";
@@ -41,7 +40,7 @@ import PaymentSettingsPage from "@/features/finance/PaymentSettingsPage";
 import SystemAdminPage from "@/features/system-admin/SystemAdminPage";
 import ManagementPortal from "@/features/system-admin/ManagementPortal";
 import { WarRoomPage } from "@/features/war-room";
-import { KeyAccountsDashboardWrapper, ClientHierarchyPage, ClientAssignmentPage, KeyAccountTeamPage, KeyAccountUserManagementPage, KeyAccountPurchaseOrderPage, KeyAccountPurchaseOrdersPage, KeyAccountAnalyticsPage, KeyAccountClientAnalyticsPage, KeyAccountRebatesPage, KeyAccountCreateRebatePage, KeyAccountPaymentSettingsPage, KeyAccountPaymentTermsPage, KeyAccountHistoricalImportPage, KeyAccountSalesRecordImportPage, KeyAccountSalesOrderImportPage, KeyAccountSalesTrackerImportPage, KeyAccountSalesTargetsPage} from "@/features/key-accounts";
+import { KeyAccountsDashboardWrapper, ClientHierarchyPage, ClientAssignmentPage, KeyAccountTeamPage, KeyAccountUserManagementPage, KeyAccountPurchaseOrderPage, KeyAccountPurchaseOrdersPage, KeyAccountAnalyticsPage, KeyAccountClientAnalyticsPage, KeyAccountRebatesPage, KeyAccountCreateRebatePage, KeyAccountPaymentSettingsPage, KeyAccountPaymentTermsPage, KeyAccountHistoricalImportPage, KeyAccountSalesRecordImportPage, KeyAccountSalesOrderImportPage, KeyAccountSalesTrackerImportPage, KeyAccountSalesTrackerImportV2Page, KeyAccountSalesTargetsPage} from "@/features/key-accounts";
 import NotFound from "@/features/shared/NotFound";
 import { AgentRemittanceReminder } from "@/features/shared/components/AgentRemittanceReminder";
 import { PriceChangeConfirmGate } from "@/features/inventory/PriceChangeConfirmGate";
@@ -111,6 +110,7 @@ const App = () => (
                     <Route path="/agent-attendance-overview" element={<ProtectedRoute><AgentAttendanceOverviewPage /></ProtectedRoute>} />
                     <Route path="/inventory" element={<ProtectedRoute><MainInventoryPage /></ProtectedRoute>} />
                     <Route path="/inventory/main" element={<ProtectedRoute><MainInventoryPage /></ProtectedRoute>} />
+                    <Route path="/inventory/main/returns" element={<ProtectedRoute><MainInventoryReturnHistoryPage /></ProtectedRoute>} />
                     <Route path="/inventory/price-history" element={<ProtectedRoute><PriceHistoryPage /></ProtectedRoute>} />
                     <Route
                       path="/inventory/price-agreements"
@@ -120,7 +120,6 @@ const App = () => (
                         </ProtectedRoute>
                       }
                     />
-                    <Route path="/inventory/main/returns" element={<ProtectedRoute><MainInventoryReturnHistoryPage /></ProtectedRoute>} />
                     <Route
                       path="/inventory/board"
                       element={
@@ -459,6 +458,14 @@ const App = () => (
                       element={
                         <ProtectedRoute allowedRoles={['sales_head', 'sales_admin']}>
                           <KeyAccountSalesTrackerImportPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/key-accounts/sales-tracker-import-v2"
+                      element={
+                        <ProtectedRoute allowedRoles={['sales_head', 'sales_admin']}>
+                          <KeyAccountSalesTrackerImportV2Page />
                         </ProtectedRoute>
                       }
                     />

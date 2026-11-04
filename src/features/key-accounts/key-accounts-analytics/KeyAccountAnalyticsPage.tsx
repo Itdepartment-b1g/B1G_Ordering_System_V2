@@ -91,6 +91,7 @@ interface KeyAccountAddressRelation {
 interface KeyAccountOrder {
   id: string;
   po_number: string;
+  rfpf_number?: string | null;
   order_date: string;
   total_amount: number | null;
   status: string | null;

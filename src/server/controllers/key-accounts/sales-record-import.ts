@@ -48,9 +48,16 @@ export async function postKASalesRecordImportHandler(req: any, res: any) {
     const authorization = getAuthorizationHeader(req.headers || {});
     const user = await requireAuthUser(authorization);
     const ctx = await resolveUserContext(user.id, accessTokenFromAuthorization(authorization));
-    const payload = (req.body || {}) as { action?: string; create_missing?: boolean };
+    const payload = (req.body || {}) as {
+      action?: string;
+      create_missing?: boolean;
+      apply_settlement_discount?: boolean;
+    };
     const rows = parseRows(req.body || {});
-    const options = { createMissing: payload.create_missing !== false };
+    const options = {
+      createMissing: payload.create_missing !== false,
+      applySettlementDiscount: payload.apply_settlement_discount === true,
+    };
 
     if (payload.action === 'import') {
       return { status: 200, body: await importKASalesRecordPos(ctx, rows, options) };

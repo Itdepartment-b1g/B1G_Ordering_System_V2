@@ -1689,6 +1689,7 @@ export default function MyInventory() {
       {user?.role !== 'team_leader' && <MyReturnRequestsSection />}
 
       {/* Remit Inventory Dialog */}
+
       <Dialog open={remitDialogOpen} onOpenChange={setRemitDialogOpen}>
         <DialogContent className="w-[95vw] max-w-4xl h-[90vh] md:h-auto md:max-h-[90vh] overflow-hidden flex flex-col p-0">
           <DialogHeader className="px-4 pt-6 pb-4 md:px-6">
