@@ -221,26 +221,133 @@ export default function MyOrdersPage() {
   const [allowedPricingStrategies, setAllowedPricingStrategies] = useState<string[]>([]);
   const [loadingPricingConfig, setLoadingPricingConfig] = useState(true);
 
-  // Helper function to get display status from stage
-  const getDisplayStatus = (order: any) => {
-    const stage = order.stage || order.status;
-    switch (stage) {
-      case 'agent_pending':
-        return { text: 'Pending', variant: 'secondary' as const };
-      case 'leader_approved':
-        return { text: 'Approved by Leader', variant: 'default' as const };
-      case 'admin_approved':
-        return { text: 'Approved', variant: 'default' as const };
-      case 'leader_rejected':
-        return { text: 'Rejected', variant: 'destructive' as const };
-      case 'admin_rejected':
-        return { text: 'Rejected', variant: 'destructive' as const };
-      case 'needs_revision':
-        return { text: 'Needs Revision', variant: 'outline' as const };
-      default:
-        return { text: order.status || 'Pending', variant: 'secondary' as const };
+  const isZeroValueOrder = (order: Order) => Math.abs(Number(order.total) || 0) < 0.01;
+
+  const hasCashOrChequeComponent = (order: Order) => {
+    if (isZeroValueOrder(order)) return false;
+    if (order.paymentMode === 'SPLIT' && Array.isArray(order.paymentSplits)) {
+      return order.paymentSplits.some((s) => s.method === 'CASH' || s.method === 'CHEQUE');
     }
+    return order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE';
   };
+
+  type OrderStatusBadge = {
+    text: string;
+    variant: 'default' | 'secondary' | 'outline' | 'destructive';
+    className?: string;
+  };
+
+  /**
+   * Stacked Status badges for agent order list:
+   *
+   * Pending Mobile Sales
+   * Awaiting Remittance
+   *
+   * Pending Team Leader
+   * Pending Cash Deposit
+   *
+   * Pending Finance Review
+   * Deposit Recorded
+   */
+  const getOrderStatusStack = (
+    order: Order
+  ): { primary: OrderStatusBadge; secondary: OrderStatusBadge | null } => {
+    if (order.stage === 'needs_revision') {
+      return { primary: { text: 'Needs Revision', variant: 'outline' }, secondary: null };
+    }
+    if (order.stage === 'admin_approved' || order.status === 'approved') {
+      return { primary: { text: 'Approved', variant: 'default' }, secondary: null };
+    }
+    if (
+      order.stage === 'admin_rejected' ||
+      order.stage === 'leader_rejected' ||
+      order.status === 'rejected'
+    ) {
+      return { primary: { text: 'Rejected', variant: 'destructive' }, secondary: null };
+    }
+
+    const stillPending =
+      order.status === 'pending' ||
+      order.stage === 'agent_pending' ||
+      order.stage === 'leader_approved' ||
+      order.stage === 'finance_pending';
+
+    if (stillPending && hasCashOrChequeComponent(order)) {
+      const depositFullyRecorded = !!(order.depositId && order.depositBankAccount);
+
+      // 1) Agent still needs to remit cash/cheque
+      if (!order.remitted && !order.depositId) {
+        return {
+          primary: { text: 'Pending Mobile Sales', variant: 'secondary' },
+          secondary: {
+            text: 'Awaiting Remittance',
+            variant: 'outline',
+            className: 'bg-amber-50 text-amber-700 border-amber-200',
+          },
+        };
+      }
+
+      // 2) Remitted (or deposit started) but TL cash deposit not fully recorded
+      if (!depositFullyRecorded) {
+        return {
+          primary: { text: 'Pending Team Leader', variant: 'secondary' },
+          secondary: {
+            text: 'Pending Cash Deposit',
+            variant: 'outline',
+            className: 'bg-orange-50 text-orange-700 border-orange-200',
+          },
+        };
+      }
+
+      // 3) Deposit recorded — waiting on finance
+      return {
+        primary: { text: 'Pending Finance Review', variant: 'secondary' },
+        secondary: {
+          text: 'Deposit Recorded',
+          variant: 'outline',
+          className: 'bg-blue-50 text-blue-700 border-blue-200',
+        },
+      };
+    }
+
+    // Bank Transfer / GCash (and FOC) — no remittance; proof goes straight to finance
+    if (order.stage === 'finance_pending' || order.status === 'pending') {
+      const isElectronic =
+        !isZeroValueOrder(order) &&
+        (order.paymentMethod === 'BANK_TRANSFER' ||
+          order.paymentMethod === 'GCASH' ||
+          (order.paymentMode === 'SPLIT' &&
+            Array.isArray(order.paymentSplits) &&
+            order.paymentSplits.some(
+              (s) => s.method === 'BANK_TRANSFER' || s.method === 'GCASH'
+            )));
+
+      return {
+        primary: { text: 'Pending Finance Review', variant: 'secondary' },
+        secondary: isElectronic
+          ? {
+              text: 'Payment Proof Submitted',
+              variant: 'outline',
+              className: 'bg-sky-50 text-sky-700 border-sky-200',
+            }
+          : null,
+      };
+    }
+    if (order.stage === 'leader_approved') {
+      return { primary: { text: 'Approved by Leader', variant: 'default' }, secondary: null };
+    }
+    if (order.stage === 'agent_pending') {
+      return { primary: { text: 'Pending Team Leader', variant: 'secondary' }, secondary: null };
+    }
+
+    return {
+      primary: { text: order.status || 'Pending', variant: 'secondary' },
+      secondary: null,
+    };
+  };
+
+  /** Primary badge only (dialogs / places that show a single status). */
+  const getDisplayStatus = (order: Order) => getOrderStatusStack(order).primary;
 
   // Helper function to format payment / split payment summary
   const formatPaymentSummary = (order: any) => {
@@ -3043,7 +3150,9 @@ export default function MyOrdersPage() {
             {paginatedOrders.length === 0 ? (
               <div className="text-center text-muted-foreground py-12">No orders</div>
             ) : (
-              paginatedOrders.map((order) => (
+              paginatedOrders.map((order) => {
+                const { primary, secondary } = getOrderStatusStack(order);
+                return (
                   <Card key={order.id}>
                   <div className="p-3">
                     <div className="flex items-start justify-between mb-2 gap-2">
@@ -3052,9 +3161,19 @@ export default function MyOrdersPage() {
                         <div className="text-xs text-muted-foreground mt-0.5 truncate">{order.clientName}</div>
                       </div>
                       <div className="flex items-start gap-1 shrink-0">
-                        <Badge variant={getDisplayStatus(order).variant} className="text-xs">
-                          {getDisplayStatus(order).text}
-                        </Badge>
+                        <div className="flex flex-col gap-1 items-end">
+                          <Badge variant={primary.variant} className="text-xs">
+                            {primary.text}
+                          </Badge>
+                          {secondary && (
+                            <Badge
+                              variant={secondary.variant}
+                              className={`text-xs ${secondary.className || ''}`}
+                            >
+                              {secondary.text}
+                            </Badge>
+                          )}
+                        </div>
                         {orderActionsMenu(order)}
                       </div>
                     </div>
@@ -3074,7 +3193,8 @@ export default function MyOrdersPage() {
                     </div>
                   </div>
                 </Card>
-              ))
+                );
+              })
             )}
           </div>
 
@@ -3136,7 +3256,9 @@ export default function MyOrdersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {paginatedOrders.map((order) => (
+                {paginatedOrders.map((order) => {
+                  const { primary, secondary } = getOrderStatusStack(order);
+                  return (
                   <TableRow key={order.id} className="hover:bg-muted/50">
                     <TableCell className="font-mono text-sm font-medium whitespace-nowrap align-middle">{order.orderNumber}</TableCell>
                     <TableCell className="font-medium align-middle">{order.clientName}</TableCell>
@@ -3149,15 +3271,26 @@ export default function MyOrdersPage() {
                       {formatPaymentSummary(order)}
                     </TableCell>
                     <TableCell className="align-middle">
-                      <Badge variant={getDisplayStatus(order).variant} className="font-normal whitespace-nowrap">
-                        {getDisplayStatus(order).text}
-                      </Badge>
+                      <div className="flex flex-col gap-1">
+                        <Badge variant={primary.variant} className="font-normal whitespace-nowrap w-fit">
+                          {primary.text}
+                        </Badge>
+                        {secondary && (
+                          <Badge
+                            variant={secondary.variant}
+                            className={`font-normal whitespace-nowrap w-fit text-xs ${secondary.className || ''}`}
+                          >
+                            {secondary.text}
+                          </Badge>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-center align-middle">
                       {orderActionsMenu(order)}
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
@@ -4482,12 +4615,24 @@ export default function MyOrdersPage() {
                   <h3 className="text-xl md:text-2xl font-bold">{orderToView.orderNumber}</h3>
                   <p className="text-sm text-muted-foreground">Client Order</p>
                 </div>
-                <Badge
-                  variant={getDisplayStatus(orderToView).variant}
-                  className="text-base px-4 py-2"
-                >
-                  {getDisplayStatus(orderToView).text}
-                </Badge>
+                {(() => {
+                  const { primary, secondary } = getOrderStatusStack(orderToView);
+                  return (
+                    <div className="flex flex-col gap-1 items-end">
+                      <Badge variant={primary.variant} className="text-base px-4 py-2">
+                        {primary.text}
+                      </Badge>
+                      {secondary && (
+                        <Badge
+                          variant={secondary.variant}
+                          className={`text-sm px-3 py-1 ${secondary.className || ''}`}
+                        >
+                          {secondary.text}
+                        </Badge>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Order Info */}

@@ -65,6 +65,8 @@ export interface Order {
   depositSlipUrl?: string; // URL of the deposit slip image uploaded by team leader
   depositReferenceNumber?: string; // Reference number for the cash deposit
   depositNotes?: string | null; // Notes/remarks recorded with the deposit
+  /** Agent cash/cheque remittance to leader completed */
+  remitted?: boolean;
   approvedBy?: string;
   approvedByName?: string;
   approvedAt?: string;
@@ -180,6 +182,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           stage,
           pricing_strategy,
           deposit_id,
+          remitted,
           approved_by,
           approved_at,
           created_at,
@@ -362,6 +365,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           depositSlipUrl: cashDeposit?.deposit_slip_url || undefined,
           depositReferenceNumber: cashDeposit?.reference_number || undefined,
           depositNotes: cashDeposit?.notes || null,
+          remitted: order.remitted === true,
           approvedBy: order.approved_by || undefined,
           approvedByName: order.approver?.full_name || undefined,
           approvedAt: order.approved_at || undefined,
