@@ -1,14 +1,22 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
-import { Building2, ChevronDown, ChevronRight, Loader2, Printer, RotateCcw, Search, Users } from 'lucide-react';
+import { Building2, Eye, Loader2, MoreVertical, Printer, RotateCcw, Search, Users } from 'lucide-react';
 import { useAuth } from '@/features/auth';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   DateRangeFilterPopover,
   type DateRangeFilterValue,
@@ -30,9 +38,11 @@ import {
 } from '@/components/ui/table';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
+import { fetchAllPaginated, SUPABASE_PAGE_SIZE } from '@/lib/supabasePaginate';
 import { isAdmin } from '@/lib/roleUtils';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import { exportMainInventoryReturnPdf } from './utils/exportMainInventoryReturnPdf';
+import { fetchLeaderRequestedFromName } from './utils/exportLeaderStockRequestPdf';
 
 type ReturnLine = {
   id: string;
@@ -70,6 +80,17 @@ function variantTypeLabel(type: string | null | undefined): string | null {
   return type;
 }
 
+function returnLineLabel(line: Pick<ReturnLine, 'brandName' | 'variantName' | 'variantType'>): string {
+  const brand = line.brandName?.trim();
+  const variant = line.variantName?.trim() || 'Item';
+  const type = variantTypeLabel(line.variantType);
+  const name = brand && brand !== 'Unknown' ? `${brand} — ${variant}` : variant;
+  return type ? `${name} (${type})` : name;
+}
+
+const returnColumns =
+  'grid grid-cols-[1.25rem_minmax(8rem,1.1fr)_minmax(8rem,1.1fr)_11rem_6.5rem_7.5rem_minmax(8rem,1.2fr)_2.75rem] items-center gap-x-3 px-3';
+
 function variantTypeBadgeClass(type: string | null | undefined): string {
   const key = type?.trim().toLowerCase();
   if (key === 'flavor') return 'border-purple-300 bg-purple-100 text-purple-800';
@@ -78,17 +99,25 @@ function variantTypeBadgeClass(type: string | null | undefined): string {
   return '';
 }
 
+function compareReturnLines(a: ReturnLine, b: ReturnLine): number {
+  const brandCmp = a.brandName.localeCompare(b.brandName, undefined, { sensitivity: 'base' });
+  if (brandCmp !== 0) return brandCmp;
+  const variantCmp = a.variantName.localeCompare(b.variantName, undefined, { sensitivity: 'base' });
+  if (variantCmp !== 0) return variantCmp;
+  return (a.variantType || '').localeCompare(b.variantType || '', undefined, { sensitivity: 'base' });
+}
+
 function groupReturns(lines: ReturnLine[]): ReturnGroup[] {
   const groups = new Map<string, ReturnGroup>();
 
   lines.forEach((line) => {
-    const minute = format(new Date(line.createdAt), 'yyyy-MM-dd HH:mm');
+    // One return_inventory_to_main call writes every line with the same timestamp.
     const key = [
-      minute,
-      line.performerId || line.returnedBy,
+      line.createdAt,
+      line.fromLocation || '',
+      line.performerId || '',
       line.notes || '',
       line.isSubWarehouseReturn ? 'sub' : 'leader',
-      line.fromLocation || '',
     ].join('|');
 
     const existing = groups.get(key);
@@ -114,14 +143,27 @@ function groupReturns(lines: ReturnLine[]): ReturnGroup[] {
     });
   });
 
-  return Array.from(groups.values()).sort(
+  const grouped = Array.from(groups.values());
+  grouped.forEach((group) => {
+    group.lines.sort(compareReturnLines);
+  });
+
+  return grouped.sort(
     (a, b) => new Date(b.returnedAt).getTime() - new Date(a.returnedAt).getTime()
   );
 }
 
-function BrandReturnTables({ lines }: { lines: ReturnLine[] }) {
+type DetailLine = {
+  id: string;
+  brandName: string;
+  variantName: string;
+  variantType: string | null;
+  quantity: number;
+};
+
+function ReturnItemGroups({ lines }: { lines: DetailLine[] }) {
   const brands = useMemo(() => {
-    const map = new Map<string, ReturnLine[]>();
+    const map = new Map<string, DetailLine[]>();
     lines.forEach((line) => {
       const name = line.brandName?.trim() || 'Unknown brand';
       const list = map.get(name) ?? [];
@@ -131,40 +173,38 @@ function BrandReturnTables({ lines }: { lines: ReturnLine[] }) {
     return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [lines]);
 
+  if (brands.length === 0) {
+    return <p className="text-sm text-muted-foreground">No items on this return.</p>;
+  }
+
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-3">
       {brands.map(([brandName, brandLines]) => (
-        <div key={brandName} className="overflow-hidden rounded-md border bg-white">
-          <div className="border-b bg-muted/40 px-4 py-2.5 font-semibold">{brandName}</div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Variant</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead className="text-right">Qty</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {brandLines.map((line) => {
-                const label = variantTypeLabel(line.variantType);
-                return (
-                  <TableRow key={line.id}>
-                    <TableCell>{line.variantName}</TableCell>
-                    <TableCell>
-                      {label ? (
-                        <Badge variant="outline" className={`text-[10px] ${variantTypeBadgeClass(line.variantType)}`}>
-                          {label}
-                        </Badge>
-                      ) : (
-                        '—'
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{line.quantity.toLocaleString()}</TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+        <div key={brandName} className="min-w-0 overflow-hidden rounded-md border bg-background">
+          <div className="border-b bg-muted/40 px-3 py-2 text-sm font-semibold">{brandName}</div>
+          <ul>
+            {brandLines.map((line) => {
+              const label = variantTypeLabel(line.variantType);
+              return (
+                <li
+                  key={line.id}
+                  className="flex items-start justify-between gap-3 border-b px-3 py-2.5 last:border-b-0"
+                >
+                  <div className="min-w-0">
+                    <p className="break-words text-sm font-medium leading-snug">{line.variantName}</p>
+                    {label ? (
+                      <Badge variant="outline" className={`mt-1 text-[10px] ${variantTypeBadgeClass(line.variantType)}`}>
+                        {label}
+                      </Badge>
+                    ) : null}
+                  </div>
+                  <span className="shrink-0 pt-0.5 text-sm font-semibold tabular-nums">
+                    {line.quantity.toLocaleString()}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
         </div>
       ))}
     </div>
@@ -173,19 +213,122 @@ function BrandReturnTables({ lines }: { lines: ReturnLine[] }) {
 
 function ReturnDetails({ group }: { group: ReturnGroup }) {
   return (
-    <div>
-      <p className="mb-3 text-sm">
-        <span className="font-medium">Reason of returned:</span>{' '}
+    <div className="min-w-0 space-y-3">
+      <p className="break-words text-sm">
+        <span className="font-medium">Reason of returned: </span>
         <span className="text-muted-foreground">{group.reason?.trim() || '—'}</span>
       </p>
-      <BrandReturnTables lines={group.lines} />
+      <ReturnItemGroups
+        lines={group.lines.map((line) => ({
+          id: line.id,
+          brandName: line.brandName,
+          variantName: line.variantName,
+          variantType: line.variantType,
+          quantity: line.quantity,
+        }))}
+      />
     </div>
   );
 }
 
-function printGroup(group: ReturnGroup) {
+const RETURN_HISTORY_ROW_CAP = 5000;
+const AGENT_LOCATION_PREFIX = 'agent_inventory:';
+
+function agentIdFromLocation(fromLocation: string | null | undefined): string | null {
+  if (!fromLocation?.startsWith(AGENT_LOCATION_PREFIX)) return null;
+  const id = fromLocation.slice(AGENT_LOCATION_PREFIX.length).trim();
+  return id || null;
+}
+
+type ReturnTransactionRow = {
+  id: string;
+  quantity: number | null;
+  notes: string | null;
+  created_at: string;
+  from_location: string | null;
+  transaction_type: string;
+  performed_by: string | null;
+  variant:
+    | {
+        name: string | null;
+        variant_type: string | null;
+        brand: { name: string | null } | { name: string | null }[] | null;
+      }
+    | {
+        name: string | null;
+        variant_type: string | null;
+        brand: { name: string | null } | { name: string | null }[] | null;
+      }[]
+    | null;
+};
+
+async function fetchReturnTransactions(
+  companyId: string,
+  transactionType: 'return_to_main' | 'warehouse_return_from_sub'
+): Promise<ReturnTransactionRow[]> {
+  const rows: ReturnTransactionRow[] = [];
+  let offset = 0;
+  let reachedCap = false;
+
+  while (rows.length < RETURN_HISTORY_ROW_CAP) {
+    const pageEnd = Math.min(offset + SUPABASE_PAGE_SIZE, RETURN_HISTORY_ROW_CAP) - 1;
+    const { data, error } = await supabase
+      .from('inventory_transactions')
+      .select(`
+        id,
+        quantity,
+        notes,
+        created_at,
+        from_location,
+        transaction_type,
+        performed_by,
+        variant:variants!inventory_transactions_variant_id_fkey(
+          name,
+          variant_type,
+          brand:brands!variants_brand_id_fkey(name)
+        )
+      `)
+      .eq('company_id', companyId)
+      .eq('transaction_type', transactionType)
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(offset, pageEnd);
+
+    if (error) throw error;
+
+    const batch = (data ?? []) as ReturnTransactionRow[];
+    rows.push(...batch);
+    if (batch.length < pageEnd - offset + 1) break;
+    offset += batch.length;
+    if (rows.length >= RETURN_HISTORY_ROW_CAP) {
+      reachedCap = true;
+      break;
+    }
+  }
+
+  if (!reachedCap || rows.length === 0) return rows;
+  const boundary = rows[rows.length - 1].created_at;
+  return rows.filter((row) => row.created_at !== boundary);
+}
+
+async function fetchProfileNames(ids: string[]): Promise<Map<string, string>> {
+  const nameById = new Map<string, string>();
+  for (let index = 0; index < ids.length; index += 100) {
+    const chunk = ids.slice(index, index + 100);
+    const { data, error } = await supabase.from('profiles').select('id, full_name').in('id', chunk);
+    if (error) throw error;
+    for (const profile of data ?? []) {
+      nameById.set(profile.id, profile.full_name?.trim() || 'Unknown');
+    }
+  }
+  return nameById;
+}
+
+async function printGroup(group: ReturnGroup, companyId?: string | null) {
+  const returnedTo = await fetchLeaderRequestedFromName(companyId);
   exportMainInventoryReturnPdf({
     returnedBy: group.returnedBy,
+    returnedTo: returnedTo || 'Super Admin',
     returnedAt: group.returnedAt,
     reason: group.reason,
     lines: group.lines.map((line) => ({
@@ -220,62 +363,101 @@ type AgentToLeaderReturn = {
   items: AgentReturnItem[];
 };
 
-function agentStatusBadge(status: AgentReturnStatus) {
-  if (status === 'approved') return <Badge>Approved</Badge>;
-  if (status === 'rejected') return <Badge variant="destructive">Rejected</Badge>;
-  return <Badge variant="secondary">Pending</Badge>;
+type AgentReturnHeaderRow = {
+  id: string;
+  return_reason: string | null;
+  reason_notes: string | null;
+  rejection_reason: string | null;
+  created_at: string;
+  status: string | null;
+  agent: { full_name: string | null } | { full_name: string | null }[] | null;
+  receiver: { full_name: string | null } | { full_name: string | null }[] | null;
+};
+
+type AgentReturnItemRow = {
+  id: string;
+  return_id: string;
+  variant_id: string;
+  quantity: number | null;
+  variant:
+    | {
+        name: string | null;
+        variant_type: string | null;
+        brand: { name: string | null } | { name: string | null }[] | null;
+      }
+    | {
+        name: string | null;
+        variant_type: string | null;
+        brand: { name: string | null } | { name: string | null }[] | null;
+      }[]
+    | null;
+};
+
+/** Keep `.in(return_id)` URLs short, then page each chunk past the 1,000-row cap. */
+const RETURN_ID_CHUNK = 80;
+
+const STOCK_RETURN_QUERY_OPTIONS = {
+  staleTime: 0,
+  refetchOnMount: 'always' as const,
+};
+
+async function fetchAllAgentReturns(companyId: string): Promise<AgentReturnHeaderRow[]> {
+  return fetchAllPaginated(async (from, to) => {
+    const { data, error } = await supabase
+      .from('inventory_returns')
+      .select(`
+        id,
+        return_reason,
+        reason_notes,
+        rejection_reason,
+        created_at,
+        status,
+        agent:profiles!inventory_returns_agent_id_fkey(full_name),
+        receiver:profiles!inventory_returns_receiver_id_fkey(full_name)
+      `)
+      .eq('company_id', companyId)
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(from, to);
+    return { data: (data ?? null) as AgentReturnHeaderRow[] | null, error };
+  });
 }
 
-function AgentReturnBrandTables({ items }: { items: AgentReturnItem[] }) {
-  const brands = useMemo(() => {
-    const map = new Map<string, AgentReturnItem[]>();
-    items.forEach((item) => {
-      const name = item.brandName?.trim() || 'Unknown brand';
-      const list = map.get(name) ?? [];
-      list.push(item);
-      map.set(name, list);
+async function fetchAllAgentReturnItems(returnIds: string[]): Promise<AgentReturnItemRow[]> {
+  const items: AgentReturnItemRow[] = [];
+  for (let index = 0; index < returnIds.length; index += RETURN_ID_CHUNK) {
+    const chunk = returnIds.slice(index, index + RETURN_ID_CHUNK);
+    const page = await fetchAllPaginated(async (from, to) => {
+      const { data, error } = await supabase
+        .from('inventory_return_items')
+        .select(`
+          id,
+          return_id,
+          variant_id,
+          quantity,
+          variant:variants(name, variant_type, brand:brands(name))
+        `)
+        .in('return_id', chunk)
+        .order('id', { ascending: true })
+        .range(from, to);
+      return { data: (data ?? null) as AgentReturnItemRow[] | null, error };
     });
-    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [items]);
+    items.push(...page);
+  }
+  return items;
+}
+//use return for the status label since return to main(superadmin) doesnt have approval
+function agentStatusLabel(status: AgentReturnStatus): string {
+  if (status === 'approved') return 'Returned';
+  if (status === 'rejected') return 'Rejected';
+  return 'Pending';
+}
 
-  return (
-    <div className="space-y-4">
-      {brands.map(([brandName, brandItems]) => (
-        <div key={brandName} className="overflow-hidden rounded-md border bg-white">
-          <div className="border-b bg-muted/40 px-4 py-2.5 font-semibold">{brandName}</div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Variant</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead className="text-right">Qty</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {brandItems.map((item) => {
-                const label = variantTypeLabel(item.variantType);
-                return (
-                  <TableRow key={`${brandName}-${item.variantId}`}>
-                    <TableCell>{item.variantName}</TableCell>
-                    <TableCell>
-                      {label ? (
-                        <Badge variant="outline" className={`text-[10px] ${variantTypeBadgeClass(item.variantType)}`}>
-                          {label}
-                        </Badge>
-                      ) : (
-                        '—'
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{item.quantity.toLocaleString()}</TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
-      ))}
-    </div>
-  );
+function agentStatusBadge(status: AgentReturnStatus) {
+  const label = agentStatusLabel(status);
+  if (status === 'approved') return <Badge>{label}</Badge>;
+  if (status === 'rejected') return <Badge variant="destructive">{label}</Badge>;
+  return <Badge variant="secondary">{label}</Badge>;
 }
 
 function AgentToLeaderReturns({
@@ -290,49 +472,27 @@ function AgentToLeaderReturns({
   rangeEnd?: Date;
 }) {
   const { toast } = useToast();
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [detailReturn, setDetailReturn] = useState<AgentToLeaderReturn | null>(null);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
 
   const { data: returns = [], isLoading } = useQuery({
     queryKey: ['agent-to-leader-return-history', companyId],
+    ...STOCK_RETURN_QUERY_OPTIONS,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('inventory_returns')
-        .select(`
-          id,
-          return_reason,
-          reason_notes,
-          rejection_reason,
-          created_at,
-          status,
-          agent:profiles!inventory_returns_agent_id_fkey(full_name),
-          receiver:profiles!inventory_returns_receiver_id_fkey(full_name)
-        `)
-        .eq('company_id', companyId)
-        .order('created_at', { ascending: false })
-        .limit(200);
-
-      if (error) {
+      let data: AgentReturnHeaderRow[] = [];
+      try {
+        data = await fetchAllAgentReturns(companyId);
+      } catch (error) {
         toast({ title: 'Error', description: 'Failed to load team leader returns', variant: 'destructive' });
         throw error;
       }
-      if (!data?.length) return [];
+      if (!data.length) return [];
 
-      const { data: itemsData, error: itemsError } = await supabase
-        .from('inventory_return_items')
-        .select(`
-          return_id,
-          variant_id,
-          quantity,
-          variant:variants(name, variant_type, brand:brands(name))
-        `)
-        .in('return_id', data.map((row) => row.id));
-
-      if (itemsError) throw itemsError;
+      const itemsData = await fetchAllAgentReturnItems(data.map((row) => row.id));
 
       const itemsByReturn = new Map<string, AgentReturnItem[]>();
-      (itemsData || []).forEach((row) => {
+      itemsData.forEach((row) => {
         const variant = Array.isArray(row.variant) ? row.variant[0] : row.variant;
         const brand = variant?.brand
           ? Array.isArray(variant.brand) ? variant.brand[0] : variant.brand
@@ -380,7 +540,7 @@ function AgentToLeaderReturns({
         row.returnedBy.toLowerCase().includes(query) ||
         row.returnedTo.toLowerCase().includes(query) ||
         row.reason.toLowerCase().includes(query) ||
-        row.status.includes(query) ||
+        agentStatusLabel(row.status).toLowerCase().includes(query) ||
         row.items.some(
           (item) =>
             item.brandName.toLowerCase().includes(query) ||
@@ -399,8 +559,9 @@ function AgentToLeaderReturns({
   const printReturn = (row: AgentToLeaderReturn) => {
     exportMainInventoryReturnPdf({
       returnedBy: row.returnedBy,
+      returnedTo: row.returnedTo,
       returnedAt: row.returnedAt,
-      status: row.status === 'approved' ? 'Approved' : row.status === 'rejected' ? 'Rejected' : 'Pending',
+      status: agentStatusLabel(row.status),
       reason: row.reason,
       lines: row.items.map((item) => ({
         brandName: item.brandName,
@@ -412,6 +573,7 @@ function AgentToLeaderReturns({
   };
 
   return (
+    <>
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
@@ -436,142 +598,92 @@ function AgentToLeaderReturns({
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-10" />
                     <TableHead>Returned by</TableHead>
                     <TableHead>Returned to</TableHead>
                     <TableHead>Date</TableHead>
-                    <TableHead className="text-right">Variant Qty</TableHead>
-                    <TableHead className="text-right">Total Qty</TableHead>
+                    <TableHead className="text-right">Total qty</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Notes</TableHead>
-                    <TableHead className="text-right">Print</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {pagedItems.map((row) => {
-                    const open = openId === row.id;
-                    return (
-                      <Fragment key={row.id}>
-                        <TableRow
-                          className="cursor-pointer hover:bg-muted/40"
-                          onClick={() => setOpenId(open ? null : row.id)}
-                        >
-                          <TableCell>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              aria-label={open ? 'Collapse return' : 'Expand return'}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                setOpenId(open ? null : row.id);
-                              }}
-                            >
-                              {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                  {pagedItems.map((row) => (
+                    <TableRow key={row.id}>
+                      <TableCell className="font-medium">{row.returnedBy}</TableCell>
+                      <TableCell>{row.returnedTo}</TableCell>
+                      <TableCell className="whitespace-nowrap text-sm">
+                        {format(new Date(row.returnedAt), 'MMM d, yyyy h:mm a')}
+                      </TableCell>
+                      <TableCell className="text-right font-medium tabular-nums">
+                        {row.totalQuantity.toLocaleString()}
+                      </TableCell>
+                      <TableCell>{agentStatusBadge(row.status)}</TableCell>
+                      <TableCell className="max-w-[220px] truncate text-sm text-muted-foreground" title={row.reason || undefined}>
+                        {row.reason?.trim() || '—'}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label="Return actions">
+                              <MoreVertical className="h-4 w-4" />
                             </Button>
-                          </TableCell>
-                          <TableCell className="font-medium">{row.returnedBy}</TableCell>
-                          <TableCell>{row.returnedTo}</TableCell>
-                          <TableCell className="whitespace-nowrap text-sm">
-                            {format(new Date(row.returnedAt), 'MMM d, yyyy h:mm a')}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">{row.variantCount}</TableCell>
-                          <TableCell className="text-right font-medium tabular-nums">
-                            {row.totalQuantity.toLocaleString()}
-                          </TableCell>
-                          <TableCell>{agentStatusBadge(row.status)}</TableCell>
-                          <TableCell className="max-w-[220px] truncate text-sm text-muted-foreground" title={row.reason || undefined}>
-                            {row.reason?.trim() || '—'}
-                          </TableCell>
-                          <TableCell className="text-right" onClick={(event) => event.stopPropagation()}>
-                            {row.status === 'approved' ? (
-                              <Button type="button" variant="outline" size="sm" onClick={() => printReturn(row)}>
-                                <Printer className="h-4 w-4" />
-                                Print
-                              </Button>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">—</span>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                        {open && (
-                          <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
-                            <TableCell colSpan={9} className="p-4">
-                              <p className="mb-3 text-sm">
-                                <span className="font-medium">Reason of returned:</span>{' '}
-                                <span className="text-muted-foreground">{row.reason || '—'}</span>
-                              </p>
-                              {row.status === 'rejected' && row.rejectionReason && (
-                                <p className="mb-3 text-sm">
-                                  <span className="font-medium">Rejection reason:</span>{' '}
-                                  <span className="text-muted-foreground">{row.rejectionReason}</span>
-                                </p>
-                              )}
-                              <AgentReturnBrandTables items={row.items} />
-                            </TableCell>
-                          </TableRow>
-                        )}
-                      </Fragment>
-                    );
-                  })}
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-40">
+                            <DropdownMenuItem onClick={() => setDetailReturn(row)}>
+                              <Eye className="mr-2 h-4 w-4" />
+                              View details
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => printReturn(row)}>
+                              <Printer className="mr-2 h-4 w-4" />
+                              Print
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))}
                 </TableBody>
               </Table>
             </div>
 
             <div className="md:hidden space-y-3">
-              {pagedItems.map((row) => {
-                const open = openId === row.id;
-                return (
-                  <div key={row.id} className="rounded-lg border p-3 space-y-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="font-medium text-sm">{row.returnedBy}</p>
-                        <p className="text-xs text-muted-foreground mt-1">To {row.returnedTo}</p>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {format(new Date(row.returnedAt), 'MMM d, yyyy h:mm a')}
-                        </p>
-                        <p className="text-xs mt-1">
-                          {row.variantCount} variants · {row.totalQuantity.toLocaleString()} qty
-                        </p>
-                      </div>
-                      <div className="flex flex-col items-end gap-2">
-                        {agentStatusBadge(row.status)}
-                        {row.status === 'approved' && (
-                          <Button type="button" variant="outline" size="sm" onClick={() => printReturn(row)}>
-                            <Printer className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </div>
+              {pagedItems.map((row) => (
+                <div key={row.id} className="rounded-lg border p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{row.returnedBy}</p>
+                      <p className="mt-1 truncate text-xs text-muted-foreground">To {row.returnedTo}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {format(new Date(row.returnedAt), 'MMM d, yyyy h:mm a')}
+                      </p>
+                      <p className="mt-1 text-xs">
+                        {row.variantCount} variants · {row.totalQuantity.toLocaleString()} qty
+                      </p>
                     </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="w-full justify-between"
-                      onClick={() => setOpenId(open ? null : row.id)}
-                    >
-                      {open ? 'Hide items' : 'View items'}
-                      {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                    </Button>
-                    {open && (
-                      <div>
-                        <p className="mb-3 text-sm">
-                          <span className="font-medium">Reason of returned:</span>{' '}
-                          <span className="text-muted-foreground">{row.reason || '—'}</span>
-                        </p>
-                        {row.status === 'rejected' && row.rejectionReason && (
-                          <p className="mb-3 text-sm">
-                            <span className="font-medium">Rejection reason:</span>{' '}
-                            <span className="text-muted-foreground">{row.rejectionReason}</span>
-                          </p>
-                        )}
-                        <AgentReturnBrandTables items={row.items} />
-                      </div>
-                    )}
+                    <div className="flex shrink-0 flex-col items-end gap-2">
+                      {agentStatusBadge(row.status)}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label="Return actions">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-40">
+                          <DropdownMenuItem onClick={() => setDetailReturn(row)}>
+                            <Eye className="mr-2 h-4 w-4" />
+                            View details
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => printReturn(row)}>
+                            <Printer className="mr-2 h-4 w-4" />
+                            Print
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
             <ListPagination
               pageSize={pageSize}
@@ -585,6 +697,50 @@ function AgentToLeaderReturns({
         )}
       </CardContent>
     </Card>
+
+    <Dialog open={!!detailReturn} onOpenChange={(open) => { if (!open) setDetailReturn(null); }}>
+      <DialogContent className="max-h-[85vh] w-[calc(100%-1.5rem)] max-w-lg overflow-x-hidden overflow-y-auto [&>*]:min-w-0">
+        <DialogHeader>
+          <DialogTitle>Return details</DialogTitle>
+          <DialogDescription className="break-words">
+            {detailReturn
+              ? `${detailReturn.returnedBy} to ${detailReturn.returnedTo} · ${format(new Date(detailReturn.returnedAt), 'MMM d, yyyy h:mm a')}`
+              : 'Return items'}
+          </DialogDescription>
+        </DialogHeader>
+        {detailReturn && (
+          <div className="min-w-0 space-y-3">
+            <div className="flex items-center gap-2">
+              {agentStatusBadge(detailReturn.status)}
+            </div>
+            <p className="break-words text-sm">
+              <span className="font-medium">Reason of returned: </span>
+              <span className="text-muted-foreground">{detailReturn.reason?.trim() || '—'}</span>
+            </p>
+            {detailReturn.status === 'rejected' && detailReturn.rejectionReason && (
+              <p className="break-words text-sm">
+                <span className="font-medium">Rejection reason: </span>
+                <span className="text-muted-foreground">{detailReturn.rejectionReason}</span>
+              </p>
+            )}
+            <ReturnItemGroups
+              lines={detailReturn.items.map((item) => ({
+                id: `${detailReturn.id}-${item.variantId}`,
+                brandName: item.brandName,
+                variantName: item.variantName,
+                variantType: item.variantType,
+                quantity: item.quantity,
+              }))}
+            />
+            <Button type="button" className="w-full" onClick={() => printReturn(detailReturn)}>
+              <Printer className="mr-2 h-4 w-4" />
+              Print
+            </Button>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
 
@@ -594,49 +750,38 @@ export default function MainInventoryReturnHistoryPage() {
   const isWarehouse = user?.role === 'warehouse';
   const { membership } = useWarehouseLocationMembership({ userId: user?.id, isWarehouse });
   const isMainWarehouseUser = membership.isMain;
-  const [openId, setOpenId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
-  const [page, setPage] = useState(0);
+  const [returnTab, setReturnTab] = useState<'all' | 'main' | 'mobile'>('all');
+  const [historyPage, setHistoryPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
+  const [detailGroup, setDetailGroup] = useState<ReturnGroup | null>(null);
 
   const { data: groups = [], isLoading } = useQuery({
     queryKey: ['main-inventory-return-history', user?.company_id, membership.locationId, isMainWarehouseUser],
+    ...STOCK_RETURN_QUERY_OPTIONS,
     enabled: !!user?.company_id,
     queryFn: async () => {
       if (!user?.company_id) return [];
 
-      const { data, error } = await supabase
-        .from('inventory_transactions')
-        .select(`
-          id,
-          quantity,
-          notes,
-          created_at,
-          from_location,
-          transaction_type,
-          performed_by,
-          variant:variants!inventory_transactions_variant_id_fkey(
-            name,
-            variant_type,
-            brand:brands!variants_brand_id_fkey(name)
-          ),
-          performer:profiles!inventory_transactions_performed_by_fkey(full_name)
-        `)
-        .eq('company_id', user.company_id)
-        .in('transaction_type', ['return_to_main', 'warehouse_return_from_sub'])
-        .order('created_at', { ascending: false })
-        .limit(200);
-
-      if (error) {
+      let leaderRows: ReturnTransactionRow[] = [];
+      let warehouseRows: ReturnTransactionRow[] = [];
+      try {
+        [leaderRows, warehouseRows] = await Promise.all([
+          fetchReturnTransactions(user.company_id, 'return_to_main'),
+          fetchReturnTransactions(user.company_id, 'warehouse_return_from_sub'),
+        ]);
+      } catch (error) {
         toast({ title: 'Error', description: 'Failed to load return history', variant: 'destructive' });
         throw error;
       }
 
+      const data = [...leaderRows, ...warehouseRows];
+
       const locationIds = [
         ...new Set(
-          (data || [])
-            .filter((row) => row.transaction_type === 'warehouse_return_from_sub' && row.from_location)
+          warehouseRows
+            .filter((row) => row.from_location)
             .map((row) => String(row.from_location).replace('warehouse_location:', ''))
             .filter(Boolean)
         ),
@@ -651,15 +796,27 @@ export default function MainInventoryReturnHistoryPage() {
         locations?.forEach((location) => locationNameMap.set(location.id, location.name));
       }
 
-      const lines: ReturnLine[] = (data || []).map((row) => {
+      const profileIds = [
+        ...new Set(
+          leaderRows.flatMap((row) => {
+            const ids = [row.performed_by, agentIdFromLocation(row.from_location)];
+            return ids.filter((id): id is string => Boolean(id));
+          })
+        ),
+      ];
+      const profileNames = await fetchProfileNames(profileIds);
+
+      const lines: ReturnLine[] = data.map((row) => {
         const variant = Array.isArray(row.variant) ? row.variant[0] : row.variant;
         const brand = variant?.brand
           ? Array.isArray(variant.brand) ? variant.brand[0] : variant.brand
           : null;
-        const performer = Array.isArray(row.performer) ? row.performer[0] : row.performer;
         const isSubWarehouseReturn = row.transaction_type === 'warehouse_return_from_sub';
         const locationId = row.from_location?.replace('warehouse_location:', '') || '';
         const locationName = locationNameMap.get(locationId);
+        const leaderId = agentIdFromLocation(row.from_location);
+        const leaderName = leaderId ? profileNames.get(leaderId) : undefined;
+        const performerName = row.performed_by ? profileNames.get(row.performed_by) : undefined;
 
         return {
           id: row.id,
@@ -668,7 +825,7 @@ export default function MainInventoryReturnHistoryPage() {
           createdAt: row.created_at,
           returnedBy: isSubWarehouseReturn
             ? locationName || 'Sub Warehouse'
-            : performer?.full_name || 'Unknown',
+            : leaderName || performerName || 'Unknown',
           performerId: row.performed_by,
           variantName: variant?.name || 'Unknown',
           variantType: variant?.variant_type || null,
@@ -679,19 +836,33 @@ export default function MainInventoryReturnHistoryPage() {
       });
 
       const isUserSubWarehouse = !isMainWarehouseUser && !!membership.locationId;
+      const ownLeaderReturns = user.role === 'team_leader';
       const visible = isUserSubWarehouse
         ? lines.filter(
             (line) =>
               line.isSubWarehouseReturn &&
               line.fromLocation === `warehouse_location:${membership.locationId}`
           )
-        : lines;
+        : ownLeaderReturns
+          ? lines.filter(
+              (line) =>
+                !line.isSubWarehouseReturn &&
+                (agentIdFromLocation(line.fromLocation) === user.id || line.performerId === user.id)
+            )
+          : lines;
 
       return groupReturns(visible);
     },
   });
 
+  const { data: superAdminName } = useQuery({
+    queryKey: ['leader-requested-from-name', user?.company_id],
+    enabled: !!user?.company_id,
+    queryFn: () => fetchLeaderRequestedFromName(user?.company_id),
+  });
+
   const canViewAgentReturns = isAdmin(user?.role);
+  const isTeamLeader = user?.role === 'team_leader';
   const dateRange = useMemo(
     () =>
       getDateRangeFromPreset(
@@ -719,21 +890,27 @@ export default function MainInventoryReturnHistoryPage() {
   }, [groups, searchQuery, dateRange.start, dateRange.end]);
 
   useEffect(() => {
-    setPage(0);
-  }, [searchQuery, dateRange.start, dateRange.end, pageSize]);
+    setHistoryPage(0);
+  }, [searchQuery, dateRange.start, dateRange.end, pageSize, returnTab]);
 
-  const { pageCount, safePage, pagedItems: pagedGroups } = getListPaginationSlice(
-    filteredGroups,
-    page,
-    pageSize
-  );
+  const renderHistoryCard = (
+    cardGroups: ReturnGroup[],
+    page: number,
+    setPage: (value: number | ((current: number) => number)) => void,
+    title: string
+  ) => {
+    const { pageCount, safePage, pagedItems: pagedGroups } = getListPaginationSlice(
+      cardGroups,
+      page,
+      pageSize
+    );
 
-  const renderHistoryCard = () => (
+    return (
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <RotateCcw className="h-5 w-5" />
-            {canViewAgentReturns ? 'Team Leader to Super Admin' : 'Return history'}
+            {title}
           </CardTitle>
           <CardDescription>Grouped by who returned the stock and when.</CardDescription>
         </CardHeader>
@@ -742,131 +919,122 @@ export default function MainInventoryReturnHistoryPage() {
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
-          ) : filteredGroups.length === 0 ? (
+          ) : cardGroups.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
               <RotateCcw className="h-10 w-10 mb-3 opacity-40" />
               <p className="font-medium text-foreground">No returns found</p>
             </div>
           ) : (
             <>
-              <div className="hidden md:block overflow-hidden rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-10" />
-                      <TableHead>Returned by</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead className="text-right">Variant Qty</TableHead>
-                      <TableHead className="text-right">Total Qty</TableHead>
-                      <TableHead>Notes</TableHead>
-                      <TableHead className="text-right">Print</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {pagedGroups.map((group) => {
-                      const open = openId === group.id;
-                      return (
-                        <Fragment key={group.id}>
-                          <TableRow
-                            className="cursor-pointer hover:bg-muted/40"
-                            onClick={() => setOpenId(open ? null : group.id)}
-                          >
-                            <TableCell>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                aria-label={open ? 'Collapse return' : 'Expand return'}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  setOpenId(open ? null : group.id);
-                                }}
-                              >
-                                {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                              </Button>
-                            </TableCell>
-                            <TableCell className="font-medium">
-                              <span className="flex items-center gap-1">
-                                {group.isSubWarehouseReturn ? (
-                                  <Building2 className="h-3 w-3 text-blue-500" />
-                                ) : (
-                                  <Users className="h-3 w-3 text-green-500" />
-                                )}
-                                {group.returnedBy}
-                              </span>
-                            </TableCell>
-                            <TableCell className="whitespace-nowrap text-sm">
-                              {format(new Date(group.returnedAt), 'MMM d, yyyy h:mm a')}
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">{group.variantCount}</TableCell>
-                            <TableCell className="text-right font-medium tabular-nums">
-                              {group.totalQuantity.toLocaleString()}
-                            </TableCell>
-                            <TableCell className="max-w-[220px] truncate text-sm text-muted-foreground" title={group.reason || undefined}>
-                              {group.reason?.trim() || '—'}
-                            </TableCell>
-                            <TableCell className="text-right" onClick={(event) => event.stopPropagation()}>
-                              <Button type="button" variant="outline" size="sm" onClick={() => printGroup(group)}>
-                                <Printer className="h-4 w-4" />
-                                Print
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                          {open && (
-                            <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
-                              <TableCell colSpan={7} className="p-4">
-                                <ReturnDetails group={group} />
-                              </TableCell>
-                            </TableRow>
+              <div className="space-y-2 md:hidden">
+                {pagedGroups.map((group) => (
+                  <div key={`mobile-${group.id}`} className="rounded-lg border bg-card p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="flex items-center gap-1 truncate text-sm font-medium">
+                          {group.isSubWarehouseReturn ? (
+                            <Building2 className="h-3 w-3 shrink-0 text-blue-500" />
+                          ) : (
+                            <Users className="h-3 w-3 shrink-0 text-green-500" />
                           )}
-                        </Fragment>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
+                          {group.returnedBy}
+                        </p>
+                        <p className="mt-1 truncate text-xs text-muted-foreground">
+                          {group.lines.length === 1
+                            ? returnLineLabel(group.lines[0])
+                            : `${group.variantCount} products`}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {group.totalQuantity.toLocaleString()} units · {format(new Date(group.returnedAt), 'MMM d, yyyy h:mm a')}
+                        </p>
+                      </div>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label="Return actions">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-40">
+                          <DropdownMenuItem onClick={() => setDetailGroup(group)}>
+                            <Eye className="mr-2 h-4 w-4" />
+                            View details
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => void printGroup(group, user?.company_id)}>
+                            <Printer className="mr-2 h-4 w-4" />
+                            Print
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </div>
+                ))}
               </div>
 
-              <div className="md:hidden space-y-3">
-                {pagedGroups.map((group) => {
-                  const open = openId === group.id;
-                  return (
-                    <div key={group.id} className="rounded-lg border p-3 space-y-2">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <p className="font-medium text-sm flex items-center gap-1">
+              <div className="hidden overflow-x-auto md:block">
+                <div className="min-w-[78rem] overflow-hidden rounded-lg border bg-card">
+                  <div className={`${returnColumns} border-b py-2 text-xs font-medium text-muted-foreground`}>
+                    <span aria-hidden />
+                    <span>Returned by</span>
+                    <span>Returned to</span>
+                    <span>Date</span>
+                    <span className="text-right">Total qty</span>
+                    <span>Status</span>
+                    <span>Notes</span>
+                    <span className="text-right">Actions</span>
+                  </div>
+                  <Accordion type="multiple">
+                    {pagedGroups.map((group) => (
+                      <AccordionItem key={group.id} value={group.id} className="border-b last:border-b-0">
+                        <div className={returnColumns}>
+                          <AccordionTrigger className="h-10 w-5 justify-center p-0 hover:no-underline" />
+                          <span className="flex min-w-0 items-center gap-1 truncate font-medium">
                             {group.isSubWarehouseReturn ? (
-                              <Building2 className="h-3 w-3 text-blue-500" />
+                              <Building2 className="h-3 w-3 shrink-0 text-blue-500" />
                             ) : (
-                              <Users className="h-3 w-3 text-green-500" />
+                              <Users className="h-3 w-3 shrink-0 text-green-500" />
                             )}
                             {group.returnedBy}
-                          </p>
-                          <p className="text-xs text-muted-foreground mt-1">
+                          </span>
+                          <span className="truncate text-sm">
+                            {group.isSubWarehouseReturn ? 'Main inventory' : superAdminName || 'Super Admin'}
+                          </span>
+                          <span className="whitespace-nowrap text-sm text-muted-foreground">
                             {format(new Date(group.returnedAt), 'MMM d, yyyy h:mm a')}
-                          </p>
-                          <p className="text-xs mt-1">
-                            {group.variantCount} variants · {group.totalQuantity.toLocaleString()} qty
-                          </p>
+                          </span>
+                          <span className="text-right text-sm font-semibold tabular-nums">
+                            {group.totalQuantity.toLocaleString()}
+                          </span>
+                          <span><Badge>Returned</Badge></span>
+                          <span className="truncate text-sm text-muted-foreground" title={group.reason || undefined}>
+                            {group.reason?.trim() || '—'}
+                          </span>
+                          <div className="flex justify-end">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label="Return actions">
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-40">
+                                <DropdownMenuItem onClick={() => setDetailGroup(group)}>
+                                  <Eye className="mr-2 h-4 w-4" />
+                                  View details
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => void printGroup(group, user?.company_id)}>
+                                  <Printer className="mr-2 h-4 w-4" />
+                                  Print
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
                         </div>
-                        <Button type="button" variant="outline" size="sm" onClick={() => printGroup(group)}>
-                          <Printer className="h-4 w-4" />
-                        </Button>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="w-full justify-between"
-                        onClick={() => setOpenId(open ? null : group.id)}
-                      >
-                        {open ? 'Hide items' : 'View items'}
-                        {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                      </Button>
-                      {open && <ReturnDetails group={group} />}
-                    </div>
-                  );
-                })}
+                        <AccordionContent className="px-3 pb-3">
+                          <ReturnDetails group={group} />
+                        </AccordionContent>
+                      </AccordionItem>
+                    ))}
+                  </Accordion>
+                </div>
               </div>
               <ListPagination
                 pageSize={pageSize}
@@ -880,23 +1048,30 @@ export default function MainInventoryReturnHistoryPage() {
           )}
         </CardContent>
       </Card>
-  );
+    );
+  };
 
   return (
     <div className="w-full p-4 md:p-6 space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Stock Returns</h1>
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
+            {isTeamLeader ? 'Returns to Main' : 'Stock Returns'}
+          </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {canViewAgentReturns
-              ? 'Returns into main inventory, and returns from mobile sales to team leaders'
-              : isMainWarehouseUser
-                ? 'Returns from team leaders and sub-warehouses to main inventory'
-                : 'Your returns to main inventory'}
+            {isTeamLeader
+              ? 'Stock you returned to main'
+              : canViewAgentReturns
+                ? 'Returns into main inventory, and returns from mobile sales to team leaders'
+                : isMainWarehouseUser
+                  ? 'Returns from team leaders and sub-warehouses to main inventory'
+                  : 'Your returns to main inventory'}
           </p>
         </div>
         <Button variant="outline" asChild>
-          <Link to="/inventory/main">Back to Main Inventory</Link>
+          <Link to={isTeamLeader ? '/my-inventory' : '/inventory/main'}>
+            {isTeamLeader ? 'Back to My Inventory' : 'Back to Main Inventory'}
+          </Link>
         </Button>
       </div>
 
@@ -918,35 +1093,64 @@ export default function MainInventoryReturnHistoryPage() {
         />
       </div>
 
-      {canViewAgentReturns && user?.company_id ? (
-        <Tabs defaultValue="all" className="space-y-4">
-          <TabsList className="h-auto flex-wrap justify-start">
-            <TabsTrigger value="all">All</TabsTrigger>
-            <TabsTrigger value="leader">Team Leader to Super Admin</TabsTrigger>
-            <TabsTrigger value="agent">Mobile Sales to Team Leader</TabsTrigger>
+      {canViewAgentReturns && (
+        <Tabs
+          value={returnTab}
+          onValueChange={(value) => setReturnTab(value as 'all' | 'main' | 'mobile')}
+          className="space-y-4"
+        >
+          <TabsList className="grid h-auto w-full grid-cols-1 sm:grid-cols-3">
+            <TabsTrigger value="all" className="whitespace-normal px-2 py-2 text-center leading-tight">
+              All
+            </TabsTrigger>
+            <TabsTrigger value="main" className="whitespace-normal px-2 py-2 text-center leading-tight">
+              Team Leader to Main
+            </TabsTrigger>
+            <TabsTrigger value="mobile" className="whitespace-normal px-2 py-2 text-center leading-tight">
+              Mobile Sales to Team Leader
+            </TabsTrigger>
           </TabsList>
-          <TabsContent value="all" className="space-y-4">
-            {renderHistoryCard()}
-            <AgentToLeaderReturns
-              companyId={user.company_id}
-              searchQuery={searchQuery}
-              rangeStart={dateRange.start}
-              rangeEnd={dateRange.end}
-            />
-          </TabsContent>
-          <TabsContent value="leader">{renderHistoryCard()}</TabsContent>
-          <TabsContent value="agent">
-            <AgentToLeaderReturns
-              companyId={user.company_id}
-              searchQuery={searchQuery}
-              rangeStart={dateRange.start}
-              rangeEnd={dateRange.end}
-            />
-          </TabsContent>
         </Tabs>
-      ) : (
-        renderHistoryCard()
       )}
+
+      {(!canViewAgentReturns || returnTab !== 'mobile') &&
+        renderHistoryCard(
+          filteredGroups,
+          historyPage,
+          setHistoryPage,
+          isTeamLeader ? 'Return history' : 'Returns to main inventory'
+        )}
+
+      {canViewAgentReturns && user?.company_id && returnTab !== 'main' && (
+        <AgentToLeaderReturns
+          companyId={user.company_id}
+          searchQuery={searchQuery}
+          rangeStart={dateRange.start}
+          rangeEnd={dateRange.end}
+        />
+      )}
+
+      <Dialog open={!!detailGroup} onOpenChange={(open) => { if (!open) setDetailGroup(null); }}>
+        <DialogContent className="max-h-[85vh] w-[calc(100%-1.5rem)] max-w-lg overflow-x-hidden overflow-y-auto [&>*]:min-w-0">
+          <DialogHeader>
+            <DialogTitle>Return details</DialogTitle>
+            <DialogDescription className="break-words">
+              {detailGroup
+                ? `${detailGroup.returnedBy} · ${format(new Date(detailGroup.returnedAt), 'MMM d, yyyy h:mm a')}`
+                : 'Return items'}
+            </DialogDescription>
+          </DialogHeader>
+          {detailGroup && (
+            <div className="space-y-3">
+              <ReturnDetails group={detailGroup} />
+              <Button type="button" className="w-full" onClick={() => void printGroup(detailGroup, user?.company_id)}>
+                <Printer className="mr-2 h-4 w-4" />
+                Print
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

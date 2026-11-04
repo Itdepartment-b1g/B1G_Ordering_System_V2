@@ -51,6 +51,8 @@ const adminMenuItems: MenuItem[] = [
 const agentMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/dashboard', description: 'Personal snapshot of today’s targets, orders, and performance.' },
   { title: 'My Inventory', url: '/my-inventory', description: 'View stock currently assigned to you and its status.' },
+  { title: 'Return History', url: '/inventory/my-returns', description: 'Review the stock you returned to your team leader.' },
+  { title: 'Allocation History', url: '/my-allocation-history', description: 'See the stock your team leader allocated to you.' },
   { title: 'Request Inventory', url: '/inventory/request', description: 'Submit stock requests to your team leader for approval.' },
   { title: 'Mobile Sales Stock', url: '/inventory/mobile-request', description: 'Request stock specifically for mobile sales inventory.' },
   { title: 'Price Agreements', url: '/inventory/price-agreements', description: 'Confirm company Selling / DSP / RSP changes before your bag prices update.' },
@@ -82,6 +84,7 @@ const leaderMenuItems: MenuItem[] = [
     { title: 'Client Order Returns', url: '/client-order-returns', description: 'History of client returns posted against ORD numbers (CR-…).' },
     { title: 'Price Agreements', url: '/inventory/price-agreements', description: 'Confirm company Selling / DSP / RSP changes before bags update.' },
     { title: 'Price History', url: '/inventory/price-history', description: 'Flattened company price change history per SKU.' },
+    { title: 'Returns to Super Admin', url: '/inventory/main/returns', description: 'Review the stock you returned from your inventory to the super admin.' },
     { title: 'How to use?', url: '/leader-manual', description: 'Open the team leader manual and usage guides.' },
   ]},
   { title: 'Tasks', url: '/tasks', description: 'Assign and monitor daily tasks for your team.', hasSubmenu: true, submenu: [

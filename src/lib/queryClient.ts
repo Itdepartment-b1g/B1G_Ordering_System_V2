@@ -47,6 +47,8 @@ const NON_PERSISTED_QUERY_KEYS = new Set([
     'warehouse-stock-returns',
     'sa-stock-returns',
     'sa-client-stock-returns',
+    'main-inventory-return-history',
+    'agent-to-leader-return-history',
     'warehouse-delivery-shortages',
     'tl-transfer-shortages',
     'my-tl-requests',

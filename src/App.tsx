@@ -11,6 +11,7 @@ import { DashboardPage, SysAdDashboardPage, SuperAdminDashboardPage } from "@/fe
 import ExecutiveDashboardPage from "@/features/dashboard/ExecutiveDashboardPage";
 import { SystemHistoryPage } from "@/features/system-history";
 import { ProfilePage } from "@/features/profile";
+import MobileSalesReturnHistoryPage from "@/features/inventory/MobileSalesReturnHistoryPage";
 import { SystemSettingsPage } from "@/features/settings";
 import { OrdersPage, PurchaseOrdersPage, MyOrdersPage, ClientOrderReturnsPage, FinanceRefundsPage, OrderProvider, PurchaseOrderProvider } from "@/features/orders";
 import BrandsPage from "@/features/orders/BrandsPage";
@@ -53,6 +54,7 @@ import AgentAttendancePage from "@/features/agent-attendance/page/AgentAttendanc
 import AgentAttendanceOverviewPage from "@/features/sales-agents/AgentAttendanceOverviewPage";
 import TeamAttendancesPage from "./features/team-leader/pages/TeamAttendancesPage";
 import LeaderAllocationHistoryPage from "./features/team-leader/pages/LeaderAllocationHistoryPage";
+import MobileSalesAllocationHistoryPage from "./features/inventory/MobileSalesAllocationHistoryPage";
 import LeaderManualPage from "./features/team-leader/pages/LeaderManualPage";
 import LeaderPoReceivePage from "./features/team-leader/pages/LeaderPoReceivePage";
 import SuperAdminAllocationHistoryPage from "@/features/sales-agents/SuperAdminAllocationHistoryPage";
@@ -258,6 +260,7 @@ const App = () => (
                     <Route path="/inventory/leaders" element={<ProtectedRoute><LeaderInventoryPage /></ProtectedRoute>} />
                     <Route path="/leader-inventory" element={<ProtectedRoute><LeaderInventoryPage /></ProtectedRoute>} />
                     <Route path="/inventory/leader/returns" element={<ProtectedRoute allowedRoles={['team_leader', 'manager']}><LeaderAgentReturnsPage /></ProtectedRoute>} />
+                    <Route path="/inventory/my-returns" element={<ProtectedRoute allowedRoles={['mobile_sales', 'sales_agent']}><MobileSalesReturnHistoryPage /></ProtectedRoute>} />
                     <Route path="/team-members" element={<ProtectedRoute><LeaderInventoryPage /></ProtectedRoute>} />
                     <Route path="/leader-inventory/request" element={<ProtectedRoute><LeaderStockRequestPage /></ProtectedRoute>} />
                     <Route path="/my-team" element={<ProtectedRoute><MyTeamPage /></ProtectedRoute>} />
@@ -274,6 +277,14 @@ const App = () => (
                       element={
                         <ProtectedRoute allowedRoles={['team_leader']}>
                           <LeaderAllocationHistoryPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/my-allocation-history"
+                      element={
+                        <ProtectedRoute allowedRoles={['mobile_sales', 'sales_agent']}>
+                          <MobileSalesAllocationHistoryPage />
                         </ProtectedRoute>
                       }
                     />

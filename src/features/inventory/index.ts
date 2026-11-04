@@ -1,5 +1,6 @@
 export { default as MainInventoryPage } from './MainInventoryPage';
 export { default as MainInventoryReturnHistoryPage } from './MainInventoryReturnHistoryPage';
+export { default as MobileSalesReturnHistoryPage } from './MobileSalesReturnHistoryPage';
 export { default as WarehouseInventoryDashboardPage } from './WarehouseInventoryDashboardPage';
 export { default as SubWarehousesPage } from './SubWarehousesPage';
 export { default as SubWarehouseStockRequestPage } from './SubWarehouseStockRequestPage';

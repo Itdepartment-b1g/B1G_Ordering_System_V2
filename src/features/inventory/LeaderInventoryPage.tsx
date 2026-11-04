@@ -1102,7 +1102,7 @@ export default function LeaderInventoryPage() {
                 <span className="truncate">Your Inventory</span>
               </CardTitle>
               <div className="flex gap-2">
-                {user.role !== 'admin' && user.role !== 'manager' && (
+                {/* {user.role !== 'admin' && user.role !== 'manager' && (
                   <Button
                     onClick={() => setAllocationOpen(true)}
                     disabled={leaderInventory.filter(item => item.availableStock > 0).length === 0}
@@ -1112,7 +1112,7 @@ export default function LeaderInventoryPage() {
                     <ArrowRight className="mr-2 h-3 w-3" />
                     Allocate
                   </Button>
-                )}
+                )} */}
                 <Button
                   variant="outline"
                   onClick={() => {
