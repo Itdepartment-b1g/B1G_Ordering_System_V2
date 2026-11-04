@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+﻿import { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,7 +8,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Label } from '@/components/ui/label';
 import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, CreditCard, Camera, RotateCcw, Smartphone, CheckCircle, Split, Pencil, Loader2, FileDown, Filter, Download, ChevronDown, Printer, Clock, MoreVertical } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -35,8 +36,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useOrders, type Order, type OrderItem, type PaymentSplit } from './OrderContext';
-import { OrderCashDepositAttachment } from './components/OrderCashDepositAttachment';
+import { MyOrderDetailsPanel } from './components/MyOrderDetailsPanel';
 import { generateAndOpenOrderReceiptFromOrder } from './generateOrderReceiptPdf';
+import { getOrderStatusStack } from './utils/orderStatusStack';
 import { getDatePresetLabel, getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import {
   ALL_TIME_DATE_RANGE,
@@ -203,6 +205,8 @@ export default function MyOrdersPage() {
   const canCustomizePricing = ['team_leader', 'manager', 'admin'].includes(user?.role || '');
   const { getOrdersByAgent, addOrder, orders: allOrders } = useOrders();
   const { agentBrands, refreshInventory } = useAgentInventory();
+  const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [searchQuery, setSearchQuery] = useState('');
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
@@ -220,131 +224,6 @@ export default function MyOrdersPage() {
   // Auto-determined pricing based on company configuration
   const [allowedPricingStrategies, setAllowedPricingStrategies] = useState<string[]>([]);
   const [loadingPricingConfig, setLoadingPricingConfig] = useState(true);
-
-  const isZeroValueOrder = (order: Order) => Math.abs(Number(order.total) || 0) < 0.01;
-
-  const hasCashOrChequeComponent = (order: Order) => {
-    if (isZeroValueOrder(order)) return false;
-    if (order.paymentMode === 'SPLIT' && Array.isArray(order.paymentSplits)) {
-      return order.paymentSplits.some((s) => s.method === 'CASH' || s.method === 'CHEQUE');
-    }
-    return order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE';
-  };
-
-  type OrderStatusBadge = {
-    text: string;
-    variant: 'default' | 'secondary' | 'outline' | 'destructive';
-    className?: string;
-  };
-
-  /**
-   * Stacked Status badges for agent order list:
-   *
-   * Pending Mobile Sales
-   * Awaiting Remittance
-   *
-   * Pending Team Leader
-   * Pending Cash Deposit
-   *
-   * Pending Finance Review
-   * Deposit Recorded
-   */
-  const getOrderStatusStack = (
-    order: Order
-  ): { primary: OrderStatusBadge; secondary: OrderStatusBadge | null } => {
-    if (order.stage === 'needs_revision') {
-      return { primary: { text: 'Needs Revision', variant: 'outline' }, secondary: null };
-    }
-    if (order.stage === 'admin_approved' || order.status === 'approved') {
-      return { primary: { text: 'Approved', variant: 'default' }, secondary: null };
-    }
-    if (
-      order.stage === 'admin_rejected' ||
-      order.stage === 'leader_rejected' ||
-      order.status === 'rejected'
-    ) {
-      return { primary: { text: 'Rejected', variant: 'destructive' }, secondary: null };
-    }
-
-    const stillPending =
-      order.status === 'pending' ||
-      order.stage === 'agent_pending' ||
-      order.stage === 'leader_approved' ||
-      order.stage === 'finance_pending';
-
-    if (stillPending && hasCashOrChequeComponent(order)) {
-      const depositFullyRecorded = !!(order.depositId && order.depositBankAccount);
-
-      // 1) Agent still needs to remit cash/cheque
-      if (!order.remitted && !order.depositId) {
-        return {
-          primary: { text: 'Pending Mobile Sales', variant: 'secondary' },
-          secondary: {
-            text: 'Awaiting Remittance',
-            variant: 'outline',
-            className: 'bg-amber-50 text-amber-700 border-amber-200',
-          },
-        };
-      }
-
-      // 2) Remitted (or deposit started) but TL cash deposit not fully recorded
-      if (!depositFullyRecorded) {
-        return {
-          primary: { text: 'Pending Team Leader', variant: 'secondary' },
-          secondary: {
-            text: 'Pending Cash Deposit',
-            variant: 'outline',
-            className: 'bg-orange-50 text-orange-700 border-orange-200',
-          },
-        };
-      }
-
-      // 3) Deposit recorded — waiting on finance
-      return {
-        primary: { text: 'Pending Finance Review', variant: 'secondary' },
-        secondary: {
-          text: 'Deposit Recorded',
-          variant: 'outline',
-          className: 'bg-blue-50 text-blue-700 border-blue-200',
-        },
-      };
-    }
-
-    // Bank Transfer / GCash (and FOC) — no remittance; proof goes straight to finance
-    if (order.stage === 'finance_pending' || order.status === 'pending') {
-      const isElectronic =
-        !isZeroValueOrder(order) &&
-        (order.paymentMethod === 'BANK_TRANSFER' ||
-          order.paymentMethod === 'GCASH' ||
-          (order.paymentMode === 'SPLIT' &&
-            Array.isArray(order.paymentSplits) &&
-            order.paymentSplits.some(
-              (s) => s.method === 'BANK_TRANSFER' || s.method === 'GCASH'
-            )));
-
-      return {
-        primary: { text: 'Pending Finance Review', variant: 'secondary' },
-        secondary: isElectronic
-          ? {
-              text: 'Payment Proof Submitted',
-              variant: 'outline',
-              className: 'bg-sky-50 text-sky-700 border-sky-200',
-            }
-          : null,
-      };
-    }
-    if (order.stage === 'leader_approved') {
-      return { primary: { text: 'Approved by Leader', variant: 'default' }, secondary: null };
-    }
-    if (order.stage === 'agent_pending') {
-      return { primary: { text: 'Pending Team Leader', variant: 'secondary' }, secondary: null };
-    }
-
-    return {
-      primary: { text: order.status || 'Pending', variant: 'secondary' },
-      secondary: null,
-    };
-  };
 
   /** Primary badge only (dialogs / places that show a single status). */
   const getDisplayStatus = (order: Order) => getOrderStatusStack(order).primary;
@@ -934,8 +813,14 @@ export default function MyOrdersPage() {
     window.setTimeout(() => setReturnDialogOpen(true), 0);
   };
 
-  const handleViewOrder = (order: any) => {
+  const handleViewOrder = (order: Order) => {
     setTimelineDialogOpen(false);
+    if (isMobile) {
+      setViewDialogOpen(false);
+      setOrderToView(null);
+      navigate(`/my-orders/${order.id}`);
+      return;
+    }
     setOrderToView(order);
     setViewDialogOpen(true);
   };
@@ -3153,14 +3038,29 @@ export default function MyOrdersPage() {
               paginatedOrders.map((order) => {
                 const { primary, secondary } = getOrderStatusStack(order);
                 return (
-                  <Card key={order.id}>
+                  <Card
+                    key={order.id}
+                    className="cursor-pointer active:bg-muted/40"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => handleViewOrder(order)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        handleViewOrder(order);
+                      }
+                    }}
+                  >
                   <div className="p-3">
                     <div className="flex items-start justify-between mb-2 gap-2">
                       <div className="flex-1 min-w-0">
                         <div className="font-mono font-semibold text-sm truncate">{order.orderNumber}</div>
                         <div className="text-xs text-muted-foreground mt-0.5 truncate">{order.clientName}</div>
                       </div>
-                      <div className="flex items-start gap-1 shrink-0">
+                      <div
+                        className="flex items-start gap-1 shrink-0"
+                        onClick={(event) => event.stopPropagation()}
+                      >
                         <div className="flex flex-col gap-1 items-end">
                           <Badge variant={primary.variant} className="text-xs">
                             {primary.text}
@@ -4560,9 +4460,16 @@ export default function MyOrdersPage() {
 
       {/* View Order Dialog */}
       <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-        <DialogContent className="max-w-4xl w-[95vw] max-h-[90vh] overflow-y-auto p-4 sm:p-6">
+        <DialogContent className="max-w-lg w-[95vw] max-h-[90vh] overflow-y-auto p-4 sm:p-6">
           <DialogHeader className="space-y-3 sm:space-y-0 sm:flex sm:flex-row sm:items-start sm:justify-between sm:gap-4 pr-8">
-            <DialogTitle>Order Details</DialogTitle>
+            <div>
+              <DialogTitle>Order Details</DialogTitle>
+              {orderToView ? (
+                <DialogDescription>
+                  {orderToView.orderNumber} · {orderToView.clientName}
+                </DialogDescription>
+              ) : null}
+            </div>
             {orderToView && showClientReturns ? (
               <DropdownMenu modal={false}>
                 <DropdownMenuTrigger asChild>
@@ -4595,401 +4502,16 @@ export default function MyOrdersPage() {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-            ) : orderToView ? (
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full sm:w-auto min-h-[44px] sm:min-h-8"
-                onClick={() => handlePrintOrderReceipt(orderToView)}
-              >
-                <Printer className="h-4 w-4 mr-2" />
-                Print
-              </Button>
             ) : null}
           </DialogHeader>
-          {orderToView && (
-            <div className="space-y-6 py-4">
-              {/* Order Number and Status */}
-              <div className="flex justify-between items-center pb-4 border-b">
-                <div>
-                  <h3 className="text-xl md:text-2xl font-bold">{orderToView.orderNumber}</h3>
-                  <p className="text-sm text-muted-foreground">Client Order</p>
-                </div>
-                {(() => {
-                  const { primary, secondary } = getOrderStatusStack(orderToView);
-                  return (
-                    <div className="flex flex-col gap-1 items-end">
-                      <Badge variant={primary.variant} className="text-base px-4 py-2">
-                        {primary.text}
-                      </Badge>
-                      {secondary && (
-                        <Badge
-                          variant={secondary.variant}
-                          className={`text-sm px-3 py-1 ${secondary.className || ''}`}
-                        >
-                          {secondary.text}
-                        </Badge>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-
-              {/* Order Info */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-muted-foreground">Order Date</Label>
-                  <p className="font-medium">{new Date(orderToView.date).toLocaleDateString()}</p>
-                </div>
-                <div>
-                  <h4 className="text-muted-foreground text-sm flex items-center gap-1">
-                    Client Name
-                  </h4>
-                  <p className="font-medium">{orderToView.clientName}</p>
-                </div>
-                <div>
-                  <h4 className="text-muted-foreground text-sm flex items-center gap-1">
-                    Pricing Strategy
-                  </h4>
-                  <Badge variant="outline" className="capitalize font-semibold bg-primary/5">
-                    {orderToView.pricingStrategy === 'special' ? 'Special Pricing (Allocated)' :
-                      orderToView.pricingStrategy === 'dsp' ? 'DSP Pricing' : 'RSP Pricing'}
-                  </Badge>
-                </div>
-              </div>
-
-              {/* Agent Info */}
-              <div className="space-y-2">
-                <h4 className="font-semibold text-lg">Sales Agent</h4>
-                <div className="bg-muted p-4 rounded-lg">
-                  <p className="font-medium">{orderToView.agentName}</p>
-                  <p className="text-sm text-muted-foreground">Agent ID: {orderToView.agentId}</p>
-                </div>
-              </div>
-
-              {/* Items - Responsive */}
-              <div className="space-y-2">
-                <h4 className="font-semibold text-lg">Items</h4>
-                {orderToView.items && orderToView.items.length > 0 ? (
-                  (() => {
-                    // Group items by brand
-                    const itemsByBrand = orderToView.items.reduce((acc: any, item: any) => {
-                      const brand = item.brandName || 'Unknown Brand';
-                      if (!acc[brand]) {
-                        acc[brand] = [];
-                      }
-                      acc[brand].push(item);
-                      return acc;
-                    }, {});
-
-                    const brands = Object.keys(itemsByBrand).sort();
-
-                    return (
-                      <>
-                        {/* Mobile: card list grouped by brand */}
-                        <div className="md:hidden space-y-4">
-                          {brands.map((brand) => (
-                            <div key={brand} className="space-y-2">
-                              <div className="flex items-center gap-2 pb-2 border-b">
-                                <h5 className="font-semibold text-base text-primary">{brand}</h5>
-                                <Badge variant="outline" className="text-xs">
-                                  {itemsByBrand[brand].length} item{itemsByBrand[brand].length > 1 ? 's' : ''}
-                                </Badge>
-                              </div>
-                              {itemsByBrand[brand].map((item: any) => (
-                                <div key={item.id} className="rounded-lg border bg-background p-3 ml-2">
-                                  <div className="flex items-center justify-between">
-                                    <div className="min-w-0">
-                                      <div className="text-sm font-semibold truncate">{item.variantName}</div>
-                                    </div>
-                                    <Badge variant={item.variantType === 'flavor' ? 'default' : item.variantType === 'battery' ? 'secondary' : 'outline'}>
-                                      {item.variantType}
-                                    </Badge>
-                                  </div>
-                                  <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                                    <div>
-                                      <div className="text-xs text-muted-foreground">Qty</div>
-                                      <div>{item.quantity}</div>
-                                    </div>
-                                    <div className="text-right">
-                                      <div className="text-xs text-muted-foreground">Unit</div>
-                                      <div>₱{item.unitPrice.toFixed(2)}</div>
-                                    </div>
-                                    <div className="col-span-2 flex justify-between border-t pt-2 font-medium">
-                                      <span>Total</span>
-                                      <span>₱{item.total.toFixed(2)}</span>
-                                    </div>
-                                  </div>
-                                </div>
-                              ))}
-                              {/* Brand subtotal */}
-                              <div className="ml-2 flex justify-end pr-3">
-                                <div className="text-sm font-semibold text-muted-foreground">
-                                  Brand Total: ₱{itemsByBrand[brand].reduce((sum: number, item: any) => sum + item.total, 0).toFixed(2)}
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-
-                        {/* Desktop/Tablet: table grouped by brand */}
-                        <div className="hidden md:block space-y-4">
-                          {brands.map((brand) => (
-                            <div key={brand} className="border rounded-lg overflow-hidden">
-                              <div className="bg-muted/50 px-4 py-2 border-b">
-                                <div className="flex items-center justify-between">
-                                  <h5 className="font-semibold text-base text-primary">{brand}</h5>
-                                  <div className="flex items-center gap-4">
-                                    <span className="text-sm text-muted-foreground">
-                                      {itemsByBrand[brand].length} item{itemsByBrand[brand].length > 1 ? 's' : ''}
-                                    </span>
-                                    <span className="text-sm font-semibold">
-                                      Brand Total: ₱{itemsByBrand[brand].reduce((sum: number, item: any) => sum + item.total, 0).toFixed(2)}
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="w-full overflow-x-auto">
-                                <Table>
-                                  <TableHeader>
-                                    <TableRow>
-                                      <TableHead>Item</TableHead>
-                                      <TableHead>Type</TableHead>
-                                      <TableHead className="text-right">Quantity</TableHead>
-                                      <TableHead className="text-right">Unit Price</TableHead>
-                                      <TableHead className="text-right">Total</TableHead>
-                                    </TableRow>
-                                  </TableHeader>
-                                  <TableBody>
-                                    {itemsByBrand[brand].map((item: any) => (
-                                      <TableRow key={item.id}>
-                                        <TableCell className="font-medium">{item.variantName}</TableCell>
-                                        <TableCell>
-                                          <Badge variant={item.variantType === 'flavor' ? 'default' : item.variantType === 'battery' ? 'secondary' : 'outline'}>
-                                            {item.variantType}
-                                          </Badge>
-                                        </TableCell>
-                                        <TableCell className="text-right">{item.quantity}</TableCell>
-                                        <TableCell className="text-right">₱{item.unitPrice.toFixed(2)}</TableCell>
-                                        <TableCell className="text-right font-semibold">₱{item.total.toFixed(2)}</TableCell>
-                                      </TableRow>
-                                    ))}
-                                  </TableBody>
-                                </Table>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </>
-                    );
-                  })()
-                ) : (
-                  <div className="rounded-lg border bg-muted/30 p-4 text-center text-sm text-muted-foreground">
-                    No items found for this order
-                  </div>
-                )}
-              </div>
-
-              {/* Payment Information */}
-              {(orderToView.paymentMethod || (orderToView.paymentMode === 'SPLIT' && orderToView.paymentSplits && orderToView.paymentSplits.length > 0)) && (
-                <div className="space-y-3 border-t pt-4">
-                  <h4 className="font-semibold text-lg flex items-center gap-2">
-                    <CreditCard className="h-5 w-5" />
-                    Payment Information
-                  </h4>
-                  
-                  {/* Split Payment Breakdown */}
-                  {orderToView.paymentMode === 'SPLIT' && Array.isArray(orderToView.paymentSplits) && orderToView.paymentSplits.length > 0 ? (
-                    <div className="space-y-4">
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline" className="text-base px-3 py-1">
-                          <Split className="h-4 w-4 mr-1 inline" />
-                          Split Payment
-                        </Badge>
-                        <span className="text-sm text-muted-foreground">
-                          {orderToView.paymentSplits.length} payment method{orderToView.paymentSplits.length > 1 ? 's' : ''}
-                        </span>
-                      </div>
-                      
-                      <div className="space-y-3">
-                        {orderToView.paymentSplits.map((split: any, index: number) => (
-                          <Card key={index} className="p-4 bg-muted/30">
-                            <div className="flex justify-between items-start mb-3">
-                              <div className="space-y-1">
-                                <div className="flex items-center gap-2">
-                                  <Badge variant="secondary">
-                                    {split.method === 'BANK_TRANSFER' ? (
-                                      split.bank ? `Bank Transfer (${split.bank})` : 'Bank Transfer'
-                                    ) : split.method === 'GCASH' ? 'GCash' :
-                                     split.method === 'CASH' ? 'Cash' :
-                                     split.method === 'CHEQUE' ? 'Cheque' : split.method}
-                                  </Badge>
-                                </div>
-                                <p className="text-lg font-semibold text-primary">
-                                  ₱{split.amount?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
-                                </p>
-                              </div>
-                            </div>
-                            {split.proofUrl && (
-                              <div className="mt-3 pt-3 border-t">
-                                <Label className="text-sm text-muted-foreground mb-2 block">Payment Proof</Label>
-                                <div className="border rounded-lg overflow-hidden bg-white">
-                                  <img
-                                    src={split.proofUrl}
-                                    alt={`Payment Proof - ${split.method}`}
-                                    className="w-full h-auto max-h-64 object-contain cursor-pointer"
-                                    onClick={() => window.open(split.proofUrl, '_blank')}
-                                    onError={(e) => {
-                                      (e.target as HTMLImageElement).src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM2YjcyODAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
-                                    }}
-                                  />
-                                </div>
-                                <p className="text-xs text-muted-foreground mt-1">Click image to view full size</p>
-                              </div>
-                            )}
-                          </Card>
-                        ))}
-                      </div>
-                      
-                      {/* Split Payment Total */}
-                      <div className="bg-primary/5 border-2 border-primary/20 rounded-lg p-4">
-                        <div className="flex justify-between items-center">
-                          <span className="font-semibold text-lg">Total Payment:</span>
-                          <span className="font-bold text-xl text-primary">
-                            ₱{orderToView.paymentSplits.reduce((sum: number, split: any) => sum + (split.amount || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    /* Full Payment Display */
-                    <div className="space-y-2">
-                      <div>
-                        <Label className="text-muted-foreground">Payment Method</Label>
-                        <p className="font-medium">
-                          {orderToView.paymentMethod === 'GCASH' ? 'GCash' :
-                            orderToView.paymentMethod === 'BANK_TRANSFER' ? (
-                              orderToView.bankType ? `Bank Transfer (${orderToView.bankType})` : 'Bank Transfer'
-                            ) : orderToView.paymentMethod === 'CHEQUE' ? (
-                              'Cheque'
-                            ) :
-                              'Cash'}
-                        </p>
-                      </div>
-                      {orderToView.paymentProofUrl && (
-                        <div>
-                          <Label className="text-muted-foreground">Payment Proof</Label>
-                          <div className="mt-2 border rounded-lg overflow-hidden bg-white">
-                            <img
-                              src={orderToView.paymentProofUrl}
-                              alt="Payment Proof"
-                              className="w-full h-auto max-h-96 object-contain cursor-pointer"
-                              onClick={() => window.open(orderToView.paymentProofUrl, '_blank')}
-                              onError={(e) => {
-                                (e.target as HTMLImageElement).src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM2YjcyODAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
-                              }}
-                            />
-                          </div>
-                          <p className="text-xs text-muted-foreground mt-1">Click image to view full size</p>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <OrderCashDepositAttachment order={orderToView} />
-
-              {/* Client Signature */}
-              {orderToView.signatureUrl && (
-                <div className="space-y-3 border-t pt-4">
-                  <h4 className="font-semibold text-lg flex items-center gap-2">
-                    <FileSignature className="h-5 w-5" />
-                    Client Signature
-                  </h4>
-                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 bg-white">
-                    <img
-                      src={orderToView.signatureUrl}
-                      alt="Client signature"
-                      className="w-full h-40 object-contain"
-                      onClick={() => {
-                        // Open signature in new window for full view
-                        const newWindow = window.open();
-                        if (newWindow) {
-                          newWindow.document.write(`
-                            <html>
-                              <head>
-                                <title>Client Signature - ${orderToView.orderNumber}</title>
-                                <style>
-                                  body {
-                                    margin: 0;
-                                    display: flex;
-                                    justify-content: center;
-                                    align-items: center;
-                                    min-height: 100vh;
-                                    background: #f5f5f5;
-                                  }
-                                  img {
-                                    max-width: 90%;
-                                    max-height: 90vh;
-                                    object-fit: contain;
-                                    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-                                    background: white;
-                                    padding: 20px;
-                                  }
-                                </style>
-                              </head>
-                              <body>
-                                <img src="${orderToView.signatureUrl}" alt="Client Signature" />
-                              </body>
-                            </html>
-                          `);
-                        }
-                      }}
-                      style={{ cursor: 'pointer' }}
-                    />
-                    <p className="text-xs text-muted-foreground mt-2 text-center">
-                      Click image to view full size
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Pricing Summary */}
-              <div className="space-y-2 border-t pt-4">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Subtotal:</span>
-                  <span className="font-medium">₱{orderToView.subtotal.toFixed(2)}</span>
-                </div>
-                {isAdmin && (
-                  <>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Tax (12%):</span>
-                      <span className="font-medium">₱{orderToView.tax.toFixed(2)}</span>
-                    </div>
-                    {orderToView.discount > 0 && (
-                      <div className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">Discount:</span>
-                        <span className="font-medium text-green-600">- ₱{orderToView.discount.toFixed(2)}</span>
-                      </div>
-                    )}
-                  </>
-                )}
-                <div className="flex justify-between text-lg font-bold border-t pt-2">
-                  <span>Total Amount:</span>
-                  <span>₱{orderToView.total.toFixed(2)}</span>
-                </div>
-              </div>
-
-              {/* Notes */}
-              {orderToView.notes && (
-                <div className="space-y-2">
-                  <Label className="font-semibold">Notes</Label>
-                  <p className="text-sm text-muted-foreground bg-muted p-3 rounded-lg">{orderToView.notes}</p>
-                </div>
-              )}
-            </div>
-          )}
+          {orderToView ? (
+            <MyOrderDetailsPanel
+              order={orderToView}
+              isAdmin={isAdmin}
+              showPrint={!showClientReturns}
+              onPrint={() => handlePrintOrderReceipt(orderToView)}
+            />
+          ) : null}
         </DialogContent>
       </Dialog>
 

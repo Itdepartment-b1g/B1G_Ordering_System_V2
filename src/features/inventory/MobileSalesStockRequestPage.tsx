@@ -12,10 +12,11 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
-import { useMyRequests, useMyLeader, GroupedRequest, useLeaderInventorySummary } from './requestHooks';
+import { useMyRequests, useMyLeader, type GroupedRequest, useLeaderInventorySummary } from './requestHooks';
 import { CreateStockRequestDialog } from './components/CreateStockRequestDialog';
 import { StockRequestHistoryList } from './components/StockRequestHistoryList';
 import { exportMobileSalesStockRequestPdf } from './utils/exportMobileSalesStockRequestPdf';
+import { groupMyStockRequests } from './utils/stockRequestGrouping';
 
 export default function MobileSalesStockRequestPage() {
   const { user } = useAuth();
@@ -31,33 +32,7 @@ export default function MobileSalesStockRequestPage() {
 
   const [formOpen, setFormOpen] = useState(false);
 
-  const groupedRequests = useMemo(() => {
-    const groups: { [key: string]: typeof requests } = {};
-
-    requests.forEach(request => {
-      const key = request.request_number || `${new Date(request.requested_at).getTime()}-${request.requester_notes || 'no-notes'}`;
-
-      if (!groups[key]) {
-        groups[key] = [];
-      }
-      groups[key].push(request);
-    });
-
-    return Object.entries(groups).map(([key, groupRequests]) => {
-      const firstRequest = groupRequests[0];
-      const allSameStatus = groupRequests.every(r => r.status === firstRequest.status);
-
-      return {
-        id: key,
-        requested_at: firstRequest.requested_at,
-        status: allSameStatus ? firstRequest.status : 'mixed',
-        productCount: groupRequests.length,
-        totalQuantity: groupRequests.reduce((sum, r) => sum + r.requested_quantity, 0),
-        requests: groupRequests,
-        requester_notes: firstRequest.requester_notes
-      } as GroupedRequest;
-    }).sort((a, b) => new Date(b.requested_at).getTime() - new Date(a.requested_at).getTime());
-  }, [requests]);
+  const groupedRequests = useMemo(() => groupMyStockRequests(requests), [requests]);
 
   const stats = useMemo(() => {
     return {
@@ -196,6 +171,7 @@ export default function MobileSalesStockRequestPage() {
         onPrint={handlePrint}
         title="My Request History"
         description="View status of your stock requests"
+        getDetailHref={(group) => `/inventory/mobile-request/${encodeURIComponent(group.id)}`}
       />
     </div>
   );

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Eye, Loader2, MoreVertical, Printer, RotateCcw, Search, Users } from 'lucide-react';
 import { useAuth } from '@/features/auth';
 import { Badge } from '@/components/ui/badge';
@@ -28,66 +28,17 @@ import {
   ListPagination,
   type PageSize,
 } from '@/features/shared/components/ListPagination';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
+import { MobileSalesReturnDetailsPanel } from './components/MobileSalesReturnDetailsPanel';
 import { exportMainInventoryReturnPdf } from './utils/exportMainInventoryReturnPdf';
-
-type ReturnStatus = 'pending' | 'approved' | 'rejected';
-
-type ReturnLine = {
-  variantId: string;
-  quantity: number;
-  variantName: string;
-  variantType: string | null;
-  brandName: string;
-};
-
-type MyReturn = {
-  id: string;
-  returnedTo: string;
-  returnedAt: string;
-  status: ReturnStatus;
-  reason: string;
-  rejectionReason: string | null;
-  variantCount: number;
-  totalQuantity: number;
-  lines: ReturnLine[];
-};
-
-function variantTypeLabel(type: string | null | undefined): string | null {
-  if (!type?.trim()) return null;
-  const key = type.trim().toLowerCase();
-  if (key === 'flavor') return 'Flavor';
-  if (key === 'battery') return 'Battery';
-  if (key === 'foc') return 'FOC';
-  if (key === 'posm') return 'POSM';
-  if (key === 'ncv') return 'NCV';
-  return type;
-}
-
-function lineLabel(line: ReturnLine): string {
-  const brand = line.brandName?.trim();
-  const variant = line.variantName?.trim() || 'Item';
-  const type = variantTypeLabel(line.variantType);
-  const name = brand && brand !== 'Unknown' ? `${brand} — ${variant}` : variant;
-  return type ? `${name} (${type})` : name;
-}
-
-function compareLines(a: ReturnLine, b: ReturnLine): number {
-  const brandCmp = a.brandName.localeCompare(b.brandName, undefined, { sensitivity: 'base' });
-  if (brandCmp !== 0) return brandCmp;
-  const variantCmp = a.variantName.localeCompare(b.variantName, undefined, { sensitivity: 'base' });
-  if (variantCmp !== 0) return variantCmp;
-  return (a.variantType || '').localeCompare(b.variantType || '', undefined, { sensitivity: 'base' });
-}
+import {
+  fetchMyReturns,
+  MOBILE_SALES_RETURN_HISTORY_QUERY_KEY,
+  type MyReturn,
+  type ReturnStatus,
+} from './utils/mobileSalesReturnHistory';
 
 function statusBadge(status: ReturnStatus) {
   if (status === 'approved') return <Badge>Approved</Badge>;
@@ -98,52 +49,11 @@ function statusBadge(status: ReturnStatus) {
 const returnColumns =
   'grid grid-cols-[1.25rem_minmax(8rem,1.1fr)_minmax(8rem,1.1fr)_11rem_6.5rem_7.5rem_minmax(8rem,1.2fr)_2.75rem] items-center gap-x-3 px-3';
 
-function ReturnDetails({ row }: { row: MyReturn }) {
-  return (
-    <div className="space-y-3 rounded-md border bg-muted/30 p-3">
-      <p className="text-sm">
-        <span className="font-medium">Reason of returned: </span>
-        <span className="text-muted-foreground">{row.reason.trim() || '—'}</span>
-      </p>
-      {row.status === 'rejected' && row.rejectionReason && (
-        <p className="text-sm">
-          <span className="font-medium">Rejection reason: </span>
-          <span className="text-muted-foreground">{row.rejectionReason}</span>
-        </p>
-      )}
-      <div className="space-y-2 md:hidden">
-        {row.lines.map((line) => (
-          <div key={line.variantId} className="rounded-md border bg-background p-2 text-sm">
-            <div className="font-medium leading-snug">{lineLabel(line)}</div>
-            <div className="mt-1 text-right text-xs font-semibold">{line.quantity.toLocaleString()}</div>
-          </div>
-        ))}
-      </div>
-      <div className="hidden overflow-x-auto md:block">
-        <Table className="min-w-[36rem]">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Product</TableHead>
-              <TableHead className="text-right">Qty</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {row.lines.map((line) => (
-              <TableRow key={line.variantId}>
-                <TableCell className="whitespace-nowrap font-medium">{lineLabel(line)}</TableCell>
-                <TableCell className="text-right tabular-nums">{line.quantity.toLocaleString()}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
-    </div>
-  );
-}
-
 export default function MobileSalesReturnHistoryPage() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState('');
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
@@ -153,76 +63,15 @@ export default function MobileSalesReturnHistoryPage() {
   const [detailRow, setDetailRow] = useState<MyReturn | null>(null);
 
   const { data: returns = [], isLoading } = useQuery({
-    queryKey: ['mobile-sales-return-history', user?.id],
+    queryKey: [MOBILE_SALES_RETURN_HISTORY_QUERY_KEY, user?.id],
     enabled: !!user?.id,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('inventory_returns')
-        .select(`
-          id,
-          return_reason,
-          reason_notes,
-          rejection_reason,
-          created_at,
-          status,
-          receiver:profiles!inventory_returns_receiver_id_fkey(full_name)
-        `)
-        .eq('agent_id', user!.id)
-        .order('created_at', { ascending: false });
-
-      if (error) {
+      try {
+        return await fetchMyReturns(user!.id);
+      } catch (error) {
         toast({ title: 'Error', description: 'Failed to load return history', variant: 'destructive' });
         throw error;
       }
-      if (!data?.length) return [];
-
-      const { data: itemsData, error: itemsError } = await supabase
-        .from('inventory_return_items')
-        .select(`
-          return_id,
-          variant_id,
-          quantity,
-          variant:variants(name, variant_type, brand:brands(name))
-        `)
-        .in('return_id', data.map((row) => row.id));
-
-      if (itemsError) throw itemsError;
-
-      const linesByReturn = new Map<string, ReturnLine[]>();
-      (itemsData || []).forEach((row) => {
-        const variant = Array.isArray(row.variant) ? row.variant[0] : row.variant;
-        const brand = variant?.brand
-          ? Array.isArray(variant.brand) ? variant.brand[0] : variant.brand
-          : null;
-        const list = linesByReturn.get(row.return_id) ?? [];
-        list.push({
-          variantId: row.variant_id,
-          quantity: Number(row.quantity) || 0,
-          variantName: variant?.name || 'Unknown',
-          variantType: variant?.variant_type || null,
-          brandName: brand?.name || 'Unknown',
-        });
-        linesByReturn.set(row.return_id, list);
-      });
-
-      return data.map((row) => {
-        const receiver = Array.isArray(row.receiver) ? row.receiver[0] : row.receiver;
-        const lines = (linesByReturn.get(row.id) ?? []).sort(compareLines);
-        const reason = [row.return_reason, row.reason_notes].map((part) => part?.trim()).filter(Boolean).join(' — ');
-        const status: ReturnStatus =
-          row.status === 'approved' || row.status === 'rejected' ? row.status : 'pending';
-        return {
-          id: row.id,
-          returnedTo: receiver?.full_name || 'Team Leader',
-          returnedAt: row.created_at,
-          status,
-          reason,
-          rejectionReason: row.rejection_reason,
-          variantCount: lines.length,
-          totalQuantity: lines.reduce((sum, line) => sum + line.quantity, 0),
-          lines,
-        } satisfies MyReturn;
-      });
     },
   });
 
@@ -239,7 +88,9 @@ export default function MobileSalesReturnHistoryPage() {
           filter: `agent_id=eq.${user.id}`,
         },
         () => {
-          void queryClient.invalidateQueries({ queryKey: ['mobile-sales-return-history', user.id] });
+          void queryClient.invalidateQueries({
+            queryKey: [MOBILE_SALES_RETURN_HISTORY_QUERY_KEY, user.id],
+          });
         }
       )
       .subscribe();
@@ -285,28 +136,15 @@ export default function MobileSalesReturnHistoryPage() {
   const { pageCount, safePage, pagedItems } = getListPaginationSlice(visible, page, pageSize);
 
   const returnedByName = user?.full_name?.trim() || 'You';
+  const detailHref = (row: MyReturn) => `/inventory/my-returns/${row.id}`;
 
-  const renderActions = (row: MyReturn) => (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label="Return actions">
-          <MoreVertical className="h-4 w-4" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-40">
-        <DropdownMenuItem onClick={() => setDetailRow(row)}>
-          <Eye className="mr-2 h-4 w-4" />
-          View details
-        </DropdownMenuItem>
-        {row.status === 'approved' && (
-          <DropdownMenuItem onClick={() => printReturn(row)}>
-            <Printer className="mr-2 h-4 w-4" />
-            Print
-          </DropdownMenuItem>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
+  const openDetails = (row: MyReturn) => {
+    if (isMobile) {
+      navigate(detailHref(row));
+      return;
+    }
+    setDetailRow(row);
+  };
 
   const printReturn = (row: MyReturn) => {
     exportMainInventoryReturnPdf({
@@ -323,6 +161,35 @@ export default function MobileSalesReturnHistoryPage() {
       })),
     });
   };
+
+  const renderActions = (row: MyReturn) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          aria-label="Return actions"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <MoreVertical className="h-4 w-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-40" onClick={(event) => event.stopPropagation()}>
+        <DropdownMenuItem onSelect={() => openDetails(row)}>
+          <Eye className="mr-2 h-4 w-4" />
+          View details
+        </DropdownMenuItem>
+        {row.status === 'approved' && (
+          <DropdownMenuItem onSelect={() => printReturn(row)}>
+            <Printer className="mr-2 h-4 w-4" />
+            Print
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 
   const emptyLabel =
     statusTab === 'pending'
@@ -394,7 +261,19 @@ export default function MobileSalesReturnHistoryPage() {
             <>
               <div className="space-y-2 md:hidden">
                 {pagedItems.map((row) => (
-                  <div key={`mobile-${row.id}`} className="rounded-lg border bg-card p-3">
+                  <div
+                    key={`mobile-${row.id}`}
+                    className="cursor-pointer rounded-lg border bg-card p-3 active:bg-muted/40"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => openDetails(row)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        openDetails(row);
+                      }
+                    }}
+                  >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="flex items-center gap-1 truncate text-sm font-medium">
@@ -402,12 +281,13 @@ export default function MobileSalesReturnHistoryPage() {
                           {row.returnedTo}
                         </p>
                         <p className="mt-1 truncate text-xs text-muted-foreground">
-                          {row.lines.length === 1
-                            ? lineLabel(row.lines[0])
+                          {row.variantCount === 1
+                            ? row.lines[0]?.variantName || '1 product'
                             : `${row.variantCount} products`}
                         </p>
                         <p className="mt-1 text-xs text-muted-foreground">
-                          {row.totalQuantity.toLocaleString()} units · {format(new Date(row.returnedAt), 'MMM d, yyyy h:mm a')}
+                          {row.totalQuantity.toLocaleString()} units ·{' '}
+                          {format(new Date(row.returnedAt), 'MMM d, yyyy h:mm a')}
                         </p>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
@@ -421,7 +301,9 @@ export default function MobileSalesReturnHistoryPage() {
 
               <div className="hidden overflow-x-auto md:block">
                 <div className="min-w-[78rem] overflow-hidden rounded-lg border bg-card">
-                  <div className={`${returnColumns} border-b py-2 text-xs font-medium text-muted-foreground`}>
+                  <div
+                    className={`${returnColumns} border-b py-2 text-xs font-medium text-muted-foreground`}
+                  >
                     <span aria-hidden />
                     <span>Returned by</span>
                     <span>Returned to</span>
@@ -448,13 +330,20 @@ export default function MobileSalesReturnHistoryPage() {
                             {row.totalQuantity.toLocaleString()}
                           </span>
                           <span>{statusBadge(row.status)}</span>
-                          <span className="truncate text-sm text-muted-foreground" title={row.reason || undefined}>
+                          <span
+                            className="truncate text-sm text-muted-foreground"
+                            title={row.reason || undefined}
+                          >
                             {row.reason.trim() || '—'}
                           </span>
                           <div className="flex justify-end">{renderActions(row)}</div>
                         </div>
                         <AccordionContent className="px-3 pb-3">
-                          <ReturnDetails row={row} />
+                          <MobileSalesReturnDetailsPanel
+                            row={row}
+                            returnedByName={returnedByName}
+                            showPrint={false}
+                          />
                         </AccordionContent>
                       </AccordionItem>
                     ))}
@@ -474,7 +363,12 @@ export default function MobileSalesReturnHistoryPage() {
         </CardContent>
       </Card>
 
-      <Dialog open={!!detailRow} onOpenChange={(open) => { if (!open) setDetailRow(null); }}>
+      <Dialog
+        open={!!detailRow}
+        onOpenChange={(open) => {
+          if (!open) setDetailRow(null);
+        }}
+      >
         <DialogContent className="max-h-[90vh] w-[calc(100%-1.5rem)] max-w-lg overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Return details</DialogTitle>
@@ -484,18 +378,9 @@ export default function MobileSalesReturnHistoryPage() {
                 : 'Return items'}
             </DialogDescription>
           </DialogHeader>
-          {detailRow && (
-            <div className="space-y-3">
-              <div>{statusBadge(detailRow.status)}</div>
-              <ReturnDetails row={detailRow} />
-              {detailRow.status === 'approved' && (
-                <Button type="button" className="w-full" onClick={() => printReturn(detailRow)}>
-                  <Printer className="mr-2 h-4 w-4" />
-                  Print
-                </Button>
-              )}
-            </div>
-          )}
+          {detailRow ? (
+            <MobileSalesReturnDetailsPanel row={detailRow} returnedByName={returnedByName} />
+          ) : null}
         </DialogContent>
       </Dialog>
     </div>

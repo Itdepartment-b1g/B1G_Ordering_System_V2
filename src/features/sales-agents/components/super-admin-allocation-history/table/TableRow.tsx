@@ -1,4 +1,5 @@
 import { Fragment, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
   ChevronDown,
@@ -71,24 +72,6 @@ function variantTypeBadgeClass(type: string | null): string {
   if (normalized === 'posm') return 'border-blue-300 bg-blue-100 text-blue-800';
   if (normalized === 'ncv') return 'border-slate-300 bg-slate-100 text-slate-800';
   return '';
-}
-
-function lineLabel(line: AllocationHistoryGroup['lines'][number]): string {
-  const brand = line.brandName?.trim();
-  const variant = line.variantName?.trim() || 'Item';
-  const type = variantTypeLabel(line.variantType);
-  const name = brand && brand !== 'Unknown brand' ? `${brand} — ${variant}` : variant;
-  return type ? `${name} (${type})` : name;
-}
-
-function sortedLines(group: AllocationHistoryGroup) {
-  return [...group.lines].sort((a, b) => {
-    const brand = a.brandName.localeCompare(b.brandName, undefined, { sensitivity: 'base' });
-    if (brand !== 0) return brand;
-    const variant = a.variantName.localeCompare(b.variantName, undefined, { sensitivity: 'base' });
-    if (variant !== 0) return variant;
-    return (a.variantType || '').localeCompare(b.variantType || '', undefined, { sensitivity: 'base' });
-  });
 }
 
 function groupLinesByBrand(lines: AllocationHistoryGroup['lines']) {
@@ -169,7 +152,7 @@ function useAllocationRecordExport(group: AllocationHistoryGroup | null) {
 
 function AllocationDetailsBody({ group }: { group: AllocationHistoryGroup }) {
   const missingLines = group.lineCount === 0;
-  const lines = sortedLines(group);
+  const linesByBrand = groupLinesByBrand(group.lines);
 
   if (missingLines) {
     return (
@@ -181,13 +164,127 @@ function AllocationDetailsBody({ group }: { group: AllocationHistoryGroup }) {
   }
 
   return (
-    <div className="space-y-2">
-      {lines.map((line) => (
-        <div key={line.id} className="flex items-start justify-between gap-3 rounded-md border bg-background p-2 text-sm">
-          <span className="min-w-0 font-medium leading-snug">{lineLabel(line)}</span>
-          <span className="shrink-0 tabular-nums">{line.quantity.toLocaleString()}</span>
+    <div className="space-y-4">
+      {linesByBrand.map((brandGroup) => {
+        const brandQty = brandGroup.types.reduce(
+          (sum, typeGroup) =>
+            sum + typeGroup.items.reduce((typeSum, line) => typeSum + line.quantity, 0),
+          0
+        );
+        return (
+          <div key={brandGroup.brand} className="overflow-hidden rounded-lg border">
+            <div className="flex items-center justify-between gap-2 border-b bg-muted/40 px-3 py-2.5">
+              <h3 className="text-sm font-semibold">{brandGroup.brand}</h3>
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {brandQty.toLocaleString()} units
+              </span>
+            </div>
+            <div className="divide-y">
+              {brandGroup.types.map((typeGroup) => {
+                const typeQty = typeGroup.items.reduce((sum, line) => sum + line.quantity, 0);
+                return (
+                  <div key={`${brandGroup.brand}-${typeGroup.type}`}>
+                    <div className="flex items-center justify-between gap-2 border-b bg-background px-3 py-2">
+                      <Badge
+                        variant="outline"
+                        className={`text-[11px] ${variantTypeBadgeClass(typeGroup.variantType)}`}
+                      >
+                        {typeGroup.type}
+                      </Badge>
+                      <span className="text-[11px] tabular-nums text-muted-foreground">
+                        {typeQty.toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="divide-y bg-background">
+                      {typeGroup.items.map((line) => (
+                        <div
+                          key={line.id}
+                          className="flex items-start justify-between gap-3 px-3 py-2.5 text-sm"
+                        >
+                          <span className="min-w-0 font-medium leading-snug">
+                            {line.variantName.trim() || 'Item'}
+                          </span>
+                          <span className="shrink-0 tabular-nums text-muted-foreground">
+                            {line.quantity.toLocaleString()}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export function AllocationDetailsPanel({ group }: { group: AllocationHistoryGroup }) {
+  const exports = useAllocationRecordExport(group);
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          disabled={exports.isExporting}
+          onClick={() => void exports.onExportExcel()}
+        >
+          {exports.isExportingExcel ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <FileSpreadsheet className="mr-2 h-4 w-4" />
+          )}
+          Excel
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={exports.isExporting}
+          onClick={() => void exports.onExportPdf()}
+        >
+          {exports.isExportingPdf ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <FileText className="mr-2 h-4 w-4" />
+          )}
+          PDF
+        </Button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-x-3 gap-y-3 rounded-lg border bg-muted/20 p-3 text-sm sm:grid-cols-3">
+        <div>
+          <p className="text-xs text-muted-foreground">Allocated by</p>
+          <p className="font-medium">{group.allocatedByName}</p>
         </div>
-      ))}
+        <div>
+          <p className="text-xs text-muted-foreground">Allocated to</p>
+          <p className="font-medium">{group.allocatedToName}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Allocated date</p>
+          <p className="font-medium">{formatManilaDateTime(group.createdAt)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Total qty</p>
+          <p className="font-medium tabular-nums">{group.totalQuantity.toLocaleString()}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">SKUs</p>
+          <p className="font-medium tabular-nums">{group.lineCount.toLocaleString()}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Type</p>
+          <p className="font-medium">{allocationTypeLabel(group.allocationType)}</p>
+        </div>
+      </div>
+
+      <div className="border-t pt-4">
+        <AllocationDetailsBody group={group} />
+      </div>
     </div>
   );
 }
@@ -201,8 +298,6 @@ export function AllocationDetailsDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const exports = useAllocationRecordExport(group);
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] w-[calc(100%-1.5rem)] max-w-lg overflow-y-auto">
@@ -214,39 +309,7 @@ export function AllocationDetailsDialog({
               : 'Allocated products'}
           </DialogDescription>
         </DialogHeader>
-        {group && (
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-2 text-sm">
-              <div>
-                <p className="text-xs text-muted-foreground">Allocated by</p>
-                <p className="font-medium">{group.allocatedByName}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Allocated to</p>
-                <p className="font-medium">{group.allocatedToName}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Brand</p>
-                <p className="font-medium">{group.brandName ?? '—'}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Total qty</p>
-                <p className="font-medium tabular-nums">{group.totalQuantity.toLocaleString()}</p>
-              </div>
-            </div>
-            <AllocationDetailsBody group={group} />
-            <div className="grid grid-cols-2 gap-2">
-              <Button type="button" variant="outline" disabled={exports.isExporting} onClick={() => void exports.onExportExcel()}>
-                {exports.isExportingExcel ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileSpreadsheet className="mr-2 h-4 w-4" />}
-                Excel
-              </Button>
-              <Button type="button" variant="outline" disabled={exports.isExporting} onClick={() => void exports.onExportPdf()}>
-                {exports.isExportingPdf ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileText className="mr-2 h-4 w-4" />}
-                PDF
-              </Button>
-            </div>
-          </div>
-        )}
+        {group ? <AllocationDetailsPanel group={group} /> : null}
       </DialogContent>
     </Dialog>
   );
@@ -301,12 +364,24 @@ export function AllocationHistoryMobileList({
   isLoading,
   groups,
   emptyMessage,
+  getDetailHref,
 }: {
   isLoading: boolean;
   groups: AllocationHistoryGroup[];
   emptyMessage: string;
+  /** When set, View details navigates here instead of opening a dialog. */
+  getDetailHref?: (group: AllocationHistoryGroup) => string;
 }) {
+  const navigate = useNavigate();
   const [detail, setDetail] = useState<AllocationHistoryGroup | null>(null);
+
+  const openDetails = (group: AllocationHistoryGroup) => {
+    if (getDetailHref) {
+      navigate(getDetailHref(group));
+      return;
+    }
+    setDetail(group);
+  };
 
   if (isLoading) {
     return (
@@ -325,7 +400,23 @@ export function AllocationHistoryMobileList({
     <>
       <div className="space-y-2">
         {groups.map((group) => (
-          <div key={group.groupId} className="rounded-lg border bg-card p-3">
+          <div
+            key={group.groupId}
+            className={`rounded-lg border bg-card p-3 ${getDetailHref ? 'cursor-pointer active:bg-muted/40' : ''}`}
+            onClick={getDetailHref ? () => openDetails(group) : undefined}
+            onKeyDown={
+              getDetailHref
+                ? (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      openDetails(group);
+                    }
+                  }
+                : undefined
+            }
+            role={getDetailHref ? 'button' : undefined}
+            tabIndex={getDetailHref ? 0 : undefined}
+          >
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">{group.brandName ?? 'Allocation'}</p>
@@ -336,18 +427,20 @@ export function AllocationHistoryMobileList({
                   {group.lineCount > 0 ? ` · ${group.lineCount} products` : ''}
                 </p>
               </div>
-              <AllocationActionsMenu group={group} onView={() => setDetail(group)} />
+              <AllocationActionsMenu group={group} onView={() => openDetails(group)} />
             </div>
           </div>
         ))}
       </div>
-      <AllocationDetailsDialog
-        group={detail}
-        open={!!detail}
-        onOpenChange={(open) => {
-          if (!open) setDetail(null);
-        }}
-      />
+      {!getDetailHref ? (
+        <AllocationDetailsDialog
+          group={detail}
+          open={!!detail}
+          onOpenChange={(open) => {
+            if (!open) setDetail(null);
+          }}
+        />
+      ) : null}
     </>
   );
 }
