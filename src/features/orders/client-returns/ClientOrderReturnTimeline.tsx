@@ -465,6 +465,45 @@ function formatWhen(value: string | undefined): string {
   return format(parsed, 'MMM d, yyyy h:mm a');
 }
 
+function formatDepositStatus(status: string | null | undefined): string {
+  if (!status) return '—';
+  if (status === 'pending_verification') return 'Pending verification';
+  if (status === 'verified') return 'Verified';
+  return status;
+}
+
+/** Remittance creates a cash_deposits stub with this bank_account until TL records a real deposit. */
+function isRemittancePlaceholderBank(bankAccount: string | null | undefined): boolean {
+  if (!bankAccount || !bankAccount.trim()) return true;
+  return (
+    bankAccount.includes('Cash Remittance') || bankAccount.includes('Cheque Remittance')
+  );
+}
+
+/** True only after team leader records a real bank deposit (not the remittance stub). */
+function isTeamLeaderDepositRecorded(
+  bankAccount: string | null | undefined,
+  hasDepositRow: boolean
+): boolean {
+  return hasDepositRow && !!bankAccount && !isRemittancePlaceholderBank(bankAccount);
+}
+
+function orderIsApproved(order: Order): boolean {
+  return order.stage === 'admin_approved' || order.status === 'approved';
+}
+
+function orderIsRejected(order: Order): boolean {
+  return (
+    order.stage === 'admin_rejected' ||
+    order.stage === 'leader_rejected' ||
+    order.status === 'rejected'
+  );
+}
+
+function orderStillOpen(order: Order): boolean {
+  return !orderIsApproved(order) && !orderIsRejected(order) && order.stage !== 'needs_revision';
+}
+
 function buildPipelineTimelineEvents(
   order: Order,
   pipeline: OrderPipelineMeta | null
@@ -479,8 +518,15 @@ function buildPipelineTimelineEvents(
     },
   ];
 
-  // Bank Transfer / GCash: show payment-proof step so the timeline isn't cut
-  if (orderHasElectronicPayment(order)) {
+  const nowAt = new Date().toISOString();
+  const cashChequeAmount = getOrderCashChequeAmount(order);
+  // Remit → TL deposit → finance ONLY for CASH / CHEQUE (or cash/cheque split portion)
+  const hasCashOrCheque = orderHasCashOrChequeToRemit(order);
+  const hasElectronic = orderHasElectronicPayment(order);
+  const stillOpen = orderStillOpen(order);
+
+  // Bank Transfer / GCash: no remittance / cash-deposit steps — proof goes to finance
+  if (hasElectronic) {
     const proofUrl = getOrderPaymentProofUrl(order);
     const submittedAt = order.createdAt || order.date;
     const electronicAmount = getOrderElectronicAmount(order);
@@ -502,109 +548,241 @@ function buildPipelineTimelineEvents(
         { label: 'Order #', value: order.orderNumber || '—' },
         {
           label: 'Status',
-          value:
-            order.stage === 'admin_approved' || order.status === 'approved'
-              ? 'Verified by finance'
-              : 'Awaiting finance review',
+          value: orderIsApproved(order) ? 'Verified by finance' : 'Awaiting finance review',
         },
         { label: 'Payment proof', value: proofUrl ? 'Attached' : 'None' },
       ],
     });
   }
 
-  // Cash/cheque only — Bank Transfer / GCash are never remitted by mobile sales
-  if (pipeline?.remittance && orderHasCashOrChequeToRemit(order)) {
-    const r = pipeline.remittance;
+  // Cash / cheque remittance pipeline only — skip entirely for Bank Transfer / GCash-only
+  if (hasCashOrCheque) {
+    const remittance = pipeline?.remittance;
+    const deposit = pipeline?.deposit;
+    const hasRemitted =
+      !!remittance || order.remitted === true || !!order.depositId || !!deposit;
+    // Prefer real TL bank from order mapping; fall back to raw deposit only if not a remittance stub
+    const rawDepositBank = deposit?.bankAccount || null;
+    const realDepositBank =
+      order.depositBankAccount ||
+      (rawDepositBank && !isRemittancePlaceholderBank(rawDepositBank) ? rawDepositBank : null);
+    const depositFullyRecorded = isTeamLeaderDepositRecorded(
+      realDepositBank,
+      !!(deposit || order.depositId)
+    );
+    const depositStatus = deposit?.status || order.depositStatus || null;
+    const depositVerified = depositStatus === 'verified';
+    const remittedAt = remittance?.remittedAt || order.createdAt || order.date;
+    const depositAt =
+      deposit?.updatedAt ||
+      deposit?.createdAt ||
+      (deposit?.depositDate ? `${deposit.depositDate}T00:00:00` : null) ||
+      remittedAt;
+
+    // Cumulative cash pipeline — never drop completed steps:
+    // Remitted → Pending Cash Deposit → Cash deposited → Pending Finance → Finance approved
+
+    // 1) Awaiting Remittance (current only)
+    if (!hasRemitted && stillOpen) {
+      events.push({
+        id: 'awaiting-remittance',
+        at: order.createdAt || order.date,
+        title: 'Awaiting Remittance',
+        tone: 'return',
+        detailRows: [
+          { label: 'Status', value: 'Pending Mobile Sales' },
+          { label: 'Waiting on', value: order.agentName || 'Mobile Sales' },
+          { label: 'Cash/cheque to remit', value: formatPeso(cashChequeAmount) },
+          { label: 'Payment', value: formatOrderPaymentLabel(order) },
+          { label: 'Client', value: order.clientName || '—' },
+          { label: 'Order #', value: order.orderNumber || '—' },
+          { label: 'Order total', value: formatPeso(order.total) },
+        ],
+      });
+    }
+
+    // 2) Remitted (keep forever once done)
+    if (hasRemitted) {
+      if (remittance) {
+        events.push({
+          id: 'remitted',
+          at: remittance.remittedAt,
+          title: 'Remitted',
+          tone: 'success',
+          signatureUrl: remittance.signatureUrl,
+          detailRows: [
+            { label: 'Remitted by', value: remittance.remittedByName || order.agentName || '—' },
+            { label: 'Remitted to', value: remittance.remittedToName || '—' },
+            { label: 'Date & time', value: formatWhen(remittance.remittedAt) },
+            { label: 'Remittance date', value: remittance.remittanceDate || '—' },
+            { label: 'Cash/cheque remitted', value: formatPeso(remittance.orderRemittanceAmount) },
+            { label: 'Payment', value: formatOrderPaymentLabel(order) },
+            { label: 'Client', value: order.clientName || '—' },
+            { label: 'Order #', value: order.orderNumber || '—' },
+            { label: 'Batch orders', value: String(remittance.batchOrdersCount || 0) },
+            { label: 'Batch total', value: formatPeso(remittance.batchTotalRevenue) },
+            {
+              label: 'Batch items',
+              value: `${remittance.batchItems} items · ${remittance.batchUnits} units`,
+            },
+            { label: 'Signature', value: remittance.signatureUrl ? 'Attached' : 'None' },
+          ],
+        });
+      } else {
+        events.push({
+          id: 'remitted',
+          at: remittedAt,
+          title: 'Remitted',
+          tone: 'success',
+          detailRows: [
+            { label: 'Remitted by', value: order.agentName || '—' },
+            { label: 'Date & time', value: formatWhen(remittedAt) },
+            { label: 'Cash/cheque remitted', value: formatPeso(cashChequeAmount) },
+            { label: 'Payment', value: formatOrderPaymentLabel(order) },
+            { label: 'Client', value: order.clientName || '—' },
+            { label: 'Order #', value: order.orderNumber || '—' },
+          ],
+        });
+      }
+    }
+
+    // 3) Pending Cash Deposit (current only — after remit, before TL bank deposit)
+    if (hasRemitted && !depositFullyRecorded && stillOpen) {
+      events.push({
+        id: 'pending-cash-deposit',
+        at: remittedAt,
+        title: 'Pending Cash Deposit',
+        tone: 'return',
+        detailRows: [
+          { label: 'Status', value: 'Awaiting Team Leader to deposit cash' },
+          { label: 'Waiting on', value: remittance?.remittedToName || 'Team Leader' },
+          { label: 'Agent', value: remittance?.remittedByName || order.agentName || '—' },
+          { label: 'Cash/cheque to deposit', value: formatPeso(cashChequeAmount) },
+          { label: 'Payment', value: formatOrderPaymentLabel(order) },
+          { label: 'Client', value: order.clientName || '—' },
+          { label: 'Order #', value: order.orderNumber || '—' },
+          { label: 'Remitted at', value: formatWhen(remittedAt) },
+          {
+            label: 'Deposit',
+            value: deposit
+              ? 'Remittance stub only — Team Leader has not recorded bank deposit yet'
+              : 'Not started',
+          },
+          { label: 'Deposit amount', value: formatPeso(deposit?.amount ?? cashChequeAmount) },
+        ],
+      });
+    }
+
+    // 4) Cash deposited (keep forever once TL recorded a real bank deposit)
+    if (depositFullyRecorded) {
+      const slipUrl = deposit?.depositSlipUrl || order.depositSlipUrl || null;
+      const depositDetailRows: DetailCell[] = [
+        { label: 'Recorded by', value: deposit?.recordedByName || '—' },
+        { label: 'Agent', value: deposit?.agentName || order.agentName || '—' },
+        { label: 'Date & time', value: formatWhen(depositAt) },
+        { label: 'Deposit date', value: deposit?.depositDate || '—' },
+        {
+          label: 'Cash/cheque in this order',
+          value: formatPeso(deposit?.orderRemittanceAmount ?? cashChequeAmount),
+        },
+        { label: 'Deposit amount', value: formatPeso(deposit?.amount) },
+        { label: 'Type', value: deposit?.depositType || '—' },
+        { label: 'Bank account', value: realDepositBank || '—' },
+        {
+          label: 'Reference #',
+          value:
+            (deposit?.referenceNumber &&
+            !String(deposit.referenceNumber).startsWith('REMIT-CASH-') &&
+            !String(deposit.referenceNumber).startsWith('REMIT-CHEQUE-')
+              ? deposit.referenceNumber
+              : null) ||
+            order.depositReferenceNumber ||
+            '—',
+        },
+        { label: 'Deposit status', value: formatDepositStatus(depositStatus) },
+        { label: 'Deposit slip', value: slipUrl ? 'Attached' : 'None' },
+        { label: 'Notes', value: deposit?.notes?.trim() || order.depositNotes?.trim() || '—' },
+      ];
+
+      events.push({
+        id: 'cash-deposited',
+        at: depositAt,
+        title: 'Cash deposited',
+        tone: 'success',
+        detailRows: depositDetailRows,
+        slipUrl,
+        slipLabel: 'Deposit slip',
+      });
+
+      // 5) Pending Finance (current only — after deposit, before finance approval)
+      if (stillOpen) {
+        events.push({
+          id: 'pending-finance-review',
+          at: depositAt,
+          title: 'Pending Finance Review',
+          tone: 'return',
+          detailRows: [
+            { label: 'Status', value: 'Awaiting finance verification' },
+            { label: 'Payment', value: formatOrderPaymentLabel(order) },
+            {
+              label: 'Cash/cheque in this order',
+              value: formatPeso(deposit?.orderRemittanceAmount ?? cashChequeAmount),
+            },
+            { label: 'Deposit amount', value: formatPeso(deposit?.amount) },
+            { label: 'Bank account', value: realDepositBank || '—' },
+            { label: 'Deposit status', value: formatDepositStatus(depositStatus) },
+            { label: 'Client', value: order.clientName || '—' },
+            { label: 'Order #', value: order.orderNumber || '—' },
+            {
+              label: 'Deposit verified',
+              value: depositVerified ? 'Yes' : 'Not yet — finance will verify',
+            },
+          ],
+          slipUrl,
+          slipLabel: 'Deposit slip',
+        });
+      }
+    }
+  }
+
+  // Bank Transfer / GCash / FOC waiting on finance (no cash remittance path)
+  if (
+    stillOpen &&
+    !hasCashOrCheque &&
+    (hasElectronic || Math.abs(Number(order.total) || 0) < 0.01) &&
+    (order.stage === 'finance_pending' || order.status === 'pending')
+  ) {
     events.push({
-      id: 'remitted',
-      at: r.remittedAt,
-      title: 'Remitted to team leader',
-      tone: 'success',
-      signatureUrl: r.signatureUrl,
+      id: 'pending-finance-review',
+      at: nowAt,
+      title: 'Pending Finance Review',
+      tone: 'return',
       detailRows: [
-        { label: 'Remitted by', value: r.remittedByName || order.agentName || '—' },
-        { label: 'Remitted to', value: r.remittedToName || '—' },
-        { label: 'Date & time', value: formatWhen(r.remittedAt) },
-        { label: 'Remittance date', value: r.remittanceDate || '—' },
-        { label: 'Cash/cheque remitted', value: formatPeso(r.orderRemittanceAmount) },
+        { label: 'Status', value: 'Awaiting finance verification' },
         { label: 'Payment', value: formatOrderPaymentLabel(order) },
+        {
+          label: 'Amount',
+          value: formatPeso(hasElectronic ? getOrderElectronicAmount(order) : order.total),
+        },
         { label: 'Client', value: order.clientName || '—' },
         { label: 'Order #', value: order.orderNumber || '—' },
-        { label: 'Batch orders', value: String(r.batchOrdersCount || 0) },
-        { label: 'Batch total', value: formatPeso(r.batchTotalRevenue) },
-        { label: 'Batch items', value: `${r.batchItems} items · ${r.batchUnits} units` },
-        { label: 'Signature', value: r.signatureUrl ? 'Attached' : 'None' },
+        { label: 'Submitted by', value: order.agentName || '—' },
+        {
+          label: 'Payment proof',
+          value: getOrderPaymentProofUrl(order) ? 'Attached' : 'None',
+        },
       ],
+      slipUrl: getOrderPaymentProofUrl(order),
+      slipLabel: 'Payment proof',
     });
   }
 
-  // Cash deposit only applies when this order had cash/cheque to remit
-  if (pipeline?.deposit && orderHasCashOrChequeToRemit(order)) {
-    const d = pipeline.deposit;
-    const depositAt =
-      d.createdAt ||
-      (d.depositDate ? `${d.depositDate}T00:00:00` : order.createdAt || order.date);
-    const depositDetailRows: DetailCell[] = [
-      { label: 'Recorded by', value: d.recordedByName || '—' },
-      { label: 'Agent', value: d.agentName || order.agentName || '—' },
-      { label: 'Date & time', value: formatWhen(depositAt) },
-      { label: 'Deposit date', value: d.depositDate || '—' },
-      { label: 'Cash/cheque in this order', value: formatPeso(d.orderRemittanceAmount) },
-      { label: 'Deposit amount', value: formatPeso(d.amount) },
-      { label: 'Type', value: d.depositType || '—' },
-      { label: 'Bank account', value: d.bankAccount || '—' },
-      { label: 'Reference #', value: d.referenceNumber || '—' },
-      { label: 'Status', value: d.status || '—' },
-      { label: 'Deposit slip', value: d.depositSlipUrl ? 'Attached' : 'None' },
-      { label: 'Notes', value: d.notes?.trim() || '—' },
-    ];
-
-    if (d.bankAccount) {
-      events.push({
-        id: 'deposit-recorded',
-        at: depositAt,
-        title: 'Cash deposit recorded',
-        tone: 'success',
-        detailRows: depositDetailRows,
-        slipUrl: d.depositSlipUrl,
-      });
-    } else {
-      events.push({
-        id: 'deposit-started',
-        at: depositAt,
-        title: 'Deposit started',
-        tone: 'return',
-        detailRows: depositDetailRows,
-        slipUrl: d.depositSlipUrl,
-      });
-    }
-
-    if (d.status === 'verified') {
-      events.push({
-        id: 'deposit-verified',
-        at: d.updatedAt || depositAt,
-        title: 'Cash deposit verified',
-        tone: 'success',
-        detailRows: [
-          { label: 'Verified status', value: 'verified' },
-          { label: 'Date & time', value: formatWhen(d.updatedAt || depositAt) },
-          { label: 'Deposit amount', value: formatPeso(d.amount) },
-          { label: 'Cash/cheque in this order', value: formatPeso(d.orderRemittanceAmount) },
-          { label: 'Bank account', value: d.bankAccount || '—' },
-          { label: 'Reference #', value: d.referenceNumber || '—' },
-          { label: 'Recorded by', value: d.recordedByName || '—' },
-          { label: 'Agent', value: d.agentName || order.agentName || '—' },
-        ],
-        slipUrl: d.depositSlipUrl,
-      });
-    }
-  }
-
-  if (order.stage === 'admin_approved' || order.status === 'approved') {
+  // 6) Finance approved (keep forever once done)
+  if (orderIsApproved(order)) {
     events.push({
       id: 'finance-approved',
       at: order.approvedAt || order.createdAt || order.date,
-      title: 'Approved by finance',
+      title: 'Finance approved',
       tone: 'success',
       detailRows: [
         { label: 'Approved by', value: order.approvedByName || '—' },
@@ -617,7 +795,7 @@ function buildPipelineTimelineEvents(
     });
   }
 
-  if (order.stage === 'admin_rejected' || order.stage === 'leader_rejected' || order.status === 'rejected') {
+  if (orderIsRejected(order)) {
     events.push({
       id: 'rejected',
       at: order.approvedAt || order.createdAt || order.date,
