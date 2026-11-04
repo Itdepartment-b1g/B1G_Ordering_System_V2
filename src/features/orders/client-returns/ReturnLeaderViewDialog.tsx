@@ -26,7 +26,7 @@ import {
   MultiProofPhotoField,
   type PackageProofPhotoItem,
 } from '@/features/shared/components/MultiProofPhotoField';
-import { BrandReturnedTable, groupLinesByBrand } from './ClientReturnBrandTable';
+import { BrandTypeLinesList } from './BrandTypeLinesList';
 import {
   getReturnLeaderLineQty,
   returnLeaderStatusBadgeClass,
@@ -61,19 +61,6 @@ export function ReturnLeaderViewDialog({
   const isReject = mode === 'reject';
   const isReview = isApprove || isReject;
   const qty = row ? getReturnLeaderLineQty(row) : 0;
-  const brandGroups = row
-    ? groupLinesByBrand(
-        row.lines.map((line) => ({
-          brandName: line.brandName,
-          variantName: line.variantName,
-          variantType: line.variantType,
-          quantity: line.quantity,
-          variantId: line.variantId,
-          brandId: line.brandId,
-          variantTypeId: line.variantTypeId,
-        }))
-      )
-    : [];
   const [rejectNote, setRejectNote] = useState('');
   const [photos, setPhotos] = useState<PackageProofPhotoItem[]>([]);
   const [submitterNameInput, setSubmitterNameInput] = useState('');
@@ -191,17 +178,18 @@ export function ReturnLeaderViewDialog({
                   <p className="text-sm font-semibold">
                     {isApprove ? 'Items to receive' : isReject ? 'Items in this return' : 'Items'}
                   </p>
-                  {brandGroups.length > 0 ? (
-                    brandGroups.map((group) => (
-                      <BrandReturnedTable
-                        key={group.brandName}
-                        brandName={group.brandName}
-                        variants={group.variants}
-                      />
-                    ))
-                  ) : (
-                    <p className="text-sm text-muted-foreground">No item lines on this return.</p>
-                  )}
+                  <BrandTypeLinesList
+                    lines={(row.lines || []).map((line) => ({
+                      brandName: line.brandName,
+                      variantName: line.variantName,
+                      variantType: line.variantType,
+                      quantity: line.quantity,
+                      variantId: line.variantId,
+                      brandId: line.brandId,
+                      variantTypeId: line.variantTypeId,
+                    }))}
+                    emptyMessage="No item lines on this return."
+                  />
                 </div>
 
                 {row.proofPhotos.length > 0 ? (

@@ -1,7 +1,9 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { useAppDispatch } from '@/store/store';
+import { useIsMobile } from '@/hooks/use-mobile';
 import {
   approveClientOrderReturn,
   fetchClientOrderReturns,
@@ -537,6 +539,8 @@ export type ClientReturnHistoryListProps = {
   emptyTitle?: string;
   emptyDescription?: string;
   filteredEmptyDescription?: string;
+  /** When set, mobile View navigates here; desktop still opens the dialog. */
+  getDetailHref?: (row: PreviewClientReturn) => string;
 };
 
 export function ClientReturnHistoryList({
@@ -549,12 +553,15 @@ export function ClientReturnHistoryList({
   emptyTitle = 'No client returns yet',
   emptyDescription = 'Returns filed from an approved order will show up here.',
   filteredEmptyDescription = 'Try another date, person, status, or search.',
+  getDetailHref,
 }: ClientReturnHistoryListProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const dispatch = useAppDispatch();
   const queryClient = useQueryClient();
   const { orders } = useOrders();
+  const navigate = useNavigate();
+  const isMobile = useIsMobile();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -621,6 +628,14 @@ export function ClientReturnHistoryList({
     setTimelineOpen(false);
     setActionRow(row);
     setConfirmKind('reject');
+  };
+
+  const openView = (row: PreviewClientReturn) => {
+    if (isMobile && getDetailHref) {
+      navigate(getDetailHref(row));
+      return;
+    }
+    setViewRow(row);
   };
 
   const openTimeline = (row: PreviewClientReturn) => {
@@ -1076,7 +1091,7 @@ export function ClientReturnHistoryList({
               key={row.id}
               row={row}
               canReview={canReviewClientReturn(user?.role, row)}
-              onView={() => setViewRow(row)}
+              onView={() => openView(row)}
               onOpenTimeline={() => openTimeline(row)}
               onPrint={() => handlePrintReturn(row)}
               onApprove={() => startApprove(row)}
@@ -1265,7 +1280,7 @@ export function ClientReturnHistoryList({
                           ) : null}
                           <ReturnRowMenu
                             row={row}
-                            onView={() => setViewRow(row)}
+                            onView={() => openView(row)}
                             onOpenTimeline={() => openTimeline(row)}
                             onPrint={() => handlePrintReturn(row)}
                           />

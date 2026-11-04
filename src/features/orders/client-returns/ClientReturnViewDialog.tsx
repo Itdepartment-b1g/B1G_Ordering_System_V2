@@ -37,7 +37,7 @@ import {
   getPreviewReturnLineQty,
   type PreviewClientReturn,
 } from './clientReturnPreview';
-import { BrandReturnedTable, groupLinesByBrand } from './ClientReturnBrandTable';
+import { BrandTypeLinesList } from './BrandTypeLinesList';
 import { ClientReturnExpandedMeta } from './ClientReturnExpandedMeta';
 
 type ClientReturnViewDialogProps = {
@@ -70,8 +70,6 @@ export function ClientReturnViewDialog({
   const isReview = isApprove || isReject;
   const isSaRefund = row?.returnType === 'refund' && row.status === 'pending_super_admin';
   const qty = row ? getPreviewReturnLineQty(row) : 0;
-  const brandGroups = row ? groupLinesByBrand(row.lines) : [];
-  const changeGroups = row ? groupLinesByBrand(row.changeLines || []) : [];
   const [agentNameInput, setAgentNameInput] = useState('');
   const [rejectNote, setRejectNote] = useState('');
   const [nameConfirmOpen, setNameConfirmOpen] = useState(false);
@@ -221,30 +219,17 @@ export function ClientReturnViewDialog({
                   </p>
                 ) : null}
                 <ClientReturnExpandedMeta row={row} />
-                {brandGroups.length > 0 ? (
-                  <div className="space-y-2">
-                    <p className="text-sm font-semibold">Returned</p>
-                    {brandGroups.map((group) => (
-                      <BrandReturnedTable
-                        key={`ret-${group.brandName}`}
-                        brandName={group.brandName}
-                        variants={group.variants}
-                        showStockFate
-                      />
-                    ))}
-                  </div>
-                ) : null}
-                {changeGroups.length > 0 ? (
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold">Returned</p>
+                  <BrandTypeLinesList lines={row.lines} showStockFate />
+                </div>
+                {(row.changeLines || []).length > 0 ? (
                   <div className="space-y-2">
                     <p className="text-sm font-semibold">Change item</p>
-                    {changeGroups.map((group) => (
-                      <BrandReturnedTable
-                        key={`chg-${group.brandName}`}
-                        brandName={group.brandName}
-                        variants={group.variants}
-                        qtyClassName="text-emerald-700"
-                      />
-                    ))}
+                    <BrandTypeLinesList
+                      lines={row.changeLines || []}
+                      qtyClassName="text-emerald-700"
+                    />
                   </div>
                 ) : null}
                 {skipNameConfirm && isReject ? (

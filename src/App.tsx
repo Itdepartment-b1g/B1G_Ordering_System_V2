@@ -12,7 +12,7 @@ import ExecutiveDashboardPage from "@/features/dashboard/ExecutiveDashboardPage"
 import { SystemHistoryPage } from "@/features/system-history";
 import { ProfilePage } from "@/features/profile";
 import { SystemSettingsPage } from "@/features/settings";
-import { OrdersPage, PurchaseOrdersPage, MyOrdersPage, MyOrderDetailPage, ClientOrderReturnsPage, FinanceRefundsPage, OrderProvider, PurchaseOrderProvider } from "@/features/orders";
+import { OrdersPage, PurchaseOrdersPage, MyOrdersPage, MyOrderDetailPage, ClientOrderReturnsPage, ClientOrderReturnDetailPage, ReturnLeaderDetailPage, ReturnedStockDetailPage, FinanceRefundsPage, OrderProvider, PurchaseOrderProvider } from "@/features/orders";
 import BrandsPage from "@/features/orders/BrandsPage";
 import VariantTypesPage from "@/features/orders/VariantTypesPage";
 import SuppliersPage from "@/features/orders/SuppliersPage";
@@ -321,6 +321,9 @@ const App = () => (
                     <Route path="/my-orders" element={<ProtectedRoute><MyOrdersPage /></ProtectedRoute>} />
                     <Route path="/my-orders/:orderId" element={<ProtectedRoute><MyOrderDetailPage /></ProtectedRoute>} />
                     <Route path="/client-order-returns" element={<ProtectedRoute><ClientOrderReturnsPage /></ProtectedRoute>} />
+                    <Route path="/client-order-returns/cr/:returnId" element={<ProtectedRoute><ClientOrderReturnDetailPage /></ProtectedRoute>} />
+                    <Route path="/client-order-returns/rl/:handoverId" element={<ProtectedRoute><ReturnLeaderDetailPage /></ProtectedRoute>} />
+                    <Route path="/client-order-returns/item/:variantId" element={<ProtectedRoute><ReturnedStockDetailPage /></ProtectedRoute>} />
                     <Route
                       path="/finance/refunds"
                       element={

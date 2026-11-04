@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ClipboardList, Loader2, Package, Truck } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useAppDispatch, useAppSelector } from '@/store/store';
 import { fetchClientOrderReturns } from '@/store/slices/moto-sales/client-returns';
@@ -38,6 +40,8 @@ type RlConfirmKind = 'approve' | 'reject' | null;
 export default function ClientOrderReturnsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const dispatch = useAppDispatch();
   const { hasWarehouseHubLink } = usePermissions();
   const isLeader = user?.role === 'team_leader';
@@ -257,6 +261,7 @@ export default function ClientOrderReturnsPage() {
             isLoading={isLoading}
             isError={isError}
             error={error}
+            getDetailHref={(row) => `/client-order-returns/cr/${row.id}`}
           />
         </TabsContent>
 
@@ -281,7 +286,13 @@ export default function ClientOrderReturnsPage() {
             ) : (
               <ReturnedInventoryPanel
                 rows={inventoryRows}
-                onRowClick={(row) => setInventoryRow(row)}
+                onRowClick={(row) => {
+                  if (isMobile) {
+                    navigate(`/client-order-returns/item/${row.variantId}`);
+                    return;
+                  }
+                  setInventoryRow(row);
+                }}
                 canBulkReturn={canBulkReturn}
                 companyId={user?.company_id}
                 submitterName={user?.full_name}
@@ -300,7 +311,13 @@ export default function ClientOrderReturnsPage() {
             error={rlError}
             canReviewLeader={(row) => canReviewReturnLeaderAsLeader(user?.role, row, user?.id)}
             canReviewSuperAdmin={(row) => canReviewReturnLeaderAsSuperAdmin(user?.role, row)}
-            onView={(row) => setRlViewRow(row)}
+            onView={(row) => {
+              if (isMobile) {
+                navigate(`/client-order-returns/rl/${row.id}`);
+                return;
+              }
+              setRlViewRow(row);
+            }}
             onApprove={startRlApprove}
             onReject={startRlReject}
           />
