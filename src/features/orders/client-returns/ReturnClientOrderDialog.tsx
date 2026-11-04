@@ -1,11 +1,17 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeftRight, Banknote, Camera, Check, Loader2, PenTool, RotateCcw, X } from 'lucide-react';
 import { format } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/features/auth';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { cn } from '@/lib/utils';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import {
+  createClientOrderReturn,
+  fetchChangeItemCatalog,
+  fetchPostedReturnedQty,
+} from '@/store/slices/moto-sales/client-returns';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -54,14 +60,7 @@ import {
   type ClientReturnStockFate,
   type PreviewChangeItemSku,
 } from './clientReturnPreview';
-import {
-  CLIENT_ORDER_RETURN_CHANGE_CATALOG_QUERY_KEY,
-  CLIENT_ORDER_RETURN_POSTED_QTY_QUERY_KEY,
-  CLIENT_ORDER_RETURNS_QUERY_KEY,
-  createClientOrderReturn,
-  fetchChangeItemCatalog,
-  fetchPostedReturnedQtyByItemId,
-} from './clientReturnApi';
+import { CLIENT_ORDER_RETURNS_QUERY_KEY } from './clientReturnApi';
 import { formatVariantType, variantTypeBadgeClass } from './ClientReturnBrandTable';
 
 export type ReturnClientOrderLine = {
@@ -423,6 +422,7 @@ export function ReturnClientOrderDialog({
 }: ReturnClientOrderDialogProps) {
   const { toast } = useToast();
   const { user } = useAuth();
+  const dispatch = useAppDispatch();
   const queryClient = useQueryClient();
   const captureInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -545,26 +545,37 @@ export function ReturnClientOrderDialog({
     [items]
   );
 
-  const { data: postedQtyByItemId = {} } = useQuery({
-    queryKey: [CLIENT_ORDER_RETURN_POSTED_QTY_QUERY_KEY, orderId],
-    enabled: open && !!orderId,
-    staleTime: 0,
-    refetchOnMount: 'always',
-    queryFn: () => fetchPostedReturnedQtyByItemId(orderId),
-  });
+  const postedQtyByItemId = useAppSelector(
+    (state) => state.motoClientReturns.postedQtyByOrderId[orderId] ?? {}
+  );
+  const liveChangeCatalog = useAppSelector((state) => state.motoClientReturns.changeCatalog);
 
-  const { data: liveChangeCatalog = [] } = useQuery({
-    queryKey: [
-      CLIENT_ORDER_RETURN_CHANGE_CATALOG_QUERY_KEY,
-      user?.id,
-      user?.company_id,
-      orderBrandIds.join('|'),
-    ],
-    enabled: open && wizardStarted && returnType === 'change' && !!user?.id && !!user?.company_id && orderBrandIds.length > 0,
-    staleTime: 0,
-    refetchOnMount: 'always',
-    queryFn: () => fetchChangeItemCatalog(user!.id, user!.company_id as string, orderBrandIds),
-  });
+  useEffect(() => {
+    if (!open || !orderId) return;
+    void dispatch(fetchPostedReturnedQty(orderId));
+  }, [open, orderId, dispatch]);
+
+  useEffect(() => {
+    if (
+      !open ||
+      !wizardStarted ||
+      returnType !== 'change' ||
+      !user?.id ||
+      !user?.company_id ||
+      orderBrandIds.length === 0
+    ) {
+      return;
+    }
+    void dispatch(fetchChangeItemCatalog(orderBrandIds));
+  }, [
+    open,
+    wizardStarted,
+    returnType,
+    user?.id,
+    user?.company_id,
+    orderBrandIds,
+    dispatch,
+  ]);
 
   const lines = useMemo(
     () =>
@@ -1037,33 +1048,34 @@ export function ReturnClientOrderDialog({
     setSubmitting(true);
     try {
       const isRefund = returnType === 'refund';
-      const saved = await createClientOrderReturn({
-        companyId: user.company_id,
-        clientOrderId: orderId,
-        returnDate,
-        reason: reason === 'other' ? otherReason.trim() : reason,
-        notes: notes.trim(),
-        signatureDataUrl: agentSignatureDataUrl,
-        items: selectedLines.map((line) => ({
-          clientOrderItemId: line.id,
-          quantity: quantities[line.id] || 0,
-          stockFate: stockFates[line.id] === 'restock' ? 'restock' : 'disposal',
-        })),
-        changeItems: isRefund
-          ? []
-          : selectedChangeSkus.map((sku) => ({
-              variantId: sku.id,
-              quantity: changeQuantities[sku.id] || 0,
-            })),
-        photos,
-        returnType: isRefund ? 'refund' : 'change_item',
-      });
+      const saved = await dispatch(
+        createClientOrderReturn({
+          companyId: user.company_id,
+          clientOrderId: orderId,
+          returnDate,
+          reason: reason === 'other' ? otherReason.trim() : reason,
+          notes: notes.trim(),
+          signatureDataUrl: agentSignatureDataUrl,
+          items: selectedLines.map((line) => ({
+            clientOrderItemId: line.id,
+            quantity: quantities[line.id] || 0,
+            stockFate: stockFates[line.id] === 'restock' ? 'restock' : 'disposal',
+          })),
+          changeItems: isRefund
+            ? []
+            : selectedChangeSkus.map((sku) => ({
+                variantId: sku.id,
+                quantity: changeQuantities[sku.id] || 0,
+              })),
+          photos,
+          returnType: isRefund ? 'refund' : 'change_item',
+        })
+      ).unwrap();
 
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] }),
-        queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURN_POSTED_QTY_QUERY_KEY, orderId] }),
-        queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURN_CHANGE_CATALOG_QUERY_KEY] }),
         queryClient.invalidateQueries({ queryKey: ['inventory'] }),
+        dispatch(fetchPostedReturnedQty(orderId)),
       ]);
       onSuccess?.();
 
