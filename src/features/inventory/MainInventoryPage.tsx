@@ -2844,7 +2844,6 @@ export default function MainInventoryPage() {
         />
       )}
 
-
       <VariantBatchLotsDialog
         open={!!batchViewTarget}
         onOpenChange={(open) => {

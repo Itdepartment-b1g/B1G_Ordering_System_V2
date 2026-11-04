@@ -4476,41 +4476,90 @@ export default function PurchaseOrdersPage() {
                           })()}
                         </div>
                       ) : (
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Brand</TableHead>
-                              <TableHead>Item</TableHead>
-                              <TableHead>Type</TableHead>
-                              <TableHead className="text-right">Quantity</TableHead>
-                              <TableHead className="text-right">Unit Price</TableHead>
-                              <TableHead className="text-right">Total</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {orderToView.items.map((item: any) => (
-                              <TableRow key={item.id}>
-                                <TableCell className="font-medium">{item.brand_name}</TableCell>
-                                <TableCell>{item.variant_name}</TableCell>
-                                <TableCell>
-                                  <Badge
-                                    variant="secondary"
-                                    className={
-                                      item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' :
-                                        item.variant_type === 'battery' ? 'bg-green-100 text-green-700' :
-                                          'bg-purple-100 text-purple-700'
-                                    }
-                                  >
-                                    {String(item.variant_type).toUpperCase()}
-                                  </Badge>
-                                </TableCell>
-                                <TableCell className="text-right">{item.quantity}</TableCell>
-                                <TableCell className="text-right">₱{Number(item.unit_price || 0).toFixed(2)}</TableCell>
-                                <TableCell className="text-right font-semibold">₱{Number(item.total_price || 0).toFixed(2)}</TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
+                        <div className="space-y-3 p-3">
+                          {(() => {
+                            const items = (orderToView.items || []) as any[];
+                            const byBrand: Record<string, any[]> = {};
+                            for (const it of items) {
+                              (byBrand[String(it.brand_name || 'Unknown')] ||= []).push(it);
+                            }
+                            const brandNames = Object.keys(byBrand).sort((a, b) => a.localeCompare(b));
+
+                            return brandNames.map((brand) => {
+                              const brandItems = (byBrand[brand] || []).slice().sort((a, b) => {
+                                const ta = String(a.variant_type || '');
+                                const tb = String(b.variant_type || '');
+                                if (ta !== tb) return ta.localeCompare(tb);
+                                return String(a.variant_name || '').localeCompare(String(b.variant_name || ''));
+                              });
+                              const totalQty = brandItems.reduce((sum, x) => sum + Number(x.quantity || 0), 0);
+                              const totalUnitPrice = brandItems.reduce((sum, x) => sum + Number(x.unit_price || 0), 0);
+                              const totalPrice = brandItems.reduce((sum, x) => sum + Number(x.total_price || 0), 0);
+                              const qtyByType: Record<string, number> = {};
+                              for (const item of brandItems) {
+                                const type = String(item.variant_type || 'Unknown');
+                                qtyByType[type] = (qtyByType[type] || 0) + Number(item.quantity || 0);
+                              }
+                              const typeTotals = Object.entries(qtyByType).sort((a, b) => a[0].localeCompare(b[0]));
+
+                              return (
+                                <div key={brand} className="border rounded-md overflow-hidden">
+                                  <div className="px-3 py-2 bg-muted/40">
+                                    <span className="font-semibold text-sm">{brand}</span>
+                                  </div>
+                                  <Table>
+                                    <TableHeader>
+                                      <TableRow>
+                                        <TableHead>Variant</TableHead>
+                                        <TableHead>Type</TableHead>
+                                        <TableHead className="text-right">Quantity</TableHead>
+                                        <TableHead className="text-right">Unit Price</TableHead>
+                                        <TableHead className="text-right">Total</TableHead>
+                                      </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                      {brandItems.map((item: any) => (
+                                        <TableRow key={item.id}>
+                                          <TableCell className="font-medium">{item.variant_name}</TableCell>
+                                          <TableCell>
+                                            <Badge
+                                              variant="secondary"
+                                              className={
+                                                item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' :
+                                                  item.variant_type === 'battery' ? 'bg-green-100 text-green-700' :
+                                                    'bg-purple-100 text-purple-700'
+                                              }
+                                            >
+                                              {String(item.variant_type).toUpperCase()}
+                                            </Badge>
+                                          </TableCell>
+                                          <TableCell className="text-right">{item.quantity}</TableCell>
+                                          <TableCell className="text-right">₱{Number(item.unit_price || 0).toFixed(2)}</TableCell>
+                                          <TableCell className="text-right font-semibold">₱{Number(item.total_price || 0).toFixed(2)}</TableCell>
+                                        </TableRow>
+                                      ))}
+                                      <TableRow className="bg-muted/30 font-semibold">
+                                        <TableCell colSpan={2}>Total</TableCell>
+                                        <TableCell className="text-right">{totalQty}</TableCell>
+                                        <TableCell className="text-right">₱{totalUnitPrice.toFixed(2)}</TableCell>
+                                        <TableCell className="text-right">₱{totalPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                                      </TableRow>
+                                    </TableBody>
+                                  </Table>
+                                  <div className="px-3 py-2 border-t space-y-1">
+                                    <p className="text-xs font-semibold text-muted-foreground">Variant types total</p>
+                                    {typeTotals.map(([type, qty]) => (
+                                      <div key={type} className="flex justify-between text-sm">
+                                        <span>{type.toUpperCase()}</span>
+                                        <span className="font-medium">{qty}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            });
+                          })()}
+                        </div>
                       )}
                     </div>
                   </div>
