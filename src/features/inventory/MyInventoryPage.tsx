@@ -10,7 +10,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Search, Package, ChevronDown, ArrowLeft, FileSignature, ShoppingCart, Loader2, CheckCircle2, ClipboardCheck, PackageMinus, Info, FileDown, FileSpreadsheet } from 'lucide-react';
+import { Search, Package, Boxes, Store, Layers, TriangleAlert, ChevronDown, ArrowLeft, FileSignature, ShoppingCart, Loader2, CheckCircle2, ClipboardCheck, ClipboardList, History, PackageMinus, Info, FileDown, FileSpreadsheet, type LucideIcon } from 'lucide-react';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -729,6 +729,21 @@ export default function MyInventory() {
     );
   };
 
+  const totalStocks = activeBrands.reduce((sum, brand) => sum + getTotalStock(brand), 0);
+  const totalLowStock = getLowStockCount();
+  const inventoryStats: Array<{
+    label: string;
+    value: number;
+    icon: LucideIcon;
+    alert?: boolean;
+    filter?: 'low';
+  }> = [
+    { label: 'Total Stocks', value: totalStocks, icon: Boxes },
+    { label: 'Total Brands', value: activeBrands.length, icon: Store },
+    { label: 'Total Variants', value: getTotalVariants(), icon: Layers },
+    { label: 'Total Low Stock', value: totalLowStock, icon: TriangleAlert, alert: totalLowStock > 0, filter: 'low' },
+  ];
+
   // Get items with stock > 0 to remit
   const getItemsToRemit = () => {
     const items: Array<{
@@ -1243,17 +1258,17 @@ export default function MyInventory() {
   return (
     <div className="w-full p-4 md:p-6 space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div className="flex flex-col items-stretch gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold">My Inventory</h1>
-          <p className="text-sm text-muted-foreground mt-1">Manage your stock and remittance</p>
+          <p className="mt-1 text-sm text-muted-foreground">Manage your stock and remittance</p>
         </div>
-        <div className="flex gap-2 w-full sm:w-auto">
+        <div className="flex w-full flex-col gap-2 sm:w-64 sm:shrink-0">
           {user?.role !== 'team_leader' && (
             <Button
               onClick={() => setRemitDialogOpen(true)}
               variant="default"
-              className="gap-2 flex-1 sm:flex-initial"
+              className="h-11 w-full justify-start gap-2"
               disabled={!canRemit}
             >
               <ClipboardCheck className="h-4 w-4" />
@@ -1265,13 +1280,16 @@ export default function MyInventory() {
               <Button
                 onClick={() => setReturnToMainDialogOpen(true)}
                 variant="outline"
-                className="gap-2 flex-1 sm:flex-initial"
+                className="h-11 w-full justify-start gap-2"
               >
                 <PackageMinus className="h-4 w-4" />
                 Return to Main
               </Button>
-              <Button variant="outline" className="flex-1 sm:flex-initial" asChild>
-                <Link to="/inventory/main/returns">Return to main history</Link>
+              <Button variant="outline" className="h-11 w-full justify-start gap-2" asChild>
+                <Link to="/inventory/main/returns">
+                  <History className="h-4 w-4" />
+                  Return to main history
+                </Link>
               </Button>
             </>
           ) : (
@@ -1279,7 +1297,7 @@ export default function MyInventory() {
               <Button
                 onClick={() => setReturnDialogOpen(true)}
                 variant="outline"
-                className="gap-2 flex-1 sm:flex-initial"
+                className="h-11 w-full justify-start gap-2"
                 disabled={!leaderId}
               >
                 <PackageMinus className="h-4 w-4" />
@@ -1287,86 +1305,118 @@ export default function MyInventory() {
               </Button>
               {(user?.role === 'mobile_sales' || user?.role === 'sales_agent') && (
                 <>
-                  <Button variant="outline" className="flex-1 sm:flex-initial" asChild>
-                    <Link to="/inventory/my-remittances">Remittance history</Link>
+                  <Button variant="outline" className="h-11 w-full justify-start gap-2" asChild>
+                    <Link to="/inventory/my-remittances">
+                      <ClipboardList className="h-4 w-4" />
+                      Remittance history
+                    </Link>
                   </Button>
-                  <Button variant="outline" className="flex-1 sm:flex-initial" asChild>
-                    <Link to="/inventory/my-returns">Your return history</Link>
+                  <Button variant="outline" className="h-11 w-full justify-start gap-2" asChild>
+                    <Link to="/inventory/my-returns">
+                      <History className="h-4 w-4" />
+                      Your return history
+                    </Link>
                   </Button>
                 </>
               )}
             </>
           )}
+          <Button variant="outline" className="h-11 w-full justify-start gap-2" onClick={handleExportPdf}>
+            <FileDown className="h-4 w-4" />
+            Export PDF
+          </Button>
+          <Button
+            variant="outline"
+            className="h-11 w-full justify-start gap-2"
+            onClick={() => void handleExportExcel()}
+            disabled={exportingExcel}
+          >
+            {exportingExcel ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
+            Export Excel
+          </Button>
         </div>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-sm text-muted-foreground">Brands</div>
-            <div className="text-2xl font-bold mt-1">{activeBrands.length}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-sm text-muted-foreground">Items</div>
-            <div className="text-2xl font-bold mt-1">{getTotalVariants()}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-sm text-muted-foreground">Low Stock</div>
-            <div className={`text-2xl font-bold mt-1 ${getLowStockCount() > 0 ? 'text-yellow-600' : 'text-green-600'}`}>
-              {getLowStockCount() > 0 ? getLowStockCount() : '0'}
-            </div>
-          </CardContent>
-        </Card>
+      <div className="grid grid-cols-2 gap-2">
+        {inventoryStats.map((stat) => {
+          const Icon = stat.icon;
+          const lowStockActive = stat.filter === 'low' && statusFilter === 'low';
+          const cardClass = `rounded-lg border bg-white px-3 py-3 text-left ${
+            lowStockActive ? 'border-amber-300 ring-1 ring-amber-200' : 'border-[#D5DCF3]'
+          }`;
+          const content = (
+            <>
+              <div className={`flex items-center gap-1.5 ${stat.alert ? 'text-amber-600' : 'text-[#02066F]/55'}`}>
+                <Icon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} aria-hidden />
+                <p className="text-xs font-normal leading-snug">{stat.label}</p>
+              </div>
+              <p
+                className={`mt-1 text-2xl font-semibold tabular-nums leading-none ${
+                  stat.alert ? 'text-amber-600' : 'text-[#02066F]'
+                }`}
+              >
+                {stat.value.toLocaleString()}
+              </p>
+            </>
+          );
+
+          if (stat.filter !== 'low') {
+            return (
+              <div key={stat.label} className={cardClass}>
+                {content}
+              </div>
+            );
+          }
+
+          return (
+            <button
+              key={stat.label}
+              type="button"
+              aria-pressed={lowStockActive}
+              aria-label={lowStockActive ? 'Show all inventory' : `Show ${totalLowStock} low stock variants`}
+              onClick={() => {
+                setStatusFilter((current) => (current === 'low' ? 'all' : 'low'));
+                setTypeTab('all');
+              }}
+              className={`${cardClass} focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#02066F]`}
+            >
+              {content}
+            </button>
+          );
+        })}
       </div>
 
       {/* Inventory List */}
       <Card>
         <CardHeader className="pb-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            {/* <h2 className="font-semibold">Inventory</h2> */}
-            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
-            <Button variant="outline" className="gap-2" onClick={handleExportPdf}>
-              <FileDown className="h-4 w-4" />
-              Export PDF
-            </Button>
-            <Button variant="outline" className="gap-2" onClick={() => void handleExportExcel()} disabled={exportingExcel}>
-              {exportingExcel ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
-              Export Excel
-            </Button>
-            <div className="flex w-full items-center gap-2 sm:w-auto">
-              <div className="relative min-w-0 flex-1 sm:w-64">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10"
-                  aria-label="Search inventory"
-                />
-              </div>
-              <InventoryQuickFilterSheet
-                showDate={false}
-                dateRange={ALL_TIME_DATE_RANGE}
-                onDateRangeChange={() => undefined}
-                columns={quickColumns}
-                columnClauses={columnClauses}
-                onColumnClausesChange={setColumnClauses}
-                status={statusFilter}
-                statusOptions={statusOptions}
-                onStatusChange={setStatusFilter}
-                onClear={() => {
-                  setStatusFilter('all');
-                  setColumnClauses([createQuickFilterAndClause<InventoryQuickColumn>()]);
-                }}
-                triggerClassName="h-10 shrink-0"
+          <div className="flex w-full items-center gap-2">
+            <div className="relative min-w-0 flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10"
+                aria-label="Search inventory"
               />
             </div>
-            </div>
+            <InventoryQuickFilterSheet
+              showDate={false}
+              dateRange={ALL_TIME_DATE_RANGE}
+              onDateRangeChange={() => undefined}
+              columns={quickColumns}
+              columnClauses={columnClauses}
+              onColumnClausesChange={setColumnClauses}
+              status={statusFilter}
+              statusOptions={statusOptions}
+              onStatusChange={setStatusFilter}
+              onClear={() => {
+                setStatusFilter('all');
+                setColumnClauses([createQuickFilterAndClause<InventoryQuickColumn>()]);
+              }}
+              triggerClassName="h-10 shrink-0"
+            />
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
