@@ -52,6 +52,13 @@ import {
 import { ReturnLeaderTimeline } from './ReturnLeaderTimeline';
 import { generateAndOpenReturnLeaderPdf } from './generateReturnLeaderPdf';
 
+function formatHandoverWhen(value: string | null | undefined, pattern: string): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return format(date, pattern);
+}
+
 const PAGE_SIZE: PageSize = 25;
 
 type RlQuickStatus = 'all' | ReturnLeaderStatus;
@@ -131,8 +138,9 @@ function ReturnLeaderCard({
 }) {
   const qty = getReturnLeaderLineQty(row);
   const pending = canReview && (row.status === 'pending_leader' || row.status === 'pending_super_admin');
-  const skuCount = row.lines.length;
-  const previewLines = row.lines.slice(0, 3);
+  const lines = row.lines || [];
+  const skuCount = lines.length;
+  const previewLines = lines.slice(0, 3);
 
   return (
     <div
@@ -155,7 +163,7 @@ function ReturnLeaderCard({
           </div>
           <p className="text-sm font-medium text-foreground/90 truncate">{row.submittedByName}</p>
           <p className="text-xs text-muted-foreground">
-            {format(new Date(row.createdAt), 'MMM d · h:mm a')}
+            {formatHandoverWhen(row.createdAt, 'MMM d · h:mm a')}
             <span className="mx-1.5 text-border">·</span>
             <span className="font-semibold tabular-nums text-rose-700">
               {qty} unit{qty === 1 ? '' : 's'}
@@ -197,9 +205,9 @@ function ReturnLeaderCard({
               </span>
             </div>
           ))}
-          {row.lines.length > previewLines.length ? (
+          {lines.length > previewLines.length ? (
             <p className="px-0.5 text-[11px] text-muted-foreground">
-              +{row.lines.length - previewLines.length} more
+              +{lines.length - previewLines.length} more
             </p>
           ) : null}
         </button>
@@ -505,7 +513,7 @@ export function ReturnToLeaderPanel({
                         </TableCell>
                         <TableCell className="font-medium">{row.submittedByName}</TableCell>
                         <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                          {format(new Date(row.createdAt), 'MMM d, yyyy · h:mm a')}
+                          {formatHandoverWhen(row.createdAt, 'MMM d, yyyy · h:mm a')}
                         </TableCell>
                         <TableCell>
                           <Badge

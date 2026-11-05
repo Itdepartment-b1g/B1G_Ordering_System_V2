@@ -210,7 +210,7 @@ export function formatClientReturnPeso(amount: number) {
 }
 
 export function getClientReturnRefundAmount(row: PreviewClientReturn): number {
-  return row.lines.reduce((sum, line) => {
+  return (row.lines || []).reduce((sum, line) => {
     const lineTotal = Number(line.lineTotal);
     if (Number.isFinite(lineTotal) && lineTotal > 0) return sum + lineTotal;
     return sum + (Number(line.quantity) || 0) * (Number(line.unitPrice) || 0);
@@ -221,7 +221,7 @@ export function getClientReturnStockFateQty(row: Pick<PreviewClientReturn, 'line
   restock: number;
   disposal: number;
 } {
-  return row.lines.reduce(
+  return (row.lines || []).reduce(
     (sum, line) => {
       const qty = Number(line.quantity) || 0;
       if (line.stockFate === 'restock') sum.restock += qty;
@@ -348,7 +348,7 @@ export function getPreviewReturnsForVariant(variantName: string): PreviewClientR
 }
 
 export function getPreviewReturnLineQty(row: PreviewClientReturn): number {
-  return row.lines.reduce((sum, line) => sum + line.quantity, 0);
+  return (row.lines || []).reduce((sum, line) => sum + (Number(line.quantity) || 0), 0);
 }
 
 export function getPreviewReturnsForOrder(orderNumber: string): PreviewClientReturn[] {

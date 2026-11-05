@@ -359,7 +359,7 @@ function matchesQuickColumn(
   const selected = (value || '').trim();
   if (!field || field === 'all' || !selected) return true;
   if (field === 'client') return nameEquals(row.clientName, selected);
-  if (field === 'brand') return row.lines.some((line) => nameEquals(line.brandName, selected));
+  if (field === 'brand') return (row.lines || []).some((line) => nameEquals(line.brandName, selected));
   return matchesEqualityField(
     row,
     { id: 'quick', field: field as Exclude<ClientReturnHistoryQuickColumn, 'client' | 'brand'>, operator: 'eq', value: selected },
@@ -401,7 +401,7 @@ function matchesSearch(row: PreviewClientReturn, search: string): boolean {
     row.approvedByName || '',
     row.rejectedByName || '',
     row.saApprovedByName || '',
-    ...row.lines.map((line) => `${line.brandName} ${line.variantName} ${line.stockFate || ''}`),
+    ...(row.lines || []).map((line) => `${line.brandName} ${line.variantName} ${line.stockFate || ''}`),
   ]
     .join(' ')
     .toLowerCase();
@@ -465,7 +465,7 @@ export function uniqueClientNames(rows: PreviewClientReturn[]): string[] {
 }
 
 export function uniqueBrandNames(rows: PreviewClientReturn[]): string[] {
-  return uniqueSortedNames(rows.flatMap((row) => row.lines.map((line) => line.brandName)));
+  return uniqueSortedNames(rows.flatMap((row) => (row.lines || []).map((line) => line.brandName)));
 }
 
 export function uniqueOrderNumbers(rows: PreviewClientReturn[]): string[] {
