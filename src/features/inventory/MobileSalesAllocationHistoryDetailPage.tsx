@@ -1,14 +1,16 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, Loader2 } from 'lucide-react';
+import { ArrowLeft, FileSpreadsheet, FileText, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useAuth } from '@/features/auth';
+import { supabase } from '@/lib/supabase';
 import {
-  AllocationDetailsPanel,
   formatManilaDateTime,
+  useAllocationRecordExport,
 } from '@/features/sales-agents/components/super-admin-allocation-history/table/TableRow';
+import { MobileSalesAllocationBrandList } from './components/MobileSalesAllocationBrandList';
 import {
   fetchMyLeaderAllocations,
   MOBILE_SALES_ALLOCATION_HISTORY_QUERY_KEY,
@@ -28,6 +30,20 @@ export default function MobileSalesAllocationHistoryDetailPage() {
     () => groups.find((item) => item.groupId === groupId) || null,
     [groups, groupId]
   );
+  const exports = useAllocationRecordExport(group);
+  const { data: variantTypes = [] } = useQuery({
+    queryKey: ['variant-types', user?.company_id],
+    enabled: !!user?.company_id,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('variant_types')
+        .select('name, display_name, color_code')
+        .eq('company_id', user!.company_id)
+        .eq('is_active', true);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
 
   if (isLoading) {
     return (
@@ -77,7 +93,41 @@ export default function MobileSalesAllocationHistoryDetailPage() {
         </div>
       </div>
 
-      <AllocationDetailsPanel group={group} />
+      <div className="grid grid-cols-2 gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          disabled={exports.isExporting}
+          onClick={() => void exports.onExportExcel()}
+        >
+          {exports.isExportingExcel ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <FileSpreadsheet className="mr-2 h-4 w-4" />
+          )}
+          Excel
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={exports.isExporting}
+          onClick={() => void exports.onExportPdf()}
+        >
+          {exports.isExportingPdf ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <FileText className="mr-2 h-4 w-4" />
+          )}
+          PDF
+        </Button>
+      </div>
+
+      <MobileSalesAllocationBrandList
+        isLoading={false}
+        groups={[group]}
+        variantTypes={variantTypes}
+        emptyMessage="This allocation has no product lines yet."
+      />
     </div>
   );
 }

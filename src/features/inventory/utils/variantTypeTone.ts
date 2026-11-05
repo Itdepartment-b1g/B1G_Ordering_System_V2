@@ -12,6 +12,8 @@ export type VariantTypeTone = {
   pill: string;
   accent: string;
   muted: string;
+  /** Visible border for small stat boxes, still from the saved color token. */
+  statBorder: string;
 };
 
 const NEUTRAL: VariantTypeTone = {
@@ -23,6 +25,7 @@ const NEUTRAL: VariantTypeTone = {
   pill: 'bg-white text-[#02066F] ring-[#02066F]/10',
   accent: 'bg-[#02066F]',
   muted: 'text-[#02066F]/55',
+  statBorder: 'border-[#02066F]/35',
 };
 
 const TONES: Record<string, VariantTypeTone> = {
@@ -35,6 +38,7 @@ const TONES: Record<string, VariantTypeTone> = {
     pill: 'bg-blue-100 text-blue-800 ring-blue-200',
     accent: 'bg-blue-700',
     muted: 'text-blue-800/60',
+    statBorder: 'border-blue-400',
   },
   green: {
     section: 'bg-green-50/80',
@@ -45,6 +49,7 @@ const TONES: Record<string, VariantTypeTone> = {
     pill: 'bg-green-100 text-green-800 ring-green-200',
     accent: 'bg-green-700',
     muted: 'text-green-800/60',
+    statBorder: 'border-green-400',
   },
   purple: {
     section: 'bg-purple-50/80',
@@ -55,6 +60,7 @@ const TONES: Record<string, VariantTypeTone> = {
     pill: 'bg-purple-100 text-purple-800 ring-purple-200',
     accent: 'bg-purple-700',
     muted: 'text-purple-800/60',
+    statBorder: 'border-purple-400',
   },
   orange: {
     section: 'bg-orange-50/80',
@@ -65,6 +71,7 @@ const TONES: Record<string, VariantTypeTone> = {
     pill: 'bg-orange-100 text-orange-800 ring-orange-200',
     accent: 'bg-orange-700',
     muted: 'text-orange-800/60',
+    statBorder: 'border-orange-400',
   },
   red: {
     section: 'bg-red-50/80',
@@ -75,6 +82,7 @@ const TONES: Record<string, VariantTypeTone> = {
     pill: 'bg-red-100 text-red-800 ring-red-200',
     accent: 'bg-red-700',
     muted: 'text-red-800/60',
+    statBorder: 'border-red-400',
   },
   yellow: {
     section: 'bg-yellow-50/90',
@@ -85,6 +93,7 @@ const TONES: Record<string, VariantTypeTone> = {
     pill: 'bg-yellow-100 text-yellow-900 ring-yellow-200',
     accent: 'bg-yellow-600',
     muted: 'text-yellow-900/60',
+    statBorder: 'border-yellow-500',
   },
   pink: {
     section: 'bg-pink-50/80',
@@ -95,6 +104,7 @@ const TONES: Record<string, VariantTypeTone> = {
     pill: 'bg-pink-100 text-pink-800 ring-pink-200',
     accent: 'bg-pink-700',
     muted: 'text-pink-800/60',
+    statBorder: 'border-pink-400',
   },
   indigo: {
     section: 'bg-indigo-50/80',
@@ -105,6 +115,7 @@ const TONES: Record<string, VariantTypeTone> = {
     pill: 'bg-indigo-100 text-indigo-800 ring-indigo-200',
     accent: 'bg-indigo-700',
     muted: 'text-indigo-800/60',
+    statBorder: 'border-indigo-400',
   },
   gray: {
     section: 'bg-gray-50',
@@ -115,6 +126,7 @@ const TONES: Record<string, VariantTypeTone> = {
     pill: 'bg-gray-100 text-gray-800 ring-gray-200',
     accent: 'bg-gray-600',
     muted: 'text-gray-700/70',
+    statBorder: 'border-gray-400',
   },
 };
 

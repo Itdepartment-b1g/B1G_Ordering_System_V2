@@ -183,9 +183,9 @@ type QuickFilterSheetProps<TColumn extends string, TStatus extends string> = {
   columns: QuickFilterColumn<TColumn>[];
   columnClauses: QuickFilterAndClause<TColumn>[];
   onColumnClausesChange: (clauses: QuickFilterAndClause<NoInfer<TColumn>>[]) => void;
-  status: TStatus;
-  statusOptions: Array<{ value: TStatus; label: string; count?: number }>;
-  onStatusChange: (value: NoInfer<TStatus>) => void;
+  status?: TStatus;
+  statusOptions?: Array<{ value: TStatus; label: string; count?: number }>;
+  onStatusChange?: (value: NoInfer<TStatus>) => void;
   extraSelects?: QuickFilterExtraSelect[];
   onClear: () => void;
   title?: string;
@@ -193,6 +193,7 @@ type QuickFilterSheetProps<TColumn extends string, TStatus extends string> = {
   triggerLabel?: string;
   triggerClassName?: string;
   showDate?: boolean;
+  showStatus?: boolean;
 };
 
 export function QuickFilterSheet<TColumn extends string, TStatus extends string>({
@@ -211,13 +212,16 @@ export function QuickFilterSheet<TColumn extends string, TStatus extends string>
   triggerLabel = 'Quick Filter',
   triggerClassName,
   showDate = true,
+  showStatus = true,
 }: QuickFilterSheetProps<TColumn, TStatus>) {
   const [open, setOpen] = useState(false);
   const rows = columnClauses.length > 0 ? columnClauses : [createQuickFilterAndClause<TColumn>()];
   const dateActive = showDate && dateRange.preset !== 'all';
   const columnActiveCount = countActiveQuickFilterAndClauses(rows);
-  const idleStatus = statusOptions[0]?.value;
-  const statusActive = Boolean(idleStatus && status !== idleStatus);
+  const statusList = statusOptions ?? [];
+  const idleStatus = statusList[0]?.value;
+  const showStatusSection = showStatus && status !== undefined && Boolean(onStatusChange);
+  const statusActive = showStatusSection && Boolean(idleStatus && status !== idleStatus);
   const extraActiveCount = extraSelects.filter((select) => {
     const idle = select.options[0]?.value;
     return Boolean(idle && select.value !== idle);
@@ -364,21 +368,23 @@ export function QuickFilterSheet<TColumn extends string, TStatus extends string>
               </Button>
             </div>
           </FilterSection>
-          <FilterSection title="Status">
-            <Select value={status} onValueChange={(next) => onStatusChange(next as TStatus)}>
-              <SelectTrigger className="h-9 w-full">
-                <SelectValue placeholder="Select status" />
-              </SelectTrigger>
-              <SelectContent className="z-[80]">
-                {statusOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                    {option.count != null ? ` (${option.count})` : ''}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </FilterSection>
+          {showStatusSection ? (
+            <FilterSection title="Status">
+              <Select value={status} onValueChange={(next) => onStatusChange?.(next as TStatus)}>
+                <SelectTrigger className="h-9 w-full">
+                  <SelectValue placeholder="Select status" />
+                </SelectTrigger>
+                <SelectContent className="z-[80]">
+                  {statusList.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                      {option.count != null ? ` (${option.count})` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FilterSection>
+          ) : null}
           {extraSelects.map((select) => (
             <FilterSection key={select.title} title={select.title}>
               <Select value={select.value} onValueChange={select.onChange}>

@@ -107,7 +107,7 @@ function groupLinesByBrand(lines: AllocationHistoryGroup['lines']) {
     });
 }
 
-function useAllocationRecordExport(group: AllocationHistoryGroup | null) {
+export function useAllocationRecordExport(group: AllocationHistoryGroup | null) {
   const { toast } = useToast();
   const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
