@@ -1,21 +1,28 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
 import {
   AlertCircle,
   CalendarIcon,
+  ChevronDown,
   Eye,
   FileSignature,
   Loader2,
+  MoreVertical,
   Package,
+  Printer,
   Receipt,
-  ShoppingCart,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Calendar } from '@/components/ui/calendar';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -34,17 +41,61 @@ import {
   ListPagination,
   type PageSize,
 } from '@/features/shared/components/ListPagination';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import { exportMyRemittancesPdf, type RemittancePdfDocument } from './utils/exportMyRemittancesPdf';
+import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/features/auth';
 import { useAppDispatch, useAppSelector } from '@/store/store';
+import { motoSalesRequest } from '@/store/slices/moto-sales/api';
 import {
   clearMyRemittanceDetail,
   fetchMyRemittanceDetail,
   fetchMyRemittances,
+  type AgentRemittanceDetail,
   type AgentRemittanceSummary,
 } from '@/store/slices/moto-sales/remittances';
 import { cn } from '@/lib/utils';
 
 function formatMoney(amount: number) {
   return `₱${amount.toLocaleString()}`;
+}
+
+type RemittanceSortKey =
+  | 'remittanceNumber'
+  | 'remittedAt'
+  | 'items'
+  | 'orders'
+  | 'remitted'
+  | 'signature';
+
+const DEFAULT_REMITTANCE_SORT_KEY: RemittanceSortKey = 'remittedAt';
+
+function compareRemittances(
+  a: AgentRemittanceSummary,
+  b: AgentRemittanceSummary,
+  key: RemittanceSortKey
+) {
+  switch (key) {
+    case 'remittanceNumber':
+      return remittanceNumberOf(a).localeCompare(remittanceNumberOf(b));
+    case 'remittedAt':
+      return new Date(a.remittedAt).getTime() - new Date(b.remittedAt).getTime();
+    case 'items':
+      return a.itemsRemitted - b.itemsRemitted;
+    case 'orders':
+      return a.ordersCount - b.ordersCount;
+    case 'remitted':
+      return a.remittedAmount - b.remittedAmount;
+    case 'signature':
+      return Number(a.hasSignature) - Number(b.hasSignature);
+  }
 }
 
 /** Fallback if an older API response has no remittanceNumber yet. */
@@ -62,14 +113,29 @@ function remittanceNumberOf(row: { id: string; remittanceNumber?: string; remitt
 
 function RemittanceDetailBody({
   compact,
+  remittanceId,
+  embedded,
 }: {
   compact?: boolean;
+  remittanceId?: string;
+  /** Skip the summary already shown on an accordion row. */
+  embedded?: boolean;
 }) {
   const detail = useAppSelector((s) => s.motoRemittances.selectedDetail);
   const detailStatus = useAppSelector((s) => s.motoRemittances.detailStatus);
   const detailError = useAppSelector((s) => s.motoRemittances.detailError);
+  const detailMatches = !remittanceId || detail?.id === remittanceId;
 
-  if (detailStatus === 'loading') {
+  if (detailStatus === 'failed' && detailError && !detailMatches) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-2 py-10 text-destructive">
+        <AlertCircle className="h-6 w-6" />
+        <p className="text-sm text-center">{detailError}</p>
+      </div>
+    );
+  }
+
+  if (detailStatus === 'loading' || !detailMatches) {
     return (
       <div className="flex flex-col items-center justify-center gap-2 py-10 text-muted-foreground">
         <Loader2 className="h-6 w-6 animate-spin" />
@@ -93,11 +159,16 @@ function RemittanceDetailBody({
     );
   }
 
+  const cashChequeOrders = detail.orders.filter(
+    (order) => order.cashPortion > 0 || order.chequePortion > 0
+  );
+
   const textXs = compact ? 'text-[10px]' : 'text-xs';
   const titleSm = compact ? 'text-xs' : 'text-sm';
 
   return (
     <div className="space-y-4">
+      {embedded ? null : (
       <div className={cn('grid grid-cols-2 gap-2 rounded-lg bg-muted p-3', textXs)}>
         <div className="col-span-2">
           <p className="text-muted-foreground">Remittance #</p>
@@ -119,7 +190,7 @@ function RemittanceDetailBody({
         </div>
         <div>
           <p className="text-muted-foreground">Orders</p>
-          <p className={cn('font-semibold', titleSm)}>{detail.ordersCount}</p>
+          <p className={cn('font-semibold', titleSm)}>{cashChequeOrders.length}</p>
         </div>
         <div>
           <p className="text-muted-foreground">Cash + Cheque</p>
@@ -128,11 +199,12 @@ function RemittanceDetailBody({
           </p>
         </div>
       </div>
+      )}
 
       <Tabs defaultValue="orders" className="w-full">
         <TabsList className="grid h-auto w-full grid-cols-2">
           <TabsTrigger value="orders" className={cn(compact && 'text-[10px] py-2')}>
-            Orders ({detail.ordersCount})
+            Orders ({cashChequeOrders.length})
           </TabsTrigger>
           <TabsTrigger value="signature" className={cn(compact && 'text-[10px] py-2')}>
             Signature
@@ -140,12 +212,12 @@ function RemittanceDetailBody({
         </TabsList>
 
         <TabsContent value="orders" className="space-y-3">
-          {detail.orders.length === 0 ? (
+          {cashChequeOrders.length === 0 ? (
             <div className="rounded-lg border py-8 text-center text-sm text-muted-foreground">
-              No orders in this remittance
+              No cash or cheque orders in this remittance
             </div>
           ) : (
-            detail.orders.map((order) => (
+            cashChequeOrders.map((order) => (
               <div key={order.orderId} className="rounded-lg border p-3 space-y-2">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
@@ -213,6 +285,8 @@ function RemittanceDetailBody({
 
 export default function MyRemittancesPage() {
   const dispatch = useAppDispatch();
+  const { toast } = useToast();
+  const { user } = useAuth();
   const items = useAppSelector((s) => s.motoRemittances.items);
   const listStatus = useAppSelector((s) => s.motoRemittances.listStatus);
   const listError = useAppSelector((s) => s.motoRemittances.listError);
@@ -221,7 +295,11 @@ export default function MyRemittancesPage() {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [viewOpen, setViewOpen] = useState(false);
+  const [openId, setOpenId] = useState<string>('');
   const [isMobile, setIsMobile] = useState(false);
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<RemittanceSortKey>>(createInitialTableSortCycle);
+  const [isPrinting, setIsPrinting] = useState(false);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -234,17 +312,132 @@ export default function MyRemittancesPage() {
     const date = selectedDate ? format(selectedDate, 'yyyy-MM-dd') : undefined;
     void dispatch(fetchMyRemittances({ date }));
     setPage(0);
+    setOpenId('');
+    dispatch(clearMyRemittanceDetail());
   }, [dispatch, selectedDate]);
 
+  const cashChequeItems = useMemo(
+    () => items.filter((row) => row.remittedAmount > 0),
+    [items]
+  );
+
+  const { key: sortKey, direction: sortDirection } = useMemo(
+    () => resolveTableSortDirection(sortState, DEFAULT_REMITTANCE_SORT_KEY, 'desc'),
+    [sortState]
+  );
+
+  const sortedItems = useMemo(() => {
+    const next = [...cashChequeItems];
+    next.sort((a, b) => {
+      const compared = compareRemittances(a, b, sortKey);
+      return sortDirection === 'asc' ? compared : -compared;
+    });
+    return next;
+  }, [cashChequeItems, sortKey, sortDirection]);
+
   const { pagedItems, safePage, pageCount } = useMemo(
-    () => getListPaginationSlice(items, page, pageSize),
-    [items, page, pageSize]
+    () => getListPaginationSlice(sortedItems, page, pageSize),
+    [sortedItems, page, pageSize]
   );
 
   const openDetail = (row: AgentRemittanceSummary) => {
     setViewOpen(true);
     void dispatch(fetchMyRemittanceDetail(row.id));
   };
+
+  const toggleRow = (id: string) => {
+    setOpenId((current) => {
+      const next = current === id ? '' : id;
+      if (next) void dispatch(fetchMyRemittanceDetail(next));
+      else dispatch(clearMyRemittanceDetail());
+      return next;
+    });
+  };
+
+  const handleSort = (key: RemittanceSortKey) => {
+    setSortState((current) => getNextTableSortCycleState(current, key));
+    setPage(0);
+    setOpenId('');
+    dispatch(clearMyRemittanceDetail());
+  };
+
+  const printRows = async (rows: AgentRemittanceSummary[]) => {
+    if (rows.length === 0 || isPrinting) return;
+    try {
+      setIsPrinting(true);
+      const remittedBy = user?.full_name?.trim() || user?.email || 'You';
+      const documents = await Promise.all(
+        rows.map(async (row): Promise<RemittancePdfDocument> => {
+          const body = await motoSalesRequest<{ remittance: AgentRemittanceDetail }>('remittances', {
+            params: { resource: 'detail', id: row.id },
+          });
+          const detail = body.remittance;
+          const cashChequeOrders = detail.orders.filter(
+            (order) => order.cashPortion > 0 || order.chequePortion > 0
+          );
+          return {
+            remittanceNumber: remittanceNumberOf(row),
+            remittedBy,
+            remittedAt: detail.remittedAt,
+            ordersCount: cashChequeOrders.length,
+            remittedAmount: cashChequeOrders.reduce((sum, order) => sum + order.remittedAmount, 0),
+            lines: cashChequeOrders.flatMap((order) =>
+              order.items.map((item) => ({
+                orderNumber: order.orderNumber,
+                brandName: item.brandName,
+                variantName: item.variantName,
+                quantity: item.quantity,
+              }))
+            ),
+          };
+        })
+      );
+      exportMyRemittancesPdf(documents);
+    } catch (error) {
+      toast({
+        title: 'Print failed',
+        description: error instanceof Error ? error.message : 'Could not open the remittance PDF.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsPrinting(false);
+    }
+  };
+
+  const viewRow = (row: AgentRemittanceSummary) => {
+    if (isMobile) {
+      openDetail(row);
+      return;
+    }
+    toggleRow(row.id);
+  };
+
+  const renderActions = (row: AgentRemittanceSummary) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          aria-label="Remittance actions"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <MoreVertical className="h-4 w-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-40" onClick={(event) => event.stopPropagation()}>
+        <DropdownMenuItem onSelect={() => viewRow(row)}>
+          <Eye className="mr-2 h-4 w-4" />
+          View details
+        </DropdownMenuItem>
+        <DropdownMenuItem disabled={isPrinting} onSelect={() => void printRows([row])}>
+          <Printer className="mr-2 h-4 w-4" />
+          Print
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 
   const closeDetail = (open: boolean) => {
     setViewOpen(open);
@@ -265,6 +458,19 @@ export default function MyRemittancesPage() {
         <div className="flex w-full gap-2 sm:w-auto">
           <Button variant="outline" className="flex-1 sm:flex-initial" asChild>
             <Link to="/my-inventory">Back to inventory</Link>
+          </Button>
+          <Button
+            variant="outline"
+            className="flex-1 sm:flex-initial"
+            disabled={sortedItems.length === 0 || isPrinting}
+            onClick={() => void printRows(sortedItems)}
+          >
+            {isPrinting ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Printer className="mr-2 h-4 w-4" />
+            )}
+            Print PDF
           </Button>
           <Popover>
             <PopoverTrigger asChild>
@@ -309,7 +515,7 @@ export default function MyRemittancesPage() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Batches</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{items.length}</div>
+            <div className="text-2xl font-bold">{cashChequeItems.length}</div>
           </CardContent>
         </Card>
         <Card>
@@ -318,7 +524,7 @@ export default function MyRemittancesPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {items.reduce((sum, r) => sum + r.ordersCount, 0)}
+              {cashChequeItems.reduce((sum, r) => sum + r.ordersCount, 0)}
             </div>
           </CardContent>
         </Card>
@@ -330,7 +536,7 @@ export default function MyRemittancesPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-green-700">
-              {formatMoney(items.reduce((sum, r) => sum + r.remittedAmount, 0))}
+              {formatMoney(cashChequeItems.reduce((sum, r) => sum + r.remittedAmount, 0))}
             </div>
           </CardContent>
         </Card>
@@ -367,7 +573,7 @@ export default function MyRemittancesPage() {
                 Retry
               </Button>
             </div>
-          ) : items.length === 0 ? (
+          ) : cashChequeItems.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
               <Package className="h-10 w-10 opacity-20" />
               <p className="font-medium">No remittances yet</p>
@@ -379,93 +585,154 @@ export default function MyRemittancesPage() {
           ) : (
             <>
               <div className="hidden md:block overflow-x-auto">
-                <Table>
+                <Table className="min-w-[960px]">
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Remittance #</TableHead>
-                      <TableHead>Date & time</TableHead>
-                      <TableHead className="text-right">Items</TableHead>
-                      <TableHead className="text-right">Orders</TableHead>
-                      <TableHead className="text-right">Remitted</TableHead>
-                      <TableHead>Signature</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                      <TableHead className="w-10" />
+                      <SortableTableHead
+                        label="Remittance #"
+                        sortKey="remittanceNumber"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'remittanceNumber')}
+                        onSort={handleSort}
+                        className="whitespace-nowrap"
+                      />
+                      <SortableTableHead
+                        label="Date & time"
+                        sortKey="remittedAt"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'remittedAt')}
+                        onSort={handleSort}
+                        className="whitespace-nowrap"
+                      />
+                      <SortableTableHead
+                        label="Items"
+                        sortKey="items"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'items')}
+                        onSort={handleSort}
+                        className="text-right whitespace-nowrap"
+                      />
+                      <SortableTableHead
+                        label="Orders"
+                        sortKey="orders"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'orders')}
+                        onSort={handleSort}
+                        className="text-right whitespace-nowrap"
+                      />
+                      <SortableTableHead
+                        label="Remitted"
+                        sortKey="remitted"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'remitted')}
+                        onSort={handleSort}
+                        className="text-right whitespace-nowrap"
+                      />
+                      <SortableTableHead
+                        label="Signature"
+                        sortKey="signature"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'signature')}
+                        onSort={handleSort}
+                        className="whitespace-nowrap"
+                      />
+                      <TableHead className="w-12 text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {pagedItems.map((row) => (
-                      <TableRow key={row.id}>
-                        <TableCell>
-                          <div className="font-mono text-sm font-medium tracking-tight">
-                            {remittanceNumberOf(row)}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="font-medium">
-                            {format(new Date(row.remittedAt), 'MMM dd, yyyy')}
-                          </div>
-                          <div className="text-sm text-muted-foreground">
-                            {format(new Date(row.remittedAt), 'hh:mm a')}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="text-sm font-semibold">{row.itemsRemitted} items</div>
-                          <div className="text-xs text-muted-foreground">{row.totalUnits} units</div>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Badge variant="secondary">{row.ordersCount}</Badge>
-                        </TableCell>
-                        <TableCell className="text-right font-semibold">
-                          {formatMoney(row.remittedAmount)}
-                        </TableCell>
-                        <TableCell>
-                          {row.hasSignature ? (
-                            <Badge className="bg-green-100 text-green-800 hover:bg-green-100">
-                              Signed
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline">None</Badge>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button variant="ghost" size="sm" onClick={() => openDetail(row)}>
-                            <Eye className="mr-1 h-4 w-4" />
-                            View
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {pagedItems.map((row) => {
+                      const isOpen = openId === row.id;
+                      return (
+                        <Fragment key={row.id}>
+                          <TableRow
+                            className="cursor-pointer"
+                            onClick={() => toggleRow(row.id)}
+                          >
+                            <TableCell>
+                              <ChevronDown
+                                className={cn(
+                                  'h-4 w-4 text-muted-foreground transition-transform',
+                                  isOpen && 'rotate-180'
+                                )}
+                              />
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap font-mono text-sm font-medium">
+                              {remittanceNumberOf(row)}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap">
+                              <div className="font-medium">
+                                {format(new Date(row.remittedAt), 'MMM dd, yyyy')}
+                              </div>
+                              <div className="text-sm text-muted-foreground">
+                                {format(new Date(row.remittedAt), 'hh:mm a')}
+                              </div>
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap text-right">
+                              <div className="text-sm font-semibold">{row.itemsRemitted} items</div>
+                              <div className="text-xs text-muted-foreground">{row.totalUnits} units</div>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Badge variant="secondary">{row.ordersCount}</Badge>
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap text-right font-semibold">
+                              {formatMoney(row.remittedAmount)}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap">
+                              {row.hasSignature ? (
+                                <Badge className="bg-green-100 text-green-800 hover:bg-green-100">
+                                  Signed
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline">None</Badge>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right">{renderActions(row)}</TableCell>
+                          </TableRow>
+                          {isOpen ? (
+                            <TableRow>
+                              <TableCell colSpan={8} className="bg-muted/20">
+                                <RemittanceDetailBody remittanceId={row.id} embedded />
+                              </TableCell>
+                            </TableRow>
+                          ) : null}
+                        </Fragment>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>
 
               <div className="space-y-2 p-3 md:hidden">
                 {pagedItems.map((row) => (
-                  <button
+                  <div
                     key={row.id}
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                     onClick={() => openDetail(row)}
-                    className="w-full rounded-lg border p-3 text-left transition hover:bg-muted/40"
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        openDetail(row);
+                      }
+                    }}
+                    className="w-full cursor-pointer rounded-lg border p-3 text-left transition hover:bg-muted/40"
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="font-mono text-sm font-medium tracking-tight truncate">
+                        <p className="truncate font-mono text-sm font-medium tracking-tight">
                           {remittanceNumberOf(row)}
                         </p>
                         <p className="text-xs text-muted-foreground">
                           {format(new Date(row.remittedAt), 'MMM dd, yyyy')} ·{' '}
                           {format(new Date(row.remittedAt), 'hh:mm a')} · {row.ordersCount} orders
                         </p>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-semibold text-green-700">
+                        <p className="mt-1 font-semibold text-green-700">
                           {formatMoney(row.remittedAmount)}
                         </p>
-                        {row.hasSignature && (
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        {row.hasSignature ? (
                           <p className="text-[10px] text-muted-foreground">Signed</p>
-                        )}
+                        ) : null}
+                        {renderActions(row)}
                       </div>
                     </div>
-                  </button>
+                  </div>
                 ))}
               </div>
 
@@ -477,9 +744,16 @@ export default function MyRemittancesPage() {
                   onPageSizeChange={(value) => {
                     setPageSize(value);
                     setPage(0);
+                    setOpenId('');
                   }}
-                  onPrevious={() => setPage((current) => Math.max(0, current - 1))}
-                  onNext={() => setPage((current) => Math.min(pageCount - 1, current + 1))}
+                  onPrevious={() => {
+                    setOpenId('');
+                    setPage((current) => Math.max(0, current - 1));
+                  }}
+                  onNext={() => {
+                    setOpenId('');
+                    setPage((current) => Math.min(pageCount - 1, current + 1));
+                  }}
                 />
               </div>
             </>
@@ -503,20 +777,7 @@ export default function MyRemittancesPage() {
             </ScrollArea>
           </SheetContent>
         </Sheet>
-      ) : (
-        <Dialog open={viewOpen} onOpenChange={closeDetail}>
-          <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <ShoppingCart className="h-5 w-5" />
-                Remittance details
-              </DialogTitle>
-              <DialogDescription>Cash and cheque orders in this batch</DialogDescription>
-            </DialogHeader>
-            <RemittanceDetailBody />
-          </DialogContent>
-        </Dialog>
-      )}
+      ) : null}
     </div>
   );
 }

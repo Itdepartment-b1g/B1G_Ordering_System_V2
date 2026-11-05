@@ -136,12 +136,10 @@ export default function MobileSalesReturnHistoryDetailPage() {
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         {statusBadge(row.status)}
-        {row.status === 'approved' ? (
-          <Button type="button" variant="outline" onClick={printReturn}>
-            <Printer className="mr-2 h-4 w-4" />
-            Print
-          </Button>
-        ) : null}
+        <Button type="button" variant="outline" onClick={printReturn}>
+          <Printer className="mr-2 h-4 w-4" />
+          Print
+        </Button>
       </div>
 
       {row.reason.trim() ? <p className="text-sm text-muted-foreground">{row.reason.trim()}</p> : null}

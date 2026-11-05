@@ -365,12 +365,15 @@ export function AllocationHistoryMobileList({
   groups,
   emptyMessage,
   getDetailHref,
+  highlightDate = false,
 }: {
   isLoading: boolean;
   groups: AllocationHistoryGroup[];
   emptyMessage: string;
   /** When set, View details navigates here instead of opening a dialog. */
   getDetailHref?: (group: AllocationHistoryGroup) => string;
+  /** Show the date bold and larger, above the brand. */
+  highlightDate?: boolean;
 }) {
   const navigate = useNavigate();
   const [detail, setDetail] = useState<AllocationHistoryGroup | null>(null);
@@ -419,9 +422,16 @@ export function AllocationHistoryMobileList({
           >
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium">{group.brandName ?? 'Allocation'}</p>
+                {highlightDate ? (
+                  <p className="text-base font-bold">{formatManilaDateTime(group.createdAt)}</p>
+                ) : null}
+                <p className={`truncate text-sm font-medium ${highlightDate ? 'mt-1' : ''}`}>
+                  {group.brandName ?? 'Allocation'}
+                </p>
                 <p className="mt-1 truncate text-xs text-muted-foreground">From {group.allocatedByName}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{formatManilaDateTime(group.createdAt)}</p>
+                {highlightDate ? null : (
+                  <p className="mt-1 text-xs text-muted-foreground">{formatManilaDateTime(group.createdAt)}</p>
+                )}
                 <p className="mt-1 text-xs">
                   {group.totalQuantity.toLocaleString()} units
                   {group.lineCount > 0 ? ` · ${group.lineCount} products` : ''}

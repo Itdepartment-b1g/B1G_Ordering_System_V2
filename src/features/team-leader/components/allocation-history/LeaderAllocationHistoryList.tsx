@@ -282,6 +282,7 @@ export default function LeaderAllocationHistoryList() {
               groups={pagedGroups}
               emptyMessage="No allocation history yet."
               getDetailHref={(group) => `/leader-allocation-history/${group.groupId}`}
+              highlightDate
             />
           </div>
           <div className="hidden md:block">
