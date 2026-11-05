@@ -35,7 +35,21 @@ export default function DashboardPage() {
   const isAdmin = user?.role === 'admin';
   const isLeader = user?.role === 'team_leader';
   const isAgent = user?.role === 'sales_agent' || user?.role === 'mobile_sales';
+  const isMobileSales = user?.role === 'mobile_sales';
   const isFinance = user?.role === 'finance' || user?.role === 'accounting';
+  const statHeader = cn(
+    'flex flex-row items-center justify-between space-y-0 pb-2',
+    isMobileSales && 'max-md:px-3 max-md:pt-3 max-md:pb-1.5'
+  );
+  const statHeaderStart = cn(
+    'flex flex-row items-start justify-between space-y-0 pb-2',
+    isMobileSales && 'max-md:px-3 max-md:pt-3 max-md:pb-1.5'
+  );
+  const statBody = cn(isMobileSales && 'max-md:px-3 max-md:pb-3 max-md:pt-0');
+  const statValue = cn(
+    'font-bold',
+    isMobileSales ? 'text-lg leading-tight md:text-2xl' : 'text-xl md:text-2xl'
+  );
 
   const pendingRemittance = useAppSelector((s) => s.motoRemittances.pending);
   const pendingRemittanceStatus = useAppSelector((s) => s.motoRemittances.pendingStatus);
@@ -599,65 +613,89 @@ export default function DashboardPage() {
         <FinanceDashboard />
       ) : (
         <>
-          {/* Agent Stats */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          {/* Agent Stats.
+              Mobile sales on a phone: one 2-column grid so sales figures lead.
+              To Remit spans both columns because it carries an amount and an action.
+              Tablet and up keep the original rows. */}
+          <div
+            className={cn(
+              isMobileSales
+                ? 'max-md:grid max-md:grid-cols-2 max-md:gap-3 md:space-y-4 lg:space-y-6'
+                : 'space-y-4 md:space-y-6'
+            )}
+          >
+          <div
+            className={cn(
+              'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4',
+              isMobileSales && 'max-md:contents'
+            )}
+          >
+            <Card className={cn(isMobileSales && 'max-md:order-6')}>
+              <CardHeader className={statHeader}>
                 <CardTitle className="text-sm font-medium">My Orders</CardTitle>
                 <ShoppingCart className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
-              <CardContent>
-                <div className="text-xl md:text-2xl font-bold">{myOrders}</div>
+              <CardContent className={statBody}>
+                <div className={statValue}>{myOrders}</div>
                 <p className="text-xs text-muted-foreground mt-1">Total orders placed</p>
               </CardContent>
             </Card>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <Card className={cn(isMobileSales && 'max-md:order-7')}>
+              <CardHeader className={statHeader}>
                 <CardTitle className="text-sm font-medium">My Clients</CardTitle>
                 <Users className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
-              <CardContent>
-                <div className="text-xl md:text-2xl font-bold">{myClients}</div>
+              <CardContent className={statBody}>
+                <div className={statValue}>{myClients}</div>
                 <p className="text-xs text-muted-foreground mt-1">Total clients</p>
               </CardContent>
             </Card>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <Card className={cn(isMobileSales && 'max-md:order-1')}>
+              <CardHeader className={statHeader}>
                 <CardTitle className="text-sm font-medium">Overall Sales</CardTitle>
                 <DollarSign className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
-              <CardContent>
-                <div className="text-xl md:text-2xl font-bold">₱{overallSales.toLocaleString()}</div>
+              <CardContent className={statBody}>
+                <div className={statValue}>₱{overallSales.toLocaleString()}</div>
                 <p className="text-xs text-muted-foreground mt-1">All orders (pending & approved)</p>
               </CardContent>
             </Card>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <Card className={cn(isMobileSales && 'max-md:order-2')}>
+              <CardHeader className={statHeader}>
                 <CardTitle className="text-sm font-medium">Approved Sales</CardTitle>
                 <CheckCircle className="h-4 w-4 text-green-600" />
               </CardHeader>
-              <CardContent>
-                <div className="text-xl md:text-2xl font-bold text-green-600">₱{approvedSales.toLocaleString()}</div>
+              <CardContent className={statBody}>
+                <div className={cn(statValue, 'text-green-600')}>₱{approvedSales.toLocaleString()}</div>
                 <p className="text-xs text-muted-foreground mt-1">Approved orders only</p>
               </CardContent>
             </Card>
           </div>
 
           {/* Pending Sales (amount) + Pending Orders (count) + To Remit */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
-            <Card className="border-l-4 border-l-yellow-500">
-              <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+          <div
+            className={cn(
+              'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4',
+              isMobileSales && 'max-md:contents'
+            )}
+          >
+            <Card className={cn('border-l-4 border-l-yellow-500', isMobileSales && 'max-md:order-3')}>
+              <CardHeader className={statHeaderStart}>
                 <div className="space-y-1 pr-2">
                   <CardTitle className="text-sm font-medium">Pending Sales</CardTitle>
                 </div>
                 <Clock className="h-4 w-4 text-yellow-600 shrink-0" />
               </CardHeader>
-              <CardContent>
-                <div className="text-xl md:text-2xl font-bold text-yellow-600">₱{pendingSales.toLocaleString()}</div>
+              <CardContent className={statBody}>
+                <div className={cn(statValue, 'text-yellow-600')}>₱{pendingSales.toLocaleString()}</div>
                 <p className="text-xs text-muted-foreground leading-snug">
-                  <span className="text-yellow-700/90">Pending ₱{pendingSalesPending.toLocaleString()}</span>
-                  {' + '}
-                  <span className="text-yellow-700/90">Needs revision ₱{pendingSalesNeedsRevision.toLocaleString()}</span>
+                  <span className={cn('text-yellow-700/90', isMobileSales && 'max-md:block')}>
+                    Pending ₱{pendingSalesPending.toLocaleString()}
+                  </span>
+                  <span className={cn(isMobileSales && 'max-md:hidden')}>{' + '}</span>
+                  <span className={cn('text-yellow-700/90', isMobileSales && 'max-md:block')}>
+                    Needs revision ₱{pendingSalesNeedsRevision.toLocaleString()}
+                  </span>
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">Awaiting approval</p>
               </CardContent>
@@ -665,6 +703,7 @@ export default function DashboardPage() {
             <Card
               className={cn(
                 'border-l-4 border-l-amber-500 transition-colors',
+                isMobileSales && 'max-md:order-4',
                 pendingOrdersCount > 0 && 'cursor-pointer hover:bg-amber-50/40'
               )}
               role={pendingOrdersCount > 0 ? 'button' : undefined}
@@ -679,14 +718,14 @@ export default function DashboardPage() {
                 }
               }}
             >
-              <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+              <CardHeader className={statHeaderStart}>
                 <div className="space-y-1 pr-2">
                   <CardTitle className="text-sm font-medium">Pending Orders</CardTitle>
                 </div>
                 <ShoppingCart className="h-4 w-4 text-amber-600 shrink-0" />
               </CardHeader>
-              <CardContent>
-                <div className="text-xl md:text-2xl font-bold text-amber-700">{pendingOrdersCount}</div>
+              <CardContent className={statBody}>
+                <div className={cn(statValue, 'text-amber-700')}>{pendingOrdersCount}</div>
                 <p className="text-xs text-muted-foreground mt-1">Not yet approved by finance</p>
                 <p className="text-xs text-muted-foreground leading-snug">
                   <button
@@ -728,6 +767,7 @@ export default function DashboardPage() {
             <Card
               className={cn(
                 'border-l-4 border-l-green-500 transition-colors',
+                isMobileSales && 'max-md:order-5 max-md:col-span-2',
                 (pendingRemittance?.cashChequeOrdersCount ?? 0) > 0 &&
                   'cursor-pointer hover:bg-green-50/40'
               )}
@@ -748,13 +788,13 @@ export default function DashboardPage() {
                 }
               }}
             >
-              <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+              <CardHeader className={statHeaderStart}>
                 <div className="space-y-1 pr-2">
                   <CardTitle className="text-sm font-medium">To Remit (Cash)</CardTitle>
                 </div>
                 <Receipt className="h-4 w-4 text-green-600 shrink-0" />
               </CardHeader>
-              <CardContent>
+              <CardContent className={statBody}>
                 {pendingRemittanceStatus === 'loading' || pendingRemittanceStatus === 'idle' ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -762,7 +802,7 @@ export default function DashboardPage() {
                   </div>
                 ) : (
                   <>
-                    <div className="text-xl md:text-2xl font-bold text-green-700">
+                    <div className={cn(statValue, 'text-green-700')}>
                       {pendingRemittance?.cashChequeOrdersCount ?? 0}
                     </div>
                     <p className="text-xs text-muted-foreground mt-1">
@@ -785,6 +825,7 @@ export default function DashboardPage() {
                 )}
               </CardContent>
             </Card>
+          </div>
           </div>
 
           {/* Recent Activity Table */}
