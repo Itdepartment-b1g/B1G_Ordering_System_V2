@@ -1357,7 +1357,7 @@ export function KeyAccountSalesTrackerImportV2Page() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base">1. Upload workbook</CardTitle>
-            <CardDescription>Tracker + brand sheets (X-FORGE, AMZ, RELX GO, …). VIZMIN GRIND is skipped.</CardDescription>
+            <CardDescription>Tracker + brand sheets (XFORGE, AMZ, RELX GO, …). VIZMIN GRIND is skipped.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <input

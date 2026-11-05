@@ -235,8 +235,11 @@ function sheetMatchesTrackerProduct(sheetName: string, trackerProduct: string) {
   if (!sheet) return false;
   const qualified = (value: string) => value.includes('disposable') || value.includes('prefilled');
   if (qualified(sheet) !== qualified(product)) return false;
-  const ultraLite = (value: string) => value === 'ultra' || value.startsWith('ultralite');
-  if (ultraLite(sheet) && ultraLite(product) && sheet !== product) return false;
+  const ultraFamily = (value: string) =>
+    value === 'ultra' || value.includes('ultralite') || (value.includes('ultra') && value.includes('lite'));
+  if (ultraFamily(sheet) && ultraFamily(product) && sheet !== product) return false;
+  const maxGo = (value: string) => value.includes('maxgo') || (value.includes('max') && value.includes('go'));
+  if (maxGo(sheet) !== maxGo(product)) return false;
   if (sheet === product || sheet.startsWith(product) || product.startsWith(sheet)) return true;
   return brandKey(sheetName) === brandKey(trackerProduct);
 }
@@ -244,9 +247,12 @@ function sheetMatchesTrackerProduct(sheetName: string, trackerProduct: string) {
 function brandFromSheet(name: string) {
   const key = normalizeSalesHeader(name);
   if (key.includes('amz')) return 'AMZ';
-  if (key.includes('xslim') || key.includes('slimbar')) return 'XSLIMBAR';
-  if (key.includes('ultralite') || (key.includes('ultra') && key.includes('lite'))) return 'ULTRALITE';
-  if (key.includes('xforge') || key === 'forge') return 'X-FORGE';
+  if (key.includes('xslim') || key.includes('slimbar')) return 'X-SLIMBAR';
+  if (key.includes('ultralite') || (key.includes('ultra') && key.includes('lite'))) return 'X-ULTRA LITE';
+  if (key.includes('xforge') || key === 'forge') return 'XFORGE';
+  if (key.includes('onebar')) return 'ONE BAR V1';
+  if (key.includes('infinity')) return 'RELX INFINITY 2 PLUS';
+  if (key.includes('maxgo') || (key.includes('max') && key.includes('go'))) return 'RELX MAX GO';
   if (key.includes('relx') && key.includes('go')) return 'RELX GO';
   if (key.includes('relx') && key.includes('ultra') && key.includes('pro')) return 'RELX ULTRA PRO';
   return displayHeader(name);
@@ -263,8 +269,10 @@ function brandKey(value: string) {
   if (key.includes('onebar') || key === 'one bar') return 'onebar';
   if (key === 'ultra') return 'ultra';
   if (key.includes('aero')) return 'aero';
+  if (key.includes('maxgo') || (key.includes('max') && key.includes('go'))) return 'relxmaxgo';
   if (key.includes('relx') && key.includes('go')) return 'relxgo';
   if (key.includes('relx') && key.includes('ultra') && key.includes('pro')) return 'relxultrapro';
+  if (key.includes('wecreate')) return 'relxwecreate';
   if (key.includes('relx') && key.includes('pod')) return 'relxpodpro';
   return key;
 }
@@ -737,6 +745,56 @@ function roundCheck(value: number) {
   return Math.round((Number(value) || 0) * 100) / 100;
 }
 
+function centsPrice(amount: number, qty: number): number | undefined {
+  if (!(qty > 0) || !(amount > 0)) return undefined;
+  return roundCheck(amount / qty);
+}
+
+/** Two tracker rows of one product are separate price tiers when every tier has its own price. */
+function distinctPositivePrices(
+  rows: TrackerHeader[],
+  qtyOf: (row: TrackerHeader) => number,
+  amountOf: (row: TrackerHeader) => number,
+) {
+  const prices: number[] = [];
+  for (const row of rows) {
+    const qty = qtyOf(row);
+    if (!(qty > 0)) continue;
+    const price = centsPrice(amountOf(row), qty);
+    if (price == null) return undefined;
+    prices.push(price);
+  }
+  if (prices.length < 2 || new Set(prices).size !== prices.length) return undefined;
+  return prices;
+}
+
+function linesMatchingPrice(
+  headers: TrackerHeader[],
+  lines: BrandLine[],
+  kind: SalesTrackerV2LineKind,
+  price: number | undefined,
+) {
+  const kindLines = lines.filter(
+    (line) => variantTypeFor(headers, line.sheet_name || '', line._group_index) === kind,
+  );
+  if (price == null) return kindLines;
+  const byRow = new Map<string, BrandLine[]>();
+  for (const line of kindLines) {
+    const key = line.source_row_key || `${line.sheet_name}|${line.excel_row}`;
+    const group = byRow.get(key) || [];
+    group.push(line);
+    byRow.set(key, group);
+  }
+  const matched: BrandLine[] = [];
+  for (const group of byRow.values()) {
+    const qty = group.reduce((sum, line) => sum + (Number(line.quantity) || 0), 0);
+    const amount = group.reduce((sum, line) => sum + (Number(line.line_total) || 0), 0);
+    if (centsPrice(amount, qty) === price) matched.push(...group);
+  }
+  // A price that matches nothing still has to be checked against the whole sheet.
+  return matched.length ? matched : kindLines;
+}
+
 export function parseKeyAccountSalesTrackerV2Buffer(buffer: ArrayBuffer): SalesTrackerV2ParseResult {
   const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
   if (!workbook.SheetNames.length) throw new Error('Excel has no sheets');
@@ -866,24 +924,28 @@ export function parseKeyAccountSalesTrackerV2Buffer(buffer: ArrayBuffer): SalesT
       const productLines = qtyLines.filter((line) =>
         sheetMatchesTrackerProduct(line.sheet_name || '', headerRow.product)
       );
-      const sheetName = productLines[0]?.sheet_name || '';
-      const sumKind = (kind: SalesTrackerV2LineKind) => {
-        const matched = productLines.filter(
-          (line) => variantTypeFor(headers, line.sheet_name || '', line._group_index) === kind
-        );
-        return {
-          qty: roundCheck(matched.reduce((sum, line) => sum + (Number(line.quantity) || 0), 0)),
-          amount: roundCheck(matched.reduce((sum, line) => sum + (Number(line.line_total) || 0), 0)),
-          count: matched.length,
-        };
-      };
-      const flavor = sumKind('flavor');
-      const battery = sumKind('battery');
+      const siblings = headers.filter(
+        (row) => normalizeSalesHeader(row.product) === normalizeSalesHeader(headerRow.product),
+      );
+      const flavorPrice = distinctPositivePrices(siblings, (row) => row.pods, (row) => row.pod_amount)
+        ? centsPrice(headerRow.pod_amount, headerRow.pods)
+        : undefined;
+      const batteryPrice = distinctPositivePrices(siblings, (row) => row.device, (row) => row.device_amount)
+        ? centsPrice(headerRow.device_amount, headerRow.device)
+        : undefined;
+      const sumLines = (matched: BrandLine[]) => ({
+        qty: roundCheck(matched.reduce((sum, line) => sum + (Number(line.quantity) || 0), 0)),
+        amount: roundCheck(matched.reduce((sum, line) => sum + (Number(line.line_total) || 0), 0)),
+        count: matched.length,
+        sheet: matched[0]?.sheet_name || productLines[0]?.sheet_name || '',
+      });
+      const flavor = sumLines(linesMatchingPrice(headers, productLines, 'flavor', flavorPrice));
+      const battery = sumLines(linesMatchingPrice(headers, productLines, 'battery', batteryPrice));
       if (headerRow.pods > 0 || flavor.count > 0) {
         qty_checks.push({
           rfpf: headerRow.rfpf_display,
           product: headerRow.product,
-          sheet: sheetName,
+          sheet: flavor.sheet,
           kind: 'flavor',
           excel_qty: flavor.qty,
           tracker_qty: headerRow.pods,
@@ -895,7 +957,7 @@ export function parseKeyAccountSalesTrackerV2Buffer(buffer: ArrayBuffer): SalesT
         qty_checks.push({
           rfpf: headerRow.rfpf_display,
           product: headerRow.product,
-          sheet: sheetName,
+          sheet: battery.sheet,
           kind: 'battery',
           excel_qty: battery.qty,
           tracker_qty: headerRow.device,

@@ -348,6 +348,175 @@ function pickByName<T>(
   return uniqueOr(fuzzy, noneMsg, manyMsg(fuzzy));
 }
 
+function compactCatalogName(value: string) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function catalogRawTokens(value: string) {
+  let text = String(value || '').toLowerCase();
+  text = text.replace(/\[[^\]]*\]/g, ' ');
+  text = text.replace(/[\u2019']/g, '');
+  text = text.replace(/[^a-z0-9]+/g, ' ').trim();
+  return text
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((token) => {
+      if (token === 'grey') return 'gray';
+      if (token === 'extra') return 'xtra';
+      if (token === 'bbgum') return 'bubblegum';
+      if (token === 'irony') return 'iron';
+      if (token === 'asteriod') return 'asteroid';
+      if (token === 'shapphire') return 'sapphire';
+      return token;
+    });
+}
+
+function withoutFlavorIce(tokens: string[]) {
+  const next = tokens.filter((token) => token !== 'ice');
+  return next.length ? next : tokens;
+}
+
+function catalogTokens(value: string, brandName: string) {
+  const drop = new Set(['device', 'b1g', ...catalogRawTokens(brandName)]);
+  const parts = catalogRawTokens(value).filter((token) => !drop.has(token));
+  return parts.length ? parts : catalogRawTokens(value);
+}
+
+function catalogTokenEq(a: string, b: string) {
+  const stem = (token: string) => (token === 'green' ? 'garden' : token);
+  const left = stem(a);
+  const right = stem(b);
+  return left === right || `${left}s` === right || `${right}s` === left;
+}
+
+function catalogTokensEqual(a: string[], b: string[]) {
+  return a.length === b.length && a.every((token, index) => catalogTokenEq(token, b[index]));
+}
+
+function catalogLead(value: string) {
+  return String(value || '')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .split(/[(/]/)[0];
+}
+
+function sortedTokens(tokens: string[]) {
+  return [...tokens].sort();
+}
+
+function catalogEditDistance(a: string, b: string) {
+  if (a === b) return 0;
+  if (Math.abs(a.length - b.length) > 1) return 2;
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  const dist = Array.from({ length: rows }, () => new Array<number>(cols).fill(0));
+  for (let i = 0; i < rows; i++) dist[i][0] = i;
+  for (let j = 0; j < cols; j++) dist[0][j] = j;
+  for (let i = 1; i < rows; i++) {
+    for (let j = 1; j < cols; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dist[i][j] = Math.min(dist[i - 1][j] + 1, dist[i][j - 1] + 1, dist[i - 1][j - 1] + cost);
+    }
+  }
+  return dist[a.length][b.length];
+}
+
+function catalogLeadsClose(a: string[], b: string[]) {
+  if (!a.length || a.length !== b.length) return false;
+  let edits = 0;
+  for (let i = 0; i < a.length; i++) {
+    if (catalogTokenEq(a[i], b[i])) continue;
+    if (catalogEditDistance(a[i], b[i]) === 1) edits += 1;
+    else return false;
+  }
+  return edits === 1;
+}
+
+function isTokenPrefix(prefix: string[], full: string[]) {
+  if (!prefix.length || prefix.length >= full.length) return false;
+  return prefix.every((token, index) => catalogTokenEq(token, full[index]));
+}
+
+function tokensCover(needles: string[], haystack: string[]) {
+  const pool = [...haystack];
+  return needles.every((token) => {
+    const index = pool.findIndex((item) => catalogTokenEq(item, token));
+    if (index < 0) return false;
+    pool.splice(index, 1);
+    return true;
+  });
+}
+
+/** Same warehouse product when punctuation, word order, a year tag, or the brand prefix is the only difference. */
+function catalogVariantScore(wanted: string, candidate: string, brandName: string) {
+  const want = withoutFlavorIce(catalogTokens(wanted, brandName));
+  const got = withoutFlavorIce(catalogTokens(candidate, brandName));
+  if (!want.length || !got.length) return 0;
+  if (
+    catalogTokensEqual(want, got) ||
+    catalogTokensEqual(sortedTokens(want), sortedTokens(got)) ||
+    want.join('') === got.join('')
+  ) {
+    return 3;
+  }
+  const wantLead = withoutFlavorIce(catalogTokens(catalogLead(wanted), brandName));
+  const gotLead = withoutFlavorIce(catalogTokens(catalogLead(candidate), brandName));
+  if (wantLead.length && gotLead.length && catalogTokensEqual(wantLead, gotLead)) return 2;
+  if (catalogLeadsClose(wantLead, gotLead)) return 2;
+  if (isTokenPrefix(gotLead, want) || isTokenPrefix(wantLead, got)) return 2;
+  if (want.length >= 2 && tokensCover(want, got)) return 2;
+  const color = (single: string[], other: string[]) =>
+    single.length === 1 && other.length <= 3 && other.some((token) => catalogTokenEq(token, single[0]));
+  if (color(got, want) || color(want, got)) return 1;
+  return 0;
+}
+
+function pickCatalogBrand<T extends { name: string }>(
+  rows: T[],
+  wanted: string,
+  noneMsg: string,
+  manyMsg: (hits: T[]) => string,
+): CatalogPick<T> {
+  const want = n(wanted);
+  if (!want) return uniqueOr(rows.length === 1 ? rows : [], noneMsg, manyMsg(rows));
+  const exact = rows.filter((row) => n(row.name) === want);
+  if (exact.length) return uniqueOr(exact, noneMsg, manyMsg(exact));
+  // Punctuation only. "ULTRALITE" must not land on the shorter brand "ULTRA".
+  const compact = compactCatalogName(wanted);
+  const hits = rows.filter((row) => compactCatalogName(row.name) === compact);
+  return uniqueOr(hits, noneMsg, manyMsg(hits));
+}
+
+function pickCatalogVariant<T extends { name: string }>(
+  rows: T[],
+  wanted: string,
+  brandName: string,
+  noneMsg: string,
+  manyMsg: (hits: T[]) => string,
+): CatalogPick<T> {
+  const named = pickByName(rows, (row) => row.name, wanted, noneMsg, manyMsg);
+  if (named.ok) return named;
+  let best = 0;
+  const hits: T[] = [];
+  for (const row of rows) {
+    const scored = catalogVariantScore(wanted, row.name, brandName);
+    if (scored > best) {
+      best = scored;
+      hits.length = 0;
+      hits.push(row);
+    } else if (scored > 0 && scored === best) hits.push(row);
+  }
+  if (!best) {
+    const wantedTokens = catalogTokens(wanted, brandName);
+    if (wantedTokens.length === 1 && wantedTokens[0] === 'device' && rows.length === 1) {
+      return { ok: true, row: rows[0] };
+    }
+    return named;
+  }
+  return uniqueOr(hits, noneMsg, manyMsg(hits));
+}
+
 function pickAddress(shopAddrs: CatalogAddr[], wanted: string): CatalogPick<CatalogAddr> {
   const none = wanted ? `address not found: ${wanted}` : 'no address for shop';
   const many = (hits: CatalogAddr[]) =>
@@ -692,9 +861,8 @@ function resolveLine(
   } else {
     const brandName = String(row.brand_name || '').trim();
     const variantName = String(row.variant_name || '').trim();
-    const brandPick = pickByName(
+    const brandPick = pickCatalogBrand(
       catalog.brands.filter((b) => b.is_active !== false),
-      (b) => b.name,
       brandName,
       `hub brand not found: ${brandName}`,
       (hits) => `hub brand ambiguous: ${hits.map((b) => b.name).join(', ')}`
@@ -709,10 +877,10 @@ function resolveLine(
         if (!typed) return true;
         return String(v.variant_type || '').trim().toLowerCase() === wantType;
       });
-      const varPick = pickByName(
+      const varPick = pickCatalogVariant(
         brandVars,
-        (v) => v.name,
         variantName,
+        brand.name,
         typed
           ? `hub ${wantType} variant not found under ${brand.name}: ${variantName}`
           : `hub variant not found under ${brand.name}: ${variantName}`,
@@ -725,10 +893,10 @@ function resolveLine(
           const anyTypeVars = catalog.variants.filter(
             (v) => v.brand_id === brand!.id && v.is_active !== false
           );
-          const wrongType = pickByName(
+          const wrongType = pickCatalogVariant(
             anyTypeVars,
-            (v) => v.name,
             variantName,
+            brand.name,
             '',
             () => ''
           );
