@@ -192,6 +192,7 @@ type QuickFilterSheetProps<TColumn extends string, TStatus extends string> = {
   description?: string;
   triggerLabel?: string;
   triggerClassName?: string;
+  showDate?: boolean;
 };
 
 export function QuickFilterSheet<TColumn extends string, TStatus extends string>({
@@ -209,10 +210,11 @@ export function QuickFilterSheet<TColumn extends string, TStatus extends string>
   description = 'Same-column values use OR. Different columns use AND.',
   triggerLabel = 'Quick Filter',
   triggerClassName,
+  showDate = true,
 }: QuickFilterSheetProps<TColumn, TStatus>) {
   const [open, setOpen] = useState(false);
   const rows = columnClauses.length > 0 ? columnClauses : [createQuickFilterAndClause<TColumn>()];
-  const dateActive = dateRange.preset !== 'all';
+  const dateActive = showDate && dateRange.preset !== 'all';
   const columnActiveCount = countActiveQuickFilterAndClauses(rows);
   const idleStatus = statusOptions[0]?.value;
   const statusActive = Boolean(idleStatus && status !== idleStatus);
@@ -273,16 +275,18 @@ export function QuickFilterSheet<TColumn extends string, TStatus extends string>
           </div>
         </SheetHeader>
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-3">
-          <FilterSection title="Date">
-            <DateRangeFilterPopover
-              value={dateRange}
-              onChange={onDateRangeChange}
-              className="w-[360px] p-0 z-[80]"
-              triggerClassName="h-9 w-full justify-between"
-              align="start"
-              modal
-            />
-          </FilterSection>
+          {showDate ? (
+            <FilterSection title="Date">
+              <DateRangeFilterPopover
+                value={dateRange}
+                onChange={onDateRangeChange}
+                className="w-[360px] p-0 z-[80]"
+                triggerClassName="h-9 w-full justify-between"
+                align="start"
+                modal
+              />
+            </FilterSection>
+          ) : null}
           <FilterSection title="Column">
             <div className="space-y-2">
               {rows.map((clause, index) => {

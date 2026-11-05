@@ -94,12 +94,12 @@ export function ReturnedStockDetailDialog({
               emptyTitle={
                 totalReturned > 0
                   ? 'No matching client returns'
-                  : 'No returns for this variant'
+                  : 'No returned items'
               }
               emptyDescription={
                 totalReturned > 0
                   ? 'Stock is on hand, but no matching client return (CR) history was found for this variant.'
-                  : 'No returns for this variant.'
+                  : 'There are currently no returned items.'
               }
             />
           ) : null}
