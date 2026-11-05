@@ -36,11 +36,20 @@ import {
 } from '@/features/orders/client-returns/clientReturnApi';
 import type { PreviewClientReturn } from '@/features/orders/client-returns/clientReturnPreview';
 import { ReturnedStockDetailDialog } from '@/features/orders/client-returns/ReturnedStockDetailDialog';
+import { ALL_TIME_DATE_RANGE } from '@/features/shared/components/DateRangeFilterPopover';
 import {
   getListPaginationSlice,
   ListPagination,
   type PageSize,
 } from '@/features/shared/components/ListPagination';
+import {
+  QuickFilterSheet,
+  createQuickFilterAndClause,
+  matchesQuickFilterAndClauses,
+  type QuickFilterAndClause,
+  type QuickFilterColumn,
+} from '@/features/shared/components/QuickFilterSheet';
+import { variantTypeTone } from './utils/variantTypeTone';
 import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
 import {
   createInitialTableSortCycle,
@@ -53,12 +62,48 @@ import {
 const INVENTORY_PAGE_SIZE: PageSize = 15;
 
 type InventoryBrandSortKey = 'name' | 'variants' | 'stock' | 'lowStock' | 'returned' | 'status';
+type InventoryQuickColumn = 'brand' | 'type' | 'variant';
+type InventoryStatusFilter = 'all' | 'in_stock' | 'low' | 'returned' | 'out';
+
+const InventoryQuickFilterSheet = QuickFilterSheet<InventoryQuickColumn, InventoryStatusFilter>;
+
+type VariantTypeMeta = {
+  name: string;
+  display_name: string;
+  color_code: string | null;
+};
 
 const DEFAULT_INVENTORY_BRAND_SORT_KEY: InventoryBrandSortKey = 'name';
 const DEFAULT_INVENTORY_BRAND_SORT_DIRECTION = 'asc' as const;
 
 const LOW_STOCK_THRESHOLD = 10;
 const isLowStock = (stock: number) => stock <= LOW_STOCK_THRESHOLD;
+
+function variantMatchesInventoryFilters(
+  brand: AgentBrand,
+  variant: AgentVariant,
+  type: string,
+  query: string,
+  typeTab: string,
+  status: InventoryStatusFilter,
+  returnedQty: number,
+  clauses: QuickFilterAndClause<InventoryQuickColumn>[]
+) {
+  const brandNameMatch = !query || brand.name.toLowerCase().includes(query);
+  const variantNameMatch = !query || variant.name.toLowerCase().includes(query);
+  if (!brandNameMatch && !variantNameMatch) return false;
+  if (typeTab !== 'all' && type.toLowerCase() !== typeTab.toLowerCase()) return false;
+  if (status === 'in_stock' && variant.stock <= 0) return false;
+  if (status === 'low' && !(isLowStock(variant.stock) && variant.stock > 0)) return false;
+  if (status === 'returned' && returnedQty <= 0) return false;
+  if (status === 'out' && variant.stock !== 0) return false;
+  return matchesQuickFilterAndClauses(clauses, (field, value) => {
+    if (field === 'brand') return brand.id === value;
+    if (field === 'type') return type.toLowerCase() === value.toLowerCase();
+    if (field === 'variant') return variant.id === value;
+    return false;
+  });
+}
 
 function isLowStockVariant(variant: { stock?: number; status?: string }) {
   const stock = variant.stock ?? 0;
@@ -221,6 +266,11 @@ export default function MyInventory() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [searchQuery, setSearchQuery] = useState('');
+  const [typeTab, setTypeTab] = useState('all');
+  const [statusFilter, setStatusFilter] = useState<InventoryStatusFilter>('all');
+  const [columnClauses, setColumnClauses] = useState<QuickFilterAndClause<InventoryQuickColumn>[]>([
+    createQuickFilterAndClause<InventoryQuickColumn>(),
+  ]);
   const [expandedBrands, setExpandedBrands] = useState<string[]>([]);
   const [brandPage, setBrandPage] = useState(0);
   const [brandPageSize, setBrandPageSize] = useState<PageSize>(INVENTORY_PAGE_SIZE);
@@ -284,6 +334,32 @@ export default function MyInventory() {
     }
     return { qty, returns };
   };
+
+  const { data: variantTypes = [] } = useQuery({
+    queryKey: ['variant-types', user?.company_id],
+    enabled: !!user?.company_id,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('variant_types')
+        .select('name, display_name, description, color_code')
+        .eq('company_id', user!.company_id)
+        .eq('is_active', true);
+      if (error) throw error;
+      return (data || []) as VariantTypeMeta[];
+    },
+  });
+
+  const variantTypeByName = useMemo(() => {
+    const map = new Map<string, VariantTypeMeta>();
+    for (const row of variantTypes) map.set(row.name.toLowerCase(), row);
+    return map;
+  }, [variantTypes]);
+
+  const typeLabelFor = (type: string) =>
+    variantTypeByName.get(type.toLowerCase())?.display_name?.trim() || formatVariantTypeLabel(type, false);
 
   const { data: clientReturns = [] } = useQuery({
     queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY, user?.company_id, user?.id],
@@ -390,13 +466,124 @@ export default function MyInventory() {
     return brands.filter((brand) => brand.allVariants.length > 0);
   }, [agentBrands, clientReturns, returnedStockByVariantId, showReturnedColumn]);
 
-  const filteredBrands = activeBrands.filter(brand => {
-    const matchesSearch =
-      brand.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (brand.allVariants || []).some(v => v.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  const typeTabs = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const brand of activeBrands) {
+      brand.variantsByType?.forEach((variants, type) => {
+        counts.set(type, (counts.get(type) || 0) + variants.length);
+      });
+    }
+    return [...counts.entries()].sort(([a], [b]) => {
+      const ai = VARIANT_TYPE_ORDER.indexOf(a.toLowerCase());
+      const bi = VARIANT_TYPE_ORDER.indexOf(b.toLowerCase());
+      const ao = ai === -1 ? 99 : ai;
+      const bo = bi === -1 ? 99 : bi;
+      if (ao !== bo) return ao - bo;
+      return a.localeCompare(b);
+    });
+  }, [activeBrands]);
 
-    return matchesSearch;
-  });
+  const variantCount = typeTabs.reduce((sum, [, count]) => sum + count, 0);
+
+  const listIsFiltered =
+    Boolean(searchQuery.trim()) ||
+    typeTab !== 'all' ||
+    statusFilter !== 'all' ||
+    columnClauses.some((clause) => clause.field !== 'all' && Boolean(clause.value.trim()));
+
+  const filteredBrands = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return activeBrands
+      .map((brand) => {
+        const variantsByType = new Map<string, AgentVariant[]>();
+        const allVariants: AgentVariant[] = [];
+        sortedVariantTypeEntries(brand.variantsByType).forEach(([type, variants]) => {
+          const visible = variants.filter((variant) =>
+            variantMatchesInventoryFilters(
+              brand,
+              variant,
+              type,
+              query,
+              typeTab,
+              statusFilter,
+              returnedStockByVariantId.get(variant.id)?.qty || 0,
+              columnClauses
+            )
+          );
+          if (visible.length === 0) return;
+          variantsByType.set(type, visible);
+          allVariants.push(...visible);
+        });
+        const visibleIds = new Set(allVariants.map((variant) => variant.id));
+        return {
+          ...brand,
+          allVariants,
+          variantsByType,
+          flavors: brand.flavors.filter((variant) => visibleIds.has(variant.id)),
+          batteries: brand.batteries.filter((variant) => visibleIds.has(variant.id)),
+          posms: (brand.posms || []).filter((variant) => visibleIds.has(variant.id)),
+          foc: (brand.foc || []).filter((variant) => visibleIds.has(variant.id)),
+        };
+      })
+      .filter((brand) => brand.allVariants.length > 0);
+  }, [activeBrands, columnClauses, returnedStockByVariantId, searchQuery, statusFilter, typeTab]);
+
+  const statusOptions = useMemo(() => {
+    let inStock = 0;
+    let low = 0;
+    let returned = 0;
+    let out = 0;
+    let all = 0;
+    for (const brand of activeBrands) {
+      for (const variant of brand.allVariants || []) {
+        all += 1;
+        if (variant.stock > 0) inStock += 1;
+        if (isLowStock(variant.stock) && variant.stock > 0) low += 1;
+        if (variant.stock === 0) out += 1;
+        if ((returnedStockByVariantId.get(variant.id)?.qty || 0) > 0) returned += 1;
+      }
+    }
+    const options: Array<{ value: InventoryStatusFilter; label: string; count: number }> = [
+      { value: 'all', label: 'All', count: all },
+      { value: 'in_stock', label: 'In stock', count: inStock },
+      { value: 'low', label: 'Low stock', count: low },
+    ];
+    if (showReturnedColumn) options.push({ value: 'returned', label: 'Returned', count: returned });
+    options.push({ value: 'out', label: 'Out of stock', count: out });
+    return options;
+  }, [activeBrands, returnedStockByVariantId, showReturnedColumn]);
+
+  const quickColumns = useMemo((): QuickFilterColumn<InventoryQuickColumn>[] => {
+    const variants: Array<{ value: string; label: string }> = [];
+    const seen = new Set<string>();
+    for (const brand of activeBrands) {
+      for (const variant of brand.allVariants || []) {
+        if (seen.has(variant.id)) continue;
+        seen.add(variant.id);
+        variants.push({ value: variant.id, label: variant.name });
+      }
+    }
+    return [
+      {
+        key: 'brand',
+        label: 'Brand',
+        searchPlaceholder: 'Search brand...',
+        options: activeBrands.map((brand) => ({ value: brand.id, label: brand.name })),
+      },
+      {
+        key: 'type',
+        label: 'Variant type',
+        searchPlaceholder: 'Search variant type...',
+        options: typeTabs.map(([type]) => ({ value: type, label: typeLabelFor(type) })),
+      },
+      {
+        key: 'variant',
+        label: 'Variant',
+        searchPlaceholder: 'Search variant...',
+        options: variants,
+      },
+    ];
+  }, [activeBrands, typeTabs, variantTypeByName]);
 
   const sortedBrands = useMemo(() => {
     const { key, direction } = resolveTableSortDirection(
@@ -444,7 +631,7 @@ export default function MyInventory() {
 
   useEffect(() => {
     setBrandPage(0);
-  }, [searchQuery, brandPageSize, brandSortState]);
+  }, [searchQuery, brandPageSize, brandSortState, typeTab, statusFilter, columnClauses]);
 
   const handleBrandSort = (key: InventoryBrandSortKey) => {
     setBrandSortState((current) => getNextTableSortCycleState(current, key));
@@ -1151,24 +1338,77 @@ export default function MyInventory() {
               {exportingExcel ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
               Export Excel
             </Button>
-            <div className="relative w-full sm:w-64">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
+            <div className="flex w-full items-center gap-2 sm:w-auto">
+              <div className="relative min-w-0 flex-1 sm:w-64">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10"
+                  aria-label="Search inventory"
+                />
+              </div>
+              <InventoryQuickFilterSheet
+                showDate={false}
+                dateRange={ALL_TIME_DATE_RANGE}
+                onDateRangeChange={() => undefined}
+                columns={quickColumns}
+                columnClauses={columnClauses}
+                onColumnClausesChange={setColumnClauses}
+                status={statusFilter}
+                statusOptions={statusOptions}
+                onStatusChange={setStatusFilter}
+                onClear={() => {
+                  setStatusFilter('all');
+                  setColumnClauses([createQuickFilterAndClause<InventoryQuickColumn>()]);
+                }}
+                triggerClassName="h-10 shrink-0"
               />
             </div>
             </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+            <button
+              type="button"
+              aria-pressed={typeTab === 'all'}
+              onClick={() => setTypeTab('all')}
+              className={`shrink-0 rounded-full px-3 py-1.5 text-sm font-medium ${
+                typeTab === 'all'
+                  ? 'bg-[#02066F] text-white'
+                  : 'bg-white text-[#02066F] ring-1 ring-[#02066F]/10'
+              }`}
+            >
+              All
+              <span className="ml-1.5 tabular-nums opacity-80">{variantCount}</span>
+            </button>
+            {typeTabs.map(([type, count]) => {
+              const tone = variantTypeTone(variantTypeByName.get(type.toLowerCase())?.color_code);
+              const active = typeTab.toLowerCase() === type.toLowerCase();
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setTypeTab(type)}
+                  className={`shrink-0 rounded-full px-3 py-1.5 text-sm font-medium ${
+                    active ? `${tone.accent} text-white` : `bg-white ring-1 ${tone.ring} ${tone.title}`
+                  }`}
+                >
+                  {typeLabelFor(type)}
+                  <span className="ml-1.5 tabular-nums opacity-80">{count}</span>
+                </button>
+              );
+            })}
+          </div>
+
           {/* Mobile: brand inventory overview */}
           <div className="md:hidden">
             <MobileInventoryBrandOverview
               brands={pagedBrands}
-              searchQuery={searchQuery}
+              isFiltered={listIsFiltered}
               onShowDetails={(brandId) => navigate(`/my-inventory/${brandId}`)}
             />
           </div>
@@ -1231,7 +1471,7 @@ export default function MyInventory() {
                       colSpan={showReturnedColumn ? 7 : 6}
                       className="text-center py-12 text-muted-foreground"
                     >
-                      {searchQuery ? 'No results found' : 'No inventory'}
+                      {listIsFiltered ? 'No results found' : 'No inventory'}
                     </TableCell>
                   </TableRow>
                 ) : (

@@ -55,11 +55,11 @@ function PriceLine({ variant }: { variant: AgentVariant }) {
 
 export function MobileInventoryBrandOverview({
   brands,
-  searchQuery,
+  isFiltered = false,
   onShowDetails,
 }: {
   brands: AgentBrand[];
-  searchQuery: string;
+  isFiltered?: boolean;
   onShowDetails: (brandId: string) => void;
 }) {
   const { user } = useAuth();
@@ -89,7 +89,7 @@ export function MobileInventoryBrandOverview({
   if (brands.length === 0) {
     return (
       <div className="rounded-lg border border-[#D5DCF3] bg-white py-12 text-center text-sm text-[#02066F]/55">
-        <p>{searchQuery ? 'No results found' : 'No inventory'}</p>
+        <p>{isFiltered ? 'No results found' : 'No inventory'}</p>
       </div>
     );
   }

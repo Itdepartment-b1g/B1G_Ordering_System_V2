@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import {
@@ -223,6 +223,12 @@ function VariantCard({
 
 export default function MyInventoryBrandPage() {
   const { brandId = '' } = useParams<{ brandId: string }>();
+
+  useLayoutEffect(() => {
+    const main = document.querySelector('main');
+    if (main instanceof HTMLElement) main.scrollTop = 0;
+    window.scrollTo(0, 0);
+  }, [brandId]);
   const { agentBrands } = useAgentInventory();
   const { user } = useAuth();
   const queryClient = useQueryClient();
