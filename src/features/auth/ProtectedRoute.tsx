@@ -1,3 +1,4 @@
+import { useLayoutEffect } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import { LayoutGrid } from 'lucide-react';
 import { useAuth } from './hooks';
@@ -16,6 +17,12 @@ interface ProtectedRouteProps {
 export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
   const { user, isAuthenticated, isLoading } = useAuth();
   const location = useLocation();
+
+  useLayoutEffect(() => {
+    const main = document.querySelector('main');
+    if (main instanceof HTMLElement) main.scrollTop = 0;
+    window.scrollTo(0, 0);
+  }, [location.pathname]);
 
   // Show loading state while checking authentication
   if (isLoading) {

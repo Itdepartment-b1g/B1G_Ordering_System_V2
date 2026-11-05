@@ -7,6 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
 import {
+  allocationTypeLabel,
   formatManilaDateTime,
   useAllocationRecordExport,
 } from '@/features/sales-agents/components/super-admin-allocation-history/table/TableRow';
@@ -31,6 +32,10 @@ export default function MobileSalesAllocationHistoryDetailPage() {
     [groups, groupId]
   );
   const exports = useAllocationRecordExport(group);
+  const totalSkus = useMemo(() => {
+    const ids = new Set((group?.lines ?? []).map((line) => line.variantId || line.id));
+    return ids.size;
+  }, [group]);
   const { data: variantTypes = [] } = useQuery({
     queryKey: ['variant-types', user?.company_id],
     enabled: !!user?.company_id,
@@ -85,13 +90,32 @@ export default function MobileSalesAllocationHistoryDetailPage() {
             Back to allocation history
           </Link>
         </Button>
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Allocation details</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            From {group.allocatedByName} · {formatManilaDateTime(group.createdAt)}
-          </p>
-        </div>
+        <h1 className="text-2xl font-semibold tracking-tight text-[#02066F]">Allocation details</h1>
       </div>
+
+      <dl className="overflow-hidden rounded-lg border border-[#D5DCF3] bg-white">
+        {(
+          [
+            { label: 'Date', value: formatManilaDateTime(group.createdAt) },
+            { label: 'Allocated to', value: group.allocatedToName?.trim() || '—' },
+            { label: 'Allocated by', value: group.allocatedByName?.trim() || '—' },
+            { label: 'Flow', value: allocationTypeLabel(group.allocationType) },
+            { label: 'Total Units', value: group.totalQuantity.toLocaleString() },
+            { label: 'Total SKUs', value: totalSkus.toLocaleString() },
+            { label: 'Brand', value: group.brandName?.trim() || '—' },
+          ] as const
+        ).map((row) => (
+          <div
+            key={row.label}
+            className="flex items-start justify-between gap-3 border-b border-[#E4E8F5] px-3.5 py-2.5 last:border-b-0"
+          >
+            <dt className="shrink-0 text-xs font-normal text-[#02066F]/55">{row.label}</dt>
+            <dd className="min-w-0 break-words text-right text-sm font-medium leading-snug text-[#02066F]">
+              {row.value}
+            </dd>
+          </div>
+        ))}
+      </dl>
 
       <div className="grid grid-cols-2 gap-2">
         <Button
