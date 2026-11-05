@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -27,6 +27,7 @@ import {
   type PackageProofPhotoItem,
 } from '@/features/shared/components/MultiProofPhotoField';
 import { BrandTypeLinesList } from './BrandTypeLinesList';
+import { BrandReturnedTable, groupLinesByBrand } from './ClientReturnBrandTable';
 import {
   getReturnLeaderLineQty,
   returnLeaderStatusBadgeClass,
@@ -61,6 +62,21 @@ export function ReturnLeaderViewDialog({
   const isReject = mode === 'reject';
   const isReview = isApprove || isReject;
   const qty = row ? getReturnLeaderLineQty(row) : 0;
+  const brandGroups = useMemo(
+    () =>
+      groupLinesByBrand(
+        (row?.lines || []).map((line) => ({
+          brandName: line.brandName,
+          variantName: line.variantName,
+          variantType: line.variantType,
+          quantity: line.quantity,
+          variantId: line.variantId,
+          brandId: line.brandId,
+          variantTypeId: line.variantTypeId,
+        }))
+      ),
+    [row]
+  );
   const [rejectNote, setRejectNote] = useState('');
   const [photos, setPhotos] = useState<PackageProofPhotoItem[]>([]);
   const [submitterNameInput, setSubmitterNameInput] = useState('');
