@@ -8,6 +8,7 @@ import { BrowserRouter, Navigate, Routes, Route } from "react-router-dom";
 import { AuthProvider, ProtectedRoute, LoginPage, RoleBasedRedirect } from "@/features/auth";
 import { COMPANY_AGENT_INVENTORY_ROLES } from "@/lib/roleUtils";
 import { DashboardPage, SysAdDashboardPage, SuperAdminDashboardPage } from "@/features/dashboard";
+import MobileSalesPagesPage from "@/features/dashboard/MobileSalesPagesPage";
 import ExecutiveDashboardPage from "@/features/dashboard/ExecutiveDashboardPage";
 import { SystemHistoryPage } from "@/features/system-history";
 import { ProfilePage } from "@/features/profile";
@@ -90,6 +91,14 @@ const App = () => (
                     <Route path="/" element={<RoleBasedRedirect />} />
                     <Route path="/login" element={<LoginPage />} />
                     <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+                    <Route
+                      path="/pages"
+                      element={
+                        <ProtectedRoute allowedRoles={['mobile_sales']}>
+                          <MobileSalesPagesPage />
+                        </ProtectedRoute>
+                      }
+                    />
                     <Route path="/member-management" element={<ProtectedRoute><SalesAgentsPage /></ProtectedRoute>} />
                     <Route path="/sales-agents" element={<ProtectedRoute><SalesAgentsOnlyPage /></ProtectedRoute>} />
                     <Route

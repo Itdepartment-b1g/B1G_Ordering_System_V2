@@ -724,6 +724,14 @@ export default function MyOrdersPage() {
     setCurrentPage(1);
   }, [searchQuery, dateRangeFilter, statusFilter, extraFilters, orderSortState]);
 
+  useEffect(() => {
+    if (searchParams.get('create') !== '1') return;
+    setCreateDialogOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('create');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
   const selectedBrand = agentBrands.find(b => b.name === selectedBrandName);
 
   // Fetch agent's clients

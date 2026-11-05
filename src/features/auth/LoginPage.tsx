@@ -30,6 +30,8 @@ export default function LoginPage() {
         navigate('/executive-dashboard', { replace: true });
       } else if (user.role === 'warehouse') {
         navigate('/inventory/board', { replace: true });
+      } else if (user.role === 'mobile_sales') {
+        navigate('/pages', { replace: true });
       } else {
         navigate('/dashboard', { replace: true });
       }
@@ -46,7 +48,7 @@ export default function LoginPage() {
     if (result.success) {
       toast({
         title: "Login successful",
-        description: "Redirecting to dashboard...",
+        description: "Redirecting...",
       });
       // Navigation will happen via useEffect when user state updates
     } else {

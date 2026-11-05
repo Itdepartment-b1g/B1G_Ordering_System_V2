@@ -16,16 +16,51 @@ interface ChatMessage {
   timestamp: Date;
 }
 
+type WidgetPos = { left: number; bottom: number };
+
 export function SupportWidget() {
   const [isOpen, setIsOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [hidden, setHidden] = useState(false);
+  const [prefsReady, setPrefsReady] = useState(false);
+  const [pos, setPos] = useState<WidgetPos | null>(null);
   const { user } = useAuth();
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const suppressClick = useRef(false);
+  const posRef = useRef<WidgetPos | null>(null);
+  const dragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originLeft: number;
+    originBottom: number;
+    moved: boolean;
+  } | null>(null);
 
   const userName = user?.full_name || user?.email || "User";
   const userRole = user?.role || 'mobile_sales';
+  const hiddenKey = user?.id ? `support-widget-hidden:${user.id}` : null;
+  const posKey = user?.id ? `support-widget-pos:${user.id}` : null;
+
+  useEffect(() => {
+    if (!hiddenKey || !posKey) {
+      setPrefsReady(false);
+      return;
+    }
+    setHidden(localStorage.getItem(hiddenKey) === '1');
+    try {
+      const raw = localStorage.getItem(posKey);
+      const saved = raw ? (JSON.parse(raw) as WidgetPos) : null;
+      posRef.current = saved;
+      setPos(saved);
+    } catch {
+      setPos(null);
+    }
+    setPrefsReady(true);
+  }, [hiddenKey, posKey]);
 
   // Initialize with welcome message
   useEffect(() => {
@@ -57,7 +92,53 @@ export function SupportWidget() {
   }, [isOpen]);
 
   // Show widget for all authenticated users (check after all hooks)
-  if (!user) return null;
+  if (!user || !prefsReady || hidden) return null;
+
+  const hideWidget = () => {
+    setHidden(true);
+    setIsOpen(false);
+    if (hiddenKey) localStorage.setItem(hiddenKey, '1');
+  };
+
+  const onDragStart = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if ((event.target as HTMLElement).closest('[data-support-dismiss]')) return;
+    const rect = rootRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originLeft: rect.left,
+      originBottom: window.innerHeight - rect.bottom,
+      moved: false,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const onDragMove = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current;
+    const root = rootRef.current;
+    if (!drag || drag.pointerId !== event.pointerId || !root) return;
+    const dx = event.clientX - drag.startX;
+    const dy = event.clientY - drag.startY;
+    if (Math.hypot(dx, dy) > 6) drag.moved = true;
+    const rect = root.getBoundingClientRect();
+    const left = Math.min(window.innerWidth - rect.width, Math.max(0, drag.originLeft + dx));
+    const bottom = Math.min(window.innerHeight - rect.height, Math.max(0, drag.originBottom - dy));
+    const next = { left, bottom };
+    posRef.current = next;
+    setPos(next);
+  };
+
+  const onDragEnd = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    if (drag.moved) {
+      suppressClick.current = true;
+      if (posKey && posRef.current) localStorage.setItem(posKey, JSON.stringify(posRef.current));
+    }
+  };
 
   const sendMessage = async () => {
     if (!message.trim() || isLoading) return;
@@ -179,7 +260,14 @@ Provide a helpful response:`;
   };
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-4">
+    <div
+      ref={rootRef}
+      className={cn(
+        "fixed z-50 flex flex-col items-end gap-4",
+        pos ? "" : "bottom-24 right-4 md:bottom-6 md:right-6"
+      )}
+      style={pos ? { left: pos.left, bottom: pos.bottom } : undefined}
+    >
       <AnimatePresence>
         {isOpen && (
           <motion.div
@@ -326,12 +414,30 @@ Provide a helpful response:`;
         )}
       </AnimatePresence>
       
+      <div className="relative">
+        {!isOpen && (
+          <button
+            type="button"
+            aria-label="Hide chat"
+            className="absolute -left-1 -top-1 z-10 flex h-5 w-5 items-center justify-center rounded-full border bg-background text-foreground shadow"
+            onClick={hideWidget}
+          >
+            <X className="h-3 w-3" />
+          </button>
+        )}
       <motion.button
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.95 }}
-        onClick={() => setIsOpen(!isOpen)}
+        onPointerDown={onDragStart}
+        onPointerMove={onDragMove}
+        onPointerUp={onDragEnd}
+        onClick={() => {
+          if (suppressClick.current) {
+            suppressClick.current = false;
+            return;
+          }
+          setIsOpen(!isOpen);
+        }}
         className={cn(
-          "h-14 w-14 rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex items-center justify-center transition-all duration-300 border border-white/20",
+          "h-14 w-14 touch-none rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex items-center justify-center transition-colors duration-300 border border-white/20",
           isOpen 
             ? "bg-destructive text-destructive-foreground rotate-90" 
             : "bg-primary text-primary-foreground hover:shadow-primary/20"
@@ -349,6 +455,7 @@ Provide a helpful response:`;
           </div>
         )}
       </motion.button>
+      </div>
     </div>
   );
 }
