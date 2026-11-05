@@ -7,6 +7,9 @@ export type AllocationHistoryLine = {
   brandName: string;
   variantType: string | null;
   quantity: number;
+  /** Line total, when this row is an order line. */
+  amount?: number;
+  unitPrice?: number;
 };
 
 export type AllocationHistoryGroup = {

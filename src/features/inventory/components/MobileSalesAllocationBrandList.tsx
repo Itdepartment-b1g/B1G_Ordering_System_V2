@@ -9,7 +9,10 @@ import {
   type QuickFilterAndClause,
   type QuickFilterColumn,
 } from '@/features/shared/components/QuickFilterSheet';
-import type { AllocationHistoryGroup } from '@/features/sales-agents/components/super-admin-allocation-history/utils/allocationHistoryMappers';
+import type {
+  AllocationHistoryGroup,
+  AllocationHistoryLine,
+} from '@/features/sales-agents/components/super-admin-allocation-history/utils/allocationHistoryMappers';
 import { formatVariantTypeLabel } from '@/features/inventory/utils/myInventoryBrandDisplay';
 import { variantTypeTone } from '@/features/inventory/utils/variantTypeTone';
 
@@ -25,6 +28,8 @@ type AllocatedVariant = {
   id: string;
   name: string;
   quantity: number;
+  amount?: number;
+  unitPrice?: number;
 };
 
 type AllocatedTypeSection = {
@@ -69,6 +74,27 @@ function typeSortIndex(type: string) {
   return index === -1 ? 99 : index;
 }
 
+/** Turns product lines into the shape the brand cards already render. */
+export function productLinesToAllocationGroup(
+  groupId: string,
+  lines: AllocationHistoryLine[]
+): AllocationHistoryGroup {
+  return {
+    groupId,
+    createdAt: '',
+    allocatedToId: '',
+    allocatedToName: '',
+    allocatedById: '',
+    allocatedByName: '',
+    brandId: null,
+    brandName: null,
+    allocationType: 'leader_to_agent',
+    totalQuantity: lines.reduce((sum, line) => sum + line.quantity, 0),
+    lineCount: lines.length,
+    lines,
+  };
+}
+
 export function groupAllocationsByBrand(groups: AllocationHistoryGroup[]): AllocatedBrandSection[] {
   const brands = new Map<
     string,
@@ -96,8 +122,18 @@ export function groupAllocationsByBrand(groups: AllocationHistoryGroup[]): Alloc
 
       const variantKey = line.variantId || line.id;
       const existing = variants.get(variantKey);
-      if (existing) existing.quantity += line.quantity;
-      else variants.set(variantKey, { id: variantKey, name: line.variantName, quantity: line.quantity });
+      if (existing) {
+        existing.quantity += line.quantity;
+        if (typeof line.amount === 'number') existing.amount = (existing.amount || 0) + line.amount;
+      } else {
+        variants.set(variantKey, {
+          id: variantKey,
+          name: line.variantName,
+          quantity: line.quantity,
+          amount: line.amount,
+          unitPrice: line.unitPrice,
+        });
+      }
     }
   }
 
@@ -128,11 +164,13 @@ export function MobileSalesAllocationBrandList({
   groups,
   variantTypes,
   emptyMessage,
+  quantityLabel = 'Total Allocated',
 }: {
   isLoading: boolean;
   groups: AllocationHistoryGroup[];
   variantTypes: VariantTypeMeta[];
   emptyMessage: string;
+  quantityLabel?: string;
 }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [typeTab, setTypeTab] = useState('all');
@@ -342,7 +380,7 @@ export function MobileSalesAllocationBrandList({
                     <div className="mt-2 grid grid-cols-2 gap-2">
                       <div className={`min-w-0 rounded-md border bg-white px-2.5 py-2 ${tone.statBorder}`}>
                         <p className="text-[10px] font-medium uppercase tracking-wide text-[#02066F]/45">
-                          Total Allocated
+                          {quantityLabel}
                         </p>
                         <p className="mt-0.5 flex flex-wrap items-baseline gap-x-1">
                           <span className="text-base font-semibold tabular-nums text-[#1C1C3A]">
@@ -367,12 +405,26 @@ export function MobileSalesAllocationBrandList({
                     <ul className="divide-y divide-[#E4E8F5]">
                       {section.variants.map((variant) => (
                         <li key={variant.id} className="flex items-start justify-between gap-3 py-2">
-                          <span className="min-w-0 text-sm font-normal leading-snug break-words text-[#02066F]">
-                            {variant.name}
+                          <span className="min-w-0">
+                            <span className="block text-sm font-normal leading-snug break-words text-[#02066F]">
+                              {variant.name}
+                            </span>
+                            {typeof variant.unitPrice === 'number' ? (
+                              <span className="mt-0.5 block text-xs font-normal tabular-nums text-[#02066F]/55">
+                                ₱{variant.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} each
+                              </span>
+                            ) : null}
                           </span>
-                          <span className="shrink-0 text-right text-sm font-medium tabular-nums text-[#1C1C3A]">
-                            {variant.quantity.toLocaleString()}{' '}
-                            <span className="font-normal text-[#02066F]/55">{unitLabel(variant.quantity)}</span>
+                          <span className="shrink-0 text-right">
+                            <span className="block text-sm font-medium tabular-nums text-[#1C1C3A]">
+                              {variant.quantity.toLocaleString()}{' '}
+                              <span className="font-normal text-[#02066F]/55">{unitLabel(variant.quantity)}</span>
+                            </span>
+                            {typeof variant.amount === 'number' ? (
+                              <span className="mt-0.5 block text-xs font-normal tabular-nums text-[#02066F]/55">
+                                ₱{variant.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                            ) : null}
                           </span>
                         </li>
                       ))}

@@ -70,7 +70,7 @@ export default function MyOrderDetailPage() {
           </Link>
         </Button>
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Order details</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-[#02066F]">Order details</h1>
           <p className="mt-0.5 text-sm text-muted-foreground">
             {order.orderNumber} · {order.clientName}
           </p>
@@ -80,6 +80,7 @@ export default function MyOrderDetailPage() {
       <MyOrderDetailsPanel
         order={order}
         isAdmin={isAdmin}
+        useBrandCards
         onPrint={() => {
           try {
             generateAndOpenOrderReceiptFromOrder(order);

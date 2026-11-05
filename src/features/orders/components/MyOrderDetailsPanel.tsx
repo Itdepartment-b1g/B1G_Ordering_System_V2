@@ -1,8 +1,16 @@
+import { useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { CreditCard, FileSignature, Printer, Split } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
+import { useAuth } from '@/features/auth';
+import { supabase } from '@/lib/supabase';
+import {
+  MobileSalesAllocationBrandList,
+  productLinesToAllocationGroup,
+} from '@/features/inventory/components/MobileSalesAllocationBrandList';
 import type { Order, OrderItem } from '../OrderContext';
 import { OrderCashDepositAttachment } from './OrderCashDepositAttachment';
 import { getOrderStatusStack } from '../utils/orderStatusStack';
@@ -68,15 +76,48 @@ export function MyOrderDetailsPanel({
   onPrint,
   showPrint = true,
   isAdmin = false,
+  useBrandCards = false,
 }: {
   order: Order;
   onPrint?: () => void;
   showPrint?: boolean;
   isAdmin?: boolean;
+  useBrandCards?: boolean;
 }) {
+  const { user } = useAuth();
   const { primary, secondary } = getOrderStatusStack(order);
   const linesByBrand = groupOrderItemsByBrand(order.items || []);
   const totalQty = (order.items || []).reduce((sum, item) => sum + (item.quantity || 0), 0);
+  const allocationGroup = useMemo(
+    () =>
+      productLinesToAllocationGroup(
+        order.id,
+        (order.items || []).map((item) => ({
+          id: item.id,
+          variantId: item.id,
+          variantName: item.variantName,
+          brandName: item.brandName,
+          variantType: item.variantType || null,
+          quantity: item.quantity || 0,
+          amount: item.total,
+          unitPrice: item.unitPrice,
+        }))
+      ),
+    [order]
+  );
+  const { data: variantTypes = [] } = useQuery({
+    queryKey: ['variant-types', user?.company_id],
+    enabled: useBrandCards && !!user?.company_id,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('variant_types')
+        .select('name, display_name, color_code')
+        .eq('company_id', user!.company_id)
+        .eq('is_active', true);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
 
   return (
     <div className="space-y-4">
@@ -140,7 +181,15 @@ export function MyOrderDetailsPanel({
       </div>
 
       <div className="space-y-4 border-t pt-4">
-        {linesByBrand.length === 0 ? (
+        {useBrandCards ? (
+          <MobileSalesAllocationBrandList
+            isLoading={false}
+            groups={[allocationGroup]}
+            variantTypes={variantTypes}
+            quantityLabel="Total Ordered"
+            emptyMessage="No items found for this order."
+          />
+        ) : linesByBrand.length === 0 ? (
           <p className="text-sm text-muted-foreground">No items found for this order.</p>
         ) : (
           linesByBrand.map((brandGroup) => {
