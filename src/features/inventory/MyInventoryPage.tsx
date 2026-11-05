@@ -21,6 +21,7 @@ import { usePermissions } from '@/hooks/usePermissions';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
+import { MobileInventoryBrandOverview } from './components/MobileInventoryBrandOverview';
 import { ReturnInventoryDialog } from './components/ReturnInventoryDialog';
 import { ReturnToMainDialog } from './components/ReturnToMainDialog';
 import MyReturnRequestsSection from './components/MyReturnRequestsSection';
@@ -1140,7 +1141,7 @@ export default function MyInventory() {
       <Card>
         <CardHeader className="pb-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <h2 className="font-semibold">Inventory</h2>
+            {/* <h2 className="font-semibold">Inventory</h2> */}
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
             <Button variant="outline" className="gap-2" onClick={handleExportPdf}>
               <FileDown className="h-4 w-4" />
@@ -1163,72 +1164,13 @@ export default function MyInventory() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Mobile: brand summary cards → details dialog */}
-          <div className="md:hidden space-y-2">
-            {pagedBrands.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground border rounded-lg">
-                <p>{searchQuery ? 'No results found' : 'No inventory'}</p>
-              </div>
-            ) : (
-              pagedBrands.map((brand) => {
-                const brandTotal = getTotalStock(brand);
-                const lowStockCount = countLowStockVariants(brand.allVariants);
-                const brandHasLow = lowStockCount > 0;
-                const itemCount = (brand.allVariants || []).length;
-                const typeEntries = sortedVariantTypeEntries(brand.variantsByType);
-                const statusLabel =
-                  brandTotal === 0 ? 'Out of Stock' : brandHasLow ? 'Low stock' : 'In Stock';
-                const statusPill =
-                  brandTotal === 0
-                    ? 'bg-red-100 text-red-700'
-                    : brandHasLow
-                      ? 'bg-amber-100 text-amber-700'
-                      : 'bg-blue-100 text-blue-700';
-
-                return (
-                  <Card key={brand.id} className="overflow-hidden">
-                    <div className="p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <h3 className="font-semibold truncate">{brand.name}</h3>
-                          <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                            {formatVariantTypeCountSummary(typeEntries, itemCount)}
-                          </p>
-                        </div>
-                        <div className="text-right shrink-0 space-y-1">
-                          <div
-                            className={`text-2xl font-bold tabular-nums leading-none ${
-                              brandHasLow && brandTotal > 0 ? 'text-amber-600' : ''
-                            }`}
-                          >
-                            {brandTotal}
-                          </div>
-                          {lowStockCount > 0 ? (
-                            <div className="text-[11px] font-medium text-amber-600 tabular-nums">
-                              {lowStockCount} low
-                            </div>
-                          ) : null}
-                          <span
-                            className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-medium ${statusPill}`}
-                          >
-                            {statusLabel}
-                          </span>
-                        </div>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="w-full mt-3"
-                        onClick={() => navigate(`/my-inventory/${brand.id}`)}
-                      >
-                        Show Details
-                      </Button>
-                    </div>
-                  </Card>
-                );
-              })
-            )}
+          {/* Mobile: brand inventory overview */}
+          <div className="md:hidden">
+            <MobileInventoryBrandOverview
+              brands={pagedBrands}
+              searchQuery={searchQuery}
+              onShowDetails={(brandId) => navigate(`/my-inventory/${brandId}`)}
+            />
           </div>
 
           {/* Desktop: one table — brand accordion rows (CR table pattern) */}
