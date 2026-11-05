@@ -8,6 +8,7 @@ import { BrowserRouter, Navigate, Routes, Route } from "react-router-dom";
 import { AuthProvider, ProtectedRoute, LoginPage, RoleBasedRedirect } from "@/features/auth";
 import { COMPANY_AGENT_INVENTORY_ROLES } from "@/lib/roleUtils";
 import { DashboardPage, SysAdDashboardPage, SuperAdminDashboardPage } from "@/features/dashboard";
+import MobileSalesPagesPage from "@/features/dashboard/MobileSalesPagesPage";
 import ExecutiveDashboardPage from "@/features/dashboard/ExecutiveDashboardPage";
 import { SystemHistoryPage } from "@/features/system-history";
 import { ProfilePage } from "@/features/profile";
@@ -53,6 +54,7 @@ import AgentAttendancePage from "@/features/agent-attendance/page/AgentAttendanc
 import AgentAttendanceOverviewPage from "@/features/sales-agents/AgentAttendanceOverviewPage";
 import TeamAttendancesPage from "./features/team-leader/pages/TeamAttendancesPage";
 import LeaderAllocationHistoryPage from "./features/team-leader/pages/LeaderAllocationHistoryPage";
+import LeaderAllocationHistoryDetailPage from "./features/team-leader/pages/LeaderAllocationHistoryDetailPage";
 import MobileSalesAllocationHistoryPage from "./features/inventory/MobileSalesAllocationHistoryPage";
 import MobileSalesAllocationHistoryDetailPage from "./features/inventory/MobileSalesAllocationHistoryDetailPage";
 import LeaderManualPage from "./features/team-leader/pages/LeaderManualPage";
@@ -89,6 +91,14 @@ const App = () => (
                     <Route path="/" element={<RoleBasedRedirect />} />
                     <Route path="/login" element={<LoginPage />} />
                     <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+                    <Route
+                      path="/pages"
+                      element={
+                        <ProtectedRoute allowedRoles={['mobile_sales']}>
+                          <MobileSalesPagesPage />
+                        </ProtectedRoute>
+                      }
+                    />
                     <Route path="/member-management" element={<ProtectedRoute><SalesAgentsPage /></ProtectedRoute>} />
                     <Route path="/sales-agents" element={<ProtectedRoute><SalesAgentsOnlyPage /></ProtectedRoute>} />
                     <Route
@@ -280,6 +290,14 @@ const App = () => (
                       element={
                         <ProtectedRoute allowedRoles={['team_leader']}>
                           <LeaderAllocationHistoryPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/leader-allocation-history/:groupId"
+                      element={
+                        <ProtectedRoute allowedRoles={['team_leader']}>
+                          <LeaderAllocationHistoryDetailPage />
                         </ProtectedRoute>
                       }
                     />

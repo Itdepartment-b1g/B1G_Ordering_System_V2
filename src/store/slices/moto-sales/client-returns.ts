@@ -99,7 +99,7 @@ export const fetchClientOrderReturns = createAsyncThunk(
         ...(typeof orderId === 'string' && orderId ? { orderId } : {}),
       },
     });
-    return body.returns || [];
+    return Array.isArray(body?.returns) ? body.returns : [];
   }
 );
 

@@ -468,5 +468,5 @@ export function countsTowardPendingReturnLeaderBadge(
 }
 
 export function getReturnLeaderLineQty(handover: ReturnLeaderHandover): number {
-  return handover.lines.reduce((sum, line) => sum + line.quantity, 0);
+  return (handover.lines || []).reduce((sum, line) => sum + (Number(line.quantity) || 0), 0);
 }

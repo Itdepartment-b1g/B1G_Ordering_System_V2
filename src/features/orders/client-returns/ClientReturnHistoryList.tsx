@@ -109,6 +109,13 @@ import {
   type ClientReturnHistoryTypeFilter,
 } from './utils/clientReturnsHistoryFilters';
 
+function formatReturnWhen(value: string | null | undefined, pattern: string): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return format(date, pattern);
+}
+
 const HISTORY_PAGE_SIZE: PageSize = 25;
 const VIEW_MODE_KEY = 'client-order-returns-view';
 const TABLE_MIN_WIDTH = 'min-w-[112rem]';
@@ -142,7 +149,7 @@ function ActorNameCell({ name, at }: { name: string | null; at: string | null })
       </p>
       {at ? (
         <p className="text-[11px] text-muted-foreground truncate">
-          {format(new Date(at), 'MMM d, yyyy')}
+          {formatReturnWhen(at, 'MMM d, yyyy')}
         </p>
       ) : null}
     </div>
@@ -414,11 +421,11 @@ function ReturnHistoryCard({
         </div>
         <div className="min-w-0">
           <p className="text-xs text-muted-foreground">Returned date</p>
-          <p className="font-semibold text-sm">{format(new Date(row.returnDate), 'MMM d, yyyy')}</p>
+          <p className="font-semibold text-sm">{formatReturnWhen(row.returnDate, 'MMM d, yyyy')}</p>
         </div>
         <div className="min-w-0 col-span-2 sm:col-span-1">
           <p className="text-xs text-muted-foreground">Created</p>
-          <p className="font-semibold text-sm">{format(new Date(row.createdAt), 'MMM d, yyyy · h:mm a')}</p>
+          <p className="font-semibold text-sm">{formatReturnWhen(row.createdAt, 'MMM d, yyyy · h:mm a')}</p>
         </div>
         <div className="min-w-0 col-span-2 sm:col-span-1">
           <p className="text-xs text-muted-foreground">Returned brands</p>
@@ -544,7 +551,7 @@ export type ClientReturnHistoryListProps = {
 };
 
 export function ClientReturnHistoryList({
-  rows,
+  rows: incomingRows,
   isLoading = false,
   isError = false,
   error,
@@ -555,6 +562,7 @@ export function ClientReturnHistoryList({
   filteredEmptyDescription = 'Try another date, person, status, or search.',
   getDetailHref,
 }: ClientReturnHistoryListProps) {
+  const rows = Array.isArray(incomingRows) ? incomingRows : [];
   const { user } = useAuth();
   const { toast } = useToast();
   const dispatch = useAppDispatch();
@@ -1084,8 +1092,7 @@ export function ClientReturnHistoryList({
     </div>
   ) : (
     <>
-      {viewMode === 'cards' && (
-        <div className="space-y-3">
+      <div className={viewMode === 'table' ? 'space-y-3 lg:hidden' : 'space-y-3'}>
           {pagedItems.map((row) => (
             <ReturnHistoryCard
               key={row.id}
@@ -1098,11 +1105,10 @@ export function ClientReturnHistoryList({
               onReject={() => startReject(row)}
             />
           ))}
-        </div>
-      )}
+      </div>
 
-              {viewMode === 'table' && (
-                <div className="rounded-md border overflow-x-auto">
+      {viewMode === 'table' ? (
+                <div className="hidden rounded-md border overflow-x-auto lg:block">
           <Table className={`table-fixed ${TABLE_MIN_WIDTH}`}>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
@@ -1226,7 +1232,7 @@ export function ClientReturnHistoryList({
                         {row.returnedByName}
                       </TableCell>
                       <TableCell className="align-top whitespace-nowrap">
-                        {format(new Date(row.returnDate), 'MMM d, yyyy')}
+                        {formatReturnWhen(row.returnDate, 'MMM d, yyyy')}
                       </TableCell>
                       <TableCell className="align-top">
                         <ReturnedBrandBadges brands={uniqueReturnBrands(row.lines)} />
@@ -1295,13 +1301,13 @@ export function ClientReturnHistoryList({
                               <p>
                                 Returned date{' '}
                                 <span className="font-medium text-foreground">
-                                  {format(new Date(row.returnDate), 'MMM d, yyyy')}
+                                  {formatReturnWhen(row.returnDate, 'MMM d, yyyy')}
                                 </span>
                               </p>
                               <p>
                                 Created{' '}
                                 <span className="font-medium text-foreground">
-                                  {format(new Date(row.createdAt), 'MMM d, yyyy · h:mm a')}
+                                  {formatReturnWhen(row.createdAt, 'MMM d, yyyy · h:mm a')}
                                 </span>
                               </p>
                               <p>
@@ -1320,7 +1326,7 @@ export function ClientReturnHistoryList({
                                     <>
                                       {' · '}
                                       <span className="font-medium text-foreground">
-                                        {format(new Date(row.saApprovedAt), 'MMM d, yyyy · h:mm a')}
+                                        {formatReturnWhen(row.saApprovedAt, 'MMM d, yyyy · h:mm a')}
                                       </span>
                                     </>
                                   ) : null}
@@ -1333,7 +1339,7 @@ export function ClientReturnHistoryList({
                                     <>
                                       {' · '}
                                       <span className="font-medium text-foreground">
-                                        {format(new Date(row.approvedAt), 'MMM d, yyyy · h:mm a')}
+                                        {formatReturnWhen(row.approvedAt, 'MMM d, yyyy · h:mm a')}
                                       </span>
                                     </>
                                   ) : null}
@@ -1346,7 +1352,7 @@ export function ClientReturnHistoryList({
                                     <>
                                       {' · '}
                                       <span className="font-medium text-foreground">
-                                        {format(new Date(actor.at), 'MMM d, yyyy · h:mm a')}
+                                        {formatReturnWhen(actor.at, 'MMM d, yyyy · h:mm a')}
                                       </span>
                                     </>
                                   ) : null}
@@ -1370,7 +1376,7 @@ export function ClientReturnHistoryList({
             </TableBody>
           </Table>
         </div>
-      )}
+      ) : null}
 
       <div className="mt-4">
         <ListPagination

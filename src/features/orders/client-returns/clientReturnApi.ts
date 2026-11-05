@@ -322,7 +322,7 @@ export function buildReturnedStockByVariantId(
       const holder = cr.originalAgentId || cr.returnedBy;
       if (holder && holder !== options.holderId) continue;
     }
-    for (const line of cr.lines) {
+    for (const line of cr.lines || []) {
       const variantId = line.variantId;
       if (!variantId) continue;
       const current = map.get(variantId) || { qty: 0, returns: [] };

@@ -28,8 +28,8 @@ import {
 
 const BRAND_PAGE_SIZE: PageSize = 25;
 
-function variantTypeOrder(type: string): number {
-  const value = type.trim().toLowerCase();
+function variantTypeOrder(type: string | null | undefined): number {
+  const value = String(type || '').trim().toLowerCase();
   if (value === 'flavor') return 0;
   if (value === 'battery') return 1;
   if (value === 'posm') return 2;
@@ -38,8 +38,8 @@ function variantTypeOrder(type: string): number {
   return 99;
 }
 
-export function formatVariantType(type: string): string {
-  const value = type.trim().toLowerCase();
+export function formatVariantType(type: string | null | undefined): string {
+  const value = String(type || '').trim().toLowerCase();
   if (value === 'posm') return 'POSM';
   if (value === 'foc') return 'FOC';
   if (value === 'ncv') return 'NCV';
@@ -47,8 +47,8 @@ export function formatVariantType(type: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-export function variantTypeBadgeClass(type: string): string {
-  const value = type.trim().toLowerCase();
+export function variantTypeBadgeClass(type: string | null | undefined): string {
+  const value = String(type || '').trim().toLowerCase();
   if (value === 'flavor') return 'bg-blue-100 text-blue-700';
   if (value === 'battery') return 'bg-green-100 text-green-700';
   if (value === 'posm') return 'bg-purple-100 text-purple-700';
@@ -57,9 +57,9 @@ export function variantTypeBadgeClass(type: string): string {
   return 'bg-gray-100 text-gray-700';
 }
 
-export function groupLinesByBrand(lines: PreviewClientReturnLine[]) {
+export function groupLinesByBrand(lines: PreviewClientReturnLine[] | null | undefined) {
   const map = new Map<string, PreviewClientReturnLine[]>();
-  for (const line of lines) {
+  for (const line of lines || []) {
     const brand = line.brandName?.trim() || 'Unknown';
     const list = map.get(brand) || [];
     const existing = list.find(
@@ -83,7 +83,7 @@ export function groupLinesByBrand(lines: PreviewClientReturnLine[]) {
       variants: variants.slice().sort((a, b) => {
         const typeCompare = variantTypeOrder(a.variantType) - variantTypeOrder(b.variantType);
         if (typeCompare !== 0) return typeCompare;
-        return a.variantName.localeCompare(b.variantName);
+        return String(a.variantName || '').localeCompare(String(b.variantName || ''));
       }),
     }));
 }

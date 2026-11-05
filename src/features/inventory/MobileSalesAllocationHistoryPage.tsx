@@ -260,6 +260,7 @@ export default function MobileSalesAllocationHistoryPage() {
               groups={pagedItems}
               emptyMessage="No stock has been allocated to you yet."
               getDetailHref={(group) => `/my-allocation-history/${group.groupId}`}
+              highlightDate
             />
           </div>
           <div className="hidden md:block">

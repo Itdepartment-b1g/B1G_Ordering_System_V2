@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Component, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ClipboardList, Loader2, Package, Truck } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -35,21 +35,53 @@ import {
 import type { PackageProofPhotoItem } from '@/features/shared/components/MultiProofPhotoField';
 
 type PageTab = 'history' | 'inventory' | 'returnToLeader';
+
+class PageErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="p-4 md:p-8">
+          <h1 className="text-2xl font-bold tracking-tight">Client Order Returns</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            This page could not be shown. Refresh and try again.
+          </p>
+          <p className="mt-2 text-sm text-destructive">{this.state.error.message}</p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 type RlConfirmKind = 'approve' | 'reject' | null;
 
 export default function ClientOrderReturnsPage() {
+  return (
+    <PageErrorBoundary>
+      <ClientOrderReturnsView />
+    </PageErrorBoundary>
+  );
+}
+
+function ClientOrderReturnsView() {
   const { user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const dispatch = useAppDispatch();
-  const { hasWarehouseHubLink } = usePermissions();
+  const { hasWarehouseHubLink, hasWarehouseHubLinkLoading } = usePermissions();
   const isLeader = user?.role === 'team_leader';
   const isSuperAdmin = user?.role === 'super_admin';
   const canBulkReturn = canCreateReturnLeader(user?.role);
   const showReturns = canShowClientOrderReturns(hasWarehouseHubLink, user?.role);
 
-  const rows = useAppSelector((state) => state.motoClientReturns.returns);
+  const storedRows = useAppSelector((state) => state.motoClientReturns.returns);
+  const rows = Array.isArray(storedRows) ? storedRows : [];
   const listStatus = useAppSelector((state) => state.motoClientReturns.listStatus);
   const listError = useAppSelector((state) => state.motoClientReturns.listError);
   const isLoading = listStatus === 'loading' || listStatus === 'idle';
@@ -76,7 +108,8 @@ export default function ClientOrderReturnsPage() {
   const holdsLoading = !!holderId && (holdsStatus === 'loading' || holdsStatus === 'idle');
   const holdsError = !!holdsErrorMsg;
 
-  const rlRows = useAppSelector((state) => state.motoReturnLeader.handovers);
+  const storedHandovers = useAppSelector((state) => state.motoReturnLeader.handovers);
+  const rlRows = Array.isArray(storedHandovers) ? storedHandovers : [];
   const rlStatus = useAppSelector((state) => state.motoReturnLeader.handoversStatus);
   const rlErrorMsg = useAppSelector((state) => state.motoReturnLeader.handoversError);
   const rlLoading = rlStatus === 'loading' || rlStatus === 'idle';
@@ -203,6 +236,15 @@ export default function ClientOrderReturnsPage() {
     }
   };
 
+  if (hasWarehouseHubLinkLoading) {
+    return (
+      <div className="flex items-center justify-center gap-2 p-8 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Loading client order returns...
+      </div>
+    );
+  }
+
   if (!showReturns) {
     return (
       <div className="p-8">
@@ -215,7 +257,7 @@ export default function ClientOrderReturnsPage() {
   }
 
   return (
-    <div className="p-4 md:p-8 space-y-6 min-w-0">
+    <div className="w-full max-w-full min-w-0 overflow-x-hidden p-4 md:p-8 space-y-6">
       <div>
         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Client Order Returns</h1>
         <p className="text-sm sm:text-base text-muted-foreground mt-1">
@@ -231,12 +273,12 @@ export default function ClientOrderReturnsPage() {
         <TabsList
           className={`grid w-full h-auto p-1 ${isSuperAdmin ? 'grid-cols-2' : 'grid-cols-3'}`}
         >
-          <TabsTrigger value="history" className="gap-1.5 py-2.5 text-xs sm:text-sm">
+          <TabsTrigger value="history" className="h-auto gap-1.5 whitespace-normal py-2.5 text-xs sm:text-sm">
             <ClipboardList className="h-4 w-4 shrink-0" />
             Client Returns
           </TabsTrigger>
           {!isSuperAdmin ? (
-            <TabsTrigger value="inventory" className="gap-1.5 py-2.5 text-xs sm:text-sm">
+            <TabsTrigger value="inventory" className="h-auto gap-1.5 whitespace-normal py-2.5 text-xs sm:text-sm">
               <Package className="h-4 w-4 shrink-0" />
               <span className="sm:hidden">Items</span>
               <span className="hidden sm:inline">Returned Items (Disposals)</span>
@@ -245,7 +287,7 @@ export default function ClientOrderReturnsPage() {
               ) : null}
             </TabsTrigger>
           ) : null}
-          <TabsTrigger value="returnToLeader" className="gap-1.5 py-2.5 text-xs sm:text-sm">
+          <TabsTrigger value="returnToLeader" className="h-auto gap-1.5 whitespace-normal py-2.5 text-xs sm:text-sm">
             <Truck className="h-4 w-4 shrink-0" />
             <span className="sm:hidden">RL</span>
             <span className="hidden sm:inline">Return to TL</span>

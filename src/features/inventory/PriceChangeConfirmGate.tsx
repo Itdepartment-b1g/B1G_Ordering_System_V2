@@ -90,8 +90,8 @@ export function PriceChangeConfirmGate() {
     queryKey: ['price-agreements', user?.company_id, user?.id],
     queryFn: () => fetchMyPendingPriceAgreements(user!.company_id!, user!.id),
     enabled: eligible && !hasWarehouseHubLinkLoading,
-    refetchInterval: eligible ? 5_000 : false,
-    refetchOnWindowFocus: true,
+    staleTime: 1000 * 60 * 2,
+    refetchOnWindowFocus: false,
   });
 
   const current = batches[0] ?? null;
@@ -102,8 +102,12 @@ export function PriceChangeConfirmGate() {
     if (!eligible || !user?.company_id || !user?.id) return;
 
     const companyId = user.company_id;
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
     const refresh = () => {
-      void qc.invalidateQueries({ queryKey: ['price-agreements', companyId, user.id] });
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        void qc.invalidateQueries({ queryKey: ['price-agreements', companyId, user.id] });
+      }, 1000);
     };
 
     const channel = supabase
@@ -141,6 +145,7 @@ export function PriceChangeConfirmGate() {
       .subscribe();
 
     return () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
       void supabase.removeChannel(channel);
     };
   }, [eligible, user?.company_id, user?.id, qc]);

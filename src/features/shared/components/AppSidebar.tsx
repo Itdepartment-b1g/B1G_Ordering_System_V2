@@ -311,6 +311,11 @@ const agentMenuItems: MenuItem[] = [
   { title: 'Attendance', url: '/attendance', icon: Calendar },
 ];
 
+const mobileSalesMenuItems: MenuItem[] = [
+  { title: 'Pages', url: '/pages', icon: LayoutGrid },
+  ...agentMenuItems,
+];
+
 const hermanosMenuItems: MenuItem[] = [
   { title: 'My Clients', url: '/my-clients', icon: ShoppingBag },
 ];
@@ -688,7 +693,7 @@ export function AppSidebar() {
     } else if (user?.role === 'accounting') {
       baseMenuItems = accountingMenuItems;
     } else if (user?.role === 'mobile_sales') {
-      baseMenuItems = agentMenuItems;
+      baseMenuItems = mobileSalesMenuItems;
     } else {
       // Default to agent menu for other roles
       baseMenuItems = agentMenuItems;

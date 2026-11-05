@@ -45,7 +45,7 @@ export function MobileSalesReturnDetailsPanel({
 
   return (
     <div className="space-y-4">
-      {showPrint && row.status === 'approved' ? (
+      {showPrint ? (
         <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={printReturn}>
           <Printer className="mr-2 h-4 w-4" />
           Print

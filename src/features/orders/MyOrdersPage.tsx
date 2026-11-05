@@ -724,6 +724,14 @@ export default function MyOrdersPage() {
     setCurrentPage(1);
   }, [searchQuery, dateRangeFilter, statusFilter, extraFilters, orderSortState]);
 
+  useEffect(() => {
+    if (searchParams.get('create') !== '1') return;
+    setCreateDialogOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('create');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
   const selectedBrand = agentBrands.find(b => b.name === selectedBrandName);
 
   // Fetch agent's clients
@@ -3051,45 +3059,40 @@ export default function MyOrdersPage() {
                       }
                     }}
                   >
-                  <div className="p-3">
-                    <div className="flex items-start justify-between mb-2 gap-2">
-                      <div className="flex-1 min-w-0">
-                        <div className="font-mono font-semibold text-sm truncate">{order.orderNumber}</div>
-                        <div className="text-xs text-muted-foreground mt-0.5 truncate">{order.clientName}</div>
-                      </div>
-                      <div
-                        className="flex items-start gap-1 shrink-0"
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        <div className="flex flex-col gap-1 items-end">
-                          <Badge variant={primary.variant} className="text-xs">
-                            {primary.text}
-                          </Badge>
-                          {secondary && (
-                            <Badge
-                              variant={secondary.variant}
-                              className={`text-xs ${secondary.className || ''}`}
-                            >
-                              {secondary.text}
-                            </Badge>
-                          )}
-                        </div>
+                  <div className="space-y-1.5 p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="min-w-0 truncate font-mono text-sm font-semibold">{order.orderNumber}</p>
+                      <div className="shrink-0" onClick={(event) => event.stopPropagation()}>
                         {orderActionsMenu(order)}
                       </div>
                     </div>
-                    <div className="space-y-1 text-xs pt-2 border-t">
-                      <div className="flex items-center justify-between">
-                        <span className="text-muted-foreground">Payment:</span>
-                        <span className="font-medium">{formatPaymentSummary(order)}</span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <span className="text-muted-foreground">{order.items.reduce((sum: number, item: any) => sum + (item.quantity || 0), 0)} items</span>
-                          <span className="text-muted-foreground mx-2">•</span>
-                          <span className="text-muted-foreground">{new Date(order.date).toLocaleDateString()}</span>
-                        </div>
-                        <div className="font-semibold text-sm">₱{order.total.toLocaleString()}</div>
-                      </div>
+                    <div className="flex flex-col items-start gap-1">
+                      <Badge variant={primary.variant} className="text-xs font-normal">
+                        {primary.text}
+                      </Badge>
+                      {secondary ? (
+                        <Badge
+                          variant={secondary.variant}
+                          className={`text-xs font-normal ${secondary.className || ''}`}
+                        >
+                          {secondary.text}
+                        </Badge>
+                      ) : null}
+                    </div>
+                    <p className="truncate text-sm text-foreground">{order.clientName}</p>
+                    <div className="space-y-1 pt-1 text-xs">
+                      <p className="text-muted-foreground">
+                        Payment:{' '}
+                        <span className="font-medium text-foreground">{formatPaymentSummary(order)}</span>
+                      </p>
+                      <p className="text-muted-foreground">
+                        {order.items.reduce((sum: number, item: any) => sum + (item.quantity || 0), 0)} items
+                        <span className="mx-1.5">·</span>
+                        {new Date(order.date).toLocaleDateString()}
+                      </p>
+                      <p className="text-sm font-semibold tabular-nums text-foreground">
+                        ₱{order.total.toLocaleString()}
+                      </p>
                     </div>
                   </div>
                 </Card>

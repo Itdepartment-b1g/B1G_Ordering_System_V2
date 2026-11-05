@@ -46,6 +46,8 @@ export function RoleBasedRedirect() {
       return <Navigate to="/key-accounts/dashboard" replace />;
     case 'key_account_accounting':
       return <Navigate to="/key-accounts/purchase-orders" replace />;
+    case 'mobile_sales':
+      return <Navigate to="/pages" replace />;
     default:
       return <Navigate to="/dashboard" replace />;
   }

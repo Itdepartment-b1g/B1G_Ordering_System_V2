@@ -34,6 +34,8 @@ import {
   type SuperAdminAllocationSortKey,
 } from '@/features/sales-agents/components/super-admin-allocation-history/utils/superAdminAllocationHistorySorting';
 import { SuperAdminAllocationHistoryTable } from '@/features/sales-agents/components/super-admin-allocation-history/table/TableHeader';
+import { AllocationHistoryMobileList } from '@/features/sales-agents/components/super-admin-allocation-history/table/TableRow';
+import { filterLeaderAllocationGroups } from './leaderAllocationGroups';
 import type { DateRangeFilterValue } from '@/features/shared/components/DateRangeFilterPopover';
 import {
   filterAllocationHistoryGroups,
@@ -74,26 +76,10 @@ export default function LeaderAllocationHistoryList() {
 
   const teamAgentIdSet = useMemo(() => new Set(teamAgentIds), [teamAgentIds]);
 
-  // Stock this leader received, TL-to-TL they sent, and leader → agent to their team.
-  const leaderGroups = useMemo(() => {
-    if (!user?.id) return [];
-    return allGroups.filter((group) => {
-      if (group.allocationType === 'main_to_leader' && group.allocatedToId === user.id) {
-        return true;
-      }
-      if (
-        group.allocationType === 'leader_to_leader' &&
-        (group.allocatedToId === user.id || group.allocatedById === user.id)
-      ) {
-        return true;
-      }
-      return (
-        group.allocationType === 'leader_to_agent' &&
-        group.allocatedById === user.id &&
-        teamAgentIdSet.has(group.allocatedToId)
-      );
-    });
-  }, [allGroups, user?.id, teamAgentIdSet]);
+  const leaderGroups = useMemo(
+    () => filterLeaderAllocationGroups(allGroups, user?.id, teamAgentIds),
+    [allGroups, teamAgentIds, user?.id]
+  );
 
   const teamRecipients = useMemo((): CompanyRecipientOption[] => {
     const agents = companyRecipients.filter(
@@ -290,13 +276,24 @@ export default function LeaderAllocationHistoryList() {
             onClearFilters={clearFilters}
           />
 
-          <SuperAdminAllocationHistoryTable
-            isLoading={isLoading || isLoadingTeamAgents}
-            pagedGroups={pagedGroups}
-            sortState={sortState}
-            onSort={handleSort}
-            emptyMessage="No allocation history yet."
-          />
+          <div className="md:hidden">
+            <AllocationHistoryMobileList
+              isLoading={isLoading || isLoadingTeamAgents}
+              groups={pagedGroups}
+              emptyMessage="No allocation history yet."
+              getDetailHref={(group) => `/leader-allocation-history/${group.groupId}`}
+              highlightDate
+            />
+          </div>
+          <div className="hidden md:block">
+            <SuperAdminAllocationHistoryTable
+              isLoading={isLoading || isLoadingTeamAgents}
+              pagedGroups={pagedGroups}
+              sortState={sortState}
+              onSort={handleSort}
+              emptyMessage="No allocation history yet."
+            />
+          </div>
 
           <ListPagination
             pageSize={pageSize}

@@ -78,7 +78,7 @@ export const fetchReturnLeaderHandovers = createAsyncThunk(
     const body = await motoSalesRequest<{ handovers: ReturnLeaderHandover[] }>('return-leader', {
       params: { resource: 'handovers' },
     });
-    return body.handovers || [];
+    return Array.isArray(body?.handovers) ? body.handovers : [];
   }
 );
 

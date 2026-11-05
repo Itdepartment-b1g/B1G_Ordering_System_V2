@@ -32,13 +32,22 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { MobileSalesReturnDetailsPanel } from './components/MobileSalesReturnDetailsPanel';
-import { exportMainInventoryReturnPdf } from './utils/exportMainInventoryReturnPdf';
+import {
+  exportMainInventoryReturnPdf,
+  exportMainInventoryReturnsPdf,
+} from './utils/exportMainInventoryReturnPdf';
 import {
   fetchMyReturns,
   MOBILE_SALES_RETURN_HISTORY_QUERY_KEY,
   type MyReturn,
   type ReturnStatus,
 } from './utils/mobileSalesReturnHistory';
+
+function statusLabel(status: ReturnStatus) {
+  if (status === 'approved') return 'Approved';
+  if (status === 'rejected') return 'Rejected';
+  return 'Pending';
+}
 
 function statusBadge(status: ReturnStatus) {
   if (status === 'approved') return <Badge>Approved</Badge>;
@@ -146,20 +155,26 @@ export default function MobileSalesReturnHistoryPage() {
     setDetailRow(row);
   };
 
+  const toPdfInput = (row: MyReturn) => ({
+    returnedBy: user?.full_name || 'Mobile Sales',
+    returnedTo: row.returnedTo,
+    returnedAt: row.returnedAt,
+    status: statusLabel(row.status),
+    reason: row.reason,
+    lines: row.lines.map((line) => ({
+      brandName: line.brandName,
+      variantName: line.variantName,
+      variantType: line.variantType,
+      quantity: line.quantity,
+    })),
+  });
+
   const printReturn = (row: MyReturn) => {
-    exportMainInventoryReturnPdf({
-      returnedBy: user?.full_name || 'Mobile Sales',
-      returnedTo: row.returnedTo,
-      returnedAt: row.returnedAt,
-      status: row.status === 'approved' ? 'Approved' : row.status === 'rejected' ? 'Rejected' : 'Pending',
-      reason: row.reason,
-      lines: row.lines.map((line) => ({
-        brandName: line.brandName,
-        variantName: line.variantName,
-        variantType: line.variantType,
-        quantity: line.quantity,
-      })),
-    });
+    exportMainInventoryReturnPdf(toPdfInput(row));
+  };
+
+  const printVisible = () => {
+    exportMainInventoryReturnsPdf(visible.map(toPdfInput));
   };
 
   const renderActions = (row: MyReturn) => (
@@ -181,12 +196,10 @@ export default function MobileSalesReturnHistoryPage() {
           <Eye className="mr-2 h-4 w-4" />
           View details
         </DropdownMenuItem>
-        {row.status === 'approved' && (
-          <DropdownMenuItem onSelect={() => printReturn(row)}>
-            <Printer className="mr-2 h-4 w-4" />
-            Print
-          </DropdownMenuItem>
-        )}
+        <DropdownMenuItem onSelect={() => printReturn(row)}>
+          <Printer className="mr-2 h-4 w-4" />
+          Print
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -205,9 +218,15 @@ export default function MobileSalesReturnHistoryPage() {
           <h1 className="text-2xl font-bold tracking-tight md:text-3xl">Returns to Team Leader</h1>
           <p className="mt-1 text-sm text-muted-foreground">Stock you returned to your team leader</p>
         </div>
-        <Button variant="outline" asChild>
-          <Link to="/my-inventory">Back to My Inventory</Link>
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" disabled={visible.length === 0} onClick={printVisible}>
+            <Printer className="mr-2 h-4 w-4" />
+            Print PDF
+          </Button>
+          <Button variant="outline" asChild>
+            <Link to="/my-inventory">Back to My Inventory</Link>
+          </Button>
+        </div>
       </div>
 
       <div className="flex flex-col gap-2 sm:flex-row">

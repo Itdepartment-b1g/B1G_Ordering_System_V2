@@ -33,22 +33,22 @@ export function sortClientReturnHistory(
     let result = 0;
     switch (sortKey) {
       case 'returnNumber':
-        result = a.returnNumber.localeCompare(b.returnNumber, undefined, { numeric: true });
+        result = String(a.returnNumber || '').localeCompare(String(b.returnNumber || ''), undefined, { numeric: true });
         break;
       case 'clientName':
-        result = a.clientName.localeCompare(b.clientName);
+        result = String(a.clientName || '').localeCompare(String(b.clientName || ''));
         break;
       case 'returnedByName':
-        result = a.returnedByName.localeCompare(b.returnedByName);
+        result = String(a.returnedByName || '').localeCompare(String(b.returnedByName || ''));
         break;
       case 'returnDate':
-        result = new Date(a.returnDate).getTime() - new Date(b.returnDate).getTime();
+        result = new Date(a.returnDate || 0).getTime() - new Date(b.returnDate || 0).getTime();
         break;
       case 'returnType':
         result = formatClientReturnType(a.returnType).localeCompare(formatClientReturnType(b.returnType));
         break;
       case 'status':
-        result = a.status.localeCompare(b.status);
+        result = String(a.status || '').localeCompare(String(b.status || ''));
         break;
       case 'saApprovedByName':
         result = (a.saApprovedByName || '').localeCompare(b.saApprovedByName || '');

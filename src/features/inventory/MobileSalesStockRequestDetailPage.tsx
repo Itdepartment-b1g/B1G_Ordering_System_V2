@@ -1,19 +1,23 @@
 import { useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, Loader2 } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Clock, Loader2, Printer, XCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
-import { StockRequestDetailsPanel } from './components/StockRequestDetailsPanel';
+import { supabase } from '@/lib/supabase';
+import {
+  MobileSalesAllocationBrandList,
+  productLinesToAllocationGroup,
+} from './components/MobileSalesAllocationBrandList';
 import { useMyLeader, useMyRequests } from './requestHooks';
 import { exportMobileSalesStockRequestPdf } from './utils/exportMobileSalesStockRequestPdf';
 import {
   formatStockRequestWhen,
   groupMyStockRequests,
 } from './utils/stockRequestGrouping';
-import { Clock, CheckCircle2, XCircle } from 'lucide-react';
 
 function statusBadge(status: string) {
   switch (status) {
@@ -64,6 +68,34 @@ export default function MobileSalesStockRequestDetailPage() {
     () => groups.find((item) => item.id === requestId) || null,
     [groups, requestId]
   );
+  const allocationGroup = useMemo(
+    () =>
+      productLinesToAllocationGroup(
+        group?.id || requestId,
+        (group?.requests || []).map((req) => ({
+          id: req.id,
+          variantId: req.variant_id,
+          variantName: req.variant?.name?.trim() || 'Item',
+          brandName: req.variant?.brand?.name?.trim() || 'Unknown brand',
+          variantType: req.variant?.variant_type || null,
+          quantity: Number(req.requested_quantity) || 0,
+        }))
+      ),
+    [group, requestId]
+  );
+  const { data: variantTypes = [] } = useQuery({
+    queryKey: ['variant-types', user?.company_id],
+    enabled: !!user?.company_id,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('variant_types')
+        .select('name, display_name, color_code')
+        .eq('company_id', user!.company_id)
+        .eq('is_active', true);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
 
   const handlePrint = () => {
     if (!group) return;
@@ -135,7 +167,7 @@ export default function MobileSalesStockRequestDetailPage() {
           </Link>
         </Button>
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Request details</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-[#02066F]">Request details</h1>
           <p className="mt-0.5 text-sm text-muted-foreground">
             {group.id.startsWith('SR-') ? group.id : 'Stock request'} ·{' '}
             {formatStockRequestWhen(group.requested_at)}
@@ -143,10 +175,29 @@ export default function MobileSalesStockRequestDetailPage() {
         </div>
       </div>
 
-      <StockRequestDetailsPanel
-        group={group}
-        statusBadge={statusBadge(group.status)}
-        onPrint={handlePrint}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        {statusBadge(group.status)}
+        <Button type="button" variant="outline" onClick={handlePrint}>
+          <Printer className="mr-2 h-4 w-4" />
+          Print
+        </Button>
+      </div>
+
+      {group.requester_notes?.trim() ? (
+        <p className="text-sm text-muted-foreground">{group.requester_notes.trim()}</p>
+      ) : null}
+      {group.requests.map((req) => req.denial_reason?.trim()).find(Boolean) ? (
+        <p className="text-sm text-destructive">
+          {group.requests.map((req) => req.denial_reason?.trim()).find(Boolean)}
+        </p>
+      ) : null}
+
+      <MobileSalesAllocationBrandList
+        isLoading={false}
+        groups={[allocationGroup]}
+        variantTypes={variantTypes}
+        quantityLabel="Total Requested"
+        emptyMessage="This request has no product lines yet."
       />
     </div>
   );

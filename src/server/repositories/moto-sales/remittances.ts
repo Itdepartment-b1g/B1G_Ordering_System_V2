@@ -366,7 +366,7 @@ export async function listAgentRemittances(
     remittedByOrderId[String((order as { id: string }).id)] = portions.remittedAmount;
   }
 
-  const remittances: AgentRemittanceSummary[] = rows.map(
+  const remittances: AgentRemittanceSummary[] = rows.flatMap(
     (row: {
       id: string;
       remittance_date: string;
@@ -378,25 +378,30 @@ export async function listAgentRemittances(
     }) => {
       const orderIds = row.order_ids || [];
       const nonImportedIds = orderIds.filter((id) => !importedOrderIds.has(id));
-      const remittedAmount = nonImportedIds.reduce(
+      const cashChequeIds = nonImportedIds.filter((id) => (remittedByOrderId[id] || 0) > 0);
+      const remittedAmount = cashChequeIds.reduce(
         (sum, id) => sum + (remittedByOrderId[id] || 0),
         0
       );
 
+      if (cashChequeIds.length === 0) return [];
+
       const id = String(row.id);
       const remittanceDate = String(row.remittance_date);
-      return {
-        id,
-        remittanceNumber: formatRemittanceNumber(id, remittanceDate),
-        remittanceDate,
-        remittedAt: String(row.remitted_at),
-        itemsRemitted: Number(row.items_remitted) || 0,
-        totalUnits: Number(row.total_units) || 0,
-        ordersCount: nonImportedIds.length,
-        remittedAmount: nonImportedIds.length === 0 ? 0 : remittedAmount,
-        hasSignature: !!row.signature_url,
-        orderIds,
-      };
+      return [
+        {
+          id,
+          remittanceNumber: formatRemittanceNumber(id, remittanceDate),
+          remittanceDate,
+          remittedAt: String(row.remitted_at),
+          itemsRemitted: Number(row.items_remitted) || 0,
+          totalUnits: Number(row.total_units) || 0,
+          ordersCount: cashChequeIds.length,
+          remittedAmount,
+          hasSignature: !!row.signature_url,
+          orderIds,
+        },
+      ];
     }
   );
 
@@ -440,7 +445,10 @@ export async function getAgentRemittanceDetail(
   const ordersRaw = await loadOrdersByIds(orderIds);
   const orders = ordersRaw
     .map((order) => mapOrderLine(asRecord(order)))
-    .filter((line): line is AgentRemittanceOrderLine => !!line);
+    .filter(
+      (line): line is AgentRemittanceOrderLine =>
+        !!line && (line.cashPortion > 0 || line.chequePortion > 0)
+    );
 
   const remittedAmount = orders.reduce((sum, o) => sum + o.remittedAmount, 0);
 
