@@ -614,8 +614,11 @@ export default function DashboardPage() {
       ) : (
         <>
           {/* Agent Stats.
-              Mobile sales on a phone: one 2-column grid so sales figures lead.
-              To Remit spans both columns because it carries an amount and an action.
+              Mobile sales on a phone:
+              [Overall Sales] [Approved Sales]
+              [Pending Sales                 ]
+              [To Remit (Cash)               ]
+              [My Orders]     [My Clients]
               Tablet and up keep the original rows. */}
           <div
             className={cn(
@@ -630,7 +633,7 @@ export default function DashboardPage() {
               isMobileSales && 'max-md:contents'
             )}
           >
-            <Card className={cn(isMobileSales && 'max-md:order-6')}>
+            <Card className={cn(isMobileSales && 'max-md:order-5')}>
               <CardHeader className={statHeader}>
                 <CardTitle className="text-sm font-medium">My Orders</CardTitle>
                 <ShoppingCart className="h-4 w-4 text-muted-foreground" />
@@ -640,7 +643,7 @@ export default function DashboardPage() {
                 <p className="text-xs text-muted-foreground mt-1">Total orders placed</p>
               </CardContent>
             </Card>
-            <Card className={cn(isMobileSales && 'max-md:order-7')}>
+            <Card className={cn(isMobileSales && 'max-md:order-6')}>
               <CardHeader className={statHeader}>
                 <CardTitle className="text-sm font-medium">My Clients</CardTitle>
                 <Users className="h-4 w-4 text-muted-foreground" />
@@ -672,38 +675,17 @@ export default function DashboardPage() {
             </Card>
           </div>
 
-          {/* Pending Sales (amount) + Pending Orders (count) + To Remit */}
+          {/* Pending (sales amount + order count) + To Remit */}
           <div
             className={cn(
-              'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4',
+              'grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4',
               isMobileSales && 'max-md:contents'
             )}
           >
-            <Card className={cn('border-l-4 border-l-yellow-500', isMobileSales && 'max-md:order-3')}>
-              <CardHeader className={statHeaderStart}>
-                <div className="space-y-1 pr-2">
-                  <CardTitle className="text-sm font-medium">Pending Sales</CardTitle>
-                </div>
-                <Clock className="h-4 w-4 text-yellow-600 shrink-0" />
-              </CardHeader>
-              <CardContent className={statBody}>
-                <div className={cn(statValue, 'text-yellow-600')}>₱{pendingSales.toLocaleString()}</div>
-                <p className="text-xs text-muted-foreground leading-snug">
-                  <span className={cn('text-yellow-700/90', isMobileSales && 'max-md:block')}>
-                    Pending ₱{pendingSalesPending.toLocaleString()}
-                  </span>
-                  <span className={cn(isMobileSales && 'max-md:hidden')}>{' + '}</span>
-                  <span className={cn('text-yellow-700/90', isMobileSales && 'max-md:block')}>
-                    Needs revision ₱{pendingSalesNeedsRevision.toLocaleString()}
-                  </span>
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">Awaiting approval</p>
-              </CardContent>
-            </Card>
             <Card
               className={cn(
                 'border-l-4 border-l-amber-500 transition-colors',
-                isMobileSales && 'max-md:order-4',
+                isMobileSales && 'max-md:order-3 max-md:col-span-2',
                 pendingOrdersCount > 0 && 'cursor-pointer hover:bg-amber-50/40'
               )}
               role={pendingOrdersCount > 0 ? 'button' : undefined}
@@ -720,26 +702,43 @@ export default function DashboardPage() {
             >
               <CardHeader className={statHeaderStart}>
                 <div className="space-y-1 pr-2">
-                  <CardTitle className="text-sm font-medium">Pending Orders</CardTitle>
+                  <CardTitle className="text-sm font-medium">Pending Sales</CardTitle>
                 </div>
-                <ShoppingCart className="h-4 w-4 text-amber-600 shrink-0" />
+                <Clock className="h-4 w-4 text-amber-600 shrink-0" />
               </CardHeader>
               <CardContent className={statBody}>
-                <div className={cn(statValue, 'text-amber-700')}>{pendingOrdersCount}</div>
-                <p className="text-xs text-muted-foreground mt-1">Not yet approved by finance</p>
-                <p className="text-xs text-muted-foreground leading-snug">
-                  <button
-                    type="button"
-                    className="text-amber-700/90 hover:underline"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate('/my-orders?status=pending');
-                    }}
-                  >
-                    {pendingOrdersPendingCount} in progress
-                  </button>
-                  {pendingOrdersNeedsRevisionCount > 0 && (
-                    <>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className={cn(statValue, 'text-amber-700')}>₱{pendingSales.toLocaleString()}</div>
+                    <p className="text-xs text-muted-foreground mt-1">Sales awaiting approval</p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <div className={cn(statValue, 'text-amber-700')}>{pendingOrdersCount}</div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {pendingOrdersCount === 1 ? 'Order' : 'Orders'}
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-2 space-y-0.5 text-xs text-muted-foreground leading-snug">
+                  <p>
+                    <span className="text-amber-700/90">Pending ₱{pendingSalesPending.toLocaleString()}</span>
+                    {' · '}
+                    <button
+                      type="button"
+                      className="text-amber-700/90 hover:underline"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate('/my-orders?status=pending');
+                      }}
+                    >
+                      {pendingOrdersPendingCount} in progress
+                    </button>
+                  </p>
+                  {(pendingSalesNeedsRevision > 0 || pendingOrdersNeedsRevisionCount > 0) && (
+                    <p>
+                      <span className="text-amber-700/90">
+                        Needs revision ₱{pendingSalesNeedsRevision.toLocaleString()}
+                      </span>
                       {' · '}
                       <button
                         type="button"
@@ -751,9 +750,9 @@ export default function DashboardPage() {
                       >
                         {pendingOrdersNeedsRevisionCount} needs revision
                       </button>
-                    </>
+                    </p>
                   )}
-                </p>
+                </div>
                 {pendingOrdersCount > 0 ? (
                   <p className="mt-3 text-xs font-medium text-amber-700 flex items-center gap-1">
                     Click to filter orders
@@ -767,7 +766,7 @@ export default function DashboardPage() {
             <Card
               className={cn(
                 'border-l-4 border-l-green-500 transition-colors',
-                isMobileSales && 'max-md:order-5 max-md:col-span-2',
+                isMobileSales && 'max-md:order-4 max-md:col-span-2',
                 (pendingRemittance?.cashChequeOrdersCount ?? 0) > 0 &&
                   'cursor-pointer hover:bg-green-50/40'
               )}
