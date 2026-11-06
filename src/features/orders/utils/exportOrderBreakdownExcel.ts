@@ -44,6 +44,7 @@ const SPACER_AFTER_BRAND = true;
 
 const BASE_SUB_HEADERS = [
   'VARIANTS',
+  'Variant type',
   'Qty',
   'Price',
   'Line Total',
@@ -55,6 +56,7 @@ const BASE_SUB_HEADERS = [
 
 const CHANGE_SUB_HEADERS = [
   'VARIANTS',
+  'Variant type',
   'Qty',
   'Change item',
   'Change Qty',
@@ -68,6 +70,7 @@ const CHANGE_SUB_HEADERS = [
 
 type BrandColOffsets = {
   variant: number;
+  variantType: number;
   qty: number;
   changeItem: number | null;
   changeQty: number | null;
@@ -85,18 +88,28 @@ function getBrandColOffsets(includeChangeColumns: boolean): BrandColOffsets {
   const extra = includeChangeColumns ? 2 : 0;
   return {
     variant: 0,
-    qty: 1,
-    changeItem: includeChangeColumns ? 2 : null,
-    changeQty: includeChangeColumns ? 3 : null,
-    price: 2 + extra,
-    lineTotal: 3 + extra,
-    unitsSold: 4 + extra,
-    pendingSold: 5 + extra,
-    approvedRev: 6 + extra,
-    pendingRev: 7 + extra,
-    count: 8 + extra,
-    totalMergeEnd: 2 + extra,
+    variantType: 1,
+    qty: 2,
+    changeItem: includeChangeColumns ? 3 : null,
+    changeQty: includeChangeColumns ? 4 : null,
+    price: 3 + extra,
+    lineTotal: 4 + extra,
+    unitsSold: 5 + extra,
+    pendingSold: 6 + extra,
+    approvedRev: 7 + extra,
+    pendingRev: 8 + extra,
+    count: 9 + extra,
+    totalMergeEnd: 3 + extra,
   };
+}
+
+function formatVariantType(type: string | null | undefined): string {
+  const value = String(type || '').trim().toLowerCase();
+  if (value === 'posm') return 'POSM';
+  if (value === 'foc') return 'FOC';
+  if (value === 'ncv') return 'NCV';
+  if (!value) return '';
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function getSubHeaders(includeChangeColumns: boolean): readonly string[] {
@@ -105,6 +118,7 @@ function getSubHeaders(includeChangeColumns: boolean): readonly string[] {
 
 type BrandLineItem = {
   variant: string;
+  variantType: string;
   changeVariants?: AllocatedChangeVariant[];
   qty: number;
   price: number;
@@ -216,6 +230,7 @@ function mapOrderToWideExport(
     const changeVariants = takeChangeVariantsFromPool(changePool, brand, returnedQty);
     brandItems[brand].push({
       variant: item.variantName,
+      variantType: formatVariantType(item.variantType),
       changeVariants: changeVariants.length > 0 ? changeVariants : undefined,
       qty: item.quantity,
       price: item.unitPrice,
@@ -752,6 +767,10 @@ function writeOrderBlock(
         variantCell.value = item.variant;
         variantCell.alignment = { wrapText: true, vertical: 'middle' };
 
+        const variantTypeCell = row.getCell(start + offsets.variantType);
+        variantTypeCell.value = item.variantType;
+        variantTypeCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
         row.getCell(start + offsets.qty).value = item.qty;
         row.getCell(start + offsets.qty).alignment = { horizontal: 'center' };
 
@@ -848,6 +867,7 @@ function applyWorksheetColumnWidths(ws: ExcelJS.Worksheet, layout: ColumnLayout)
   ws.getColumn(FIXED_COLS.client).width = 10;
   for (const { start } of layout.brandStarts) {
     ws.getColumn(start + offsets.variant).width = NAME_COL_WIDTH;
+    ws.getColumn(start + offsets.variantType).width = 14;
     ws.getColumn(start + offsets.qty).width = 7;
     if (offsets.changeItem != null && offsets.changeQty != null) {
       ws.getColumn(start + offsets.changeItem).width = NAME_COL_WIDTH;
