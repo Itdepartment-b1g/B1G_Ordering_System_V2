@@ -586,13 +586,15 @@ export default function MainInventoryPage() {
     if (isSubWarehouseUser) return null;
     return (
       <Button
-        variant="ghost"
-        size="sm"
-        title="View stock holders"
-        onClick={() => navigate(`/inventory/main/stock-holders/${variant.id}`)}
-      >
-        <Users className="h-4 w-4" />
-      </Button>
+      variant="outline"
+      size="sm"
+      title="View stock holders"
+      onClick={() => navigate(`/inventory/main/stock-holders/${variant.id}`)}
+      className="h-8 gap-1.5 px-2.5 text-xs"
+    >
+      <Users className="h-3.5 w-3.5" />
+      Stock Holders
+    </Button>
     );
   };
 
@@ -1358,7 +1360,7 @@ export default function MainInventoryPage() {
                                   </TableCell>
                                   <TableCell className="text-center">
                                     <div className="flex items-center justify-center gap-1">
-                                      {!isWarehouse && (
+                                      {/* {!isWarehouse && (
                                       <Button
                                         variant="ghost"
                                         size="sm"
@@ -1366,7 +1368,7 @@ export default function MainInventoryPage() {
                                       >
                                         <Edit className="h-4 w-4" />
                                       </Button>
-                                      )}
+                                      )} */}
 
                                       {isWarehouse && flavor.mainInventoryId && (
                                         <AlertDialog>
@@ -1405,7 +1407,7 @@ export default function MainInventoryPage() {
 
                                       {!isWarehouse && (
                                         <AlertDialog>
-                                          <AlertDialogTrigger asChild>
+                                          {/* <AlertDialogTrigger asChild>
                                             <Button
                                               variant="ghost"
                                               size="sm"
@@ -1414,7 +1416,7 @@ export default function MainInventoryPage() {
                                             >
                                               <Trash2 className="h-4 w-4" />
                                             </Button>
-                                          </AlertDialogTrigger>
+                                          </AlertDialogTrigger> */}
                                           <AlertDialogContent>
                                             <AlertDialogHeader>
                                               <AlertDialogTitle>Archive this product?</AlertDialogTitle>
@@ -1568,7 +1570,7 @@ export default function MainInventoryPage() {
 
                                       {!isWarehouse && (
                                         <AlertDialog>
-                                          <AlertDialogTrigger asChild>
+                                          {/* <AlertDialogTrigger asChild>
                                             <Button
                                               variant="ghost"
                                               size="sm"
@@ -1577,7 +1579,7 @@ export default function MainInventoryPage() {
                                             >
                                               <Trash2 className="h-4 w-4" />
                                             </Button>
-                                          </AlertDialogTrigger>
+                                          </AlertDialogTrigger> */}
                                           <AlertDialogContent>
                                             <AlertDialogHeader>
                                               <AlertDialogTitle>Archive this product?</AlertDialogTitle>
@@ -1724,7 +1726,7 @@ export default function MainInventoryPage() {
                                       {renderBatchViewButton(posm, brand.name)}
                                       {!isWarehouse && (
                                         <AlertDialog>
-                                          <AlertDialogTrigger asChild>
+                                          {/* <AlertDialogTrigger asChild>
                                             <Button
                                               variant="ghost"
                                               size="sm"
@@ -1733,7 +1735,7 @@ export default function MainInventoryPage() {
                                             >
                                               <Trash2 className="h-4 w-4" />
                                             </Button>
-                                          </AlertDialogTrigger>
+                                          </AlertDialogTrigger> */}
                                           <AlertDialogContent>
                                             <AlertDialogHeader>
                                               <AlertDialogTitle>Archive this product?</AlertDialogTitle>
