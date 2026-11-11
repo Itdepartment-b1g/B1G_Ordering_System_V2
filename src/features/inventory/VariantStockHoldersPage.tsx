@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Loader2, Package, Search, Smartphone, UserCheck, Users } from 'lucide-react';
+import { ArrowLeft, Loader2, Package, Printer, Search, Smartphone, UserCheck, Users } from 'lucide-react';
 import { useAuth } from '@/features/auth';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHeader, TableRow } from '@/components/ui/table';
+import { useToast } from '@/hooks/use-toast';
+import { exportVariantStockHoldersPdf } from './utils/exportVariantStockHoldersPdf';
 import {
   DEFAULT_PAGE_SIZE,
   getListPaginationSlice,
@@ -108,6 +110,7 @@ async function fetchVariantMeta(companyId: string, variantId: string): Promise<V
 export default function VariantStockHoldersPage() {
   const { variantId } = useParams<{ variantId: string }>();
   const { user } = useAuth();
+  const { toast } = useToast();
   const companyId = user?.company_id;
 
   const [page, setPage] = useState(0);
@@ -117,6 +120,7 @@ export default function VariantStockHoldersPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<RoleFilter>('all');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [printing, setPrinting] = useState(false);
 
   const {
     data: variantMeta,
@@ -200,6 +204,36 @@ export default function VariantStockHoldersPage() {
   const handleSort = (key: HolderSortKey) => {
     setSortState((prev) => getNextTableSortCycleState(prev, key));
   };
+
+  const handlePrint = () => {
+    if (!variantMeta) return;
+    setPrinting(true);
+    try {
+      exportVariantStockHoldersPdf({
+        brandName: variantMeta.brandName,
+        variantName: variantMeta.name,
+        variantType: variantMeta.variantType,
+        printedAt: new Date().toISOString(),
+        lines: sortedHolders.map((holder) => ({
+          holderName: holder.holderName,
+          role: holder.role,
+          leaderName: holder.leaderName,
+          status: holder.status,
+          qty: holder.qty,
+        })),
+      });
+    } catch (err) {
+      toast({
+        variant: 'destructive',
+        title: 'Print failed',
+        description: err instanceof Error ? err.message : 'Could not open print view.',
+      });
+    } finally {
+      setPrinting(false);
+    }
+  };
+
+  const canPrint = showStats && holders.length > 0;
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -318,6 +352,21 @@ export default function VariantStockHoldersPage() {
               <SelectItem value="inactive">Inactive</SelectItem>
             </SelectContent>
           </Select>
+          {canPrint && (
+            <Button
+              variant="outline"
+              onClick={handlePrint}
+              disabled={printing}
+              className="w-full sm:w-auto"
+            >
+              {printing ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Printer className="h-4 w-4 mr-2" />
+              )}
+              Print
+            </Button>
+          )}
         </div>
       )}
 
