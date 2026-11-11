@@ -37,7 +37,7 @@ type VariantMeta = {
   brandName: string;
 };
 
-type HolderSortKey = 'holderName' | 'role' | 'leaderName' | 'status' | 'qty';
+type HolderSortKey = 'holderName' | 'role' | 'status' | 'qty';
 type RoleFilter = 'all' | 'team_leader' | 'mobile_sales';
 type StatusFilter = 'all' | 'active' | 'inactive';
 
@@ -47,11 +47,6 @@ const DEFAULT_SORT_DIRECTION = 'desc' as const;
 function unwrapOne<T>(value: T | T[] | null | undefined): T | undefined {
   if (Array.isArray(value)) return value[0];
   return value ?? undefined;
-}
-
-function leaderDisplay(holder: VariantStockHolder): string {
-  if (holder.role === 'team_leader') return '—';
-  return holder.leaderName || 'Unassigned';
 }
 
 function compareHolders(
@@ -72,9 +67,6 @@ function compareHolders(
       break;
     case 'role':
       result = getRoleDisplayName(a.role).localeCompare(getRoleDisplayName(b.role));
-      break;
-    case 'leaderName':
-      result = leaderDisplay(a).localeCompare(leaderDisplay(b));
       break;
     case 'status':
       result = a.status.localeCompare(b.status);
@@ -175,7 +167,7 @@ export default function VariantStockHoldersPage() {
       if (roleFilter !== 'all' && holder.role !== roleFilter) return false;
       if (statusFilter !== 'all' && holder.status !== statusFilter) return false;
       if (!q) return true;
-      const leader = leaderDisplay(holder).toLowerCase();
+      const leader = (holder.leaderName || 'Unassigned').toLowerCase();
       return (
         holder.holderName.toLowerCase().includes(q) ||
         leader.includes(q) ||
@@ -378,12 +370,6 @@ export default function VariantStockHoldersPage() {
                         onSort={handleSort}
                       />
                       <SortableTableHead
-                        label="Leader"
-                        sortKey="leaderName"
-                        sortDirection={getTableSortDisplayDirection(sortState, 'leaderName')}
-                        onSort={handleSort}
-                      />
-                      <SortableTableHead
                         label="Status"
                         sortKey="status"
                         sortDirection={getTableSortDisplayDirection(sortState, 'status')}
@@ -402,9 +388,13 @@ export default function VariantStockHoldersPage() {
                     {pagedItems.map((holder) => (
                       <TableRow key={holder.holderId}>
                         <TableCell className="font-medium">{holder.holderName}</TableCell>
-                        <TableCell className="text-sm">{getRoleDisplayName(holder.role)}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {leaderDisplay(holder)}
+                        <TableCell className="text-sm">
+                          <div>{getRoleDisplayName(holder.role)}</div>
+                          {holder.role === 'mobile_sales' && (
+                            <div className="text-xs text-muted-foreground">
+                              (Team Leader: {holder.leaderName || 'Unassigned'})
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell>
                           <Badge
