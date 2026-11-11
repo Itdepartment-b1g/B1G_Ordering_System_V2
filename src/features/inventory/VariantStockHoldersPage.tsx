@@ -8,7 +8,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Separator } from '@/components/ui/separator';
 import { Table, TableBody, TableCell, TableHeader, TableRow } from '@/components/ui/table';
 import {
   DEFAULT_PAGE_SIZE,
@@ -244,100 +243,90 @@ export default function VariantStockHoldersPage() {
         </div>
       </div>
 
-      <Separator />
-
       {showStats && (
-        <>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2">
-                  <Package className="h-4 w-4 text-sky-600" />
-                  <div>
-                    <div className="text-2xl font-bold">
-                      {stockStats.totalStock.toLocaleString()}
-                    </div>
-                    <div className="text-xs text-muted-foreground">Total Stock</div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2">
+                <Package className="h-4 w-4 text-sky-600" />
+                <div>
+                  <div className="text-2xl font-bold">
+                    {stockStats.totalStock.toLocaleString()}
                   </div>
+                  <div className="text-xs text-muted-foreground">Total Stock</div>
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+            </CardContent>
+          </Card>
 
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2">
-                  <UserCheck className="h-4 w-4 text-orange-600" />
-                  <div>
-                    <div className="text-2xl font-bold">
-                      {stockStats.teamLeaderStock.toLocaleString()}
-                    </div>
-                    <div className="text-xs text-muted-foreground">Team Leader Stock</div>
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2">
+                <UserCheck className="h-4 w-4 text-orange-600" />
+                <div>
+                  <div className="text-2xl font-bold">
+                    {stockStats.teamLeaderStock.toLocaleString()}
                   </div>
+                  <div className="text-xs text-muted-foreground">Team Leader Stock</div>
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+            </CardContent>
+          </Card>
 
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2">
-                  <Smartphone className="h-4 w-4 text-emerald-600" />
-                  <div>
-                    <div className="text-2xl font-bold">
-                      {stockStats.mobileSalesStock.toLocaleString()}
-                    </div>
-                    <div className="text-xs text-muted-foreground">Mobile Sales Stock</div>
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2">
+                <Smartphone className="h-4 w-4 text-emerald-600" />
+                <div>
+                  <div className="text-2xl font-bold">
+                    {stockStats.mobileSalesStock.toLocaleString()}
                   </div>
+                  <div className="text-xs text-muted-foreground">Mobile Sales Stock</div>
                 </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          <Separator />
-        </>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       )}
 
       {showStats && holders.length > 0 && (
-        <>
-          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-            <div className="relative flex-1 min-w-[200px]">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                className="pl-8"
-                placeholder="Search name, leader, or role…"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
-            <Select
-              value={roleFilter}
-              onValueChange={(value) => setRoleFilter(value as RoleFilter)}
-            >
-              <SelectTrigger className="w-full sm:w-[180px]">
-                <SelectValue placeholder="Role" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All roles</SelectItem>
-                <SelectItem value="team_leader">Team Leader</SelectItem>
-                <SelectItem value="mobile_sales">Mobile Sales</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select
-              value={statusFilter}
-              onValueChange={(value) => setStatusFilter(value as StatusFilter)}
-            >
-              <SelectTrigger className="w-full sm:w-[160px]">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All statuses</SelectItem>
-                <SelectItem value="active">Active</SelectItem>
-                <SelectItem value="inactive">Inactive</SelectItem>
-              </SelectContent>
-            </Select>
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              className="pl-8"
+              placeholder="Search name, leader, or role…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
           </div>
-
-          <Separator />
-        </>
+          <Select
+            value={roleFilter}
+            onValueChange={(value) => setRoleFilter(value as RoleFilter)}
+          >
+            <SelectTrigger className="w-full sm:w-[180px]">
+              <SelectValue placeholder="Role" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All roles</SelectItem>
+              <SelectItem value="team_leader">Team Leader</SelectItem>
+              <SelectItem value="mobile_sales">Mobile Sales</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select
+            value={statusFilter}
+            onValueChange={(value) => setStatusFilter(value as StatusFilter)}
+          >
+            <SelectTrigger className="w-full sm:w-[160px]">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="active">Active</SelectItem>
+              <SelectItem value="inactive">Inactive</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       )}
 
       <Card>
