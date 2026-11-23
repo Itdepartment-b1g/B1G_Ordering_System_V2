@@ -432,7 +432,6 @@ function ClientOrderReturnsView() {
         totalReturned={inventoryRow?.qty || 0}
         returns={inventoryRow?.returns || []}
       />
-
       <ReturnLeaderViewDialog
         open={!!rlViewRow}
         onOpenChange={(open) => {

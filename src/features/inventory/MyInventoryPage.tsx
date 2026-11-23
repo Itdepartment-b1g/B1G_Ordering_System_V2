@@ -122,10 +122,15 @@ function brandStatusRank(total: number, hasLow: boolean): number {
   return 0;
 }
 
-type ReturnedStockEntry = { qty: number; returns: PreviewClientReturn[] };
+type ReturnedStockEntry = {
+  qty: number;
+  restockQty: number;
+  disposalQty: number;
+  returns: PreviewClientReturn[];
+};
 
 function emptyReturnedStock(): ReturnedStockEntry {
-  return { qty: 0, returns: [] };
+  return { qty: 0, restockQty: 0, disposalQty: 0, returns: [] };
 }
 
 function variantTypeKey(variantType?: string) {
@@ -296,7 +301,11 @@ export default function MyInventory() {
   const [returnedDialog, setReturnedDialog] = useState<{
     variantName: string;
     brandName: string;
+    variantId?: string;
+    variantType?: string;
     totalReturned: number;
+    restockQty: number;
+    disposalQty: number;
     returns: PreviewClientReturn[];
   } | null>(null);
   const [exportingExcel, setExportingExcel] = useState(false);
@@ -321,18 +330,22 @@ export default function MyInventory() {
 
   const getTypeReturnedStock = (variants: AgentVariant[]) => {
     let qty = 0;
+    let restockQty = 0;
+    let disposalQty = 0;
     const returns: PreviewClientReturn[] = [];
     const seen = new Set<string>();
     for (const variant of variants) {
       const stock = getReturnedStock(variant.id);
       qty += stock.qty;
+      restockQty += stock.restockQty;
+      disposalQty += stock.disposalQty;
       for (const row of stock.returns) {
         if (seen.has(row.id)) continue;
         seen.add(row.id);
         returns.push(row);
       }
     }
-    return { qty, returns };
+    return { qty, restockQty, disposalQty, returns };
   };
 
   const { data: variantTypes = [] } = useQuery({
@@ -374,17 +387,25 @@ export default function MyInventory() {
     return buildReturnedStockByVariantId(clientReturns, { holderId: user?.id });
   }, [clientReturns, showReturnedColumn, user?.id]);
 
-  const openReturnedDialog = (
-    brandName: string,
-    variantName: string,
-    qty: number,
-    returns: PreviewClientReturn[]
-  ) => {
+  const openReturnedDialog = (args: {
+    brandName: string;
+    variantName: string;
+    variantId?: string;
+    variantType?: string;
+    qty: number;
+    restockQty: number;
+    disposalQty: number;
+    returns: PreviewClientReturn[];
+  }) => {
     setReturnedDialog({
-      brandName,
-      variantName,
-      totalReturned: qty,
-      returns,
+      brandName: args.brandName,
+      variantName: args.variantName,
+      variantId: args.variantId,
+      variantType: args.variantType,
+      totalReturned: args.qty,
+      restockQty: args.restockQty,
+      disposalQty: args.disposalQty,
+      returns: args.returns,
     });
   };
 
@@ -394,14 +415,18 @@ export default function MyInventory() {
   const getBrandReturnedStock = (brand: { allVariants?: Array<{ id: string }> }) => {
     const returnsById = new Map<string, PreviewClientReturn>();
     let qty = 0;
+    let restockQty = 0;
+    let disposalQty = 0;
     for (const variant of brand.allVariants || []) {
       const stock = getReturnedStock(variant.id);
       qty += stock.qty;
+      restockQty += stock.restockQty;
+      disposalQty += stock.disposalQty;
       for (const row of stock.returns) {
         returnsById.set(row.id, row);
       }
     }
-    return { qty, returns: Array.from(returnsById.values()) };
+    return { qty, restockQty, disposalQty, returns: Array.from(returnsById.values()) };
   };
 
   // Keep sellable stock, plus variants/brands that only have returned qty (so the Return column still has a basis)
@@ -1542,7 +1567,12 @@ export default function MyInventory() {
                     const variantSummary = formatVariantTypeCountSummary(typeEntries, itemCount);
                     const brandReturned = showReturnedColumn
                       ? getBrandReturnedStock(brand)
-                      : { qty: 0, returns: [] as PreviewClientReturn[] };
+                      : {
+                          qty: 0,
+                          restockQty: 0,
+                          disposalQty: 0,
+                          returns: [] as PreviewClientReturn[],
+                        };
                     const statusLabel =
                       brandTotal === 0 ? 'Out of Stock' : brandHasLow ? 'Low stock' : 'In Stock';
                     const statusClass =
@@ -1607,14 +1637,16 @@ export default function MyInventory() {
                                     ? 'text-rose-700 hover:bg-rose-50 hover:underline'
                                     : 'text-muted-foreground hover:bg-muted/60'
                                 }`}
-                                title="Click to view returned items"
+                                title="Click to view restock and disposal returns"
                                 onClick={() =>
-                                  openReturnedDialog(
-                                    brand.name,
-                                    'All variants',
-                                    brandReturned.qty,
-                                    brandReturned.returns
-                                  )
+                                  openReturnedDialog({
+                                    brandName: brand.name,
+                                    variantName: 'All variants',
+                                    qty: brandReturned.qty,
+                                    restockQty: brandReturned.restockQty,
+                                    disposalQty: brandReturned.disposalQty,
+                                    returns: brandReturned.returns,
+                                  })
                                 }
                               >
                                 {brandReturned.qty || '—'}
@@ -1641,7 +1673,12 @@ export default function MyInventory() {
                                   const typeStock = getTypeStock(variants);
                                   const typeReturned = showReturnedColumn
                                     ? getTypeReturnedStock(variants)
-                                    : { qty: 0, returns: [] as PreviewClientReturn[] };
+                                    : {
+                                        qty: 0,
+                                        restockQty: 0,
+                                        disposalQty: 0,
+                                        returns: [] as PreviewClientReturn[],
+                                      };
                                   const typeHasLow = variants.some(
                                     (v) => isLowStock(v.stock) && v.stock > 0
                                   );
@@ -1677,12 +1714,14 @@ export default function MyInventory() {
                                                 : 'text-muted-foreground'
                                             }`}
                                             onClick={() =>
-                                              openReturnedDialog(
-                                                brand.name,
-                                                formatVariantTypeLabel(type, true),
-                                                typeReturned.qty,
-                                                typeReturned.returns
-                                              )
+                                              openReturnedDialog({
+                                                brandName: brand.name,
+                                                variantName: formatVariantTypeLabel(type, true),
+                                                qty: typeReturned.qty,
+                                                restockQty: typeReturned.restockQty,
+                                                disposalQty: typeReturned.disposalQty,
+                                                returns: typeReturned.returns,
+                                              })
                                             }
                                           >
                                             Returned {typeReturned.qty || '—'}
@@ -1729,15 +1768,19 @@ export default function MyInventory() {
                                                           ? 'text-rose-700 hover:bg-rose-50 hover:underline'
                                                           : 'text-muted-foreground hover:bg-muted/60'
                                                       }`}
-                                                      title="Click to view returned items"
+                                                      title="Click to view restock and disposal returns"
                                                       onClick={() => {
                                                         const stock = getReturnedStock(variant.id);
-                                                        openReturnedDialog(
-                                                          brand.name,
-                                                          variant.name,
-                                                          stock.qty,
-                                                          stock.returns
-                                                        );
+                                                        openReturnedDialog({
+                                                          brandName: brand.name,
+                                                          variantName: variant.name,
+                                                          variantId: variant.id,
+                                                          variantType: variant.variantType,
+                                                          qty: stock.qty,
+                                                          restockQty: stock.restockQty,
+                                                          disposalQty: stock.disposalQty,
+                                                          returns: stock.returns,
+                                                        });
                                                       }}
                                                     >
                                                       {getReturnedStock(variant.id).qty || '—'}
@@ -2889,7 +2932,11 @@ export default function MyInventory() {
           }}
           brandName={returnedDialog?.brandName}
           variantName={returnedDialog?.variantName || ''}
+          variantId={returnedDialog?.variantId}
+          variantType={returnedDialog?.variantType}
           totalReturned={returnedDialog?.totalReturned || 0}
+          restockQty={returnedDialog?.restockQty || 0}
+          disposalQty={returnedDialog?.disposalQty || 0}
           returns={returnedDialog?.returns || []}
         />
       )}

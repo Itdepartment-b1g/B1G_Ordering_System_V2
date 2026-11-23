@@ -238,7 +238,11 @@ export default function MyInventoryBrandPage() {
   const [returnedDialog, setReturnedDialog] = useState<{
     variantName: string;
     brandName: string;
+    variantId?: string;
+    variantType?: string;
     totalReturned: number;
+    restockQty: number;
+    disposalQty: number;
     returns: PreviewClientReturn[];
   } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -323,7 +327,7 @@ export default function MyInventoryBrandPage() {
   const totalStock = brand ? getBrandTotalStock(brand) : 0;
   const returned = brand
     ? getBrandReturnedStock(brand, getReturnedStock)
-    : { qty: 0, returns: [] as PreviewClientReturn[] };
+    : { qty: 0, restockQty: 0, disposalQty: 0, returns: [] as PreviewClientReturn[] };
   const lowStockCount = brand ? countLowStockVariants(brand.allVariants) : 0;
   const typeEntries = brand ? sortedVariantTypeEntries(brand.variantsByType) : [];
   const itemCount = (brand?.allVariants || []).length;
@@ -612,7 +616,11 @@ export default function MyInventoryBrandPage() {
                         setReturnedDialog({
                           brandName: brand.name,
                           variantName: variant.name,
+                          variantId: variant.id,
+                          variantType: variant.variantType,
                           totalReturned: returnedStock.qty,
+                          restockQty: returnedStock.restockQty,
+                          disposalQty: returnedStock.disposalQty,
                           returns: returnedStock.returns,
                         })
                       }
@@ -632,7 +640,11 @@ export default function MyInventoryBrandPage() {
         }}
         brandName={returnedDialog?.brandName}
         variantName={returnedDialog?.variantName || ''}
+        variantId={returnedDialog?.variantId}
+        variantType={returnedDialog?.variantType}
         totalReturned={returnedDialog?.totalReturned || 0}
+        restockQty={returnedDialog?.restockQty || 0}
+        disposalQty={returnedDialog?.disposalQty || 0}
         returns={returnedDialog?.returns || []}
       />
     </div>

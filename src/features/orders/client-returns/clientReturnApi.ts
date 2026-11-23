@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase';
 import type { PackageProofPhotoItem } from '@/features/shared/components/MultiProofPhotoField';
 import {
+  lineMatchesReturnedVariant,
   parseClientReturnStatus,
   parseClientReturnStockFate,
   parseClientReturnType,
@@ -311,11 +312,23 @@ export async function fetchChangeItemCatalog(
     .filter(Boolean) as PreviewChangeItemSku[];
 }
 
+export type ReturnedStockByVariant = {
+  qty: number;
+  restockQty: number;
+  disposalQty: number;
+  returns: PreviewClientReturn[];
+};
+
+export function emptyReturnedStockByVariant(): ReturnedStockByVariant {
+  return { qty: 0, restockQty: 0, disposalQty: 0, returns: [] };
+}
+
+/** Posted CR qty per variant, split by restock vs disposal (missing fate = disposal). */
 export function buildReturnedStockByVariantId(
   returns: PreviewClientReturn[],
   options?: { holderId?: string | null }
-): Map<string, { qty: number; returns: PreviewClientReturn[] }> {
-  const map = new Map<string, { qty: number; returns: PreviewClientReturn[] }>();
+): Map<string, ReturnedStockByVariant> {
+  const map = new Map<string, ReturnedStockByVariant>();
   for (const cr of returns) {
     if (cr.status !== 'posted') continue;
     if (options?.holderId) {
@@ -325,13 +338,45 @@ export function buildReturnedStockByVariantId(
     for (const line of cr.lines || []) {
       const variantId = line.variantId;
       if (!variantId) continue;
-      const current = map.get(variantId) || { qty: 0, returns: [] };
-      current.qty += line.quantity;
+      const current = map.get(variantId) || emptyReturnedStockByVariant();
+      const qty = Number(line.quantity) || 0;
+      if (line.stockFate === 'restock') current.restockQty += qty;
+      else current.disposalQty += qty;
+      current.qty = current.restockQty + current.disposalQty;
       if (!current.returns.some((row) => row.id === cr.id)) current.returns.push(cr);
       map.set(variantId, current);
     }
   }
   return map;
+}
+
+/**
+ * Restock / disposal qty inside a CR list.
+ * Pass variantId (preferred) or exact variantName to scope to one SKU;
+ * omit both to sum every line (brand / type rollups).
+ */
+export function getReturnedStockFateQtyForVariant(
+  returns: PreviewClientReturn[],
+  options?: { variantId?: string; variantName?: string }
+): { restockQty: number; disposalQty: number; totalQty: number } {
+  let restockQty = 0;
+  let disposalQty = 0;
+  const scopeToVariant = Boolean(options?.variantId || options?.variantName);
+
+  for (const cr of returns) {
+    for (const line of cr.lines || []) {
+      if (
+        scopeToVariant &&
+        !lineMatchesReturnedVariant(line, options?.variantId, options?.variantName)
+      ) {
+        continue;
+      }
+      const qty = Number(line.quantity) || 0;
+      if (line.stockFate === 'restock') restockQty += qty;
+      else disposalQty += qty;
+    }
+  }
+  return { restockQty, disposalQty, totalQty: restockQty + disposalQty };
 }
 
 export type ReturnedInventoryRow = {

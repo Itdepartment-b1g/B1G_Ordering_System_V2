@@ -16,10 +16,15 @@ export function countLowStockVariants(
   return (variants || []).filter(isLowStockVariant).length;
 }
 
-export type ReturnedStockEntry = { qty: number; returns: PreviewClientReturn[] };
+export type ReturnedStockEntry = {
+  qty: number;
+  restockQty: number;
+  disposalQty: number;
+  returns: PreviewClientReturn[];
+};
 
 export function emptyReturnedStock(): ReturnedStockEntry {
-  return { qty: 0, returns: [] };
+  return { qty: 0, restockQty: 0, disposalQty: 0, returns: [] };
 }
 
 function variantTypeKey(variantType?: string) {
@@ -145,14 +150,18 @@ export function getBrandReturnedStock(
 ) {
   const returnsById = new Map<string, PreviewClientReturn>();
   let qty = 0;
+  let restockQty = 0;
+  let disposalQty = 0;
   for (const variant of brand.allVariants || []) {
     const stock = getReturnedStock(variant.id);
     qty += stock.qty;
+    restockQty += stock.restockQty;
+    disposalQty += stock.disposalQty;
     for (const row of stock.returns) {
       returnsById.set(row.id, row);
     }
   }
-  return { qty, returns: Array.from(returnsById.values()) };
+  return { qty, restockQty, disposalQty, returns: Array.from(returnsById.values()) };
 }
 
 /** Keep sellable stock plus returned-only variants/brands for the Return column. */
