@@ -1255,23 +1255,26 @@ export default function MyInventory() {
   // They just need to be assigned to a leader
   const canRemit = !!leaderId;
 
+  const actionBtnClass =
+    'h-10 w-full justify-center gap-2 px-3 text-sm sm:w-auto sm:justify-start';
+
   return (
-    <div className="w-full p-4 md:p-6 space-y-6">
-      {/* Header */}
-      <div className="flex flex-col items-stretch gap-4 sm:flex-row sm:items-start sm:justify-between">
+    <div className="w-full max-w-full min-w-0 overflow-x-hidden p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6">
+      {/* Header — stacked on webview; actions wrap instead of a tall side column */}
+      <div className="space-y-3 sm:space-y-4">
         <div>
-          <h1 className="text-2xl font-bold">My Inventory</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Manage your stock and remittance</p>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight">My Inventory</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">Manage your stock and remittance</p>
         </div>
-        <div className="flex w-full flex-col gap-2 sm:w-64 sm:shrink-0">
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
           {user?.role !== 'team_leader' && (
             <Button
               onClick={() => setRemitDialogOpen(true)}
               variant="default"
-              className="h-11 w-full justify-start gap-2"
+              className={`${actionBtnClass} col-span-2 sm:col-auto`}
               disabled={!canRemit}
             >
-              <ClipboardCheck className="h-4 w-4" />
+              <ClipboardCheck className="h-4 w-4 shrink-0" />
               Remit
             </Button>
           )}
@@ -1280,15 +1283,15 @@ export default function MyInventory() {
               <Button
                 onClick={() => setReturnToMainDialogOpen(true)}
                 variant="outline"
-                className="h-11 w-full justify-start gap-2"
+                className={actionBtnClass}
               >
-                <PackageMinus className="h-4 w-4" />
-                Return to Main
+                <PackageMinus className="h-4 w-4 shrink-0" />
+                <span className="truncate">Return to Main</span>
               </Button>
-              <Button variant="outline" className="h-11 w-full justify-start gap-2" asChild>
+              <Button variant="outline" className={actionBtnClass} asChild>
                 <Link to="/inventory/main/returns">
-                  <History className="h-4 w-4" />
-                  Return to main history
+                  <History className="h-4 w-4 shrink-0" />
+                  <span className="truncate">Return history</span>
                 </Link>
               </Button>
             </>
@@ -1297,62 +1300,66 @@ export default function MyInventory() {
               <Button
                 onClick={() => setReturnDialogOpen(true)}
                 variant="outline"
-                className="h-11 w-full justify-start gap-2"
+                className={actionBtnClass}
                 disabled={!leaderId}
               >
-                <PackageMinus className="h-4 w-4" />
+                <PackageMinus className="h-4 w-4 shrink-0" />
                 Return
               </Button>
               {(user?.role === 'mobile_sales' || user?.role === 'sales_agent') && (
                 <>
-                  <Button variant="outline" className="h-11 w-full justify-start gap-2" asChild>
+                  <Button variant="outline" className={actionBtnClass} asChild>
                     <Link to="/inventory/my-remittances">
-                      <ClipboardList className="h-4 w-4" />
-                      Remittance history
+                      <ClipboardList className="h-4 w-4 shrink-0" />
+                      <span className="truncate">Remittance history</span>
                     </Link>
                   </Button>
-                  <Button variant="outline" className="h-11 w-full justify-start gap-2" asChild>
+                  <Button variant="outline" className={actionBtnClass} asChild>
                     <Link to="/inventory/my-returns">
-                      <History className="h-4 w-4" />
-                      Your return history
+                      <History className="h-4 w-4 shrink-0" />
+                      <span className="truncate">Your return history</span>
                     </Link>
                   </Button>
                 </>
               )}
             </>
           )}
-          <Button variant="outline" className="h-11 w-full justify-start gap-2" onClick={handleExportPdf}>
-            <FileDown className="h-4 w-4" />
-            Export PDF
+          <Button variant="outline" className={actionBtnClass} onClick={handleExportPdf}>
+            <FileDown className="h-4 w-4 shrink-0" />
+            <span className="truncate">Export PDF</span>
           </Button>
           <Button
             variant="outline"
-            className="h-11 w-full justify-start gap-2"
+            className={actionBtnClass}
             onClick={() => void handleExportExcel()}
             disabled={exportingExcel}
           >
-            {exportingExcel ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
-            Export Excel
+            {exportingExcel ? (
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+            ) : (
+              <FileSpreadsheet className="h-4 w-4 shrink-0" />
+            )}
+            <span className="truncate">Export Excel</span>
           </Button>
         </div>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-2 gap-2 sm:gap-3">
         {inventoryStats.map((stat) => {
           const Icon = stat.icon;
           const lowStockActive = stat.filter === 'low' && statusFilter === 'low';
-          const cardClass = `rounded-lg border bg-white px-3 py-3 text-left ${
+          const cardClass = `rounded-lg border bg-white px-2.5 py-2.5 sm:px-3 sm:py-3 text-left ${
             lowStockActive ? 'border-amber-300 ring-1 ring-amber-200' : 'border-[#D5DCF3]'
           }`;
           const content = (
             <>
               <div className={`flex items-center gap-1.5 ${stat.alert ? 'text-amber-600' : 'text-[#02066F]/55'}`}>
                 <Icon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} aria-hidden />
-                <p className="text-xs font-normal leading-snug">{stat.label}</p>
+                <p className="text-[11px] sm:text-xs font-normal leading-snug">{stat.label}</p>
               </div>
               <p
-                className={`mt-1 text-2xl font-semibold tabular-nums leading-none ${
+                className={`mt-1 text-xl sm:text-2xl font-semibold tabular-nums leading-none ${
                   stat.alert ? 'text-amber-600' : 'text-[#02066F]'
                 }`}
               >
@@ -1388,16 +1395,16 @@ export default function MyInventory() {
       </div>
 
       {/* Inventory List */}
-      <Card>
-        <CardHeader className="pb-4">
-          <div className="flex w-full items-center gap-2">
+      <Card className="min-w-0 overflow-hidden">
+        <CardHeader className="space-y-3 p-3 pb-3 sm:p-6 sm:pb-4">
+          <div className="flex w-full min-w-0 items-center gap-2">
             <div className="relative min-w-0 flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Search..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
+                className="h-10 pl-10"
                 aria-label="Search inventory"
               />
             </div>
