@@ -11,7 +11,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Search, Edit, Package, ChevronRight, Users, TrendingUp, Eye, RefreshCw, Filter, Download, BarChart3, TrendingDown, AlertTriangle, CheckCircle, Trash2, RotateCcw, Loader2, Plus, Unlink, Clock, ClipboardList, Scale, History } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/usePermissions';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -66,6 +66,7 @@ type OpenPoReservationDetail = {
 
 export default function MainInventoryPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { brands, setBrands, updateBrandName, updateVariant, refreshInventory } = useInventory();
   const [searchQuery, setSearchQuery] = useState('');
@@ -728,6 +729,22 @@ export default function MainInventoryPage() {
         <Eye className="h-3 w-3 mr-1" />
         View
       </Button>
+    );
+  };
+
+  const renderViewHoldersButton = (variant: { id: string }) => {
+    if (isSubWarehouseUser) return null;
+    return (
+      <Button
+      variant="outline"
+      size="sm"
+      title="View stock holders"
+      onClick={() => navigate(`/inventory/main/stock-holders/${variant.id}`)}
+      className="h-8 gap-1.5 px-2.5 text-xs"
+    >
+      <Users className="h-3.5 w-3.5" />
+      Stock Holders
+    </Button>
     );
   };
 
@@ -1618,7 +1635,7 @@ export default function MainInventoryPage() {
                                   </TableCell>
                                   <TableCell className="text-center">
                                     <div className="flex items-center justify-center gap-1">
-                                      {!isWarehouse && (
+                                      {/* {!isWarehouse && (
                                       <Button
                                         variant="ghost"
                                         size="sm"
@@ -1626,7 +1643,7 @@ export default function MainInventoryPage() {
                                       >
                                         <Edit className="h-4 w-4" />
                                       </Button>
-                                      )}
+                                      )} */}
 
                                       {isWarehouse && flavor.mainInventoryId && (
                                         <AlertDialog>
@@ -1660,11 +1677,12 @@ export default function MainInventoryPage() {
                                         </AlertDialog>
                                       )}
 
+                                      {renderViewHoldersButton(flavor)}
                                       {renderBatchViewButton(flavor, brand.name)}
 
                                       {!isWarehouse && (
                                         <AlertDialog>
-                                          <AlertDialogTrigger asChild>
+                                          {/* <AlertDialogTrigger asChild>
                                             <Button
                                               variant="ghost"
                                               size="sm"
@@ -1673,7 +1691,7 @@ export default function MainInventoryPage() {
                                             >
                                               <Trash2 className="h-4 w-4" />
                                             </Button>
-                                          </AlertDialogTrigger>
+                                          </AlertDialogTrigger> */}
                                           <AlertDialogContent>
                                             <AlertDialogHeader>
                                               <AlertDialogTitle>Archive this product?</AlertDialogTitle>
@@ -1824,11 +1842,12 @@ export default function MainInventoryPage() {
                                         </AlertDialog>
                                       )}
 
+                                      {renderViewHoldersButton(battery)}
                                       {renderBatchViewButton(battery, brand.name)}
 
                                       {!isWarehouse && (
                                         <AlertDialog>
-                                          <AlertDialogTrigger asChild>
+                                          {/* <AlertDialogTrigger asChild>
                                             <Button
                                               variant="ghost"
                                               size="sm"
@@ -1837,7 +1856,7 @@ export default function MainInventoryPage() {
                                             >
                                               <Trash2 className="h-4 w-4" />
                                             </Button>
-                                          </AlertDialogTrigger>
+                                          </AlertDialogTrigger> */}
                                           <AlertDialogContent>
                                             <AlertDialogHeader>
                                               <AlertDialogTitle>Archive this product?</AlertDialogTitle>
@@ -1995,10 +2014,11 @@ export default function MainInventoryPage() {
                                           </AlertDialogContent>
                                         </AlertDialog>
                                       )}
+                                      {renderViewHoldersButton(posm)}
                                       {renderBatchViewButton(posm, brand.name)}
                                       {!isWarehouse && (
                                         <AlertDialog>
-                                          <AlertDialogTrigger asChild>
+                                          {/* <AlertDialogTrigger asChild>
                                             <Button
                                               variant="ghost"
                                               size="sm"
@@ -2007,7 +2027,7 @@ export default function MainInventoryPage() {
                                             >
                                               <Trash2 className="h-4 w-4" />
                                             </Button>
-                                          </AlertDialogTrigger>
+                                          </AlertDialogTrigger> */}
                                           <AlertDialogContent>
                                             <AlertDialogHeader>
                                               <AlertDialogTitle>Archive this product?</AlertDialogTitle>
@@ -2163,6 +2183,7 @@ export default function MainInventoryPage() {
                                               </AlertDialogContent>
                                             </AlertDialog>
                                           )}
+                                          {renderViewHoldersButton(variant)}
                                           {renderBatchViewButton(variant, brand.name)}
                                           {!isWarehouse && (
                                             <AlertDialog>
