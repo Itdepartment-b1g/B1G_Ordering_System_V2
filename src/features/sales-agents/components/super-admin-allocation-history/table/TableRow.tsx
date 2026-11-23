@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
   ChevronDown,
@@ -89,7 +90,7 @@ function sortedLines(group: AllocationHistoryGroup) {
   });
 }
 
-function useAllocationRecordExport(group: AllocationHistoryGroup | null) {
+export function useAllocationRecordExport(group: AllocationHistoryGroup | null) {
   const { toast } = useToast();
   const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
@@ -266,12 +267,26 @@ export function AllocationHistoryMobileList({
   isLoading,
   groups,
   emptyMessage,
+  getDetailHref,
+  highlightDate,
 }: {
   isLoading: boolean;
   groups: AllocationHistoryGroup[];
   emptyMessage: string;
+  /** When set, View / card tap navigates here instead of opening a dialog. */
+  getDetailHref?: (group: AllocationHistoryGroup) => string;
+  highlightDate?: boolean;
 }) {
+  const navigate = useNavigate();
   const [detail, setDetail] = useState<AllocationHistoryGroup | null>(null);
+
+  const openDetails = (group: AllocationHistoryGroup) => {
+    if (getDetailHref) {
+      navigate(getDetailHref(group));
+      return;
+    }
+    setDetail(group);
+  };
 
   if (isLoading) {
     return (
@@ -290,29 +305,55 @@ export function AllocationHistoryMobileList({
     <>
       <div className="space-y-2">
         {groups.map((group) => (
-          <div key={group.groupId} className="rounded-lg border bg-card p-3">
+          <div
+            key={group.groupId}
+            className={`rounded-lg border bg-card p-3 ${getDetailHref ? 'cursor-pointer active:bg-muted/40' : ''}`}
+            onClick={getDetailHref ? () => openDetails(group) : undefined}
+            onKeyDown={
+              getDetailHref
+                ? (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      openDetails(group);
+                    }
+                  }
+                : undefined
+            }
+            role={getDetailHref ? 'button' : undefined}
+            tabIndex={getDetailHref ? 0 : undefined}
+          >
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">{group.brandName ?? 'Allocation'}</p>
                 <p className="mt-1 truncate text-xs text-muted-foreground">From {group.allocatedByName}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{formatManilaDateTime(group.createdAt)}</p>
+                <p
+                  className={`mt-1 text-xs ${
+                    highlightDate ? 'font-medium text-foreground' : 'text-muted-foreground'
+                  }`}
+                >
+                  {formatManilaDateTime(group.createdAt)}
+                </p>
                 <p className="mt-1 text-xs">
                   {group.totalQuantity.toLocaleString()} units
                   {group.lineCount > 0 ? ` · ${group.lineCount} products` : ''}
                 </p>
               </div>
-              <AllocationActionsMenu group={group} onView={() => setDetail(group)} />
+              <div onClick={(event) => event.stopPropagation()}>
+                <AllocationActionsMenu group={group} onView={() => openDetails(group)} />
+              </div>
             </div>
           </div>
         ))}
       </div>
-      <AllocationDetailsDialog
-        group={detail}
-        open={!!detail}
-        onOpenChange={(open) => {
-          if (!open) setDetail(null);
-        }}
-      />
+      {!getDetailHref ? (
+        <AllocationDetailsDialog
+          group={detail}
+          open={!!detail}
+          onOpenChange={(open) => {
+            if (!open) setDetail(null);
+          }}
+        />
+      ) : null}
     </>
   );
 }

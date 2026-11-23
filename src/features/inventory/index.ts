@@ -2,6 +2,7 @@ export { default as MainInventoryPage } from './MainInventoryPage';
 export { default as MainInventoryReturnHistoryPage } from './MainInventoryReturnHistoryPage';
 export { default as VariantStockHoldersPage } from './VariantStockHoldersPage';
 export { default as MobileSalesReturnHistoryPage } from './MobileSalesReturnHistoryPage';
+export { default as MobileSalesReturnHistoryDetailPage } from './MobileSalesReturnHistoryDetailPage';
 export { default as WarehouseInventoryDashboardPage } from './WarehouseInventoryDashboardPage';
 export { default as SubWarehousesPage } from './SubWarehousesPage';
 export { default as SubWarehouseStockRequestPage } from './SubWarehouseStockRequestPage';
@@ -30,7 +31,10 @@ export { default as PendingRequestsPage } from './PendingRequestsPage';
 export { default as AdminRequestsPage } from './AdminRequestsPage';
 export { default as LeaderStockRequestPage } from './LeaderStockRequestPage';
 export { default as MobileSalesStockRequestPage } from './MobileSalesStockRequestPage';
+export { default as MobileSalesStockRequestDetailPage } from './MobileSalesStockRequestDetailPage';
 export { default as LeaderPoReceivePage } from './LeaderPoReceivePage';
+export { default as MobileSalesAllocationHistoryPage } from './MobileSalesAllocationHistoryPage';
+export { default as MobileSalesAllocationHistoryDetailPage } from './MobileSalesAllocationHistoryDetailPage';
 
 export { InventoryProvider, useInventory, type Brand, type Variant } from './InventoryContext';
 export { AgentInventoryProvider } from './AgentInventoryContext';
