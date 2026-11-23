@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Calendar, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -17,12 +18,15 @@ export type DateRangeFilterValue = {
   customEnd?: Date;
 };
 
+export const ALL_TIME_DATE_RANGE: DateRangeFilterValue = { preset: 'all' };
+
 type DateRangeFilterPopoverProps = {
   value: DateRangeFilterValue;
   onChange: (value: DateRangeFilterValue) => void;
   className?: string;
   triggerClassName?: string;
   align?: 'start' | 'center' | 'end';
+  modal?: boolean;
 };
 
 export function DateRangeFilterPopover({
@@ -31,6 +35,7 @@ export function DateRangeFilterPopover({
   className,
   triggerClassName,
   align = 'start',
+  modal = false,
 }: DateRangeFilterPopoverProps) {
   const [open, setOpen] = useState(false);
   const { preset, customStart, customEnd } = value;
@@ -47,7 +52,7 @@ export function DateRangeFilterPopover({
   const label = getDatePresetLabel(preset, customStart, customEnd);
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={setOpen} modal={modal}>
       <PopoverTrigger asChild>
         <Button
           variant="outline"
@@ -60,7 +65,14 @@ export function DateRangeFilterPopover({
           <ChevronDown className="h-4 w-4 opacity-50 shrink-0 ml-2" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className={className ?? 'w-[360px] p-0'} align={align}>
+      <PopoverContent
+        align={align}
+        collisionPadding={12}
+        className={cn('w-[360px] overflow-y-auto p-0', className)}
+        style={{
+          maxHeight: 'min(32rem, var(--radix-popover-content-available-height, 70vh))',
+        }}
+      >
         <div className="p-4 space-y-4">
           <div className="space-y-3">
             <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
