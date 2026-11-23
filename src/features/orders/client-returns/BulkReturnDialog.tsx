@@ -31,7 +31,7 @@ import {
   type PackageProofPhotoItem,
 } from '@/features/shared/components/MultiProofPhotoField';
 import { cn } from '@/lib/utils';
-import type { ReturnedInventoryRow } from './clientReturnApi';
+import { CLIENT_ORDER_RETURNS_QUERY_KEY, type ReturnedInventoryRow } from './clientReturnApi';
 import {
   CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY,
   createReturnLeaderHandover,
@@ -324,8 +324,9 @@ export function BulkReturnDialog({
         signatureDataUrl: agentSignatureDataUrl,
       });
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: [RETURN_LEADER_HANDOVERS_QUERY_KEY] }),
-        queryClient.invalidateQueries({ queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY] }),
+        queryClient.refetchQueries({ queryKey: [RETURN_LEADER_HANDOVERS_QUERY_KEY] }),
+        queryClient.refetchQueries({ queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY] }),
+        queryClient.refetchQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] }),
       ]);
       setShowNameConfirm(false);
       onOpenChange(false);

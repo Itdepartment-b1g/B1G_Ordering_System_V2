@@ -65,6 +65,7 @@ import {
   fetchClientOrderRefundsEnabled,
   fetchPostedReturnedQtyByItemId,
 } from './clientReturnApi';
+import { CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY } from './returnLeaderApi';
 import { formatVariantType, variantTypeBadgeClass } from './ClientReturnBrandTable';
 
 export type ReturnClientOrderLine = {
@@ -1087,10 +1088,11 @@ export function ReturnClientOrderDialog({
       });
 
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] }),
+        queryClient.refetchQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] }),
         queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURN_POSTED_QTY_QUERY_KEY] }),
         queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURN_CHANGE_CATALOG_QUERY_KEY] }),
         queryClient.invalidateQueries({ queryKey: ['inventory'] }),
+        queryClient.refetchQueries({ queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY] }),
       ]);
       onSuccess?.();
 

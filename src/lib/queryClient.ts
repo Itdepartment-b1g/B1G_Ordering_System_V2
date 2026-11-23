@@ -31,7 +31,7 @@ export const queryClient = new QueryClient({
 // Reduces main thread blocking from frequent cache updates
 export const persister = createSyncStoragePersister({
     storage: window.localStorage,
-    key: 'VITE_APP_QUERY_CACHE',
+    key: 'VITE_APP_QUERY_CACHE_v2',
     throttleTime: 1000, // Only persist once per second
 });
 
@@ -52,6 +52,10 @@ const NON_PERSISTED_QUERY_KEYS = new Set([
     'warehouse-delivery-shortages',
     // Heavy nested payloads (events + proof URLs); must stay live for allocate/request sync.
     'internal-stock-requests',
+    // Client returns must stay live (CR / RL / disposal holds).
+    'client-order-returns',
+    'return-leader-handovers',
+    'client-return-stock-holds',
     COMPANY_AGENT_INVENTORY_QUERY_KEY,
 ]);
 

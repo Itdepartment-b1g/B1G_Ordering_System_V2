@@ -88,6 +88,14 @@ function ClientOrderReturnsView() {
   const canBulkReturn = canCreateReturnLeader(user?.role);
   const showReturns = canShowClientOrderReturns(hasWarehouseHubLink, user?.role);
 
+  const liveQueryOpts = {
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnMount: 'always' as const,
+    refetchOnWindowFocus: true,
+    refetchInterval: 8_000,
+  };
+
   const {
     data: returnsData,
     isLoading,
@@ -97,6 +105,7 @@ function ClientOrderReturnsView() {
     queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY, 'list', user?.company_id],
     enabled: showReturns && !!user?.company_id,
     queryFn: fetchClientOrderReturns,
+    ...liveQueryOpts,
   });
   const rows = Array.isArray(returnsData) ? returnsData : EMPTY_RETURNS;
 
@@ -120,6 +129,7 @@ function ClientOrderReturnsView() {
     queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY, holderId],
     enabled: showReturns && !!holderId,
     queryFn: () => fetchClientReturnStockHolds(holderId!),
+    ...liveQueryOpts,
   });
   const holdRows = Array.isArray(holdsData) ? holdsData : EMPTY_HOLDS;
 
@@ -132,6 +142,7 @@ function ClientOrderReturnsView() {
     queryKey: [RETURN_LEADER_HANDOVERS_QUERY_KEY, user?.company_id],
     enabled: showReturns && !!user?.company_id,
     queryFn: fetchReturnLeaderHandovers,
+    ...liveQueryOpts,
   });
   const rlRows = Array.isArray(handoversData) ? handoversData : EMPTY_HANDOVERS;
 
@@ -168,7 +179,7 @@ function ClientOrderReturnsView() {
     [rlRows, user?.id, user?.role]
   );
 
-  // Keep Return to TL + Returned Items Disposal in sync across users (MS submit / TL confirm).
+  // Keep Client Returns / Return to TL / Returned Items in sync (same user + other users).
   useEffect(() => {
     if (!showReturns || !user?.company_id) return;
 
@@ -176,45 +187,33 @@ function ClientOrderReturnsView() {
     const refresh = () => {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
-        void queryClient.invalidateQueries({ queryKey: [RETURN_LEADER_HANDOVERS_QUERY_KEY] });
-        void queryClient.invalidateQueries({ queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY] });
-        void queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] });
-      }, 250);
+        void queryClient.refetchQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY], type: 'active' });
+        void queryClient.refetchQueries({ queryKey: [RETURN_LEADER_HANDOVERS_QUERY_KEY], type: 'active' });
+        void queryClient.refetchQueries({ queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY], type: 'active' });
+      }, 200);
     };
 
+    // No column filters: filtered realtime often fails until publication + REPLICA IDENTITY
+    // are applied; unfiltered still only delivers rows the session can SELECT (RLS).
     const channels = [
-      subscribeToTable(
-        'return_leader_handovers',
-        refresh,
-        '*',
-        { column: 'company_id', value: user.company_id }
-      ),
-      subscribeToTable(
-        'client_order_returns',
-        refresh,
-        '*',
-        { column: 'company_id', value: user.company_id }
-      ),
-      holderId
-        ? subscribeToTable(
-            'client_return_stock_holds',
-            refresh,
-            '*',
-            { column: 'holder_id', value: holderId }
-          )
-        : subscribeToTable(
-            'client_return_stock_holds',
-            refresh,
-            '*',
-            { column: 'company_id', value: user.company_id }
-          ),
+      subscribeToTable('client_order_returns', refresh),
+      subscribeToTable('return_leader_handovers', refresh),
+      subscribeToTable('client_return_stock_holds', refresh),
     ];
 
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
       channels.forEach(unsubscribe);
     };
-  }, [showReturns, user?.company_id, holderId, queryClient]);
+  }, [showReturns, user?.company_id, queryClient]);
+
+  // Also refetch when switching tabs so Client Returns never shows a stale cache.
+  useEffect(() => {
+    if (!showReturns) return;
+    void queryClient.refetchQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY], type: 'active' });
+    void queryClient.refetchQueries({ queryKey: [RETURN_LEADER_HANDOVERS_QUERY_KEY], type: 'active' });
+    void queryClient.refetchQueries({ queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY], type: 'active' });
+  }, [pageTab, showReturns, queryClient]);
 
   const startRlApprove = (row: ReturnLeaderHandover) => {
     setRlViewRow(null);
@@ -230,9 +229,9 @@ function ClientOrderReturnsView() {
 
   const refreshInventoryQueries = async () => {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: [RETURN_LEADER_HANDOVERS_QUERY_KEY] }),
-      queryClient.invalidateQueries({ queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY] }),
-      queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] }),
+      queryClient.refetchQueries({ queryKey: [RETURN_LEADER_HANDOVERS_QUERY_KEY] }),
+      queryClient.refetchQueries({ queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY] }),
+      queryClient.refetchQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] }),
     ]);
   };
 
