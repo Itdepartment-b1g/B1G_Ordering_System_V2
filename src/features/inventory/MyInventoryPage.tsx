@@ -1698,7 +1698,7 @@ export default function MyInventory() {
                                               <TableHead className="text-right">Stock</TableHead>
                                               {showReturnedColumn ? (
                                                 <TableHead className="text-right">
-                                                  Returned(For Disposal)
+                                                  Returned
                                                 </TableHead>
                                               ) : null}
                                               <TableHead className="text-right">Price</TableHead>
