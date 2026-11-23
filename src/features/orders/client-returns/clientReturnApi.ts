@@ -546,9 +546,10 @@ export async function rejectClientOrderReturn(returnId: string, note?: string): 
   if (!result.success) throw new Error(result.error || 'Failed to reject client return');
 }
 
-export function canShowClientOrderReturns(hasWarehouseHubLink: boolean, role?: string | null): boolean {
+/** CR/RL are available without a warehouse hub. RT (return to warehouse) stays hub-gated. */
+export function canShowClientOrderReturns(_hasWarehouseHubLink: boolean, role?: string | null): boolean {
   if (role === 'warehouse') return false;
-  return hasWarehouseHubLink;
+  return true;
 }
 
 export function canOpenClientOrderTimeline(
@@ -557,6 +558,38 @@ export function canOpenClientOrderTimeline(
 ): boolean {
   if (!canShowClientOrderReturns(hasWarehouseHubLink, role)) return false;
   return role === 'super_admin' || role === 'finance' || role === 'team_leader';
+}
+
+/** Short banner when disposal cannot go to warehouse (no hub link). */
+export const NO_WAREHOUSE_DISPOSAL_NOTE =
+  'Your company is not connected to a warehouse yet. Disposal stock cannot be returned to the warehouse.';
+
+export const CLIENT_ORDER_REFUNDS_DISABLED_TOAST =
+  'Please inform your manager to allow refund';
+
+export const CLIENT_ORDER_REFUNDS_ENABLED_QUERY_KEY = 'client-order-refunds-enabled';
+
+/** Company flag for filing CR refunds. Defaults to false when unset. */
+export async function fetchClientOrderRefundsEnabled(companyId: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('companies')
+    .select('client_order_refunds_enabled')
+    .eq('id', companyId)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.client_order_refunds_enabled === true;
+}
+
+export async function updateClientOrderRefundsEnabled(enabled: boolean): Promise<boolean> {
+  const { data, error } = await supabase.rpc('update_company_client_order_refunds_enabled', {
+    p_refunds_enabled: enabled,
+  });
+  if (error) throw error;
+  const result = data as { success?: boolean; message?: string; client_order_refunds_enabled?: boolean } | null;
+  if (!result?.success) {
+    throw new Error(result?.message || 'Failed to update client refund setting');
+  }
+  return result.client_order_refunds_enabled === true;
 }
 
 export function canCreateClientOrderReturn(role?: string | null): boolean {

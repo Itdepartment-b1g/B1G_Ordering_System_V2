@@ -597,7 +597,8 @@ export function AppSidebar() {
   // Get menu items based on role, then filter by permissions
   const menuItems = useMemo(() => {
     const canSeeReturnToWarehouse = hasWarehouseHubLink === true;
-    const canSeeClientOrderReturns = hasWarehouseHubLink === true && user?.role !== 'warehouse';
+    // CR + RL without hub; RT stays hub-gated above.
+    const canSeeClientOrderReturns = user?.role !== 'warehouse';
     const canSeePriceChangePages = hasWarehouseHubLink === true;
 
     const isPriceChangeRoute = (url: string) =>

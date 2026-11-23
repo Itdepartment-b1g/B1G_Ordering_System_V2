@@ -109,6 +109,8 @@ export interface Company {
   company_account_type: CompanyAccountType;
   team_leader_allowed_pricing?: PricingColumn[];
   mobile_sales_allowed_pricing?: PricingColumn[];
+  /** When true, agents may file CR refunds. Default false; change-item always allowed. */
+  client_order_refunds_enabled?: boolean;
   created_at: string;
   updated_at: string;
 }

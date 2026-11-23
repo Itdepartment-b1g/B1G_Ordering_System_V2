@@ -50,22 +50,17 @@ export function usePermissions() {
     }
 
     if (route === '/client-order-returns') {
-      if (user?.role === 'warehouse') return false;
-      return hasWarehouseHubLink === true;
+      // CR + RL do not require a warehouse hub (RT still does).
+      return user?.role !== 'warehouse';
     }
 
     if (route === '/finance/refunds') {
-      if (
-        !(
-          user?.role === 'finance' ||
-          user?.role === 'accounting' ||
-          user?.role === 'admin' ||
-          user?.role === 'super_admin'
-        )
-      ) {
-        return false;
-      }
-      return hasWarehouseHubLink === true;
+      return (
+        user?.role === 'finance' ||
+        user?.role === 'accounting' ||
+        user?.role === 'admin' ||
+        user?.role === 'super_admin'
+      );
     }
 
     // PO Receiving is only available for team leaders whose tenant is linked to a warehouse hub.

@@ -28,7 +28,6 @@ import {
 } from '@/features/shared/utils/tableSortCycle';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
-import { usePermissions } from '@/hooks/usePermissions';
 import { ALL_TIME_DATE_RANGE } from '@/features/shared/components/DateRangeFilterPopover';
 import { ConditionFilterSheet } from '@/features/shared/components/ConditionFilterSheet';
 import { QuickFilterSheet, createQuickFilterAndClause, countActiveQuickFilterAndClauses, type QuickFilterColumn } from '@/features/shared/components/QuickFilterSheet';
@@ -210,14 +209,12 @@ export default function FinanceRefundsPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { orders } = useOrders();
-  const { hasWarehouseHubLink } = usePermissions();
   const isFinance = user?.role === 'finance';
   const canSeePage =
-    hasWarehouseHubLink &&
-    (user?.role === 'finance' ||
-      user?.role === 'accounting' ||
-      user?.role === 'admin' ||
-      user?.role === 'super_admin');
+    user?.role === 'finance' ||
+    user?.role === 'accounting' ||
+    user?.role === 'admin' ||
+    user?.role === 'super_admin';
 
   const {
     data: rows = [],
@@ -588,7 +585,7 @@ export default function FinanceRefundsPage() {
       <div className="p-8">
         <h1 className="text-3xl font-bold tracking-tight">Client Refunds</h1>
         <p className="text-muted-foreground mt-2">
-          Client refunds are available to finance when this company is linked to a warehouse.
+          Client refunds are available to finance, accounting, and admin roles.
         </p>
       </div>
     );

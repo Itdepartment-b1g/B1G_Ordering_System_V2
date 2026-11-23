@@ -18,6 +18,7 @@ import {
 import {
   buildReturnedInventoryRows,
   canShowClientOrderReturns,
+  NO_WAREHOUSE_DISPOSAL_NOTE,
   type ReturnedInventoryRow,
 } from './clientReturnApi';
 import { ClientReturnHistoryList } from './ClientReturnHistoryList';
@@ -250,7 +251,7 @@ function ClientOrderReturnsView() {
       <div className="p-8">
         <h1 className="text-3xl font-bold tracking-tight">Client Order Returns</h1>
         <p className="text-muted-foreground mt-2">
-          Client order returns are available when this company is linked to a warehouse.
+          Client order returns are not available for this role.
         </p>
       </div>
     );
@@ -268,6 +269,15 @@ function ClientOrderReturnsView() {
               : 'CR history, your returned items, and submit RL handovers to your team leader.'}
         </p>
       </div>
+
+      {!hasWarehouseHubLink ? (
+        <div
+          role="status"
+          className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"
+        >
+          {NO_WAREHOUSE_DISPOSAL_NOTE}
+        </div>
+      ) : null}
 
       <Tabs value={pageTab} onValueChange={(value) => setPageTab(value as PageTab)} className="space-y-4">
         <TabsList

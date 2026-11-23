@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeftRight, Banknote, Camera, Check, Loader2, PenTool, RotateCcw, X } from 'lucide-react';
 import { format } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
@@ -61,7 +61,12 @@ import {
   type ClientReturnStockFate,
   type PreviewChangeItemSku,
 } from './clientReturnPreview';
-import { CLIENT_ORDER_RETURNS_QUERY_KEY } from './clientReturnApi';
+import {
+  CLIENT_ORDER_REFUNDS_DISABLED_TOAST,
+  CLIENT_ORDER_REFUNDS_ENABLED_QUERY_KEY,
+  CLIENT_ORDER_RETURNS_QUERY_KEY,
+  fetchClientOrderRefundsEnabled,
+} from './clientReturnApi';
 import { formatVariantType, variantTypeBadgeClass } from './ClientReturnBrandTable';
 
 export type ReturnClientOrderLine = {
@@ -456,6 +461,13 @@ export function ReturnClientOrderDialog({
   const [openChangeBrands, setOpenChangeBrands] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
+  const { data: refundsEnabled = false } = useQuery({
+    queryKey: [CLIENT_ORDER_REFUNDS_ENABLED_QUERY_KEY, user?.company_id],
+    enabled: !!user?.company_id && open,
+    queryFn: () => fetchClientOrderRefundsEnabled(user!.company_id!),
+    staleTime: 1000 * 60,
+  });
+
   const itemIdsKey = items.map((item) => item.id).join(',');
 
   const stopCamera = () => {
@@ -821,6 +833,13 @@ export function ReturnClientOrderDialog({
   });
 
   const startReturnWizard = (kind: ClientReturnKind) => {
+    if (kind === 'refund' && !refundsEnabled) {
+      toast({
+        title: 'Refunds not allowed',
+        description: CLIENT_ORDER_REFUNDS_DISABLED_TOAST,
+      });
+      return;
+    }
     setReturnType(kind);
     setChangeQuantities({});
     setChangeHints({});

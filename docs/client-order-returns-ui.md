@@ -4,7 +4,9 @@ Visual mock only. Flag: `SHOW_CLIENT_RETURN_MOCK` in `src/features/orders/client
 
 Use this file as the source of truth for **tables, cards, list columns, and the planned schema** so the return UI and SQL stay consistent.
 
-**Scope:** warehouse-linked Standard Account companies only (`get_linked_warehouse_company_id()`). Not Return to Warehouse (`RT-…`) and not warehouse Client Stock Returns inspect.
+**Scope:** Standard Account companies (warehouse hub link optional). CR + RL work without a hub; without a hub, show: “Your company is not connected to a warehouse yet. Disposal stock cannot be returned to the warehouse.” Not Return to Warehouse (`RT-…`) and not warehouse Client Stock Returns inspect (those still require a hub).
+
+**Refunds:** `companies.client_order_refunds_enabled` defaults **false**. Change-item is always allowed. Super Admin toggles refunds in System Settings. Refund card stays visible; when disabled, toast: “Please inform your manager to allow refund.” RPC `create_client_order_return` also rejects refunds when the flag is off.
 
 Do not FK inventory rows to returns — join `company_id` + `variant_id` (+ `agent_id` on agent inventory).
 
@@ -497,5 +499,5 @@ UI tabs on `ClientOrderReturnsPage`: **Returns** · **Returned Items** (bulk RL 
 
 1. **Run the migration** in the SQL editor, then confirm tables/RPCs exist.
 2. **Wire the UI** off mock (`SHOW_CLIENT_RETURN_MOCK`) to the RPCs + SELECT.
-3. **Hide the feature** when the company is not warehouse-linked (menu + Return button), same gate as Return to Warehouse.
+3. ~~Hide the feature when not warehouse-linked~~ — CR/RL are available without a hub; only RT stays hub-gated (see migration `20261023120000_client_returns_without_warehouse_hub.sql`).
 4. **Return-process timeline** on the ORD (submitted → pending leader → approved / rejected), not only a single “Return posted” event.
