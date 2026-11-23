@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CheckCircle2, LayoutGrid, Loader2, Table2, X } from 'lucide-react';
 import { useAuth } from '@/features/auth';
-import { usePermissions } from '@/hooks/usePermissions';
 import { useToast } from '@/hooks/use-toast';
 import { useAgentInventory } from '@/features/inventory/hooks';
 import { supabase } from '@/lib/supabase';
@@ -70,7 +69,6 @@ function countBrandsAndVariants(items: { brand_id: string | null; brand_name: st
  */
 export function PriceChangeConfirmGate() {
   const { user } = useAuth();
-  const { hasWarehouseHubLink, hasWarehouseHubLinkLoading } = usePermissions();
   const { toast } = useToast();
   const qc = useQueryClient();
   const [acked, setAcked] = useState(false);
@@ -83,13 +81,12 @@ export function PriceChangeConfirmGate() {
   const eligible =
     !!user?.id &&
     !!user?.company_id &&
-    hasWarehouseHubLink === true &&
     (user.role === 'team_leader' || user.role === 'mobile_sales');
 
   const { data: batches = [], isLoading } = useQuery({
     queryKey: ['price-agreements', user?.company_id, user?.id],
     queryFn: () => fetchMyPendingPriceAgreements(user!.company_id!, user!.id),
-    enabled: eligible && !hasWarehouseHubLinkLoading,
+    enabled: eligible,
     staleTime: 1000 * 60 * 2,
     refetchOnWindowFocus: false,
   });

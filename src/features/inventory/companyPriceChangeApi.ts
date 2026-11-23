@@ -49,6 +49,8 @@ export interface CompanyPriceChangeAgreement {
   created_at: string;
 }
 
+export type PriceChangeScopeType = 'company' | 'team';
+
 export interface CompanyPriceChangeBatch {
   id: string;
   company_id: string;
@@ -65,6 +67,13 @@ export interface CompanyPriceChangeBatch {
   rejected_at: string | null;
   rejection_note: string | null;
   rejected_by_name: string | null;
+  /** company = all TL+MS; team = one or more TLs + their MS */
+  scope_type?: PriceChangeScopeType | null;
+  target_leader_ids?: string[] | null;
+  target_leader_names?: string | null;
+  /** @deprecated prefer target_leader_ids / target_leader_names */
+  target_leader_id?: string | null;
+  target_leader_name?: string | null;
   items?: CompanyPriceChangeItem[];
   agreements?: CompanyPriceChangeAgreement[];
 }
@@ -97,16 +106,49 @@ function asRpcResult(data: unknown): RpcResult {
 
 export async function createCompanyPriceChangeBatch(
   items: PriceChangeItemInput[],
-  note?: string
+  note?: string,
+  /** When set, only these Team Leaders + their Mobile Sales must confirm */
+  targetLeaderIds?: string[] | null
 ): Promise<RpcResult> {
+  const ids = [...new Set((targetLeaderIds ?? []).map((id) => id.trim()).filter(Boolean))];
   const { data, error } = await supabase.rpc('create_company_price_change_batch', {
     p_items: items,
     p_note: note?.trim() || null,
+    p_target_leader_ids: ids.length > 0 ? ids : null,
   });
   if (error) throw error;
   const result = asRpcResult(data);
   if (!result.success) throw new Error(result.error || 'Failed to create price change batch');
   return result;
+}
+
+/** Display label for batch scope badge */
+export function priceChangeScopeLabel(batch: {
+  scope_type?: PriceChangeScopeType | null;
+  target_leader_names?: string | null;
+  target_leader_name?: string | null;
+}): string {
+  if (batch.scope_type !== 'team') return 'Company';
+  const names = (batch.target_leader_names || batch.target_leader_name || '').trim();
+  return names ? `Team: ${names}` : 'Team';
+}
+
+/** Active team leaders in the company (for SA team-scoped price push). */
+export async function fetchActiveTeamLeaders(
+  companyId: string
+): Promise<Array<{ id: string; full_name: string }>> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id, full_name')
+    .eq('company_id', companyId)
+    .eq('role', 'team_leader')
+    .eq('status', 'active')
+    .order('full_name', { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map((p) => ({
+    id: p.id as string,
+    full_name: ((p.full_name as string) || '').trim() || 'Team Leader',
+  }));
 }
 
 export async function confirmCompanyPriceChange(batchId: string): Promise<RpcResult> {
@@ -176,8 +218,9 @@ export async function fetchPriceChangeBatchDetail(
         .from('company_price_change_items')
         .select('*')
         .eq('batch_id', batchId)
-        .order('brand_name')
-        .order('variant_name'),
+        .order('created_at', { ascending: false })
+        .order('brand_name', { ascending: true })
+        .order('variant_name', { ascending: true }),
       supabase
         .from('company_price_change_agreements')
         .select('*')

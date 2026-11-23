@@ -13,7 +13,7 @@ import {
   type CompanyPriceChangeBatch,
   type PriceChangeBatchStatus,
 } from './companyPriceChangeApi';
-import { PriceChangeDisplay } from './PriceChangeDisplay';
+import { PriceChangeItemsGroupedTable } from './PriceChangeItemsGroupedTable';
 
 function statusLabel(status: PriceChangeBatchStatus) {
   switch (status) {
@@ -31,54 +31,14 @@ function statusLabel(status: PriceChangeBatchStatus) {
 }
 
 function updatedDateLabel(batch: CompanyPriceChangeBatch): string {
-  const raw = batch.main_applied_at || batch.created_at;
+  const items = batch.items ?? [];
+  const latestItem = items.reduce<string | null>((max, item) => {
+    const at = item.updated_at || item.created_at;
+    if (!max || new Date(at).getTime() > new Date(max).getTime()) return at;
+    return max;
+  }, null);
+  const raw = latestItem || batch.main_applied_at || batch.created_at;
   return new Date(raw).toLocaleString();
-}
-
-function VariantPriceLine({
-  name,
-  oldSelling,
-  newSelling,
-  oldDsp,
-  newDsp,
-  oldRsp,
-  newRsp,
-}: {
-  name: string;
-  oldSelling: number;
-  newSelling: number;
-  oldDsp: number;
-  newDsp: number;
-  oldRsp: number;
-  newRsp: number;
-}) {
-  const dspChanged = Number(oldDsp) !== Number(newDsp);
-  const rspChanged = Number(oldRsp) !== Number(newRsp);
-
-  return (
-    <li className="text-sm py-1.5 border-b border-border/50 last:border-0">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-        <span className="font-medium">{name}</span>
-        <PriceChangeDisplay oldVal={oldSelling} newVal={newSelling} />
-      </div>
-      {(dspChanged || rspChanged) && (
-        <div className="mt-0.5 text-xs flex flex-wrap gap-x-3 items-center">
-          {dspChanged && (
-            <span className="inline-flex items-center gap-1">
-              <span className="text-muted-foreground">DSP</span>
-              <PriceChangeDisplay oldVal={oldDsp} newVal={newDsp} className="text-xs" />
-            </span>
-          )}
-          {rspChanged && (
-            <span className="inline-flex items-center gap-1">
-              <span className="text-muted-foreground">RSP</span>
-              <PriceChangeDisplay oldVal={oldRsp} newVal={newRsp} className="text-xs" />
-            </span>
-          )}
-        </div>
-      )}
-    </li>
-  );
 }
 
 export function BrandPriceHistoryDialog({
@@ -98,15 +58,17 @@ export function BrandPriceHistoryDialog({
     queryKey: ['brand-price-history', companyId, brandId],
     queryFn: () => fetchBrandPriceHistory(companyId!, brandId!),
     enabled: open && !!companyId && !!brandId,
+    staleTime: 0,
+    refetchOnMount: 'always',
   });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Price history — {brandName}</DialogTitle>
           <DialogDescription>
-            Selling price changes for this brand, grouped by batch.
+            Selling / DSP / RSP changes for this brand, grouped by batch and update time.
           </DialogDescription>
         </DialogHeader>
 
@@ -135,22 +97,20 @@ export function BrandPriceHistoryDialog({
                       UPDATED PRICE DATE: {updatedDateLabel(batch)}
                     </p>
                   </div>
-                  <Badge variant="outline">{statusLabel(batch.status)}</Badge>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Badge variant="secondary" className="font-normal">
+                      {batch.scope_type === 'team'
+                        ? `Team: ${(
+                            batch.target_leader_names ||
+                            batch.target_leader_name ||
+                            'Team Leader'
+                          ).trim()}`
+                        : 'Company'}
+                    </Badge>
+                    <Badge variant="outline">{statusLabel(batch.status)}</Badge>
+                  </div>
                 </div>
-                <ul className="mt-1">
-                  {(batch.items ?? []).map((item) => (
-                    <VariantPriceLine
-                      key={item.id}
-                      name={item.variant_name}
-                      oldSelling={item.old_selling_price}
-                      newSelling={item.new_selling_price}
-                      oldDsp={item.old_dsp_price}
-                      newDsp={item.new_dsp_price}
-                      oldRsp={item.old_rsp_price}
-                      newRsp={item.new_rsp_price}
-                    />
-                  ))}
-                </ul>
+                <PriceChangeItemsGroupedTable batch={batch} viewMode="table" compact />
               </section>
             ))}
           </div>

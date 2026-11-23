@@ -10,13 +10,24 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, Edit, Package, ChevronRight, Users, TrendingUp, Eye, RefreshCw, Filter, Download, BarChart3, TrendingDown, AlertTriangle, CheckCircle, Trash2, RotateCcw, Loader2, Plus, Unlink, Clock, ClipboardList, Scale, History } from 'lucide-react';
+import { Search, Edit, Package, ChevronRight, Users, TrendingUp, Eye, RefreshCw, Filter, Download, BarChart3, TrendingDown, AlertTriangle, CheckCircle, RotateCcw, Loader2, Plus, Unlink, Clock, ClipboardList, Scale, History, MoreVertical } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/usePermissions';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useInventory, type Variant, type Brand } from './InventoryContext';
-import { createCompanyPriceChangeBatch } from './companyPriceChangeApi';
+import {
+  createCompanyPriceChangeBatch,
+  fetchActiveTeamLeaders,
+} from './companyPriceChangeApi';
+import { TeamLeaderCheckboxPicker } from './components/TeamLeaderCheckboxPicker';
 import { BrandPriceHistoryDialog } from './BrandPriceHistoryDialog';
 import { supabase } from '@/lib/supabase';
 import { Textarea } from '@/components/ui/textarea';
@@ -95,8 +106,6 @@ export default function MainInventoryPage() {
     originalDspPrice?: number;
     originalRspPrice?: number;
   } | null>(null);
-  const [deleteVariantId, setDeleteVariantId] = useState<string | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
   const [priceInputValue, setPriceInputValue] = useState<string>('');
   const [sellingPriceInputValue, setSellingPriceInputValue] = useState<string>('');
   const [dspPriceInputValue, setDspPriceInputValue] = useState<string>('');
@@ -108,6 +117,30 @@ export default function MainInventoryPage() {
     name: string;
   } | null>(null);
 
+  // Single-variant price edit dialog
+  const [editPriceOpen, setEditPriceOpen] = useState(false);
+  const [editingPriceVariant, setEditingPriceVariant] = useState<{
+    brandId: string;
+    variantId: string;
+    variantType: string;
+    name: string;
+    stock: number;
+    price: number;
+    sellingPrice: number;
+    dspPrice: number;
+    rspPrice: number;
+    originalSellingPrice: number;
+    originalDspPrice: number;
+    originalRspPrice: number;
+  } | null>(null);
+  const [editPriceSellingValue, setEditPriceSellingValue] = useState('');
+  const [editPriceDspValue, setEditPriceDspValue] = useState('');
+  const [editPriceRspValue, setEditPriceRspValue] = useState('');
+  const [editPriceNote, setEditPriceNote] = useState('');
+  const [updatingEditPrice, setUpdatingEditPrice] = useState(false);
+  /** Empty = entire company; otherwise selected team leader profile ids */
+  const [editPriceTargetLeaderIds, setEditPriceTargetLeaderIds] = useState<string[]>([]);
+
   // Bulk price update states
   const [bulkPriceDialogOpen, setBulkPriceDialogOpen] = useState(false);
   const [bulkPriceType, setBulkPriceType] = useState<'flavors' | 'batteries' | 'posms' | null>(null);
@@ -116,7 +149,10 @@ export default function MainInventoryPage() {
   const [bulkDspValue, setBulkDspValue] = useState<string>('');
   const [bulkRspValue, setBulkRspValue] = useState<string>('');
   const [bulkPriceNote, setBulkPriceNote] = useState<string>('');
+  const [bulkPriceTargetLeaderIds, setBulkPriceTargetLeaderIds] = useState<string[]>([]);
   const [priceChangeNote, setPriceChangeNote] = useState<string>('');
+  /** Empty = entire company (legacy edit-variant dialog) */
+  const [variantEditTargetLeaderIds, setVariantEditTargetLeaderIds] = useState<string[]>([]);
   const [updatingBulkPrice, setUpdatingBulkPrice] = useState(false);
 
   // Bulk stock edit states
@@ -170,6 +206,33 @@ export default function MainInventoryPage() {
   const isMainWarehouseUser = membership.isMain;
   /** Hub-linked tenants and warehouse accounts must not edit stock inline. */
   const isStockFieldLocked = isWarehouse || hasWarehouseHubLink;
+  /** Price change batches + TL/MS confirm — all non-warehouse sales companies */
+  const useCompanyPriceChange = !isWarehouse;
+
+  const { data: activeTeamLeaders = [] } = useQuery({
+    queryKey: ['active-team-leaders', user?.company_id],
+    enabled: !!user?.company_id && useCompanyPriceChange,
+    queryFn: () => fetchActiveTeamLeaders(user!.company_id!),
+  });
+
+  /** Default = all TLs selected. All/empty → company-wide (null). Subset → bags-only. */
+  const allTeamLeaderIds = useMemo(
+    () => activeTeamLeaders.map((tl) => tl.id),
+    [activeTeamLeaders]
+  );
+  const resolvePriceChangeLeaderIds = (selectedIds: string[]): string[] | null => {
+    if (selectedIds.length === 0) return null;
+    if (
+      allTeamLeaderIds.length > 0 &&
+      selectedIds.length === allTeamLeaderIds.length &&
+      allTeamLeaderIds.every((id) => selectedIds.includes(id))
+    ) {
+      return null;
+    }
+    return selectedIds;
+  };
+  const isBagsOnlyLeaderSelection = (selectedIds: string[]) =>
+    resolvePriceChangeLeaderIds(selectedIds) !== null;
 
   // Fetch sub-warehouse location name for display
   const { data: myLocationName } = useQuery({
@@ -189,33 +252,9 @@ export default function MainInventoryPage() {
   const [warehouseBrandForm, setWarehouseBrandForm] = useState({ name: '', description: '' });
   const [warehouseBrandSubmitting, setWarehouseBrandSubmitting] = useState(false);
   const [removeStockSubmitting, setRemoveStockSubmitting] = useState(false);
+  const [removeInventoryTarget, setRemoveInventoryTarget] = useState<Variant | null>(null);
 
   const { toast } = useToast();
-
-  const handleDeleteVariant = async (variantId: string) => {
-    if (!user?.company_id) {
-      toast({ title: "Error", description: "User company ID not found.", variant: "destructive" });
-      return;
-    }
-    try {
-      setIsDeleting(true);
-      // Soft delete: set is_active = false instead of actually deleting
-      const { error } = await supabase
-        .from('variants')
-        .update({ is_active: false })
-        .eq('id', variantId);
-      if (error) throw error;
-      toast({ title: "Product Archived", description: "The product has been archived and hidden from inventory." });
-      refreshInventory();
-      queryClient.invalidateQueries({ queryKey: ['inventory'] }); // Invalidate react-query cache
-    } catch (err: any) {
-      console.error('Error archiving variant:', err);
-      toast({ title: "Archive Failed", description: err.message, variant: "destructive" });
-    } finally {
-      setIsDeleting(false);
-      setDeleteVariantId(null);
-    }
-  };
 
   const handleRemoveMainInventoryRow = async (variant: Variant) => {
     if (!user?.company_id || !variant.mainInventoryId) return;
@@ -363,7 +402,210 @@ export default function MainInventoryPage() {
     setDspPriceInputValue('');
     setRspPriceInputValue('');
     setPriceChangeNote('');
+    setVariantEditTargetLeaderIds(allTeamLeaderIds);
     setEditVariantOpen(true);
+  };
+
+  const resetEditPriceForm = () => {
+    setEditPriceOpen(false);
+    setEditingPriceVariant(null);
+    setEditPriceSellingValue('');
+    setEditPriceDspValue('');
+    setEditPriceRspValue('');
+    setEditPriceNote('');
+    setEditPriceTargetLeaderIds([]);
+  };
+
+  const priceChangeSubmitToastDescription = (
+    result: {
+      batch_number?: string;
+      item_count?: number;
+      auto_applied?: boolean;
+      appended?: boolean;
+      reset_confirmed_count?: number;
+    },
+    targetLeaderIds: string[] | null | undefined,
+    mode: 'single' | 'bulk'
+  ) => {
+    const batch = result.batch_number ?? '';
+    const ids = targetLeaderIds ?? [];
+    const isTeam = ids.length > 0; // already resolved: null = company-wide
+    const teamNames = ids
+      .map((id) => activeTeamLeaders.find((t) => t.id === id)?.full_name)
+      .filter(Boolean) as string[];
+    const teamLabel =
+      teamNames.length === 0
+        ? null
+        : teamNames.length <= 2
+          ? teamNames.join(' & ')
+          : `${teamNames.slice(0, 2).join(', ')} +${teamNames.length - 2} more`;
+    if (result.auto_applied) {
+      if (isTeam) {
+        return mode === 'bulk'
+          ? `Batch ${batch}: ${result.item_count} SKU(s) applied to selected bags (no TL/MS). Main unchanged.`
+          : `Batch ${batch}: selected bags updated (no TL/MS to confirm). Main unchanged.`;
+      }
+      return mode === 'bulk'
+        ? `Batch ${batch}: updated ${result.item_count} SKU(s); bags applied (no TL/MS).`
+        : `Batch ${batch}: main and agent bags updated (no TL/MS to confirm).`;
+    }
+    if (result.appended) {
+      const reset =
+        (result.reset_confirmed_count ?? 0) > 0
+          ? ` — ${result.reset_confirmed_count} confirmer(s) must confirm again`
+          : '';
+      if (isTeam) {
+        return mode === 'bulk'
+          ? `Batch ${batch}: ${result.item_count} SKU(s) queued for selected bags. Appended${reset}. Main unchanged.`
+          : `Batch ${batch}: appended for selected bags${reset}. Main unchanged.`;
+      }
+      return mode === 'bulk'
+        ? `Batch ${batch}: main updated for ${result.item_count} SKU(s). Appended to the open agreement list${reset}.`
+        : `Batch ${batch}: main updated. Appended to the open agreement list${reset}.`;
+    }
+    if (teamLabel) {
+      return mode === 'bulk'
+        ? `Batch ${batch}: ${result.item_count} SKU(s) queued. ${teamLabel} and their Mobile Sales must confirm before bags update. Main unchanged.`
+        : `Batch ${batch}: queued for ${teamLabel} and their Mobile Sales — they confirm before bags update. Main unchanged.`;
+    }
+    return mode === 'bulk'
+      ? `Batch ${batch}: main updated for ${result.item_count} SKU(s). TL and Mobile Sales must confirm before bags update.`
+      : `Batch ${batch}: main inventory updated. Team Leaders and Mobile Sales must confirm before bags use the new price.`;
+  };
+
+  const handleEditPrice = (brandId: string, variant: Variant, type: string) => {
+    const currentUnitPrice = variant.price || 0;
+    const currentSellingPrice = (variant as any).sellingPrice || 0;
+    const currentDspPrice = (variant as any).dspPrice || 0;
+    const currentRspPrice = (variant as any).rspPrice || 0;
+    setEditingPriceVariant({
+      brandId,
+      variantId: variant.id,
+      variantType: type,
+      name: variant.name,
+      stock: variant.stock,
+      price: currentUnitPrice,
+      sellingPrice: currentSellingPrice,
+      dspPrice: currentDspPrice,
+      rspPrice: currentRspPrice,
+      originalSellingPrice: currentSellingPrice,
+      originalDspPrice: currentDspPrice,
+      originalRspPrice: currentRspPrice,
+    });
+    setEditPriceSellingValue('');
+    setEditPriceDspValue('');
+    setEditPriceRspValue('');
+    setEditPriceNote('');
+    setEditPriceTargetLeaderIds(allTeamLeaderIds);
+    setEditPriceOpen(true);
+  };
+
+  const handleConfirmEditPrice = async () => {
+    if (!editingPriceVariant) return;
+
+    const sellingPrice =
+      editPriceSellingValue === '' ? editingPriceVariant.sellingPrice : Number(editPriceSellingValue);
+    const dspPrice =
+      editPriceDspValue === '' ? editingPriceVariant.dspPrice : Number(editPriceDspValue);
+    const rspPrice =
+      editPriceRspValue === '' ? editingPriceVariant.rspPrice : Number(editPriceRspValue);
+
+    if (
+      isNaN(sellingPrice) ||
+      sellingPrice < 0 ||
+      isNaN(dspPrice) ||
+      dspPrice < 0 ||
+      isNaN(rspPrice) ||
+      rspPrice < 0
+    ) {
+      toast({
+        title: 'Invalid prices',
+        description: 'Please enter valid prices',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const pricesChanged =
+      sellingPrice !== editingPriceVariant.originalSellingPrice ||
+      dspPrice !== editingPriceVariant.originalDspPrice ||
+      rspPrice !== editingPriceVariant.originalRspPrice;
+
+    if (!pricesChanged) {
+      toast({
+        title: 'No changes',
+        description: 'Prices are unchanged.',
+      });
+      return;
+    }
+
+    setUpdatingEditPrice(true);
+    try {
+      if (useCompanyPriceChange) {
+        if (!editPriceNote.trim()) {
+          toast({
+            title: 'Note required',
+            description: 'Add a short reason for this price change before submitting.',
+            variant: 'destructive',
+          });
+          return;
+        }
+        const targetLeaderIds = resolvePriceChangeLeaderIds(editPriceTargetLeaderIds);
+        const result = await createCompanyPriceChangeBatch(
+          [
+            {
+              variant_id: editingPriceVariant.variantId,
+              new_selling_price: sellingPrice,
+              new_dsp_price: dspPrice,
+              new_rsp_price: rspPrice,
+            },
+          ],
+          editPriceNote.trim(),
+          targetLeaderIds
+        );
+        await refreshInventory();
+        void queryClient.invalidateQueries({ queryKey: ['price-history'] });
+        void queryClient.invalidateQueries({ queryKey: ['price-history-detail'] });
+        void queryClient.invalidateQueries({ queryKey: ['price-agreements'] });
+        void queryClient.invalidateQueries({ queryKey: ['brand-price-history'] });
+        toast({
+          title: result.auto_applied
+            ? 'Prices applied'
+            : result.appended
+              ? 'Added to open price batch'
+              : 'Price change submitted',
+          description: priceChangeSubmitToastDescription(result, targetLeaderIds, 'single'),
+        });
+        resetEditPriceForm();
+        return;
+      }
+
+      await updateVariant(
+        editingPriceVariant.variantId,
+        editingPriceVariant.name,
+        editingPriceVariant.stock,
+        editingPriceVariant.price,
+        sellingPrice,
+        dspPrice,
+        rspPrice,
+        undefined,
+        isWarehouse
+      );
+      await refreshInventory();
+      toast({
+        title: 'Success',
+        description: `Prices updated for ${editingPriceVariant.name}`,
+      });
+      resetEditPriceForm();
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to update prices',
+        variant: 'destructive',
+      });
+    } finally {
+      setUpdatingEditPrice(false);
+    }
   };
 
   const handleEditBrand = (brand: Brand) => {
@@ -388,7 +630,7 @@ export default function MainInventoryPage() {
         dspPrice !== (editingVariant.originalDspPrice ?? editingVariant.dspPrice ?? 0) ||
         rspPrice !== (editingVariant.originalRspPrice ?? editingVariant.rspPrice ?? 0);
 
-      if (!isWarehouse && hasWarehouseHubLink && pricesChanged) {
+      if (useCompanyPriceChange && pricesChanged) {
         if (!priceChangeNote.trim()) {
           toast({
             title: 'Note required',
@@ -397,6 +639,7 @@ export default function MainInventoryPage() {
           });
           return;
         }
+        const targetLeaderIds = resolvePriceChangeLeaderIds(variantEditTargetLeaderIds);
         const result = await createCompanyPriceChangeBatch(
           [
             {
@@ -406,7 +649,8 @@ export default function MainInventoryPage() {
               new_rsp_price: rspPrice,
             },
           ],
-          priceChangeNote.trim()
+          priceChangeNote.trim(),
+          targetLeaderIds
         );
         await refreshInventory();
         void queryClient.invalidateQueries({ queryKey: ['price-history'] });
@@ -419,15 +663,7 @@ export default function MainInventoryPage() {
             : result.appended
               ? 'Added to open price batch'
               : 'Price change submitted',
-          description: result.auto_applied
-            ? `Batch ${result.batch_number}: main and agent bags updated (no TL/MS to confirm).`
-            : result.appended
-              ? `Batch ${result.batch_number}: main updated. Appended to the open agreement list${
-                  (result.reset_confirmed_count ?? 0) > 0
-                    ? ` — ${result.reset_confirmed_count} confirmer(s) must confirm again`
-                    : ''
-                }.`
-              : `Batch ${result.batch_number}: main inventory updated. Team Leaders and Mobile Sales must confirm before bags use the new price.`,
+          description: priceChangeSubmitToastDescription(result, targetLeaderIds, 'single'),
         });
         setEditVariantOpen(false);
         setEditingVariant(null);
@@ -436,6 +672,7 @@ export default function MainInventoryPage() {
         setDspPriceInputValue('');
         setRspPriceInputValue('');
         setPriceChangeNote('');
+        setVariantEditTargetLeaderIds([]);
         return;
       }
 
@@ -502,6 +739,7 @@ export default function MainInventoryPage() {
     setBulkDspValue('');
     setBulkRspValue('');
     setBulkPriceNote('');
+    setBulkPriceTargetLeaderIds(allTeamLeaderIds);
     setBulkPriceDialogOpen(true);
   };
 
@@ -554,7 +792,7 @@ export default function MainInventoryPage() {
             ? brand.batteries
             : brand.posms || [];
 
-      if (hasWarehouseHubLink) {
+      if (useCompanyPriceChange) {
         if (!bulkPriceNote.trim()) {
           toast({
             title: 'Note required',
@@ -563,6 +801,7 @@ export default function MainInventoryPage() {
           });
           return;
         }
+        const targetLeaderIds = resolvePriceChangeLeaderIds(bulkPriceTargetLeaderIds);
         const result = await createCompanyPriceChangeBatch(
           variants.map((variant) => ({
             variant_id: variant.id,
@@ -570,7 +809,8 @@ export default function MainInventoryPage() {
             new_dsp_price: dspPrice,
             new_rsp_price: rspPrice,
           })),
-          bulkPriceNote.trim()
+          bulkPriceNote.trim(),
+          targetLeaderIds
         );
         await refreshInventory();
         void queryClient.invalidateQueries({ queryKey: ['price-history'] });
@@ -583,17 +823,10 @@ export default function MainInventoryPage() {
             : result.appended
               ? 'Added to open price batch'
               : 'Price change submitted',
-          description: result.auto_applied
-            ? `Batch ${result.batch_number}: updated ${result.item_count} SKU(s); bags applied (no TL/MS).`
-            : result.appended
-              ? `Batch ${result.batch_number}: main updated for ${result.item_count} SKU(s). Appended to the open agreement list${
-                  (result.reset_confirmed_count ?? 0) > 0
-                    ? ` — ${result.reset_confirmed_count} confirmer(s) must confirm again`
-                    : ''
-                }.`
-              : `Batch ${result.batch_number}: main updated for ${result.item_count} SKU(s). TL and Mobile Sales must confirm before bags update.`,
+          description: priceChangeSubmitToastDescription(result, targetLeaderIds, 'bulk'),
         });
         setBulkPriceDialogOpen(false);
+        setBulkPriceTargetLeaderIds([]);
         setBulkPriceValue('');
         setBulkDspValue('');
         setBulkRspValue('');
@@ -710,41 +943,91 @@ export default function MainInventoryPage() {
   const showPendingAllocations = !isWarehouse;
   const showPoReservedColumn = isWarehouse;
 
-  const renderBatchViewButton = (variant: { id: string; name: string }, brandName: string) => {
-    if (!isWarehouse) return null;
-    if (isSubWarehouseUser && !membership.locationId) return null;
-    return (
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => {
-          void queryClient.invalidateQueries({ queryKey: ['variant-batch-lots'] });
-          setBatchViewTarget({
-            variantId: variant.id,
-            variantName: variant.name,
-            brandName,
-          });
-        }}
-      >
-        <Eye className="h-3 w-3 mr-1" />
-        View
-      </Button>
-    );
-  };
+  const canViewBatchLots =
+    isWarehouse && !(isSubWarehouseUser && !membership.locationId);
+  const canViewStockHolders = !isSubWarehouseUser;
 
-  const renderViewHoldersButton = (variant: { id: string }) => {
-    if (isSubWarehouseUser) return null;
+  const renderVariantActionsMenu = (
+    brandId: string,
+    brandName: string,
+    variant: Variant,
+    variantType: string
+  ) => {
+    const showEditPrice = !isWarehouse;
+    const showPriceHistory = useCompanyPriceChange;
+    const showRemove = isWarehouse && !!variant.mainInventoryId;
+    const showStockHolders = canViewStockHolders;
+    const showBatchView = canViewBatchLots;
+    const hasPrimary =
+      showEditPrice || showPriceHistory || showStockHolders || showBatchView;
+
+    if (!hasPrimary && !showRemove) {
+      return null;
+    }
+
     return (
-      <Button
-      variant="outline"
-      size="sm"
-      title="View stock holders"
-      onClick={() => navigate(`/inventory/main/stock-holders/${variant.id}`)}
-      className="h-8 gap-1.5 px-2.5 text-xs"
-    >
-      <Users className="h-3.5 w-3.5" />
-      Stock Holders
-    </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" className="h-8 w-8">
+            <MoreVertical className="h-4 w-4" />
+            <span className="sr-only">Open actions</span>
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-52">
+          {showEditPrice && (
+            <DropdownMenuItem onClick={() => handleEditPrice(brandId, variant, variantType)}>
+              <Edit className="mr-2 h-4 w-4" />
+              Edit price
+            </DropdownMenuItem>
+          )}
+          {showPriceHistory && (
+            <DropdownMenuItem
+              onClick={() =>
+                setBrandPriceHistory({
+                  brandId,
+                  brandName,
+                })
+              }
+            >
+              <History className="mr-2 h-4 w-4" />
+              Show price history
+            </DropdownMenuItem>
+          )}
+          {showStockHolders && (
+            <DropdownMenuItem
+              onClick={() => navigate(`/inventory/main/stock-holders/${variant.id}`)}
+            >
+              <Users className="mr-2 h-4 w-4" />
+              Stock holders
+            </DropdownMenuItem>
+          )}
+          {showBatchView && (
+            <DropdownMenuItem
+              onClick={() => {
+                void queryClient.invalidateQueries({ queryKey: ['variant-batch-lots'] });
+                setBatchViewTarget({
+                  variantId: variant.id,
+                  variantName: variant.name,
+                  brandName,
+                });
+              }}
+            >
+              <Eye className="mr-2 h-4 w-4" />
+              View batches
+            </DropdownMenuItem>
+          )}
+          {showRemove && hasPrimary && <DropdownMenuSeparator />}
+          {showRemove && (
+            <DropdownMenuItem
+              className="text-muted-foreground"
+              onClick={() => setRemoveInventoryTarget(variant)}
+            >
+              <Unlink className="mr-2 h-4 w-4" />
+              Remove from inventory
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
     );
   };
 
@@ -1233,7 +1516,7 @@ export default function MainInventoryPage() {
               </Link>
             </Button>
           )}
-          {!isWarehouse && hasWarehouseHubLink && (
+          {useCompanyPriceChange && (
             <Button variant="outline" asChild>
               <Link to="/inventory/price-history">
                 <History className="mr-2 h-4 w-4" />
@@ -1260,18 +1543,29 @@ export default function MainInventoryPage() {
         </div>
       )}
 
-      {!isWarehouse && hasWarehouseHubLink && (
+      {useCompanyPriceChange && hasWarehouseHubLink && (
         <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-4 py-3 text-sm text-amber-950">
           This company is linked to a warehouse. <strong>Stock counts are read-only</strong> here
           and update when you receive inventory through <strong>purchase orders to the warehouse</strong>.
-          Price edits update Main Inventory now; <strong>Team Leaders and Mobile Sales must confirm</strong>{' '}
-          before agent bags use the new prices. See{' '}
+          Company-wide price edits update Main now; selecting Team Leaders pushes <strong>bags only</strong>{' '}
+          (Main unchanged). Confirmers must agree before bags use the new prices. See{' '}
           <Link to="/inventory/price-history" className="underline font-medium">
             Price History
           </Link>
           . To send stock back, use{' '}
           <Link to="/inventory/return-to-warehouse" className="underline font-medium">
             Return to Warehouse
+          </Link>
+          .
+        </div>
+      )}
+
+      {useCompanyPriceChange && !hasWarehouseHubLink && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-4 py-3 text-sm text-amber-950">
+          Company-wide price edits update Main now; selecting Team Leaders pushes <strong>bags only</strong>{' '}
+          (Main unchanged). Confirmers must agree before bags use the new prices. See{' '}
+          <Link to="/inventory/price-history" className="underline font-medium">
+            Price History
           </Link>
           .
         </div>
@@ -1478,7 +1772,7 @@ export default function MainInventoryPage() {
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
                           <h3 className="font-semibold text-lg">{brand.name}</h3>
-                          {!isWarehouse && hasWarehouseHubLink && (
+                          {useCompanyPriceChange && (
                             <Button
                               variant="outline"
                               size="sm"
@@ -1634,85 +1928,7 @@ export default function MainInventoryPage() {
                                     </Badge>
                                   </TableCell>
                                   <TableCell className="text-center">
-                                    <div className="flex items-center justify-center gap-1">
-                                      {/* {!isWarehouse && (
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => handleEditVariant(brand.id, flavor, 'flavor')}
-                                      >
-                                        <Edit className="h-4 w-4" />
-                                      </Button>
-                                      )} */}
-
-                                      {isWarehouse && flavor.mainInventoryId && (
-                                        <AlertDialog>
-                                          <AlertDialogTrigger asChild>
-                                            <Button
-                                              variant="ghost"
-                                              size="sm"
-                                              className="text-muted-foreground hover:text-foreground"
-                                              title="Remove from main inventory"
-                                            >
-                                              <Unlink className="h-4 w-4" />
-                                            </Button>
-                                          </AlertDialogTrigger>
-                                          <AlertDialogContent>
-                                            <AlertDialogHeader>
-                                              <AlertDialogTitle>Remove from main inventory?</AlertDialogTitle>
-                                              <AlertDialogDescription>
-                                                This removes the stock line for <strong>{flavor.name}</strong>. The SKU stays in Brands &amp; Variants; allocated stock must be zero.
-                                              </AlertDialogDescription>
-                                            </AlertDialogHeader>
-                                            <AlertDialogFooter>
-                                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                              <AlertDialogAction
-                                                onClick={() => handleRemoveMainInventoryRow(flavor)}
-                                                disabled={removeStockSubmitting}
-                                              >
-                                                {removeStockSubmitting ? 'Removing…' : 'Remove'}
-                                              </AlertDialogAction>
-                                            </AlertDialogFooter>
-                                          </AlertDialogContent>
-                                        </AlertDialog>
-                                      )}
-
-                                      {renderViewHoldersButton(flavor)}
-                                      {renderBatchViewButton(flavor, brand.name)}
-
-                                      {!isWarehouse && (
-                                        <AlertDialog>
-                                          {/* <AlertDialogTrigger asChild>
-                                            <Button
-                                              variant="ghost"
-                                              size="sm"
-                                              className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                                              onClick={() => setDeleteVariantId(flavor.id)}
-                                            >
-                                              <Trash2 className="h-4 w-4" />
-                                            </Button>
-                                          </AlertDialogTrigger> */}
-                                          <AlertDialogContent>
-                                            <AlertDialogHeader>
-                                              <AlertDialogTitle>Archive this product?</AlertDialogTitle>
-                                              <AlertDialogDescription>
-                                                This will hide <strong>{flavor.name}</strong> from inventory. Existing purchase orders and history will be preserved.
-                                              </AlertDialogDescription>
-                                            </AlertDialogHeader>
-                                            <AlertDialogFooter>
-                                              <AlertDialogCancel onClick={() => setDeleteVariantId(null)}>Cancel</AlertDialogCancel>
-                                              <AlertDialogAction
-                                                onClick={() => deleteVariantId && handleDeleteVariant(deleteVariantId)}
-                                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                                disabled={isDeleting}
-                                              >
-                                                {isDeleting ? "Archiving..." : "Archive"}
-                                              </AlertDialogAction>
-                                            </AlertDialogFooter>
-                                          </AlertDialogContent>
-                                        </AlertDialog>
-                                      )}
-                                    </div>
+                                    {renderVariantActionsMenu(brand.id, brand.name, flavor, 'flavor')}
                                   </TableCell>
                                 </TableRow>
                               );
@@ -1799,85 +2015,7 @@ export default function MainInventoryPage() {
                                     </Badge>
                                   </TableCell>
                                   <TableCell className="text-center">
-                                    <div className="flex items-center justify-center gap-1">
-                                      {!isWarehouse && (
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => handleEditVariant(brand.id, battery, 'battery')}
-                                      >
-                                        <Edit className="h-4 w-4" />
-                                      </Button>
-                                      )}
-
-                                      {isWarehouse && battery.mainInventoryId && (
-                                        <AlertDialog>
-                                          <AlertDialogTrigger asChild>
-                                            <Button
-                                              variant="ghost"
-                                              size="sm"
-                                              className="text-muted-foreground hover:text-foreground"
-                                              title="Remove from main inventory"
-                                            >
-                                              <Unlink className="h-4 w-4" />
-                                            </Button>
-                                          </AlertDialogTrigger>
-                                          <AlertDialogContent>
-                                            <AlertDialogHeader>
-                                              <AlertDialogTitle>Remove from main inventory?</AlertDialogTitle>
-                                              <AlertDialogDescription>
-                                                This removes the stock line for <strong>{battery.name}</strong>. The SKU stays in Brands &amp; Variants; allocated stock must be zero.
-                                              </AlertDialogDescription>
-                                            </AlertDialogHeader>
-                                            <AlertDialogFooter>
-                                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                              <AlertDialogAction
-                                                onClick={() => handleRemoveMainInventoryRow(battery)}
-                                                disabled={removeStockSubmitting}
-                                              >
-                                                {removeStockSubmitting ? 'Removing…' : 'Remove'}
-                                              </AlertDialogAction>
-                                            </AlertDialogFooter>
-                                          </AlertDialogContent>
-                                        </AlertDialog>
-                                      )}
-
-                                      {renderViewHoldersButton(battery)}
-                                      {renderBatchViewButton(battery, brand.name)}
-
-                                      {!isWarehouse && (
-                                        <AlertDialog>
-                                          {/* <AlertDialogTrigger asChild>
-                                            <Button
-                                              variant="ghost"
-                                              size="sm"
-                                              className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                                              onClick={() => setDeleteVariantId(battery.id)}
-                                            >
-                                              <Trash2 className="h-4 w-4" />
-                                            </Button>
-                                          </AlertDialogTrigger> */}
-                                          <AlertDialogContent>
-                                            <AlertDialogHeader>
-                                              <AlertDialogTitle>Archive this product?</AlertDialogTitle>
-                                              <AlertDialogDescription>
-                                                This will hide <strong>{battery.name}</strong> from inventory. Existing purchase orders and history will be preserved.
-                                              </AlertDialogDescription>
-                                            </AlertDialogHeader>
-                                            <AlertDialogFooter>
-                                              <AlertDialogCancel onClick={() => setDeleteVariantId(null)}>Cancel</AlertDialogCancel>
-                                              <AlertDialogAction
-                                                onClick={() => deleteVariantId && handleDeleteVariant(deleteVariantId)}
-                                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                                disabled={isDeleting}
-                                              >
-                                                {isDeleting ? "Archiving..." : "Archive"}
-                                              </AlertDialogAction>
-                                            </AlertDialogFooter>
-                                          </AlertDialogContent>
-                                        </AlertDialog>
-                                      )}
-                                    </div>
+                                    {renderVariantActionsMenu(brand.id, brand.name, battery, 'battery')}
                                   </TableCell>
                                 </TableRow>
                               );
@@ -1972,83 +2110,7 @@ export default function MainInventoryPage() {
                                     </Badge>
                                   </TableCell>
                                   <TableCell className="text-center">
-                                    <div className="flex items-center justify-center gap-1">
-                                      {!isWarehouse && (
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => handleEditVariant(brand.id, posm, 'posm')}
-                                        className="text-purple-600 hover:text-purple-800 hover:bg-purple-100"
-                                      >
-                                        <Edit className="h-4 w-4" />
-                                      </Button>
-                                      )}
-                                      {isWarehouse && posm.mainInventoryId && (
-                                        <AlertDialog>
-                                          <AlertDialogTrigger asChild>
-                                            <Button
-                                              variant="ghost"
-                                              size="sm"
-                                              className="text-muted-foreground hover:text-foreground"
-                                              title="Remove from main inventory"
-                                            >
-                                              <Unlink className="h-4 w-4" />
-                                            </Button>
-                                          </AlertDialogTrigger>
-                                          <AlertDialogContent>
-                                            <AlertDialogHeader>
-                                              <AlertDialogTitle>Remove from main inventory?</AlertDialogTitle>
-                                              <AlertDialogDescription>
-                                                This removes the stock line for <strong>{posm.name}</strong>. The SKU stays in Brands &amp; Variants; allocated stock must be zero.
-                                              </AlertDialogDescription>
-                                            </AlertDialogHeader>
-                                            <AlertDialogFooter>
-                                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                              <AlertDialogAction
-                                                onClick={() => handleRemoveMainInventoryRow(posm as Variant)}
-                                                disabled={removeStockSubmitting}
-                                              >
-                                                {removeStockSubmitting ? 'Removing…' : 'Remove'}
-                                              </AlertDialogAction>
-                                            </AlertDialogFooter>
-                                          </AlertDialogContent>
-                                        </AlertDialog>
-                                      )}
-                                      {renderViewHoldersButton(posm)}
-                                      {renderBatchViewButton(posm, brand.name)}
-                                      {!isWarehouse && (
-                                        <AlertDialog>
-                                          {/* <AlertDialogTrigger asChild>
-                                            <Button
-                                              variant="ghost"
-                                              size="sm"
-                                              className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                                              onClick={() => setDeleteVariantId(posm.id)}
-                                            >
-                                              <Trash2 className="h-4 w-4" />
-                                            </Button>
-                                          </AlertDialogTrigger> */}
-                                          <AlertDialogContent>
-                                            <AlertDialogHeader>
-                                              <AlertDialogTitle>Archive this product?</AlertDialogTitle>
-                                              <AlertDialogDescription>
-                                                This will hide <strong>{posm.name}</strong> from inventory. Existing purchase orders and history will be preserved.
-                                              </AlertDialogDescription>
-                                            </AlertDialogHeader>
-                                            <AlertDialogFooter>
-                                              <AlertDialogCancel onClick={() => setDeleteVariantId(null)}>Cancel</AlertDialogCancel>
-                                              <AlertDialogAction
-                                                onClick={() => deleteVariantId && handleDeleteVariant(deleteVariantId)}
-                                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                                disabled={isDeleting}
-                                              >
-                                                {isDeleting ? 'Archiving...' : 'Archive'}
-                                              </AlertDialogAction>
-                                            </AlertDialogFooter>
-                                          </AlertDialogContent>
-                                        </AlertDialog>
-                                      )}
-                                    </div>
+                                    {renderVariantActionsMenu(brand.id, brand.name, posm as Variant, 'posm')}
                                   </TableCell>
                                 </TableRow>
                               );
@@ -2142,82 +2204,7 @@ export default function MainInventoryPage() {
                                         </Badge>
                                       </TableCell>
                                       <TableCell className="text-center">
-                                        <div className="flex items-center justify-center gap-1">
-                                          {!isWarehouse && (
-                                          <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            onClick={() => handleEditVariant(brand.id, variant, variantType as any)}
-                                          >
-                                            <Edit className="h-4 w-4" />
-                                          </Button>
-                                          )}
-                                          {isWarehouse && variant.mainInventoryId && (
-                                            <AlertDialog>
-                                              <AlertDialogTrigger asChild>
-                                                <Button
-                                                  variant="ghost"
-                                                  size="sm"
-                                                  className="text-muted-foreground hover:text-foreground"
-                                                  title="Remove from main inventory"
-                                                >
-                                                  <Unlink className="h-4 w-4" />
-                                                </Button>
-                                              </AlertDialogTrigger>
-                                              <AlertDialogContent>
-                                                <AlertDialogHeader>
-                                                  <AlertDialogTitle>Remove from main inventory?</AlertDialogTitle>
-                                                  <AlertDialogDescription>
-                                                    This removes the stock line for <strong>{variant.name}</strong>. The SKU stays in Brands &amp; Variants; allocated stock must be zero.
-                                                  </AlertDialogDescription>
-                                                </AlertDialogHeader>
-                                                <AlertDialogFooter>
-                                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                                  <AlertDialogAction
-                                                    onClick={() => handleRemoveMainInventoryRow(variant)}
-                                                    disabled={removeStockSubmitting}
-                                                  >
-                                                    {removeStockSubmitting ? 'Removing…' : 'Remove'}
-                                                  </AlertDialogAction>
-                                                </AlertDialogFooter>
-                                              </AlertDialogContent>
-                                            </AlertDialog>
-                                          )}
-                                          {renderViewHoldersButton(variant)}
-                                          {renderBatchViewButton(variant, brand.name)}
-                                          {!isWarehouse && (
-                                            <AlertDialog>
-                                              <AlertDialogTrigger asChild>
-                                                <Button
-                                                  variant="ghost"
-                                                  size="sm"
-                                                  className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                                                  onClick={() => setDeleteVariantId(variant.id)}
-                                                >
-                                                  <Trash2 className="h-4 w-4" />
-                                                </Button>
-                                              </AlertDialogTrigger>
-                                              <AlertDialogContent>
-                                                <AlertDialogHeader>
-                                                  <AlertDialogTitle>Archive this product?</AlertDialogTitle>
-                                                  <AlertDialogDescription>
-                                                    This will hide <strong>{variant.name}</strong> from inventory. Existing purchase orders and history will be preserved.
-                                                  </AlertDialogDescription>
-                                                </AlertDialogHeader>
-                                                <AlertDialogFooter>
-                                                  <AlertDialogCancel onClick={() => setDeleteVariantId(null)}>Cancel</AlertDialogCancel>
-                                                  <AlertDialogAction
-                                                    onClick={() => deleteVariantId && handleDeleteVariant(deleteVariantId)}
-                                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                                    disabled={isDeleting}
-                                                  >
-                                                    {isDeleting ? "Archiving..." : "Archive"}
-                                                  </AlertDialogAction>
-                                                </AlertDialogFooter>
-                                              </AlertDialogContent>
-                                            </AlertDialog>
-                                          )}
-                                        </div>
+                                        {renderVariantActionsMenu(brand.id, brand.name, variant, variantType)}
                                       </TableCell>
                                     </TableRow>
                                   );
@@ -2310,7 +2297,7 @@ export default function MainInventoryPage() {
 
       {/* Edit Variant Dialog */}
       <Dialog open={editVariantOpen} onOpenChange={setEditVariantOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {isWarehouse ? 'Edit stock' : `Edit ${editingVariant?.variantType}`}
@@ -2397,23 +2384,29 @@ export default function MainInventoryPage() {
                   }}
                 />
               </div>
-              {hasWarehouseHubLink && (
-                <div>
-                  <Label htmlFor="price_change_note">
-                    Note <span className="text-destructive">*</span>
-                  </Label>
-                  <Textarea
-                    id="price_change_note"
-                    value={priceChangeNote}
-                    onChange={(e) => setPriceChangeNote(e.target.value)}
-                    placeholder="e.g. supplier increase, promo"
-                    required
+              {useCompanyPriceChange && (
+                <>
+                  <TeamLeaderCheckboxPicker
+                    leaders={activeTeamLeaders}
+                    selectedIds={variantEditTargetLeaderIds}
+                    onChange={setVariantEditTargetLeaderIds}
                   />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Required. Main Inventory updates now. Team Leaders and Mobile Sales must confirm
-                    before bags use the new price.
-                  </p>
-                </div>
+                  <div>
+                    <Label htmlFor="price_change_note">
+                      Note <span className="text-destructive">*</span>
+                    </Label>
+                    <Textarea
+                      id="price_change_note"
+                      value={priceChangeNote}
+                      onChange={(e) => setPriceChangeNote(e.target.value)}
+                      placeholder="e.g. supplier increase, promo"
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Required. Explain why this price is changing.
+                    </p>
+                  </div>
+                </>
               )}
                 </>
               )}
@@ -2424,6 +2417,7 @@ export default function MainInventoryPage() {
                   setSellingPriceInputValue('');
                   setDspPriceInputValue('');
                   setRspPriceInputValue('');
+                  setVariantEditTargetLeaderIds([]);
                 }}>
                   Cancel
                 </Button>
@@ -2465,9 +2459,134 @@ export default function MainInventoryPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Single Variant Edit Price Dialog */}
+      <Dialog
+        open={editPriceOpen}
+        onOpenChange={(open) => {
+          if (!open) resetEditPriceForm();
+          else setEditPriceOpen(true);
+        }}
+      >
+        <DialogContent className="max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Price — {editingPriceVariant?.name}</DialogTitle>
+          </DialogHeader>
+          {editingPriceVariant && (
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="editPriceSelling">Selling Price (₱)</Label>
+                <Input
+                  id="editPriceSelling"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={editPriceSellingValue}
+                  placeholder={
+                    editingPriceVariant.sellingPrice === 0
+                      ? '0'
+                      : String(editingPriceVariant.sellingPrice || 0)
+                  }
+                  onChange={(e) => setEditPriceSellingValue(e.target.value)}
+                  disabled={updatingEditPrice}
+                />
+              </div>
+              <div>
+                <Label htmlFor="editPriceDsp">DSP (Dealer Selling Price)</Label>
+                <Input
+                  id="editPriceDsp"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={editPriceDspValue}
+                  placeholder={
+                    editingPriceVariant.dspPrice === 0
+                      ? '0'
+                      : String(editingPriceVariant.dspPrice || 0)
+                  }
+                  onChange={(e) => setEditPriceDspValue(e.target.value)}
+                  disabled={updatingEditPrice}
+                />
+              </div>
+              <div>
+                <Label htmlFor="editPriceRsp">RSP (Retail Selling Price)</Label>
+                <Input
+                  id="editPriceRsp"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={editPriceRspValue}
+                  placeholder={
+                    editingPriceVariant.rspPrice === 0
+                      ? '0'
+                      : String(editingPriceVariant.rspPrice || 0)
+                  }
+                  onChange={(e) => setEditPriceRspValue(e.target.value)}
+                  disabled={updatingEditPrice}
+                />
+              </div>
+              {useCompanyPriceChange && (
+                <>
+                  <TeamLeaderCheckboxPicker
+                    leaders={activeTeamLeaders}
+                    selectedIds={editPriceTargetLeaderIds}
+                    onChange={setEditPriceTargetLeaderIds}
+                    disabled={updatingEditPrice}
+                  />
+                  <div>
+                    <Label htmlFor="editPriceNote">
+                      Note <span className="text-destructive">*</span>
+                    </Label>
+                    <Textarea
+                      id="editPriceNote"
+                      value={editPriceNote}
+                      onChange={(e) => setEditPriceNote(e.target.value)}
+                      placeholder="e.g. supplier increase, promo"
+                      disabled={updatingEditPrice}
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Required. Explain why this price is changing.
+                    </p>
+                  </div>
+                </>
+              )}
+              <p className="text-sm text-muted-foreground">
+                {useCompanyPriceChange
+                  ? isBagsOnlyLeaderSelection(editPriceTargetLeaderIds)
+                    ? 'Bags only: Main stays unchanged. Selected Team Leader(s) and their Mobile Sales confirm before their bags use these prices.'
+                    : 'Company-wide (all selected): Main updates now. All Team Leaders and Mobile Sales confirm before bags use the new price.'
+                  : 'This will update Selling Price, DSP, and RSP for this variant only.'}
+              </p>
+              <div className="flex justify-end space-x-2">
+                <Button
+                  variant="outline"
+                  onClick={resetEditPriceForm}
+                  disabled={updatingEditPrice}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleConfirmEditPrice}
+                  disabled={
+                    updatingEditPrice ||
+                    (useCompanyPriceChange && !editPriceNote.trim())
+                  }
+                >
+                  {updatingEditPrice
+                    ? 'Updating...'
+                    : useCompanyPriceChange
+                      ? 'Submit price change'
+                      : 'Update Price'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* Bulk Price Update Dialog */}
       <Dialog open={bulkPriceDialogOpen} onOpenChange={setBulkPriceDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               Set Prices for All{' '}
@@ -2521,27 +2640,37 @@ export default function MainInventoryPage() {
                   disabled={updatingBulkPrice}
                 />
               </div>
-              {hasWarehouseHubLink && (
-                <div>
-                  <Label htmlFor="bulkNote">
-                    Note <span className="text-destructive">*</span>
-                  </Label>
-                  <Textarea
-                    id="bulkNote"
-                    value={bulkPriceNote}
-                    onChange={(e) => setBulkPriceNote(e.target.value)}
-                    placeholder="e.g. supplier increase"
+              {useCompanyPriceChange && (
+                <>
+                  <TeamLeaderCheckboxPicker
+                    leaders={activeTeamLeaders}
+                    selectedIds={bulkPriceTargetLeaderIds}
+                    onChange={setBulkPriceTargetLeaderIds}
                     disabled={updatingBulkPrice}
-                    required
                   />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Required. Explain why these prices are changing.
-                  </p>
-                </div>
+                  <div>
+                    <Label htmlFor="bulkNote">
+                      Note <span className="text-destructive">*</span>
+                    </Label>
+                    <Textarea
+                      id="bulkNote"
+                      value={bulkPriceNote}
+                      onChange={(e) => setBulkPriceNote(e.target.value)}
+                      placeholder="e.g. supplier increase"
+                      disabled={updatingBulkPrice}
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Required. Explain why these prices are changing.
+                    </p>
+                  </div>
+                </>
               )}
               <p className="text-sm text-muted-foreground">
-                {hasWarehouseHubLink
-                  ? `This updates Main Inventory Selling / DSP / RSP for all ${bulkPriceTypeLabel} now. Team Leaders and Mobile Sales must confirm before bags use the new price.`
+                {useCompanyPriceChange
+                  ? isBagsOnlyLeaderSelection(bulkPriceTargetLeaderIds)
+                    ? `Bags only: Main stays unchanged. Selected Team Leader(s) and their Mobile Sales confirm before their bags update for these ${bulkPriceTypeLabel}.`
+                    : `Company-wide (all selected): Main updates for all ${bulkPriceTypeLabel} now. All Team Leaders and Mobile Sales confirm before bags use the new price.`
                   : `This will update Selling Price, DSP, and RSP for all ${bulkPriceTypeLabel} in this brand.`}
               </p>
               <div className="flex justify-end space-x-2">
@@ -2553,6 +2682,7 @@ export default function MainInventoryPage() {
                     setBulkDspValue('');
                     setBulkRspValue('');
                     setBulkPriceNote('');
+                    setBulkPriceTargetLeaderIds([]);
                   }}
                   disabled={updatingBulkPrice}
                 >
@@ -2562,12 +2692,12 @@ export default function MainInventoryPage() {
                   onClick={handleConfirmBulkPriceUpdate}
                   disabled={
                     updatingBulkPrice ||
-                    (hasWarehouseHubLink && !bulkPriceNote.trim())
+                    (useCompanyPriceChange && !bulkPriceNote.trim())
                   }
                 >
                   {updatingBulkPrice
                     ? 'Updating...'
-                    : hasWarehouseHubLink
+                    : useCompanyPriceChange
                       ? 'Submit price change'
                       : 'Update All Prices'}
                 </Button>
@@ -2893,6 +3023,38 @@ export default function MainInventoryPage() {
         brandId={brandPriceHistory?.brandId ?? null}
         brandName={brandPriceHistory?.brandName ?? ''}
       />
+
+      <AlertDialog
+        open={!!removeInventoryTarget}
+        onOpenChange={(open) => {
+          if (!open) setRemoveInventoryTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove from main inventory?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the stock line for{' '}
+              <strong>{removeInventoryTarget?.name}</strong>. The SKU stays in Brands &amp;
+              Variants; allocated stock must be zero.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (removeInventoryTarget) {
+                  void handleRemoveMainInventoryRow(removeInventoryTarget);
+                }
+              }}
+              disabled={removeStockSubmitting}
+            >
+              {removeStockSubmitting ? 'Removing…' : 'Remove'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
     </div>
   );
 }

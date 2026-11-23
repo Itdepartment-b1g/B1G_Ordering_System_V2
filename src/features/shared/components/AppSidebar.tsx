@@ -599,7 +599,8 @@ export function AppSidebar() {
     const canSeeReturnToWarehouse = hasWarehouseHubLink === true;
     // CR + RL without hub; RT stays hub-gated above.
     const canSeeClientOrderReturns = user?.role !== 'warehouse';
-    const canSeePriceChangePages = hasWarehouseHubLink === true;
+    // Price agreements / history for all sales companies (not warehouse hub accounts)
+    const canSeePriceChangePages = user?.role !== 'warehouse';
 
     const isPriceChangeRoute = (url: string) =>
       url === '/inventory/price-history' || url === '/inventory/price-agreements';

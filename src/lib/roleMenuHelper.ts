@@ -23,7 +23,7 @@ const adminMenuItems: MenuItem[] = [
     { title: 'Team Remittances', url: '/inventory/admin-team-remittances', description: 'Review remitted stocks and reconcile team inventory.' },
     { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', description: 'Return stock to your linked warehouse for inspection (good/damaged + batch).' },
     { title: 'Client Order Returns', url: '/client-order-returns', description: 'History of client returns posted against ORD numbers (CR-…).' },
-    { title: 'Price History', url: '/inventory/price-history', description: 'Flattened Selling / DSP / RSP change history per SKU (warehouse-linked companies).' },
+    { title: 'Price History', url: '/inventory/price-history', description: 'Flattened Selling / DSP / RSP change history per SKU.' },
   ]},
   { title: 'Clients', url: '/clients', description: 'Admin-level management of all customer records.', hasSubmenu: true, submenu: [
     { title: 'Clients Database', url: '/clients', description: 'Search, filter, and manage all active clients.' },
@@ -168,7 +168,7 @@ const superAdminMenuItems: MenuItem[] = [
     { title: 'Team Remittances', url: '/inventory/admin-team-remittances', description: 'Audit remittances from teams for compliance.' },
     { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', description: 'Return stock to your linked warehouse for inspection (good/damaged + batch).' },
     { title: 'Client Order Returns', url: '/client-order-returns', description: 'History of client returns posted against ORD numbers (CR-…).' },
-    { title: 'Price History', url: '/inventory/price-history', description: 'Flattened Selling / DSP / RSP change history per SKU (warehouse-linked companies).' },
+    { title: 'Price History', url: '/inventory/price-history', description: 'Flattened Selling / DSP / RSP change history per SKU.' },
   ]},
   { title: 'Clients', url: '/clients', description: 'High-level client management and quality control.', hasSubmenu: true, submenu: [
     { title: 'Clients Database', url: '/clients', description: 'View all clients registered under this tenant.' },

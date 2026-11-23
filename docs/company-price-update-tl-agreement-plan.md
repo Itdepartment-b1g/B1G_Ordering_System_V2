@@ -10,24 +10,17 @@ This is **not** System Administrator (platform) pricing. This is **not** Key Acc
 
 ---
 
-## Warehouse link required (hard gate)
+## Warehouse link (not required for CPC)
 
-This whole feature — batch create, field agreement, agent cascade, flattened history — is **only for Standard Account companies linked to a warehouse hub**.
-
-Same check as client returns and hub POs:
-
-- UI: `usePermissions().hasWarehouseHubLink` (`get_linked_warehouse_company_id()`)
-- DB: `warehouse_company_assignments` has a row for this sales `company_id`
+Company price change batches (create, TL/MS confirm, bag cascade, history) work for **all Standard Account / sales companies**, whether or not they are linked to a warehouse hub.
 
 | Company | What they get |
 |---|---|
-| **Linked to warehouse** | Batch price update + TL **and** Mobile Sales confirm + cascade to all agent bags + flattened history |
-| **Not linked** | **No new UI, no RPCs, no history.** Keep today’s Main Inventory single/bulk price edit on `main_inventory` only. Do not cascade to agents. |
+| **Linked to warehouse** | Same CPC flow; stock remains hub-managed (read-only main stock) |
+| **Not linked** | Same CPC flow; stock can still be edited per existing Main Inventory rules |
 | **Warehouse role / hub company** | Out of scope. Hub does not set tenant bag prices. |
 
-RPCs must refuse if `get_linked_warehouse_company_id()` is null (`success: false`, error like `Only warehouse-linked companies can push company prices`). Hide sidebar items and Main Inventory batch dialog while `hasWarehouseHubLink` is false (and while that query is loading).
-
-Catalog for linked tenants is warehouse-owned (`/brands` may be hidden). Selling / DSP / RSP still live on **tenant** `main_inventory` — that is what this flow updates, not warehouse hub cost.
+Selling / DSP / RSP still live on **tenant** `main_inventory` — that is what this flow updates.
 
 ---
 
@@ -53,9 +46,8 @@ Orders already **snapshot** `client_order_items.unit_price` at submit. Historica
 
 ## Locked product rules
 
-1. Company **must** be warehouse-linked. If not, stop — do not create a batch.
-2. Super Admin (and Admin if we keep current Main Inventory access) creates a **price change batch** for the company.
-3. Scope is always `company_id`. Every `agent_inventory` row for those `variant_id`s under that company is in play — leaders and mobile sales.
+1. Super Admin (and Admin if we keep current Main Inventory access) creates a **price change batch** for the company (warehouse link optional).
+2. Scope is always `company_id` (or team-scoped to selected TL trees). Agent bags for required confirmers update on confirm.
 4. Columns that move:
 
    | Location | Columns |
@@ -66,7 +58,7 @@ Orders already **snapshot** `client_order_items.unit_price` at submit. Historica
    Do **not** bulk-overwrite `main_inventory.unit_price` (cost).
 5. **Both** active Team Leaders **and** Mobile Sales must **review and confirm** before their bags use the new prices. Each confirmer’s bag updates **on their confirm**; the batch closes when everyone has confirmed.
 6. History is **flat one row per SKU**, not nested JSON from `system_audit_log`.
-7. **One open `pending_agreement` batch** per company. Further SA price edits **append** into that batch (upsert by `variant_id`). Confirm once covers the whole flat list until you ack. If SA appends **after** you confirmed, your agreement resets to `pending` and you must confirm again. UI badges: **New** vs **Confirmed** (item `updated_at` ≤ your `last_confirmed_at`).
+7. **One open `pending_agreement` batch** per company (or per identical team leader set). Further SA price edits **append** into that batch (**upsert by `variant_id`**). Confirm once covers the whole flat list until you ack. If SA appends **after** you confirmed, your agreement resets to `pending` and you must confirm again. UI badges: **New** vs **Confirmed** (item `updated_at` ≤ your `last_confirmed_at`). Picker: **all TLs selected (default) = company-wide**; **subset = bags-only**.
 
 ### Who must confirm
 
@@ -398,3 +390,26 @@ Keep `updateVariant` for **name / stock / single-SKU non-batch edits** until tho
 4. Field agreement page + notifications (both roles).
 5. Agent cascade RPC + counts on history rows.
 6. Block leftover direct price updates in `updateVariant` / bulk dialog so nothing bypasses history.
+
+---
+
+## Addendum: Team-scoped batches (bags-only)
+
+SA picker defaults to **all Team Leaders selected**. Append upserts by `variant_id` (one row per SKU per open batch).
+
+| | Company scope | Team scope |
+|---|---|---|
+| UI selection | **All** TLs selected (default), or empty | **Subset** of TLs |
+| Main Inventory | Updates **immediately** (`main_applied_at`) | **Unchanged** (`main_applied_at` stays null) |
+| Confirmers | All active TL + MS | Selected TL(s) + their MS (`leader_teams`) |
+| Bags on confirm | That confirmer only | That confirmer only (same) |
+| Other teams’ bags | Must confirm | Untouched |
+| Same prices as Main | Skipped (no-op) | **Allowed** — push company list price to selected bags only |
+| Open append | One open company batch (upsert SKU) | One open pending batch **per identical leader set** |
+| Cancel | Revert main + revert confirmed bags | Main already untouched; revert confirmed bags only |
+
+Columns on `company_price_change_batches`: `scope_type` (`company` \| `team`), `target_leader_ids uuid[]`, `target_leader_names`.
+
+Final agent apply only updates `agent_inventory` for profiles with **confirmed** agreements on that batch (auto-apply with zero agreements still cascades for that batch’s targets).
+
+UI: Edit Price / bulk → TL checkboxes default all-on = company-wide; uncheck some = bags-only. Price History shows `Company` vs `Team: {names}`.

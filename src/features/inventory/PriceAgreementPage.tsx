@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, Loader2 } from 'lucide-react';
 import { useAuth } from '@/features/auth';
-import { usePermissions } from '@/hooks/usePermissions';
 import { useToast } from '@/hooks/use-toast';
 import { useAgentInventory } from '@/features/inventory/hooks';
 import { Badge } from '@/components/ui/badge';
@@ -20,15 +19,12 @@ import { PriceChangeItemsFlatTable } from './PriceChangeItemsFlatTable';
 
 export default function PriceAgreementPage() {
   const { user } = useAuth();
-  const { hasWarehouseHubLink, hasWarehouseHubLinkLoading } = usePermissions();
   const { toast } = useToast();
   const qc = useQueryClient();
   const [ackByBatch, setAckByBatch] = useState<Record<string, boolean>>({});
   const { refreshInventory } = useAgentInventory();
 
-  const canAccess =
-    hasWarehouseHubLink === true &&
-    (user?.role === 'team_leader' || user?.role === 'mobile_sales');
+  const canAccess = user?.role === 'team_leader' || user?.role === 'mobile_sales';
 
   const { data: batches = [], isLoading } = useQuery({
     queryKey: ['price-agreements', user?.company_id, user?.id],
@@ -63,14 +59,6 @@ export default function PriceAgreementPage() {
     [user?.role]
   );
 
-  if (hasWarehouseHubLinkLoading) {
-    return (
-      <div className="flex items-center justify-center p-12">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
   if (!canAccess) {
     return (
       <div className="p-6">
@@ -78,7 +66,7 @@ export default function PriceAgreementPage() {
           <CardHeader>
             <CardTitle>Price agreements</CardTitle>
             <CardDescription>
-              Available only for Team Leaders and Mobile Sales in warehouse-linked companies.
+              Available only for Team Leaders and Mobile Sales.
             </CardDescription>
           </CardHeader>
         </Card>
