@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, CreditCard, Camera, RotateCcw, Smartphone, CheckCircle, Split, Pencil, Loader2, FileDown, Filter, Download, ChevronDown, Printer } from 'lucide-react';
+import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, CreditCard, Camera, RotateCcw, Smartphone, CheckCircle, Split, Pencil, Loader2, FileDown, Filter, Download, ChevronDown, Printer, Clock, MoreVertical } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -56,6 +56,14 @@ import { sendOrderConfirmationEmail } from '@/lib/email.helpers';
 import { usePaymentSettings } from '@/features/finance/hooks/usePaymentSettings';
 import type { BankAccount } from '@/types/database.types';
 import { PRICING_OPTIONS, type PricingColumn } from '@/types/database.types';
+import { usePermissions } from '@/hooks/usePermissions';
+import {
+  canCreateClientOrderReturn,
+  canOpenClientOrderTimeline,
+  canShowClientOrderReturns,
+} from './client-returns/clientReturnApi';
+import { ReturnClientOrderDialog } from './client-returns/ReturnClientOrderDialog';
+import { ClientOrderReturnTimeline } from './client-returns/ClientOrderReturnTimeline';
 
 interface SelectedItem {
   variantId: string;
@@ -160,6 +168,33 @@ export default function MyOrdersPage() {
   const canCustomizePricing = ['team_leader', 'manager', 'admin'].includes(user?.role || '');
   const { getOrdersByAgent, addOrder, orders: allOrders } = useOrders();
   const { agentBrands } = useAgentInventory();
+
+  // Client order returns (CR): Return button + order timeline. No warehouse hub required.
+  const { hasWarehouseHubLink } = usePermissions();
+  const showClientReturns = canShowClientOrderReturns(hasWarehouseHubLink, user?.role);
+  const canFileClientReturn = showClientReturns && canCreateClientOrderReturn(user?.role);
+  const canViewReturnTimeline = canOpenClientOrderTimeline(hasWarehouseHubLink, user?.role);
+  const [returnOrder, setReturnOrder] = useState<Order | null>(null);
+  const [timelineOrder, setTimelineOrder] = useState<Order | null>(null);
+  const isOrderReturnable = (order: Order) =>
+    (order.status === 'approved' || order.stage === 'admin_approved') &&
+    order.items.some((item) => !!item.clientOrderItemId);
+  const returnDialogItems = useMemo(
+    () =>
+      (returnOrder?.items || [])
+        .filter((item) => !!item.clientOrderItemId)
+        .map((item) => ({
+          id: item.clientOrderItemId as string,
+          brandId: item.brandId,
+          brandName: item.brandName,
+          variantName: item.variantName,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          variantType: item.variantType,
+        })),
+    [returnOrder]
+  );
+
   const [searchQuery, setSearchQuery] = useState('');
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
@@ -2816,6 +2851,22 @@ export default function MyOrdersPage() {
                       >
                         View Details
                       </button>
+                      {canFileClientReturn && isOrderReturnable(order) && (
+                        <button
+                          onClick={() => setReturnOrder(order)}
+                          className="flex-1 text-xs text-rose-600 hover:text-rose-700 font-medium transition-colors"
+                        >
+                          Return
+                        </button>
+                      )}
+                      {canViewReturnTimeline && (
+                        <button
+                          onClick={() => setTimelineOrder(order)}
+                          className="flex-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          Timeline
+                        </button>
+                      )}
                       {order.stage === 'needs_revision' && (
                         <button
                           onClick={() => handleEditOrder(order)}
@@ -2907,19 +2958,53 @@ export default function MyOrdersPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-center align-middle">
-                      <Button variant="ghost" size="icon" onClick={() => handleViewOrder(order)}>
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                      {order.stage === 'needs_revision' && (
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          onClick={() => handleEditOrder(order)}
-                          className="text-amber-600 hover:text-amber-700"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                      )}
+                      <DropdownMenu modal={false}>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            aria-label={`Actions for ${order.orderNumber}`}
+                          >
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-48">
+                          <DropdownMenuItem
+                            onSelect={() => window.setTimeout(() => handleViewOrder(order), 0)}
+                          >
+                            <Eye className="h-4 w-4 mr-2" />
+                            View
+                          </DropdownMenuItem>
+                          {canViewReturnTimeline ? (
+                            <DropdownMenuItem
+                              onSelect={() => window.setTimeout(() => setTimelineOrder(order), 0)}
+                            >
+                              <Clock className="h-4 w-4 mr-2" />
+                              Order timeline
+                            </DropdownMenuItem>
+                          ) : null}
+                          {canFileClientReturn && isOrderReturnable(order) ? (
+                            <DropdownMenuItem
+                              onSelect={() => window.setTimeout(() => setReturnOrder(order), 0)}
+                              className="text-rose-600 focus:text-rose-700"
+                            >
+                              <RotateCcw className="h-4 w-4 mr-2" />
+                              Return
+                            </DropdownMenuItem>
+                          ) : null}
+                          {order.stage === 'needs_revision' ? (
+                            <DropdownMenuItem
+                              onSelect={() => window.setTimeout(() => handleEditOrder(order), 0)}
+                              className="text-amber-600 focus:text-amber-700"
+                            >
+                              <Pencil className="h-4 w-4 mr-2" />
+                              Edit
+                            </DropdownMenuItem>
+                          ) : null}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -4934,6 +5019,29 @@ export default function MyOrdersPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {showClientReturns && (
+        <ClientOrderReturnTimeline
+          open={!!timelineOrder}
+          onOpenChange={(open) => {
+            if (!open) setTimelineOrder(null);
+          }}
+          order={timelineOrder}
+        />
+      )}
+
+      {showClientReturns && (
+        <ReturnClientOrderDialog
+          open={!!returnOrder}
+          onOpenChange={(open) => {
+            if (!open) setReturnOrder(null);
+          }}
+          orderId={returnOrder?.id || ''}
+          orderNumber={returnOrder?.orderNumber || ''}
+          clientName={returnOrder?.clientName || ''}
+          items={returnDialogItems}
+        />
+      )}
     </div>
   );
 }

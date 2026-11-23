@@ -1,5 +1,6 @@
-import { Component, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Component, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ClipboardList, Loader2, Package, Truck } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -7,17 +8,11 @@ import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { usePermissions } from '@/hooks/usePermissions';
-import { useAppDispatch, useAppSelector } from '@/store/store';
-import { fetchClientOrderReturns } from '@/store/slices/moto-sales/client-returns';
-import {
-  approveReturnLeaderHandover,
-  fetchClientReturnStockHolds,
-  fetchReturnLeaderHandovers,
-  rejectReturnLeaderHandover,
-} from '@/store/slices/moto-sales/return-leader';
 import {
   buildReturnedInventoryRows,
   canShowClientOrderReturns,
+  CLIENT_ORDER_RETURNS_QUERY_KEY,
+  fetchClientOrderReturns,
   NO_WAREHOUSE_DISPOSAL_NOTE,
   type ReturnedInventoryRow,
 } from './clientReturnApi';
@@ -27,13 +22,20 @@ import { ReturnedStockDetailDialog } from './ReturnedStockDetailDialog';
 import { ReturnLeaderViewDialog } from './ReturnLeaderViewDialog';
 import { ReturnToLeaderPanel } from './ReturnToLeaderPanel';
 import {
+  approveReturnLeaderHandover,
   canCreateReturnLeader,
   canReviewReturnLeaderAsLeader,
   canReviewReturnLeaderAsSuperAdmin,
+  CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY,
   countsTowardPendingReturnLeaderBadge,
+  fetchClientReturnStockHolds,
+  fetchReturnLeaderHandovers,
+  rejectReturnLeaderHandover,
+  RETURN_LEADER_HANDOVERS_QUERY_KEY,
   type ReturnLeaderHandover,
 } from './returnLeaderApi';
 import type { PackageProofPhotoItem } from '@/features/shared/components/MultiProofPhotoField';
+import type { PreviewClientReturn } from './clientReturnPreview';
 
 type PageTab = 'history' | 'inventory' | 'returnToLeader';
 
@@ -61,6 +63,10 @@ class PageErrorBoundary extends Component<{ children: ReactNode }, { error: Erro
 }
 type RlConfirmKind = 'approve' | 'reject' | null;
 
+const EMPTY_RETURNS: PreviewClientReturn[] = [];
+const EMPTY_HANDOVERS: ReturnLeaderHandover[] = [];
+const EMPTY_HOLDS: ReturnedInventoryRow[] = [];
+
 export default function ClientOrderReturnsPage() {
   return (
     <PageErrorBoundary>
@@ -74,20 +80,24 @@ function ClientOrderReturnsView() {
   const { toast } = useToast();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
-  const dispatch = useAppDispatch();
+  const queryClient = useQueryClient();
   const { hasWarehouseHubLink, hasWarehouseHubLinkLoading } = usePermissions();
   const isLeader = user?.role === 'team_leader';
   const isSuperAdmin = user?.role === 'super_admin';
   const canBulkReturn = canCreateReturnLeader(user?.role);
   const showReturns = canShowClientOrderReturns(hasWarehouseHubLink, user?.role);
 
-  const storedRows = useAppSelector((state) => state.motoClientReturns.returns);
-  const rows = Array.isArray(storedRows) ? storedRows : [];
-  const listStatus = useAppSelector((state) => state.motoClientReturns.listStatus);
-  const listError = useAppSelector((state) => state.motoClientReturns.listError);
-  const isLoading = listStatus === 'loading' || listStatus === 'idle';
-  const isError = listStatus === 'failed';
-  const error = listError ? new Error(listError) : null;
+  const {
+    data: returnsData,
+    isLoading,
+    isError,
+    error,
+  } = useQuery({
+    queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY, 'list', user?.company_id],
+    enabled: showReturns && !!user?.company_id,
+    queryFn: fetchClientOrderReturns,
+  });
+  const rows = Array.isArray(returnsData) ? returnsData : EMPTY_RETURNS;
 
   const [pageTab, setPageTab] = useState<PageTab>('history');
   const [inventoryRow, setInventoryRow] = useState<ReturnedInventoryRow | null>(null);
@@ -101,32 +111,28 @@ function ClientOrderReturnsView() {
       ? user.id
       : undefined;
 
-  const holdRows = useAppSelector((state) =>
-    holderId ? state.motoReturnLeader.holdsByHolderId[holderId] || [] : []
-  );
-  const holdsStatus = useAppSelector((state) => state.motoReturnLeader.holdsStatus);
-  const holdsErrorMsg = useAppSelector((state) => state.motoReturnLeader.holdsError);
-  const holdsLoading = !!holderId && (holdsStatus === 'loading' || holdsStatus === 'idle');
-  const holdsError = !!holdsErrorMsg;
+  const {
+    data: holdsData,
+    isLoading: holdsLoading,
+    isError: holdsError,
+  } = useQuery({
+    queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY, holderId],
+    enabled: showReturns && !!holderId,
+    queryFn: () => fetchClientReturnStockHolds(holderId!),
+  });
+  const holdRows = Array.isArray(holdsData) ? holdsData : EMPTY_HOLDS;
 
-  const storedHandovers = useAppSelector((state) => state.motoReturnLeader.handovers);
-  const rlRows = Array.isArray(storedHandovers) ? storedHandovers : [];
-  const rlStatus = useAppSelector((state) => state.motoReturnLeader.handoversStatus);
-  const rlErrorMsg = useAppSelector((state) => state.motoReturnLeader.handoversError);
-  const rlLoading = rlStatus === 'loading' || rlStatus === 'idle';
-  const rlIsError = rlStatus === 'failed';
-  const rlError = rlErrorMsg ? new Error(rlErrorMsg) : null;
-
-  useEffect(() => {
-    if (!showReturns || !user?.company_id) return;
-    void dispatch(fetchClientOrderReturns());
-    void dispatch(fetchReturnLeaderHandovers());
-  }, [showReturns, user?.company_id, dispatch]);
-
-  useEffect(() => {
-    if (!showReturns || !holderId) return;
-    void dispatch(fetchClientReturnStockHolds(holderId));
-  }, [showReturns, holderId, dispatch]);
+  const {
+    data: handoversData,
+    isLoading: rlLoading,
+    isError: rlIsError,
+    error: rlError,
+  } = useQuery({
+    queryKey: [RETURN_LEADER_HANDOVERS_QUERY_KEY, user?.company_id],
+    enabled: showReturns && !!user?.company_id,
+    queryFn: fetchReturnLeaderHandovers,
+  });
+  const rlRows = Array.isArray(handoversData) ? handoversData : EMPTY_HANDOVERS;
 
   const inventoryRows = useMemo(() => {
     // MS: only their own posted CRs. TL: any posted CRs they can see (team), so detail still
@@ -175,8 +181,9 @@ function ClientOrderReturnsView() {
 
   const refreshInventoryQueries = async () => {
     await Promise.all([
-      dispatch(fetchReturnLeaderHandovers()),
-      holderId ? dispatch(fetchClientReturnStockHolds(holderId)) : Promise.resolve(),
+      queryClient.invalidateQueries({ queryKey: [RETURN_LEADER_HANDOVERS_QUERY_KEY] }),
+      queryClient.invalidateQueries({ queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY] }),
+      queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] }),
     ]);
   };
 
@@ -184,13 +191,7 @@ function ClientOrderReturnsView() {
     if (!rlActionRow || rlActing || !user?.company_id) return;
     setRlActing(true);
     try {
-      await dispatch(
-        approveReturnLeaderHandover({
-          handoverId: rlActionRow.id,
-          photos,
-          companyId: user.company_id,
-        })
-      ).unwrap();
+      await approveReturnLeaderHandover(rlActionRow.id, photos, user.company_id);
       await refreshInventoryQueries();
       toast({
         title: 'Return confirmed',
@@ -213,12 +214,7 @@ function ClientOrderReturnsView() {
     if (!rlActionRow || rlActing) return;
     setRlActing(true);
     try {
-      await dispatch(
-        rejectReturnLeaderHandover({
-          handoverId: rlActionRow.id,
-          note,
-        })
-      ).unwrap();
+      await rejectReturnLeaderHandover(rlActionRow.id, note);
       await refreshInventoryQueries();
       toast({
         title: 'Return rejected',

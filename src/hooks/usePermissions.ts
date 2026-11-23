@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useWarehouseLocationMembership } from '@/features/inventory/useWarehouseLocationMembership';
 import { canViewCompanyAgentInventory } from '@/lib/roleUtils';
+import { canShowClientOrderReturns } from '@/features/orders/client-returns/clientReturnApi';
 
 /**
  * Hook to check user permissions
@@ -56,6 +57,21 @@ export function usePermissions() {
 
     if (route === '/leader-manual') {
       return user?.role === 'team_leader' && hasWarehouseHubLink === true;
+    }
+
+    // Client order returns (CR) — no warehouse hub required. Hub only affects disposal handover (RT).
+    if (route === '/client-order-returns' || route.startsWith('/client-order-returns/')) {
+      return canShowClientOrderReturns(hasWarehouseHubLink === true, user?.role);
+    }
+
+    // Finance refunds queue — no warehouse hub required.
+    if (route === '/finance/refunds') {
+      return (
+        user?.role === 'finance' ||
+        user?.role === 'accounting' ||
+        user?.role === 'admin' ||
+        user?.role === 'super_admin'
+      );
     }
 
     // If impersonating, allow full navigation access to the tenant environment.

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Check, ChevronDown, Loader2, PenTool, Search, X } from 'lucide-react';
-import { useAppDispatch } from '@/store/store';
-import { createReturnLeaderHandover } from '@/store/slices/moto-sales/return-leader';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -33,6 +32,11 @@ import {
 } from '@/features/shared/components/MultiProofPhotoField';
 import { cn } from '@/lib/utils';
 import type { ReturnedInventoryRow } from './clientReturnApi';
+import {
+  CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY,
+  createReturnLeaderHandover,
+  RETURN_LEADER_HANDOVERS_QUERY_KEY,
+} from './returnLeaderApi';
 import { formatVariantType, variantTypeBadgeClass } from './ClientReturnBrandTable';
 
 const ROW_COLS = 'grid grid-cols-[2.25rem_minmax(0,1fr)_5.75rem] items-center gap-3';
@@ -162,7 +166,7 @@ export function BulkReturnDialog({
   submitterName = '',
   onSubmitted,
 }: BulkReturnDialogProps) {
-  const dispatch = useAppDispatch();
+  const queryClient = useQueryClient();
   const [step, setStep] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [selected, setSelected] = useState<Map<string, SelectedItem>>(new Map());
@@ -312,15 +316,17 @@ export function BulkReturnDialog({
         brandId: item.row.brandId,
         quantity: item.qty,
       }));
-      await dispatch(
-        createReturnLeaderHandover({
-          companyId: companyId!,
-          items,
-          notes,
-          photos,
-          signatureDataUrl: agentSignatureDataUrl,
-        })
-      ).unwrap();
+      await createReturnLeaderHandover({
+        companyId: companyId!,
+        items,
+        notes,
+        photos,
+        signatureDataUrl: agentSignatureDataUrl,
+      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: [RETURN_LEADER_HANDOVERS_QUERY_KEY] }),
+        queryClient.invalidateQueries({ queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY] }),
+      ]);
       setShowNameConfirm(false);
       onOpenChange(false);
       onSubmitted?.();

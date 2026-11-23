@@ -6,24 +6,34 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
-import { Settings, DollarSign, Info, Save, Loader2, CheckCircle } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
+import { Settings, DollarSign, Info, Save, Loader2, CheckCircle, RotateCcw } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth/hooks';
 import type { PricingColumn, Company } from '@/types/database.types';
 import { PRICING_OPTIONS } from '@/types/database.types';
+import {
+  CLIENT_ORDER_REFUNDS_ENABLED_QUERY_KEY,
+  updateClientOrderRefundsEnabled,
+} from '@/features/orders/client-returns/clientReturnApi';
 
 export default function SystemSettingsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const isSuperAdmin = user?.role === 'super_admin';
   
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingRefunds, setSavingRefunds] = useState(false);
   const [companyData, setCompanyData] = useState<Company | null>(null);
   
   // Pricing permissions state
   const [teamLeaderPricing, setTeamLeaderPricing] = useState<PricingColumn[]>(['rsp_price']);
   const [mobileSalesPricing, setMobileSalesPricing] = useState<PricingColumn[]>(['rsp_price']);
+  const [clientOrderRefundsEnabled, setClientOrderRefundsEnabled] = useState(false);
 
   // Load company settings
   useEffect(() => {
@@ -68,6 +78,7 @@ export default function SystemSettingsPage() {
 
       setTeamLeaderPricing(teamLeaderPricing);
       setMobileSalesPricing(mobileSalesPricing);
+      setClientOrderRefundsEnabled(data.client_order_refunds_enabled === true);
     } catch (error) {
       console.error('Error fetching company settings:', error);
       toast({
@@ -160,6 +171,42 @@ export default function SystemSettingsPage() {
       });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleRefundsEnabledChange = async (enabled: boolean) => {
+    if (!isSuperAdmin) {
+      toast({
+        title: 'Not allowed',
+        description: 'Only Super Admin can change client refund settings.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const previous = clientOrderRefundsEnabled;
+    setClientOrderRefundsEnabled(enabled);
+    try {
+      setSavingRefunds(true);
+      const next = await updateClientOrderRefundsEnabled(enabled);
+      setClientOrderRefundsEnabled(next);
+      await queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_REFUNDS_ENABLED_QUERY_KEY] });
+      toast({
+        title: 'Success',
+        description: next
+          ? 'Client refunds are now allowed for this company.'
+          : 'Client refunds are now disabled. Agents can still file change-item returns.',
+      });
+      await fetchCompanySettings();
+    } catch (error: any) {
+      setClientOrderRefundsEnabled(previous);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to update client refund setting',
+        variant: 'destructive',
+      });
+    } finally {
+      setSavingRefunds(false);
     }
   };
 
@@ -315,6 +362,52 @@ export default function SystemSettingsPage() {
                 </>
               )}
             </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Client Order Returns */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <RotateCcw className="h-5 w-5 text-primary" />
+            <CardTitle>Client Order Returns</CardTitle>
+          </div>
+          <CardDescription>
+            Change-item returns are always available. Refunds are off by default until Super Admin enables them.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Alert>
+            <Info className="h-4 w-4" />
+            <AlertDescription>
+              When refunds are disabled, agents still see the Refund option but get a toast asking them to inform their manager.
+            </AlertDescription>
+          </Alert>
+
+          <div className="flex items-center justify-between gap-4 rounded-lg border p-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Label htmlFor="client-order-refunds-enabled" className="text-base font-semibold cursor-pointer">
+                  Allow client refunds
+                </Label>
+                <Badge variant={clientOrderRefundsEnabled ? 'secondary' : 'outline'}>
+                  {clientOrderRefundsEnabled ? 'Enabled' : 'Disabled'}
+                </Badge>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Lets mobile sales and team leaders file refund-type client returns (SA → Finance).
+              </p>
+              {!isSuperAdmin ? (
+                <p className="text-sm text-muted-foreground">Only Super Admin can change this setting.</p>
+              ) : null}
+            </div>
+            <Switch
+              id="client-order-refunds-enabled"
+              checked={clientOrderRefundsEnabled}
+              disabled={!isSuperAdmin || savingRefunds}
+              onCheckedChange={(checked) => void handleRefundsEnabledChange(checked)}
+            />
           </div>
         </CardContent>
       </Card>

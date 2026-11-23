@@ -557,7 +557,16 @@ export function canOpenClientOrderTimeline(
   role?: string | null
 ): boolean {
   if (!canShowClientOrderReturns(hasWarehouseHubLink, role)) return false;
-  return role === 'super_admin' || role === 'finance' || role === 'team_leader';
+  // Order + CR timeline for roles that use client returns (hub not required).
+  return (
+    role === 'super_admin' ||
+    role === 'finance' ||
+    role === 'accounting' ||
+    role === 'admin' ||
+    role === 'team_leader' ||
+    role === 'mobile_sales' ||
+    role === 'sales_agent'
+  );
 }
 
 /** Short banner when disposal cannot go to warehouse (no hub link). */

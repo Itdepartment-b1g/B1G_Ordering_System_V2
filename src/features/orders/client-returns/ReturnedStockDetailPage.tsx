@@ -1,50 +1,54 @@
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Loader2, RotateCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useAuth } from '@/features/auth';
 import { usePermissions } from '@/hooks/usePermissions';
-import { useAppDispatch, useAppSelector } from '@/store/store';
-import { fetchClientOrderReturns } from '@/store/slices/moto-sales/client-returns';
-import { fetchClientReturnStockHolds } from '@/store/slices/moto-sales/return-leader';
 import {
   buildReturnedInventoryRows,
   canShowClientOrderReturns,
+  CLIENT_ORDER_RETURNS_QUERY_KEY,
+  fetchClientOrderReturns,
+  type ReturnedInventoryRow,
 } from './clientReturnApi';
+import { CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY, fetchClientReturnStockHolds } from './returnLeaderApi';
 import { formatVariantType, variantTypeBadgeClass } from './ClientReturnBrandTable';
 import { ClientReturnHistoryList } from './ClientReturnHistoryList';
+import type { PreviewClientReturn } from './clientReturnPreview';
+
+const EMPTY_RETURNS: PreviewClientReturn[] = [];
+const EMPTY_HOLDS: ReturnedInventoryRow[] = [];
 
 export default function ReturnedStockDetailPage() {
   const { variantId = '' } = useParams<{ variantId: string }>();
   const { user } = useAuth();
   const { hasWarehouseHubLink } = usePermissions();
-  const dispatch = useAppDispatch();
   const showReturns = canShowClientOrderReturns(hasWarehouseHubLink, user?.role);
   const isLeader = user?.role === 'team_leader';
 
-  const rows = useAppSelector((state) => state.motoClientReturns.returns);
-  const listStatus = useAppSelector((state) => state.motoClientReturns.listStatus);
   const holderId =
     user?.role === 'mobile_sales' || user?.role === 'sales_agent' || user?.role === 'team_leader'
       ? user.id
       : undefined;
-  const holdRows = useAppSelector((state) =>
-    holderId ? state.motoReturnLeader.holdsByHolderId[holderId] || [] : []
-  );
-  const holdsStatus = useAppSelector((state) => state.motoReturnLeader.holdsStatus);
-  const holdsErrorMsg = useAppSelector((state) => state.motoReturnLeader.holdsError);
 
-  useEffect(() => {
-    if (!showReturns || !user?.company_id) return;
-    void dispatch(fetchClientOrderReturns());
-  }, [dispatch, showReturns, user?.company_id]);
+  const { data: rows = EMPTY_RETURNS, isLoading: listLoading } = useQuery({
+    queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY, 'list', user?.company_id],
+    enabled: showReturns && !!user?.company_id,
+    queryFn: fetchClientOrderReturns,
+  });
 
-  useEffect(() => {
-    if (!showReturns || !holderId) return;
-    void dispatch(fetchClientReturnStockHolds(holderId));
-  }, [dispatch, holderId, showReturns]);
+  const {
+    data: holdRows = EMPTY_HOLDS,
+    isLoading: holdsLoading,
+    isError: holdsErrorMsg,
+  } = useQuery({
+    queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY, holderId],
+    enabled: showReturns && !!holderId,
+    queryFn: () => fetchClientReturnStockHolds(holderId!),
+  });
 
   const inventoryRow = useMemo(() => {
     const crForDetail = buildReturnedInventoryRows(rows, isLeader ? undefined : { holderId });
@@ -63,10 +67,7 @@ export default function ReturnedStockDetailPage() {
     return buildReturnedInventoryRows(rows, { holderId }).find((row) => row.variantId === variantId) || null;
   }, [holdRows, holdsErrorMsg, holderId, isLeader, rows, variantId]);
 
-  const loading =
-    listStatus === 'loading' ||
-    listStatus === 'idle' ||
-    (!!holderId && (holdsStatus === 'loading' || holdsStatus === 'idle'));
+  const loading = listLoading || holdsLoading;
 
   if (loading && !inventoryRow) {
     return (

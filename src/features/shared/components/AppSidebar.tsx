@@ -114,6 +114,7 @@ const adminMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
+      { title: 'Client Refunds', url: '/finance/refunds', icon: BanknoteIcon },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
       { title: 'Payment Settings', url: '/finance/payment-settings', icon: CreditCard },
     ]
@@ -279,6 +280,7 @@ const agentMenuItems: MenuItem[] = [
   { title: 'Request Inventory', url: '/inventory/mobile-request', icon: Send },
   { title: 'My Clients', url: '/my-clients', icon: ShoppingBag },
   { title: 'My Orders', url: '/my-orders', icon: ShoppingCart },
+  { title: 'Client Returns', url: '/client-order-returns', icon: RotateCcw },
   { title: 'My Activity', url: '/system-history', icon: History },
   { title: 'Calendar', url: '/calendar', icon: Calendar },
   { title: 'Profile', url: '/profile', icon: UserCircle },
@@ -326,6 +328,7 @@ const leaderMenuItems: MenuItem[] = [
   { title:  "My Team's Attendance", url: '/team-attendances', icon: Calendar},
   { title: "My Allocation History", url: '/leader-allocation-history', icon: Package2Icon },
   { title: 'My Orders', url: '/my-orders', icon: ShoppingCart },
+  { title: 'Client Returns', url: '/client-order-returns', icon: RotateCcw },
   { title: 'Order Management', url: '/leader-orders', icon: FileText },
   { title: 'Team Activity', url: '/system-history', icon: History },
   { title: 'Calendar', url: '/calendar', icon: Calendar },
@@ -421,6 +424,7 @@ const financeMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
+      { title: 'Client Refunds', url: '/finance/refunds', icon: BanknoteIcon },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
       { title: 'Payment Settings', url: '/finance/payment-settings', icon: CreditCard },
       { title: 'Physical Count', url: '/inventory/physical-count', icon: ClipboardCheck },
@@ -443,6 +447,7 @@ const accountingMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
+      { title: 'Client Refunds', url: '/finance/refunds', icon: BanknoteIcon },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
       { title: 'Physical Count', url: '/inventory/physical-count', icon: ClipboardCheck },
     ]
@@ -491,6 +496,7 @@ const superAdminMenuItems: MenuItem[] = [
       { title: 'Voided Clients', url: '/voided-clients', icon: Archive },
     ]
   },
+  { title: 'Client Returns', url: '/client-order-returns', icon: RotateCcw },
   {
     title: 'Finance',
     url: '/finance-section',
@@ -499,6 +505,7 @@ const superAdminMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
+      { title: 'Client Refunds', url: '/finance/refunds', icon: BanknoteIcon },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
       { title: 'Payment Settings', url: '/finance/payment-settings', icon: CreditCard },
     ]

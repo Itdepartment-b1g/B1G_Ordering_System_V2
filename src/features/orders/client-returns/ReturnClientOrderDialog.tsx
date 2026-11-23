@@ -6,13 +6,6 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/features/auth';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { cn } from '@/lib/utils';
-import { useAppDispatch, useAppSelector } from '@/store/store';
-import {
-  createClientOrderReturn,
-  fetchChangeItemCatalog,
-  fetchClientOrderReturns,
-  fetchPostedReturnedQty,
-} from '@/store/slices/moto-sales/client-returns';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -65,7 +58,12 @@ import {
   CLIENT_ORDER_REFUNDS_DISABLED_TOAST,
   CLIENT_ORDER_REFUNDS_ENABLED_QUERY_KEY,
   CLIENT_ORDER_RETURNS_QUERY_KEY,
+  CLIENT_ORDER_RETURN_CHANGE_CATALOG_QUERY_KEY,
+  CLIENT_ORDER_RETURN_POSTED_QTY_QUERY_KEY,
+  createClientOrderReturn,
+  fetchChangeItemCatalog,
   fetchClientOrderRefundsEnabled,
+  fetchPostedReturnedQtyByItemId,
 } from './clientReturnApi';
 import { formatVariantType, variantTypeBadgeClass } from './ClientReturnBrandTable';
 
@@ -96,6 +94,8 @@ type StockShortfall = {
 };
 
 type ClientReturnKind = 'change' | 'refund';
+
+const EMPTY_POSTED_QTY: Record<string, number> = {};
 
 const RETURN_STEPS = [
   { id: 0, label: 'Return Items' },
@@ -428,7 +428,6 @@ export function ReturnClientOrderDialog({
 }: ReturnClientOrderDialogProps) {
   const { toast } = useToast();
   const { user } = useAuth();
-  const dispatch = useAppDispatch();
   const queryClient = useQueryClient();
   const captureInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -558,37 +557,31 @@ export function ReturnClientOrderDialog({
     [items]
   );
 
-  const postedQtyByItemId = useAppSelector(
-    (state) => state.motoClientReturns.postedQtyByOrderId[orderId] ?? {}
-  );
-  const liveChangeCatalog = useAppSelector((state) => state.motoClientReturns.changeCatalog);
+  const { data: postedQtyData } = useQuery({
+    queryKey: [CLIENT_ORDER_RETURN_POSTED_QTY_QUERY_KEY, orderId],
+    enabled: open && !!orderId,
+    staleTime: 0,
+    queryFn: () => fetchPostedReturnedQtyByItemId(orderId),
+  });
+  const postedQtyByItemId = postedQtyData ?? EMPTY_POSTED_QTY;
 
-  useEffect(() => {
-    if (!open || !orderId) return;
-    void dispatch(fetchPostedReturnedQty(orderId));
-  }, [open, orderId, dispatch]);
-
-  useEffect(() => {
-    if (
-      !open ||
-      !wizardStarted ||
-      returnType !== 'change' ||
-      !user?.id ||
-      !user?.company_id ||
-      orderBrandIds.length === 0
-    ) {
-      return;
-    }
-    void dispatch(fetchChangeItemCatalog(orderBrandIds));
-  }, [
-    open,
-    wizardStarted,
-    returnType,
-    user?.id,
-    user?.company_id,
-    orderBrandIds,
-    dispatch,
-  ]);
+  const { data: liveChangeCatalog } = useQuery({
+    queryKey: [
+      CLIENT_ORDER_RETURN_CHANGE_CATALOG_QUERY_KEY,
+      user?.id,
+      user?.company_id,
+      orderBrandIds.join(','),
+    ],
+    enabled:
+      open &&
+      wizardStarted &&
+      returnType === 'change' &&
+      !!user?.id &&
+      !!user?.company_id &&
+      orderBrandIds.length > 0,
+    staleTime: 0,
+    queryFn: () => fetchChangeItemCatalog(user!.id, user!.company_id!, orderBrandIds),
+  });
 
   const lines = useMemo(
     () =>
@@ -624,7 +617,10 @@ export function ReturnClientOrderDialog({
     return map;
   }, [selectedLines, quantities]);
 
-  const changeCatalog = Array.isArray(liveChangeCatalog) ? liveChangeCatalog : [];
+  const changeCatalog = useMemo<PreviewChangeItemSku[]>(
+    () => (Array.isArray(liveChangeCatalog) ? liveChangeCatalog : []),
+    [liveChangeCatalog]
+  );
 
   useEffect(() => {
     if (!open || returnType !== 'change') return;
@@ -1068,35 +1064,33 @@ export function ReturnClientOrderDialog({
     setSubmitting(true);
     try {
       const isRefund = returnType === 'refund';
-      const saved = await dispatch(
-        createClientOrderReturn({
-          companyId: user.company_id,
-          clientOrderId: orderId,
-          returnDate,
-          reason: reason === 'other' ? otherReason.trim() : reason,
-          notes: notes.trim(),
-          signatureDataUrl: agentSignatureDataUrl,
-          items: selectedLines.map((line) => ({
-            clientOrderItemId: line.id,
-            quantity: quantities[line.id] || 0,
-            stockFate: stockFates[line.id] === 'restock' ? 'restock' : 'disposal',
-          })),
-          changeItems: isRefund
-            ? []
-            : selectedChangeSkus.map((sku) => ({
-                variantId: sku.id,
-                quantity: changeQuantities[sku.id] || 0,
-              })),
-          photos,
-          returnType: isRefund ? 'refund' : 'change_item',
-        })
-      ).unwrap();
+      const saved = await createClientOrderReturn({
+        companyId: user.company_id,
+        clientOrderId: orderId,
+        returnDate,
+        reason: reason === 'other' ? otherReason.trim() : reason,
+        notes: notes.trim(),
+        signatureDataUrl: agentSignatureDataUrl,
+        items: selectedLines.map((line) => ({
+          clientOrderItemId: line.id,
+          quantity: quantities[line.id] || 0,
+          stockFate: stockFates[line.id] === 'restock' ? 'restock' : 'disposal',
+        })),
+        changeItems: isRefund
+          ? []
+          : selectedChangeSkus.map((sku) => ({
+              variantId: sku.id,
+              quantity: changeQuantities[sku.id] || 0,
+            })),
+        photos,
+        returnType: isRefund ? 'refund' : 'change_item',
+      });
 
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] }),
+        queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURN_POSTED_QTY_QUERY_KEY] }),
+        queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURN_CHANGE_CATALOG_QUERY_KEY] }),
         queryClient.invalidateQueries({ queryKey: ['inventory'] }),
-        dispatch(fetchPostedReturnedQty(orderId)),
-        dispatch(fetchClientOrderReturns()),
       ]);
       onSuccess?.();
 

@@ -1,13 +1,13 @@
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Loader2, RotateCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useAuth } from '@/features/auth';
-import { useAppDispatch, useAppSelector } from '@/store/store';
-import { fetchClientOrderReturns } from '@/store/slices/moto-sales/client-returns';
 import { BrandTypeLinesList } from './BrandTypeLinesList';
+import { CLIENT_ORDER_RETURNS_QUERY_KEY, fetchClientOrderReturns } from './clientReturnApi';
 import { ClientReturnExpandedMeta } from './ClientReturnExpandedMeta';
 import {
   clientReturnStatusBadgeClass,
@@ -20,19 +20,13 @@ import {
 export default function ClientOrderReturnDetailPage() {
   const { returnId = '' } = useParams<{ returnId: string }>();
   const { user } = useAuth();
-  const dispatch = useAppDispatch();
-  const rows = useAppSelector((state) => state.motoClientReturns.returns);
-  const listStatus = useAppSelector((state) => state.motoClientReturns.listStatus);
-
-  useEffect(() => {
-    if (!user?.company_id) return;
-    if (listStatus === 'idle' || listStatus === 'failed') {
-      void dispatch(fetchClientOrderReturns());
-    }
-  }, [dispatch, listStatus, user?.company_id]);
+  const { data: rows = [], isLoading: loading } = useQuery({
+    queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY, 'list', user?.company_id],
+    enabled: !!user?.company_id,
+    queryFn: fetchClientOrderReturns,
+  });
 
   const row = useMemo(() => rows.find((item) => item.id === returnId) || null, [rows, returnId]);
-  const loading = listStatus === 'loading' || listStatus === 'idle';
   const qty = row ? getPreviewReturnLineQty(row) : 0;
 
   if (loading && !row) {

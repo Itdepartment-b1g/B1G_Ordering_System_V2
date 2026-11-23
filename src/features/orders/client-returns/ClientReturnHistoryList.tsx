@@ -2,13 +2,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { useAppDispatch } from '@/store/store';
 import { useIsMobile } from '@/hooks/use-mobile';
-import {
-  approveClientOrderReturn,
-  fetchClientOrderReturns,
-  rejectClientOrderReturn,
-} from '@/store/slices/moto-sales/client-returns';
 import {
   Check,
   ChevronDown,
@@ -78,6 +72,12 @@ import {
 } from './clientReturnPreview';
 import { BrandReturnedTable, groupLinesByBrand } from './ClientReturnBrandTable';
 import { ClientReturnExpandedMeta } from './ClientReturnExpandedMeta';
+import type { PackageProofPhotoItem } from '@/features/shared/components/MultiProofPhotoField';
+import {
+  CLIENT_ORDER_RETURNS_QUERY_KEY,
+  approveClientOrderReturn,
+  rejectClientOrderReturn,
+} from './clientReturnApi';
 import { ClientReturnViewDialog } from './ClientReturnViewDialog';
 import { ClientOrderReturnTimeline } from './ClientOrderReturnTimeline';
 import { generateAndOpenClientReturnPdf } from './generateClientReturnPdf';
@@ -562,10 +562,9 @@ export function ClientReturnHistoryList({
   filteredEmptyDescription = 'Try another date, person, status, or search.',
   getDetailHref,
 }: ClientReturnHistoryListProps) {
-  const rows = Array.isArray(incomingRows) ? incomingRows : [];
+  const rows = useMemo(() => (Array.isArray(incomingRows) ? incomingRows : []), [incomingRows]);
   const { user } = useAuth();
   const { toast } = useToast();
-  const dispatch = useAppDispatch();
   const queryClient = useQueryClient();
   const { orders } = useOrders();
   const navigate = useNavigate();
@@ -938,15 +937,28 @@ export function ClientReturnHistoryList({
     setHistorySortState((current) => getNextTableSortCycleState(current, key));
   };
 
-  const handleApproveConfirm = async () => {
+  const handleApproveConfirm = async (photos?: PackageProofPhotoItem[]) => {
     if (!actionRow || acting || !canReviewClientReturn(user?.role, actionRow)) return;
     const isRefund = actionRow.returnType === 'refund';
     const sendingToFinance = isRefund && actionRow.status === 'pending_super_admin';
+    const needsPayoutProof = isRefund && actionRow.status === 'pending_finance';
+    const companyId = user?.company_id;
+    if (needsPayoutProof && (!companyId || !photos?.length)) {
+      toast({
+        title: 'Photo required',
+        description: 'Attach a photo as proof that cash was sent.',
+        variant: 'destructive',
+      });
+      return;
+    }
     setActing(true);
     try {
-      await dispatch(approveClientOrderReturn({ returnId: actionRow.id })).unwrap();
+      await approveClientOrderReturn(
+        actionRow.id,
+        needsPayoutProof && companyId ? { companyId, photos: photos || [] } : undefined
+      );
       await Promise.all([
-        dispatch(fetchClientOrderReturns()),
+        queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] }),
         queryClient.invalidateQueries({ queryKey: ['inventory'] }),
       ]);
       toast({
@@ -973,10 +985,8 @@ export function ClientReturnHistoryList({
     const isRefund = actionRow.returnType === 'refund';
     setActing(true);
     try {
-      await dispatch(
-        rejectClientOrderReturn({ returnId: actionRow.id, note })
-      ).unwrap();
-      await dispatch(fetchClientOrderReturns());
+      await rejectClientOrderReturn(actionRow.id, note);
+      await queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] });
       toast({
         title: isRefund ? 'Refund rejected' : 'Return rejected',
         description: `${actionRow.returnNumber} is closed. Agent can file a new CR on the same ORD.`,
@@ -1416,13 +1426,14 @@ export function ClientReturnHistoryList({
         open={confirmKind === 'approve' || confirmKind === 'reject'}
         row={actionRow}
         acting={acting}
+        skipNameConfirm={actionRow?.returnType === 'refund' && actionRow.status === 'pending_finance'}
         onOpenChange={(nextOpen) => {
           if (!nextOpen && !acting) {
             setConfirmKind(null);
             setActionRow(null);
           }
         }}
-        onApprove={() => void handleApproveConfirm()}
+        onApprove={(photos) => void handleApproveConfirm(photos)}
         onReject={(note) => void handleRejectConfirm(note)}
       />
     </>

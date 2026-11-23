@@ -1,15 +1,16 @@
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Loader2, RotateCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useAuth } from '@/features/auth';
-import { useAppDispatch, useAppSelector } from '@/store/store';
-import { fetchReturnLeaderHandovers } from '@/store/slices/moto-sales/return-leader';
 import { BrandTypeLinesList } from './BrandTypeLinesList';
 import {
+  fetchReturnLeaderHandovers,
   getReturnLeaderLineQty,
+  RETURN_LEADER_HANDOVERS_QUERY_KEY,
   returnLeaderStatusBadgeClass,
   returnLeaderStatusLabel,
 } from './returnLeaderApi';
@@ -17,19 +18,13 @@ import {
 export default function ReturnLeaderDetailPage() {
   const { handoverId = '' } = useParams<{ handoverId: string }>();
   const { user } = useAuth();
-  const dispatch = useAppDispatch();
-  const rows = useAppSelector((state) => state.motoReturnLeader.handovers);
-  const status = useAppSelector((state) => state.motoReturnLeader.handoversStatus);
-
-  useEffect(() => {
-    if (!user?.company_id) return;
-    if (status === 'idle' || status === 'failed') {
-      void dispatch(fetchReturnLeaderHandovers());
-    }
-  }, [dispatch, status, user?.company_id]);
+  const { data: rows = [], isLoading: loading } = useQuery({
+    queryKey: [RETURN_LEADER_HANDOVERS_QUERY_KEY, user?.company_id],
+    enabled: !!user?.company_id,
+    queryFn: fetchReturnLeaderHandovers,
+  });
 
   const row = useMemo(() => rows.find((item) => item.id === handoverId) || null, [rows, handoverId]);
-  const loading = status === 'loading' || status === 'idle';
   const qty = row ? getReturnLeaderLineQty(row) : 0;
 
   if (loading && !row) {
