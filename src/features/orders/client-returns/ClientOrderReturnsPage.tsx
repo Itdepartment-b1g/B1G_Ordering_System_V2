@@ -334,7 +334,7 @@ function ClientOrderReturnsView() {
           {!isSuperAdmin ? (
             <TabsTrigger value="inventory" className="h-auto gap-1.5 whitespace-normal py-2.5 text-xs sm:text-sm">
               <Package className="h-4 w-4 shrink-0" />
-              <span className="sm:hidden">Items</span>
+              <span className="sm:hidden">Items (Disposals)</span>
               <span className="hidden sm:inline">Returned Items (Disposals)</span>
               {inventoryRows.length > 0 ? (
                 <span className="tabular-nums opacity-80">({inventoryRows.length})</span>
@@ -343,7 +343,7 @@ function ClientOrderReturnsView() {
           ) : null}
           <TabsTrigger value="returnToLeader" className="h-auto gap-1.5 whitespace-normal py-2.5 text-xs sm:text-sm">
             <Truck className="h-4 w-4 shrink-0" />
-            <span className="sm:hidden">RL</span>
+            <span className="sm:hidden">Return (Disposals)</span>
             <span className="hidden sm:inline">Return to TL</span>
             {pendingRlCount > 0 ? (
               <span className="tabular-nums opacity-80">({pendingRlCount})</span>
