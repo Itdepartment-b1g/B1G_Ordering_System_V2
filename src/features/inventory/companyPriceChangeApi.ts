@@ -30,6 +30,10 @@ export interface CompanyPriceChangeItem {
   new_dsp_price: number;
   old_rsp_price: number;
   new_rsp_price: number;
+  /** First snapshot when SKU entered the batch (cancel / bag revert). */
+  baseline_selling_price?: number | null;
+  baseline_dsp_price?: number | null;
+  baseline_rsp_price?: number | null;
   agent_rows_updated: number | null;
   created_at: string;
   updated_at?: string;

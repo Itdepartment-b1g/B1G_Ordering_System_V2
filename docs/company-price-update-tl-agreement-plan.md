@@ -58,7 +58,7 @@ Orders already **snapshot** `client_order_items.unit_price` at submit. Historica
    Do **not** bulk-overwrite `main_inventory.unit_price` (cost).
 5. **Both** active Team Leaders **and** Mobile Sales must **review and confirm** before their bags use the new prices. Each confirmer’s bag updates **on their confirm**; the batch closes when everyone has confirmed.
 6. History is **flat one row per SKU**, not nested JSON from `system_audit_log`.
-7. **One open `pending_agreement` batch** per company (or per identical team leader set). Further SA price edits **append** into that batch (**upsert by `variant_id`**). Confirm once covers the whole flat list until you ack. If SA appends **after** you confirmed, your agreement resets to `pending` and you must confirm again. UI badges: **New** vs **Confirmed** (item `updated_at` ≤ your `last_confirmed_at`). Picker: **all TLs selected (default) = company-wide**; **subset = bags-only**.
+7. **One open `pending_agreement` batch** per company (or per identical team leader set). Further SA price edits **append** into that batch (**upsert by `variant_id`**). On append, `old_*` refreshes from current Main (so history reads last change → new); `baseline_*` stays the first snapshot for cancel/bag revert. Confirm once covers the whole flat list until you ack. If SA appends **after** you confirmed, your agreement resets to `pending` and you must confirm again. UI badges: **New** vs **Confirmed** (item `updated_at` ≤ your `last_confirmed_at`). Picker: **all TLs selected (default) = company-wide**; **subset = bags-only**.
 
 ### Who must confirm
 
