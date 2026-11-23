@@ -1,4 +1,4 @@
-import { Component, useMemo, useState, type ReactNode } from 'react';
+import { Component, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ClipboardList, Loader2, Package, Truck } from 'lucide-react';
@@ -8,6 +8,7 @@ import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { usePermissions } from '@/hooks/usePermissions';
+import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import {
   buildReturnedInventoryRows,
   canShowClientOrderReturns,
@@ -166,6 +167,54 @@ function ClientOrderReturnsView() {
       ).length,
     [rlRows, user?.id, user?.role]
   );
+
+  // Keep Return to TL + Returned Items Disposal in sync across users (MS submit / TL confirm).
+  useEffect(() => {
+    if (!showReturns || !user?.company_id) return;
+
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const refresh = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        void queryClient.invalidateQueries({ queryKey: [RETURN_LEADER_HANDOVERS_QUERY_KEY] });
+        void queryClient.invalidateQueries({ queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY] });
+        void queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] });
+      }, 250);
+    };
+
+    const channels = [
+      subscribeToTable(
+        'return_leader_handovers',
+        refresh,
+        '*',
+        { column: 'company_id', value: user.company_id }
+      ),
+      subscribeToTable(
+        'client_order_returns',
+        refresh,
+        '*',
+        { column: 'company_id', value: user.company_id }
+      ),
+      holderId
+        ? subscribeToTable(
+            'client_return_stock_holds',
+            refresh,
+            '*',
+            { column: 'holder_id', value: holderId }
+          )
+        : subscribeToTable(
+            'client_return_stock_holds',
+            refresh,
+            '*',
+            { column: 'company_id', value: user.company_id }
+          ),
+    ];
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      channels.forEach(unsubscribe);
+    };
+  }, [showReturns, user?.company_id, holderId, queryClient]);
 
   const startRlApprove = (row: ReturnLeaderHandover) => {
     setRlViewRow(null);

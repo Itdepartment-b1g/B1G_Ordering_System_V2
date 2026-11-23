@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -164,6 +165,7 @@ function orderMatchesStatusFilter(order: Order, filter: MyOrdersStatusFilter): b
 
 export default function MyOrdersPage() {
   const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const isAdmin = user?.role === 'admin';
   const canCustomizePricing = ['team_leader', 'manager', 'admin'].includes(user?.role || '');
   const { getOrdersByAgent, addOrder, orders: allOrders } = useOrders();
@@ -654,6 +656,15 @@ export default function MyOrdersPage() {
   useEffect(() => {
     setCurrentPage(1);
   }, [searchQuery, dateRangeFilter, statusFilter, orderSortState]);
+
+  // Bottom nav Create → open create order dialog
+  useEffect(() => {
+    if (searchParams.get('create') !== '1') return;
+    setCreateDialogOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('create');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const selectedBrand = agentBrands.find(b => b.name === selectedBrandName);
 
@@ -2821,14 +2832,63 @@ export default function MyOrdersPage() {
               paginatedOrders.map((order) => (
                   <Card key={order.id}>
                   <div className="p-3">
-                    <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-start justify-between mb-2 gap-2">
                       <div className="flex-1 min-w-0">
                         <div className="font-mono font-semibold text-sm truncate">{order.orderNumber}</div>
                         <div className="text-xs text-muted-foreground mt-0.5 truncate">{order.clientName}</div>
                       </div>
-                      <Badge variant={getDisplayStatus(order).variant} className="ml-2 flex-shrink-0 text-xs">
-                        {getDisplayStatus(order).text}
-                      </Badge>
+                      <div className="flex flex-shrink-0 items-center gap-1">
+                        <Badge variant={getDisplayStatus(order).variant} className="text-xs">
+                          {getDisplayStatus(order).text}
+                        </Badge>
+                        <DropdownMenu modal={false}>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              aria-label={`Actions for ${order.orderNumber}`}
+                            >
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-48">
+                            <DropdownMenuItem
+                              onSelect={() => window.setTimeout(() => handleViewOrder(order), 0)}
+                            >
+                              <Eye className="h-4 w-4 mr-2" />
+                              View
+                            </DropdownMenuItem>
+                            {canViewReturnTimeline ? (
+                              <DropdownMenuItem
+                                onSelect={() => window.setTimeout(() => setTimelineOrder(order), 0)}
+                              >
+                                <Clock className="h-4 w-4 mr-2" />
+                                Timeline
+                              </DropdownMenuItem>
+                            ) : null}
+                            {canFileClientReturn && isOrderReturnable(order) ? (
+                              <DropdownMenuItem
+                                onSelect={() => window.setTimeout(() => setReturnOrder(order), 0)}
+                                className="text-rose-600 focus:text-rose-700"
+                              >
+                                <RotateCcw className="h-4 w-4 mr-2" />
+                                Return
+                              </DropdownMenuItem>
+                            ) : null}
+                            {order.stage === 'needs_revision' ? (
+                              <DropdownMenuItem
+                                onSelect={() => window.setTimeout(() => handleEditOrder(order), 0)}
+                                className="text-amber-600 focus:text-amber-700"
+                              >
+                                <Pencil className="h-4 w-4 mr-2" />
+                                Edit
+                              </DropdownMenuItem>
+                            ) : null}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
                     </div>
                     <div className="space-y-1 text-xs pt-2 border-t">
                       <div className="flex items-center justify-between">
@@ -2843,38 +2903,6 @@ export default function MyOrdersPage() {
                         </div>
                         <div className="font-semibold text-sm">₱{order.total.toLocaleString()}</div>
                       </div>
-                    </div>
-                    <div className="flex gap-2 mt-2 pt-2 border-t">
-                      <button 
-                        onClick={() => handleViewOrder(order)}
-                        className="flex-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                      >
-                        View Details
-                      </button>
-                      {canFileClientReturn && isOrderReturnable(order) && (
-                        <button
-                          onClick={() => setReturnOrder(order)}
-                          className="flex-1 text-xs text-rose-600 hover:text-rose-700 font-medium transition-colors"
-                        >
-                          Return
-                        </button>
-                      )}
-                      {canViewReturnTimeline && (
-                        <button
-                          onClick={() => setTimelineOrder(order)}
-                          className="flex-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                        >
-                          Timeline
-                        </button>
-                      )}
-                      {order.stage === 'needs_revision' && (
-                        <button
-                          onClick={() => handleEditOrder(order)}
-                          className="flex-1 text-xs text-amber-600 hover:text-amber-700 font-medium transition-colors"
-                        >
-                          Edit
-                        </button>
-                      )}
                     </div>
                   </div>
                 </Card>
@@ -2982,7 +3010,7 @@ export default function MyOrdersPage() {
                               onSelect={() => window.setTimeout(() => setTimelineOrder(order), 0)}
                             >
                               <Clock className="h-4 w-4 mr-2" />
-                              Order timeline
+                              Timeline
                             </DropdownMenuItem>
                           ) : null}
                           {canFileClientReturn && isOrderReturnable(order) ? (

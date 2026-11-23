@@ -30,7 +30,10 @@ type TableName =
   | 'stock_requests'
   | 'leader_teams'
   | 'sub_teams'
-  | 'cash_deposits';
+  | 'cash_deposits'
+  | 'client_order_returns'
+  | 'return_leader_handovers'
+  | 'client_return_stock_holds';
 
 type ChangeEvent = 'INSERT' | 'UPDATE' | 'DELETE' | '*';
 
