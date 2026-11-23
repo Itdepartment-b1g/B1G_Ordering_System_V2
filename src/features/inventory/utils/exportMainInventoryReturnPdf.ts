@@ -109,7 +109,7 @@ function detailField(label: string, valueHtml: string): string {
       </div>`;
 }
 
-function buildReturnHtml(input: MainInventoryReturnPdfInput): string {
+function returnPageHtml(input: MainInventoryReturnPdfInput): string {
   const total = input.lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
   const returnedBy = input.returnedBy?.trim() ? escapeHtml(input.returnedBy.trim()) : '—';
   const returnedTo = input.returnedTo?.trim() ? escapeHtml(input.returnedTo.trim()) : '—';
@@ -118,6 +118,57 @@ function buildReturnHtml(input: MainInventoryReturnPdfInput): string {
     ? escapeHtml(input.reason.trim())
     : '<span class="muted">—</span>';
   const status = input.status?.trim() ? escapeHtml(input.status.trim()) : '';
+
+  return `
+  <div class="page">
+    <div class="doc-title">STOCK RETURN</div>
+    <div class="meta-row">
+      <span class="label">RETURN BY:</span>
+      <span class="value">${returnedBy}</span>
+    </div>
+    <div class="meta-row">
+      <span class="label">RETURN TO:</span>
+      <span class="value">${returnedTo}</span>
+    </div>
+    <div class="meta-row">
+      <span class="label">DATE:</span>
+      <span class="value">${when}</span>
+    </div>
+    ${status ? `<div class="meta-row">
+      <span class="label">STATUS:</span>
+      <span class="value">${status}</span>
+    </div>` : ''}
+    <table class="items-table">
+      <thead>
+        <tr>
+          <th class="col-desc">Description</th>
+          <th class="col-type">Type</th>
+          <th class="col-qty">Qty</th>
+        </tr>
+      </thead>
+      <tbody>${itemRowsHtml(input.lines)}</tbody>
+    </table>
+    <div class="totals-note">Total returned: ${fmtQty(total)} unit(s)</div>
+    <div class="delivery-section">
+      <div class="section-label">RETURN DETAILS</div>
+      ${detailField('RETURN BY:', returnedBy)}
+      ${detailField('RETURN TO:', returnedTo)}
+      ${detailField('DATE:', when)}
+      ${status ? detailField('STATUS:', status) : ''}
+      ${detailField('REASON:', reason)}
+      ${detailField('SIGNATURE:', '<span class="sline"></span>')}
+    </div>
+    <div class="footer-note">Stock return · ${escapeHtml(formatDateTime(new Date().toISOString()))}</div>
+  </div>`;
+}
+
+function buildReturnsHtml(inputs: MainInventoryReturnPdfInput[]): string {
+  const first = inputs[0];
+  const returnedBy = first?.returnedBy?.trim() ? escapeHtml(first.returnedBy.trim()) : '—';
+  const badge =
+    inputs.length === 1
+      ? `RETURN BY: <span>${returnedBy}</span>`
+      : `Returns: <span>${inputs.length.toLocaleString()}</span>`;
 
   return `<!doctype html>
 <html lang="en">
@@ -163,6 +214,7 @@ function buildReturnHtml(input: MainInventoryReturnPdfInput): string {
     border-radius: 4px; cursor: pointer;
   }
   .toolbar button:hover { background: #16a34a; color: #fff; }
+  .page + .page { break-before: page; }
   .page {
     width: 210mm;
     min-height: 297mm;
@@ -234,56 +286,22 @@ function buildReturnHtml(input: MainInventoryReturnPdfInput): string {
       </h1>
     </div>
     <div class="toolbar-center">
-      <div class="warehouse-badge">RETURN BY: <span>${returnedBy}</span></div>
+      <div class="warehouse-badge">${badge}</div>
     </div>
     <div class="toolbar-right">
       <button type="button" onclick="window.print()">Print</button>
     </div>
   </div>
-  <div class="page">
-    <div class="doc-title">STOCK RETURN</div>
-    <div class="meta-row">
-      <span class="label">RETURN BY:</span>
-      <span class="value">${returnedBy}</span>
-    </div>
-    <div class="meta-row">
-      <span class="label">RETURN TO:</span>
-      <span class="value">${returnedTo}</span>
-    </div>
-    <div class="meta-row">
-      <span class="label">DATE:</span>
-      <span class="value">${when}</span>
-    </div>
-    ${status ? `<div class="meta-row">
-      <span class="label">STATUS:</span>
-      <span class="value">${status}</span>
-    </div>` : ''}
-    <table class="items-table">
-      <thead>
-        <tr>
-          <th class="col-desc">Description</th>
-          <th class="col-type">Type</th>
-          <th class="col-qty">Qty</th>
-        </tr>
-      </thead>
-      <tbody>${itemRowsHtml(input.lines)}</tbody>
-    </table>
-    <div class="totals-note">Total returned: ${fmtQty(total)} unit(s)</div>
-    <div class="delivery-section">
-      <div class="section-label">RETURN DETAILS</div>
-      ${detailField('RETURN BY:', returnedBy)}
-      ${detailField('RETURN TO:', returnedTo)}
-      ${detailField('DATE:', when)}
-      ${status ? detailField('STATUS:', status) : ''}
-      ${detailField('REASON:', reason)}
-      ${detailField('SIGNATURE:', '<span class="sline"></span>')}
-    </div>
-    <div class="footer-note">Stock return · ${escapeHtml(formatDateTime(new Date().toISOString()))}</div>
-  </div>
+  ${inputs.map(returnPageHtml).join('')}
 </body>
 </html>`;
 }
 
 export function exportMainInventoryReturnPdf(input: MainInventoryReturnPdfInput): void {
-  openPrintableHtml(buildReturnHtml(input));
+  openPrintableHtml(buildReturnsHtml([input]));
+}
+
+export function exportMainInventoryReturnsPdf(inputs: MainInventoryReturnPdfInput[]): void {
+  if (inputs.length === 0) return;
+  openPrintableHtml(buildReturnsHtml(inputs));
 }
