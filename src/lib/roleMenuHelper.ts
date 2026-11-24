@@ -72,6 +72,7 @@ const leaderMenuItems: MenuItem[] = [
     { title: 'Team Remittances', url: '/inventory/team-remittances', description: 'Review stock and cash remittances submitted by your team.' },
     { title: 'Cash Deposits', url: '/inventory/cash-deposits', description: 'Record and review cash/cheque deposits for your team.' },
     { title: 'Stock Transfers', url: '/inventory/tl-stock-requests', description: 'Request stock from another team leader in your company. Super Admin approves, they dispatch, then you receive. Works without a warehouse link.' },
+    { title: 'Transfer Shortages', url: '/inventory/tl-transfer-shortages', description: 'Investigate TL-to-TL stock that was dispatched but arrived short. Works without a warehouse link.' },
     { title: 'PO Receiving', url: '/inventory/po-receive', description: 'Receive warehouse transfer POs assigned to you and report delivery shortages.' },
     { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', description: 'Return your allocated stock to the linked warehouse for inspection (good/damaged + batch).' },
     { title: 'Returns to Super Admin', url: '/inventory/main/returns', description: 'Review the stock you returned from your inventory to the super admin.' },

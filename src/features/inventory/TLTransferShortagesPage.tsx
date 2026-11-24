@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, Loader2, PackageSearch, Printer, Search } from 'lucide-react';
 import { useAuth } from '@/features/auth';
-import { usePermissions } from '@/hooks/usePermissions';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -107,7 +106,6 @@ export default function TLTransferShortagesPage() {
   const { user } = useAuth();
   const { toast } = useToast();
   const dispatch = useAppDispatch();
-  const { hasWarehouseHubLink, hasWarehouseHubLinkLoading } = usePermissions();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const [searchParams] = useSearchParams();
   const [statusFilter, setStatusFilter] = useState<'open' | 'all'>(() =>
@@ -125,8 +123,7 @@ export default function TLTransferShortagesPage() {
   const [saving, setSaving] = useState(false);
   const [printingId, setPrintingId] = useState<string | null>(null);
 
-  const canUsePage =
-    isAdmin || (user?.role === 'team_leader' && hasWarehouseHubLink === true);
+  const canUsePage = isAdmin || user?.role === 'team_leader';
 
   useTlTransferRealtime({
     enabled: canUsePage && !!user?.company_id,
@@ -339,15 +336,6 @@ export default function TLTransferShortagesPage() {
     }
   };
 
-  if (hasWarehouseHubLinkLoading && user?.role === 'team_leader') {
-    return (
-      <div className="flex items-center justify-center py-20 text-muted-foreground">
-        <Loader2 className="h-5 w-5 animate-spin mr-2" />
-        Loading...
-      </div>
-    );
-  }
-
   if (!canUsePage) {
     return (
       <div className="container mx-auto p-4">
@@ -355,8 +343,7 @@ export default function TLTransferShortagesPage() {
           <CardHeader>
             <CardTitle>Transfer shortages unavailable</CardTitle>
             <CardDescription>
-              This queue is for team leaders who dispatch TL-to-TL transfers (warehouse-linked
-              companies) and for company admins.
+              This queue is for team leaders who dispatch TL-to-TL transfers and for company admins.
             </CardDescription>
           </CardHeader>
         </Card>

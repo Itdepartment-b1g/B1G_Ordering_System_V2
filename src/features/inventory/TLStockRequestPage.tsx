@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Loader2, Package, Plus, Search } from 'lucide-react';
 import { useAuth } from '@/features/auth';
-import { usePermissions } from '@/hooks/usePermissions';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -241,7 +240,6 @@ function TransferGroupsTable({
 
 export default function TLStockRequestPage() {
   const { user } = useAuth();
-  const { hasWarehouseHubLink, hasWarehouseHubLinkLoading } = usePermissions();
   const { toast } = useToast();
   const [createOpen, setCreateOpen] = useState(false);
   const [viewOpen, setViewOpen] = useState(false);
@@ -268,16 +266,16 @@ export default function TLStockRequestPage() {
   const dispatchedLoading = dispatchedStatus === 'idle' || dispatchedStatus === 'loading';
 
   useEffect(() => {
-    if (!user?.id || !hasWarehouseHubLink) return;
+    if (!user?.id) return;
     void dispatch(fetchMyTlTransfers());
     if (user.role === 'team_leader') {
       void dispatch(fetchIncomingTlTransfers());
       void dispatch(fetchDispatchedTlTransfers());
     }
-  }, [dispatch, user?.id, user?.role, hasWarehouseHubLink]);
+  }, [dispatch, user?.id, user?.role]);
 
   useTlTransferRealtime({
-    enabled: !!user?.company_id && hasWarehouseHubLink,
+    enabled: !!user?.company_id,
     companyId: user?.company_id,
     channelKey: 'tl-page',
   });
@@ -435,30 +433,6 @@ export default function TLStockRequestPage() {
     );
   }
 
-  if (hasWarehouseHubLinkLoading) {
-    return (
-      <div className="flex items-center justify-center py-20 text-muted-foreground">
-        <Loader2 className="h-5 w-5 animate-spin mr-2" />
-        Loading...
-      </div>
-    );
-  }
-
-  if (!hasWarehouseHubLink) {
-    return (
-      <div className="container mx-auto p-4">
-        <Card>
-          <CardHeader>
-            <CardTitle>Stock transfers unavailable</CardTitle>
-            <CardDescription>
-              TL-to-TL stock transfers are only available when your company is linked to a warehouse.
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      </div>
-    );
-  }
-
   return (
     <div className="container mx-auto p-4 space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -466,7 +440,7 @@ export default function TLStockRequestPage() {
           <h1 className="text-2xl font-bold">Stock transfers</h1>
           <p className="text-muted-foreground">
             Request stock from another team leader. Super Admin approves, they dispatch, then you
-            receive.
+            receive. Works without a warehouse link.
           </p>
         </div>
         <Button onClick={() => setCreateOpen(true)}>

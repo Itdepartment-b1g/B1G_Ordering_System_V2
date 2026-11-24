@@ -4,7 +4,7 @@
  * Filtered postgres_changes on header.status / source_leader_id often drops UPDATEs
  * (replica identity + RLS). Item status changes (Found / Replace reopening Incoming)
  * also never hit a header-only subscription. The channel stays on Supabase; list
- * data is refetched through /api/motosales/tl-stock-transfers.
+ * data is refetched from Supabase in the client (no Vercel API).
  */
 import { useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
