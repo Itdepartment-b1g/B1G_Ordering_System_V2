@@ -23,7 +23,10 @@ import {
   type PreviewClientReturn,
   type PreviewClientReturnLine,
 } from '@/features/orders/client-returns/clientReturnPreview';
-import { formatVariantType, variantTypeBadgeClass } from '@/features/orders/client-returns/ClientReturnBrandTable';
+import {
+  formatVariantType,
+  variantTypeBadgeClass,
+} from '@/features/orders/client-returns/ClientReturnBrandTable';
 import { ClientReturnHistoryList } from '@/features/orders/client-returns/ClientReturnHistoryList';
 import { cn } from '@/lib/utils';
 
@@ -184,17 +187,15 @@ export default function MainInventoryReturnedDetailPage() {
           </Link>
         </Button>
         <div className="flex items-center gap-2">
-          <RotateCcw className="h-5 w-5 shrink-0 text-rose-600" />
-          <h1 className="text-2xl font-semibold tracking-tight">Returned Stock</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">RETURNED STOCKS</h1>
         </div>
         {variantId ? (
           <div className="space-y-1 pt-1">
-            {variantMeta.brandName ? (
-              <p className="text-sm font-semibold">{variantMeta.brandName}</p>
-            ) : null}
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-base font-medium leading-snug">
-                {variantMeta.variantName || 'Selected variant'}
+                {[variantMeta.brandName, variantMeta.variantName || 'Selected variant']
+                  .filter(Boolean)
+                  .join(' - ')}
               </p>
               {variantMeta.variantType ? (
                 <Badge
@@ -257,6 +258,7 @@ export default function MainInventoryReturnedDetailPage() {
       ) : (
         <ClientReturnHistoryList
           embedded
+          showConditionFilter={false}
           resetKey={`${variantId}|${brandId}|${scopedRows.length}`}
           rows={scopedRows}
           emptyTitle={

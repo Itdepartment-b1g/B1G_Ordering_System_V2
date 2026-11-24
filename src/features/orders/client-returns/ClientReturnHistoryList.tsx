@@ -542,6 +542,8 @@ export type ClientReturnHistoryListProps = {
   isError?: boolean;
   error?: unknown;
   embedded?: boolean;
+  /** When false, hides the Condition Filter sheet (default true). */
+  showConditionFilter?: boolean;
   resetKey?: string | number | boolean;
   emptyTitle?: string;
   emptyDescription?: string;
@@ -556,6 +558,7 @@ export function ClientReturnHistoryList({
   isError = false,
   error,
   embedded = false,
+  showConditionFilter = true,
   resetKey,
   emptyTitle = 'No client returns yet',
   emptyDescription = 'Returns filed from an approved order will show up here.',
@@ -1006,38 +1009,19 @@ export function ClientReturnHistoryList({
 
   const toolbar = (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-3">
+      {embedded ? null : (
         <div className="flex items-center gap-2 min-w-0">
-          {embedded ? null : <RotateCcw className="h-4 w-4 text-rose-600 shrink-0" />}
+          <RotateCcw className="h-4 w-4 text-rose-600 shrink-0" />
           <div className="min-w-0">
-            <h2 className={embedded ? 'text-sm font-semibold truncate' : 'font-semibold truncate'}>
+            <h2 className="font-semibold truncate">
               {filtered.length} return{filtered.length === 1 ? '' : 's'}
             </h2>
-            {embedded ? null : (
-              <p className="text-xs text-muted-foreground">Audit by date, people, reason, and status</p>
-            )}
+            <p className="text-xs text-muted-foreground">Audit by date, people, reason, and status</p>
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {hasActiveHistoryFilters ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-8 px-2 text-xs"
-              onClick={clearHistoryFilters}
-            >
-              <FilterX className="h-3.5 w-3.5 mr-1" />
-              Clear
-            </Button>
-          ) : null}
-          <div className="hidden lg:block">
-            <ViewModeToggle value={viewMode} onChange={setAndStoreViewMode} />
-          </div>
-        </div>
-      </div>
-      <div className="flex flex-col sm:flex-row gap-2">
-        <div className="relative w-full sm:flex-1">
+      )}
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+        <div className="relative w-full lg:flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="Search CR, order, client, actor..."
@@ -1046,7 +1030,19 @@ export function ClientReturnHistoryList({
             className="pl-10 h-9"
           />
         </div>
-        <div className="flex w-full gap-2 sm:w-auto shrink-0">
+        <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto lg:shrink-0">
+          {hasActiveHistoryFilters ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-9 px-2 text-xs"
+              onClick={clearHistoryFilters}
+            >
+              <FilterX className="h-3.5 w-3.5 mr-1" />
+              Clear
+            </Button>
+          ) : null}
           <HistoryQuickFilterSheet
             dateRange={dateRangeFilter}
             onDateRangeChange={setDateRangeFilter}
@@ -1067,15 +1063,20 @@ export function ClientReturnHistoryList({
             onClear={clearQuickFilters}
             triggerClassName="h-9 gap-1.5 shrink-0 flex-1 sm:flex-none"
           />
-          <ConditionFilterSheet
-            fields={historyFilterFields}
-            conditions={conditions}
-            onAddCondition={(condition) => setConditions((current) => [...current, condition])}
-            onRemoveCondition={(id) =>
-              setConditions((current) => current.filter((condition) => condition.id !== id))
-            }
-            onClear={clearPanelFilters}
-          />
+          {showConditionFilter ? (
+            <ConditionFilterSheet
+              fields={historyFilterFields}
+              conditions={conditions}
+              onAddCondition={(condition) => setConditions((current) => [...current, condition])}
+              onRemoveCondition={(id) =>
+                setConditions((current) => current.filter((condition) => condition.id !== id))
+              }
+              onClear={clearPanelFilters}
+            />
+          ) : null}
+          <div className="hidden lg:block">
+            <ViewModeToggle value={viewMode} onChange={setAndStoreViewMode} />
+          </div>
         </div>
       </div>
     </div>
@@ -1308,24 +1309,6 @@ export function ClientReturnHistoryList({
                         <TableCell colSpan={TABLE_COL_SPAN} className="bg-muted/10 p-4">
                           <div className="space-y-2 min-w-0 max-w-4xl ml-2">
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-muted-foreground mb-3">
-                              <p>
-                                Returned date{' '}
-                                <span className="font-medium text-foreground">
-                                  {formatReturnWhen(row.returnDate, 'MMM d, yyyy')}
-                                </span>
-                              </p>
-                              <p>
-                                Created{' '}
-                                <span className="font-medium text-foreground">
-                                  {formatReturnWhen(row.createdAt, 'MMM d, yyyy · h:mm a')}
-                                </span>
-                              </p>
-                              <p>
-                                Reason{' '}
-                                <Badge variant="outline" className="font-normal">
-                                  {formatClientReturnReason(row.reason)}
-                                </Badge>
-                              </p>
                               {isRefundReturn(row) ? (
                                 <p className="sm:col-span-2">
                                   TL not required · Super Admin approved by{' '}
@@ -1354,26 +1337,11 @@ export function ClientReturnHistoryList({
                                     </>
                                   ) : null}
                                 </p>
-                              ) : actor.kind ? (
-                                <p className="sm:col-span-2">
-                                  {actor.kind === 'reject' ? 'Rejected by' : 'TL approved by'}{' '}
-                                  <span className="font-medium text-foreground">{actor.name || '—'}</span>
-                                  {actor.at ? (
-                                    <>
-                                      {' · '}
-                                      <span className="font-medium text-foreground">
-                                        {formatReturnWhen(actor.at, 'MMM d, yyyy · h:mm a')}
-                                      </span>
-                                    </>
-                                  ) : null}
-                                  {' · '}
-                                  SA / Finance not required
-                                </p>
-                              ) : (
+                              ) : !actor.kind ? (
                                 <p className="sm:col-span-2">
                                   {tlWaiting(row) || 'Waiting TL'} · SA / Finance not required
                                 </p>
-                              )}
+                              ) : null}
                             </div>
                             <ReturnHistoryDetails row={row} />
                           </div>
