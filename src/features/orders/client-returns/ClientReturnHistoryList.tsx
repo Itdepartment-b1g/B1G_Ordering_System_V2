@@ -68,9 +68,10 @@ import {
   getReturnActionActor,
   type ClientReturnKind,
   type PreviewClientReturn,
+  type PreviewClientReturnLine,
   type PreviewClientReturnStatus,
 } from './clientReturnPreview';
-import { BrandReturnedTable, groupLinesByBrand } from './ClientReturnBrandTable';
+import { formatVariantType, groupLinesByBrand } from './ClientReturnBrandTable';
 import { ClientReturnExpandedMeta } from './ClientReturnExpandedMeta';
 import type { PackageProofPhotoItem } from '@/features/shared/components/MultiProofPhotoField';
 import {
@@ -484,19 +485,92 @@ function ReturnHistoryCard({
   );
 }
 
-function ReturnHistoryDetails({ row }: { row: PreviewClientReturn }) {
-  const brandGroups = groupLinesByBrand(row.lines);
+function AccordionBrandLinesTable({
+  lines,
+  qtyClassName = 'text-rose-700',
+}: {
+  lines: PreviewClientReturnLine[];
+  qtyClassName?: string;
+}) {
+  const groups = groupLinesByBrand(lines);
+  if (groups.length === 0) {
+    return <p className="text-sm text-muted-foreground">No item lines.</p>;
+  }
+
   return (
-    <div className="space-y-3 mb-2">
-      <ClientReturnExpandedMeta row={row} />
-      {brandGroups.map((group) => (
-        <BrandReturnedTable
-          key={group.brandName}
-          brandName={group.brandName}
-          variants={group.variants}
-          showStockFate
-        />
-      ))}
+    <div className="space-y-2">
+      {groups.map((group) => {
+        const totalUnits = group.variants.reduce((sum, line) => sum + (line.quantity || 0), 0);
+        return (
+          <div key={group.brandName} className="rounded-md border bg-background">
+            <div className="flex items-center justify-between gap-2 border-b bg-muted/40 px-3 py-2">
+              <p className="text-sm font-semibold truncate">{group.brandName}</p>
+              <span className={`text-xs font-semibold tabular-nums shrink-0 ${qtyClassName}`}>
+                {totalUnits.toLocaleString()} units
+              </span>
+            </div>
+            <Table className="w-full min-w-[22rem]">
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="h-8 px-3 text-[11px] uppercase tracking-wide text-muted-foreground">
+                    Variant
+                  </TableHead>
+                  <TableHead className="h-8 px-3 text-[11px] uppercase tracking-wide text-muted-foreground whitespace-nowrap">
+                    Type
+                  </TableHead>
+                  <TableHead className="h-8 px-3 text-[11px] uppercase tracking-wide text-muted-foreground text-right whitespace-nowrap">
+                    Unit
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {group.variants.map((line, index) => (
+                  <TableRow
+                    key={`${group.brandName}-${line.variantName}-${line.stockFate || ''}-${index}`}
+                    className="hover:bg-transparent"
+                  >
+                    <TableCell className="px-3 py-2 text-sm font-medium whitespace-nowrap">
+                      {line.variantName}
+                    </TableCell>
+                    <TableCell className="px-3 py-2 text-sm text-muted-foreground whitespace-nowrap">
+                      {formatVariantType(line.variantType)}
+                    </TableCell>
+                    <TableCell
+                      className={`px-3 py-2 text-right text-sm font-semibold tabular-nums whitespace-nowrap ${qtyClassName}`}
+                    >
+                      {(line.quantity || 0).toLocaleString()}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ReturnHistoryDetails({ row }: { row: PreviewClientReturn }) {
+  const changeLines = row.changeLines || [];
+  const showChange = changeLines.length > 0;
+  return (
+    <div className="w-max min-w-full space-y-3">
+      <div className="min-w-[36rem]">
+        <ClientReturnExpandedMeta row={row} />
+      </div>
+      <div className="flex gap-3">
+        <div className="w-[28rem] shrink-0 space-y-2">
+          <p className="text-xs font-semibold">Returned</p>
+          <AccordionBrandLinesTable lines={row.lines} />
+        </div>
+        {showChange ? (
+          <div className="w-[28rem] shrink-0 space-y-2">
+            <p className="text-xs font-semibold">Change item</p>
+            <AccordionBrandLinesTable lines={changeLines} qtyClassName="text-emerald-700" />
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -1306,44 +1380,49 @@ export function ClientReturnHistoryList({
                     </TableRow>
                     {isOpen ? (
                       <TableRow className="hover:bg-transparent">
-                        <TableCell colSpan={TABLE_COL_SPAN} className="bg-muted/10 p-4">
-                          <div className="space-y-2 min-w-0 max-w-4xl ml-2">
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-muted-foreground mb-3">
-                              {isRefundReturn(row) ? (
-                                <p className="sm:col-span-2">
-                                  TL not required · Super Admin approved by{' '}
-                                  <span className="font-medium text-foreground">
-                                    {row.saApprovedByName || refundSaWaiting(row) || '—'}
-                                  </span>
-                                  {row.saApprovedAt ? (
-                                    <>
-                                      {' · '}
-                                      <span className="font-medium text-foreground">
-                                        {formatReturnWhen(row.saApprovedAt, 'MMM d, yyyy · h:mm a')}
-                                      </span>
-                                    </>
-                                  ) : null}
-                                  {' · '}
-                                  Finance Approved by{' '}
-                                  <span className="font-medium text-foreground">
-                                    {row.approvedByName || refundFinanceWaiting(row) || '—'}
-                                  </span>
-                                  {row.approvedAt ? (
-                                    <>
-                                      {' · '}
-                                      <span className="font-medium text-foreground">
-                                        {formatReturnWhen(row.approvedAt, 'MMM d, yyyy · h:mm a')}
-                                      </span>
-                                    </>
-                                  ) : null}
-                                </p>
-                              ) : !actor.kind ? (
-                                <p className="sm:col-span-2">
-                                  {tlWaiting(row) || 'Waiting TL'} · SA / Finance not required
-                                </p>
-                              ) : null}
+                        <TableCell colSpan={TABLE_COL_SPAN} className="bg-muted/10 p-0">
+                          <div
+                            className="sticky left-0 overflow-x-auto overscroll-x-contain p-4"
+                            style={{ width: 'min(56rem, calc(100vw - 3rem))' }}
+                          >
+                            <div className="w-max min-w-full space-y-2">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-muted-foreground mb-3 min-w-[36rem]">
+                                {isRefundReturn(row) ? (
+                                  <p className="sm:col-span-2">
+                                    TL not required · Super Admin approved by{' '}
+                                    <span className="font-medium text-foreground">
+                                      {row.saApprovedByName || refundSaWaiting(row) || '—'}
+                                    </span>
+                                    {row.saApprovedAt ? (
+                                      <>
+                                        {' · '}
+                                        <span className="font-medium text-foreground">
+                                          {formatReturnWhen(row.saApprovedAt, 'MMM d, yyyy · h:mm a')}
+                                        </span>
+                                      </>
+                                    ) : null}
+                                    {' · '}
+                                    Finance Approved by{' '}
+                                    <span className="font-medium text-foreground">
+                                      {row.approvedByName || refundFinanceWaiting(row) || '—'}
+                                    </span>
+                                    {row.approvedAt ? (
+                                      <>
+                                        {' · '}
+                                        <span className="font-medium text-foreground">
+                                          {formatReturnWhen(row.approvedAt, 'MMM d, yyyy · h:mm a')}
+                                        </span>
+                                      </>
+                                    ) : null}
+                                  </p>
+                                ) : !actor.kind ? (
+                                  <p className="sm:col-span-2">
+                                    {tlWaiting(row) || 'Waiting TL'} · SA / Finance not required
+                                  </p>
+                                ) : null}
+                              </div>
+                              <ReturnHistoryDetails row={row} />
                             </div>
-                            <ReturnHistoryDetails row={row} />
                           </div>
                         </TableCell>
                       </TableRow>
