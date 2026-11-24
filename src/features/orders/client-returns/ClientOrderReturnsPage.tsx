@@ -18,7 +18,6 @@ import {
 } from './clientReturnApi';
 import { ClientReturnHistoryList } from './ClientReturnHistoryList';
 import { ReturnedInventoryPanel } from './ReturnedInventoryPanel';
-import { ReturnedStockDetailDialog } from './ReturnedStockDetailDialog';
 import { ReturnLeaderViewDialog } from './ReturnLeaderViewDialog';
 import { ReturnToLeaderPanel } from './ReturnToLeaderPanel';
 import {
@@ -109,7 +108,6 @@ function ClientOrderReturnsView() {
   const rows = Array.isArray(returnsData) ? returnsData : EMPTY_RETURNS;
 
   const [pageTab, setPageTab] = useState<PageTab>('history');
-  const [inventoryRow, setInventoryRow] = useState<ReturnedInventoryRow | null>(null);
   const [rlViewRow, setRlViewRow] = useState<ReturnLeaderHandover | null>(null);
   const [rlActionRow, setRlActionRow] = useState<ReturnLeaderHandover | null>(null);
   const [rlConfirmKind, setRlConfirmKind] = useState<RlConfirmKind>(null);
@@ -374,11 +372,7 @@ function ClientOrderReturnsView() {
               <ReturnedInventoryPanel
                 rows={inventoryRows}
                 onRowClick={(row) => {
-                  if (isMobile) {
-                    navigate(`/client-order-returns/item/${row.variantId}`);
-                    return;
-                  }
-                  setInventoryRow(row);
+                  navigate(`/client-order-returns/item/${row.variantId}`);
                 }}
                 canBulkReturn={canBulkReturn}
                 companyId={user?.company_id}
@@ -413,18 +407,6 @@ function ClientOrderReturnsView() {
         </TabsContent>
       </Tabs>
 
-      <ReturnedStockDetailDialog
-        open={!!inventoryRow}
-        onOpenChange={(open) => {
-          if (!open) setInventoryRow(null);
-        }}
-        brandName={inventoryRow?.brandName}
-        variantName={inventoryRow?.variantName || ''}
-        variantType={inventoryRow?.variantType}
-        variantId={inventoryRow?.variantId}
-        totalReturned={inventoryRow?.qty || 0}
-        returns={inventoryRow?.returns || []}
-      />
       <ReturnLeaderViewDialog
         open={!!rlViewRow}
         onOpenChange={(open) => {

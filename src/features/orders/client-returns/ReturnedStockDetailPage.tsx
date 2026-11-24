@@ -1,12 +1,20 @@
-import { useMemo } from 'react';
+import { useMemo, type ElementType } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Loader2, RotateCcw } from 'lucide-react';
+import {
+  ArrowLeft,
+  ArrowLeftRight,
+  Loader2,
+  Package,
+  PackageOpen,
+  RotateCcw,
+  Trash2,
+} from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import { useAuth } from '@/features/auth';
 import { usePermissions } from '@/hooks/usePermissions';
+import { cn } from '@/lib/utils';
 import {
   buildReturnedInventoryRows,
   canShowClientOrderReturns,
@@ -21,6 +29,27 @@ import type { PreviewClientReturn } from './clientReturnPreview';
 
 const EMPTY_RETURNS: PreviewClientReturn[] = [];
 const EMPTY_HOLDS: ReturnedInventoryRow[] = [];
+
+type StatCardProps = {
+  label: string;
+  value: string;
+  icon: ElementType;
+  accentClassName: string;
+};
+
+function StatCard({ label, value, icon: Icon, accentClassName }: StatCardProps) {
+  return (
+    <div className="flex items-center gap-3 border border-border/70 bg-background px-3 py-2.5">
+      <div className={cn('flex h-8 w-8 shrink-0 items-center justify-center', accentClassName)}>
+        <Icon className="h-4 w-4" />
+      </div>
+      <div className="min-w-0">
+        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
+        <p className="text-lg font-semibold tabular-nums leading-tight">{value}</p>
+      </div>
+    </div>
+  );
+}
 
 export default function ReturnedStockDetailPage() {
   const { variantId = '' } = useParams<{ variantId: string }>();
@@ -37,6 +66,8 @@ export default function ReturnedStockDetailPage() {
   const { data: rows = EMPTY_RETURNS, isLoading: listLoading } = useQuery({
     queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY, 'list', user?.company_id],
     enabled: showReturns && !!user?.company_id,
+    staleTime: 0,
+    refetchOnMount: 'always',
     queryFn: fetchClientOrderReturns,
   });
 
@@ -47,6 +78,8 @@ export default function ReturnedStockDetailPage() {
   } = useQuery({
     queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY, holderId],
     enabled: showReturns && !!holderId,
+    staleTime: 0,
+    refetchOnMount: 'always',
     queryFn: () => fetchClientReturnStockHolds(holderId!),
   });
 
@@ -67,7 +100,59 @@ export default function ReturnedStockDetailPage() {
     return buildReturnedInventoryRows(rows, { holderId }).find((row) => row.variantId === variantId) || null;
   }, [holdRows, holdsErrorMsg, holderId, isLeader, rows, variantId]);
 
+  const scopedReturns = inventoryRow?.returns || EMPTY_RETURNS;
+
+  const stats = useMemo(() => {
+    let totalUnits = 0;
+    let totalRestock = 0;
+    let totalDisposals = 0;
+    let changeItemCount = 0;
+
+    for (const row of scopedReturns) {
+      if (row.returnType === 'change_item') changeItemCount += 1;
+
+      const lines = (row.lines || []).filter((line) => !variantId || line.variantId === variantId);
+      for (const line of lines) {
+        const qty = Number(line.quantity) || 0;
+        totalUnits += qty;
+        if (line.stockFate === 'restock') totalRestock += qty;
+        else totalDisposals += qty;
+      }
+    }
+
+    // Held disposal qty is the source of truth for this page when CR history is incomplete.
+    const heldQty = inventoryRow?.qty || 0;
+    if (heldQty > totalUnits) {
+      totalDisposals += heldQty - totalUnits;
+      totalUnits = heldQty;
+    }
+
+    return {
+      totalReturns: scopedReturns.length,
+      totalUnits,
+      totalRestock,
+      totalDisposals,
+      changeItemCount,
+    };
+  }, [scopedReturns, variantId, inventoryRow?.qty]);
+
   const loading = listLoading || holdsLoading;
+
+  if (!showReturns) {
+    return (
+      <div className="space-y-4 p-4 md:p-6">
+        <Button variant="ghost" size="sm" className="-ml-2 gap-1.5" asChild>
+          <Link to="/client-order-returns">
+            <ArrowLeft className="h-4 w-4" />
+            Back to returned items
+          </Link>
+        </Button>
+        <p className="text-sm text-muted-foreground">
+          Returned stock is not available for this account.
+        </p>
+      </div>
+    );
+  }
 
   if (loading && !inventoryRow) {
     return (
@@ -84,40 +169,39 @@ export default function ReturnedStockDetailPage() {
         <Button variant="ghost" size="sm" className="-ml-2 gap-1.5" asChild>
           <Link to="/client-order-returns">
             <ArrowLeft className="h-4 w-4" />
-            Back to client returns
+            Back to returned items
           </Link>
         </Button>
-        <Card>
-          <CardContent className="py-10 text-center text-muted-foreground">
-            <p className="font-medium text-foreground">Returned item not found</p>
-            <Button className="mt-4" asChild>
-              <Link to="/client-order-returns">Go to Client Returns</Link>
-            </Button>
-          </CardContent>
-        </Card>
+        <p className="text-sm font-medium">Returned item not found</p>
+        <p className="text-sm text-muted-foreground">
+          This variant is not in your returned stock holdings.
+        </p>
+        <Button asChild>
+          <Link to="/client-order-returns">Go to Returned Items</Link>
+        </Button>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4 p-4 pb-8 md:p-6">
-      <div className="space-y-2">
+    <div className="mx-auto max-w-6xl space-y-5 p-4 pb-8 md:p-6">
+      <div className="space-y-1">
         <Button variant="ghost" size="sm" className="-ml-2 gap-1.5" asChild>
           <Link to="/client-order-returns">
             <ArrowLeft className="h-4 w-4" />
-            Back to client returns
+            Back to returned items
           </Link>
         </Button>
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 space-y-1">
-            <div className="flex items-center gap-2">
-              <RotateCcw className="h-5 w-5 shrink-0 text-rose-600" />
-              <h1 className="text-2xl font-semibold tracking-tight">Returned items</h1>
-            </div>
-            {inventoryRow.brandName ? (
-              <p className="text-sm font-semibold">{inventoryRow.brandName}</p>
-            ) : null}
-            <p className="text-base font-medium leading-snug">{inventoryRow.variantName}</p>
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-semibold tracking-tight">RETURNED STOCKS</h1>
+        </div>
+        <div className="space-y-1 pt-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-base font-medium leading-snug">
+              {[inventoryRow.brandName, inventoryRow.variantName || 'Selected variant']
+                .filter(Boolean)
+                .join(' - ')}
+            </p>
             {inventoryRow.variantType ? (
               <Badge
                 variant="secondary"
@@ -127,31 +211,67 @@ export default function ReturnedStockDetailPage() {
               </Badge>
             ) : null}
           </div>
-          <div className="shrink-0 text-right">
-            <p className="text-3xl font-bold tabular-nums leading-none text-rose-700">
-              {inventoryRow.qty}
-            </p>
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              unit{inventoryRow.qty === 1 ? '' : 's'} returned
-            </p>
-          </div>
+          <p className="text-sm text-muted-foreground">
+            Showing client returns for this held returned variant.
+          </p>
         </div>
       </div>
 
-      <ClientReturnHistoryList
-        embedded
-        resetKey={inventoryRow.variantId}
-        rows={inventoryRow.returns}
-        emptyTitle={
-          inventoryRow.qty > 0 ? 'No matching client returns' : 'No returns for this variant'
-        }
-        emptyDescription={
-          inventoryRow.qty > 0
-            ? 'Stock is held, but linked CR history was not found.'
-            : undefined
-        }
-        getDetailHref={(row) => `/client-order-returns/cr/${row.id}`}
-      />
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+        <StatCard
+          label="Total Returns"
+          value={stats.totalReturns.toLocaleString()}
+          icon={PackageOpen}
+          accentClassName="bg-sky-50 text-sky-700"
+        />
+        <StatCard
+          label="Total Units"
+          value={stats.totalUnits.toLocaleString()}
+          icon={Package}
+          accentClassName="bg-slate-100 text-slate-700"
+        />
+        <StatCard
+          label="Total Restock"
+          value={stats.totalRestock.toLocaleString()}
+          icon={RotateCcw}
+          accentClassName="bg-emerald-50 text-emerald-700"
+        />
+        <StatCard
+          label="Total Disposals"
+          value={stats.totalDisposals.toLocaleString()}
+          icon={Trash2}
+          accentClassName="bg-rose-50 text-rose-700"
+        />
+        <StatCard
+          label="Total Change Item"
+          value={stats.changeItemCount.toLocaleString()}
+          icon={ArrowLeftRight}
+          accentClassName="bg-amber-50 text-amber-800"
+        />
+      </div>
+
+      {loading ? (
+        <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading returned items…
+        </div>
+      ) : (
+        <ClientReturnHistoryList
+          embedded
+          showConditionFilter={false}
+          resetKey={inventoryRow.variantId}
+          rows={scopedReturns}
+          emptyTitle={
+            inventoryRow.qty > 0 ? 'No matching client returns' : 'No returns for this variant'
+          }
+          emptyDescription={
+            inventoryRow.qty > 0
+              ? 'Stock is held, but linked CR history was not found.'
+              : undefined
+          }
+          getDetailHref={(row) => `/client-order-returns/cr/${row.id}`}
+        />
+      )}
     </div>
   );
 }

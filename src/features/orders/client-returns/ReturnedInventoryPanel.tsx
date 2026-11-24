@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronDown, ChevronRight, RotateCcw, Search } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { RotateCcw, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -12,11 +11,11 @@ import {
 } from '@/features/shared/components/ListPagination';
 import { useToast } from '@/hooks/use-toast';
 import { NO_WAREHOUSE_DISPOSAL_NOTE, type ReturnedInventoryRow } from './clientReturnApi';
-import { formatVariantType, variantTypeBadgeClass } from './ClientReturnBrandTable';
+import { AccordionBrandLinesTable, type AccordionBrandLine } from './AccordionBrandLinesTable';
 import { BulkReturnDialog } from './BulkReturnDialog';
+import { generateAndOpenReturnedInventoryPdf } from './generateReturnedInventoryPdf';
 
 const PAGE_SIZE: PageSize = 25;
-const ROW_COLS = 'grid grid-cols-[minmax(0,1fr)_5rem] items-center gap-3';
 
 type BrandGroup = {
   brandName: string;
@@ -53,6 +52,17 @@ function groupRowsByBrand(rows: ReturnedInventoryRow[]): BrandGroup[] {
     }));
 }
 
+function rowsToAccordionLines(rows: ReturnedInventoryRow[]): AccordionBrandLine[] {
+  return rows.map((row) => ({
+    brandId: row.brandId,
+    brandName: row.brandName,
+    variantId: row.variantId,
+    variantName: row.variantName,
+    variantType: row.variantType,
+    quantity: row.qty,
+  }));
+}
+
 export function ReturnedInventoryPanel({
   rows,
   onRowClick,
@@ -69,7 +79,6 @@ export function ReturnedInventoryPanel({
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(PAGE_SIZE);
   const [bulkOpen, setBulkOpen] = useState(false);
-  const [openBrands, setOpenBrands] = useState<Set<string>>(new Set());
   const isTeamLeader = holderRole === 'team_leader';
   const canDisposeToWarehouse = isTeamLeader && rows.length > 0;
 
@@ -104,24 +113,23 @@ export function ReturnedInventoryPanel({
   );
 
   const { pagedItems, safePage, pageCount } = getListPaginationSlice(brandGroups, page, pageSize);
-  const pageBrandKey = pagedItems.map((group) => group.brandName).join('\0');
+
+  const pagedLines = useMemo(
+    () => rowsToAccordionLines(pagedItems.flatMap((group) => group.variants)),
+    [pagedItems]
+  );
+
+  const rowByVariantId = useMemo(() => {
+    const map = new Map<string, ReturnedInventoryRow>();
+    for (const row of filteredRows) {
+      map.set(row.variantId, row);
+    }
+    return map;
+  }, [filteredRows]);
 
   useEffect(() => {
     setPage(0);
   }, [searchQuery, pageSize, rows.length]);
-
-  useEffect(() => {
-    setOpenBrands(new Set(pageBrandKey ? pageBrandKey.split('\0') : []));
-  }, [pageBrandKey]);
-
-  const toggleBrandOpen = (brandName: string) => {
-    setOpenBrands((current) => {
-      const next = new Set(current);
-      if (next.has(brandName)) next.delete(brandName);
-      else next.add(brandName);
-      return next;
-    });
-  };
 
   const showWarehouseNote = !hasWarehouseHubLink && rows.length > 0;
 
@@ -200,69 +208,18 @@ export function ReturnedInventoryPanel({
             </div>
           ) : (
             <>
-              <div className="hidden sm:grid grid-cols-[minmax(0,1fr)_5rem] gap-3 px-4 text-xs font-medium text-muted-foreground">
-                <span>Brand / Variant</span>
-                <span className="text-right">Qty</span>
-              </div>
-
-              <div className="space-y-3">
-                {pagedItems.map((group) => {
-                  const isOpen = openBrands.has(group.brandName);
-                  return (
-                    <section
-                      key={group.brandName}
-                      className="rounded-xl border bg-background overflow-hidden shadow-sm"
-                    >
-                      <button
-                        type="button"
-                        className={`${ROW_COLS} w-full px-4 py-3 bg-muted/40 border-b text-left hover:bg-muted/60`}
-                        onClick={() => toggleBrandOpen(group.brandName)}
-                      >
-                        <div className="min-w-0 flex items-center gap-2">
-                          <h3 className="font-semibold text-base truncate">{group.brandName}</h3>
-                          <span className="text-xs text-muted-foreground shrink-0 tabular-nums">
-                            {group.variants.length} variant{group.variants.length === 1 ? '' : 's'}
-                          </span>
-                          <ChevronDown
-                            className={`ml-auto h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
-                              isOpen ? 'rotate-180' : ''
-                            }`}
-                          />
-                        </div>
-                        <p className="text-right font-semibold tabular-nums text-rose-700">{group.qty}</p>
-                      </button>
-
-                      {isOpen ? (
-                        <ul className="divide-y">
-                          {group.variants.map((row) => (
-                            <li key={row.variantId}>
-                              <button
-                                type="button"
-                                onClick={() => onRowClick(row)}
-                                className={`${ROW_COLS} w-full px-4 py-3 text-left hover:bg-rose-50/40 active:bg-muted/40`}
-                              >
-                                <div className="min-w-0">
-                                  <p className="font-medium leading-snug break-words">{row.variantName}</p>
-                                  <Badge
-                                    variant="secondary"
-                                    className={`mt-1 font-normal ${variantTypeBadgeClass(row.variantType)}`}
-                                  >
-                                    {formatVariantType(row.variantType)}
-                                  </Badge>
-                                </div>
-                                <div className="flex items-center justify-end gap-1">
-                                  <span className="text-lg font-bold tabular-nums text-rose-700">{row.qty}</span>
-                                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                                </div>
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : null}
-                    </section>
-                  );
-                })}
-              </div>
+              <AccordionBrandLinesTable
+                lines={pagedLines}
+                typeColumnLabel="Variant type"
+                onLineClick={(line) => {
+                  const row = line.variantId ? rowByVariantId.get(line.variantId) : undefined;
+                  if (row) onRowClick(row);
+                }}
+                onLinePrint={(line) => {
+                  const row = line.variantId ? rowByVariantId.get(line.variantId) : undefined;
+                  if (row) generateAndOpenReturnedInventoryPdf(row);
+                }}
+              />
 
               <ListPagination
                 pageSize={pageSize}
