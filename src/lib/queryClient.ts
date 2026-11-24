@@ -56,6 +56,8 @@ const NON_PERSISTED_QUERY_KEYS = new Set([
     'client-order-returns',
     'return-leader-handovers',
     'client-return-stock-holds',
+    // Warehouse hub link flips when SA assigns a warehouse; never serve a stale false.
+    'has-warehouse-hub-link',
     COMPANY_AGENT_INVENTORY_QUERY_KEY,
 ]);
 

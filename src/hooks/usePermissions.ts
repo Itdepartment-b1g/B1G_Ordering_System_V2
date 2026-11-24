@@ -23,6 +23,9 @@ export function usePermissions() {
       return !!data;
     },
     staleTime: 1000 * 60, // 1 minute
+    // Override app defaults so a prior false is not kept after SA links a warehouse.
+    refetchOnMount: 'always',
+    gcTime: 0,
   });
 
   const lockStandardCatalog = hasWarehouseHubLink === true;
