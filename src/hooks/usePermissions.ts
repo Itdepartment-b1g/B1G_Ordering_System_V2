@@ -62,6 +62,21 @@ export function usePermissions() {
       return user?.role === 'team_leader' && hasWarehouseHubLink === true;
     }
 
+    // TL-to-TL stock transfers — bag-to-bag inside the same company. No warehouse hub required.
+    if (route === '/inventory/tl-stock-requests') {
+      return user?.role === 'team_leader';
+    }
+    if (route === '/inventory/admin-tl-requests') {
+      return user?.role === 'admin' || user?.role === 'super_admin';
+    }
+    if (route === '/inventory/tl-transfer-shortages') {
+      return (
+        user?.role === 'team_leader' ||
+        user?.role === 'admin' ||
+        user?.role === 'super_admin'
+      );
+    }
+
     // Client order returns (CR) — no warehouse hub required. Hub only affects disposal handover (RT).
     if (route === '/client-order-returns' || route.startsWith('/client-order-returns/')) {
       return canShowClientOrderReturns(hasWarehouseHubLink === true, user?.role);

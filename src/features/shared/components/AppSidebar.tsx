@@ -44,6 +44,7 @@ import {
   ClipboardCheck,
   Book,
   CheckCircle2,
+  ArrowRightLeft,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -91,7 +92,7 @@ const adminMenuItems: MenuItem[] = [
       { title: 'Main Inventory', url: '/inventory/main', icon: Package },
       { title: 'Stock Allocations', url: '/inventory/allocations', icon: Users },
       { title: 'Inventory Requests', url: '/inventory/admin-requests', icon: Send },
-      { title: 'TL Stock Requests', url: '/inventory/admin-tl-requests', icon: Users },
+      { title: 'TL Stock Transfers', url: '/inventory/admin-tl-requests', icon: ArrowRightLeft },
       { title: 'Team Remittances', url: '/inventory/admin-team-remittances', icon: Users },
       { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
       { title: 'Price History', url: '/inventory/price-history', icon: History },
@@ -312,6 +313,7 @@ const leaderMenuItems: MenuItem[] = [
       { title: 'Pending Requests', url: '/inventory/pending-requests', icon: Send },
       { title: 'Team Remittances', url: '/inventory/team-remittances', icon: ArrowLeft },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: DollarSign },
+      { title: 'Stock Transfers', url: '/inventory/tl-stock-requests', icon: ArrowRightLeft },
       { title: 'PO Receiving', url: '/inventory/po-receive', icon: PackageCheck },
       { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
       { title: 'Price Agreements', url: '/inventory/price-agreements', icon: CheckCircle2 },
@@ -487,6 +489,7 @@ const superAdminMenuItems: MenuItem[] = [
       { title: 'Main Inventory', url: '/inventory/main', icon: Package },
       { title: 'Stock Allocations', url: '/inventory/allocations', icon: Users },
       { title: 'Inventory Requests', url: '/inventory/admin-requests', icon: Send },
+      { title: 'TL Stock Transfers', url: '/inventory/admin-tl-requests', icon: ArrowRightLeft },
       { title: 'Team Remittances', url: '/inventory/admin-team-remittances', icon: Users },
       { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
       { title: 'Price History', url: '/inventory/price-history', icon: History },

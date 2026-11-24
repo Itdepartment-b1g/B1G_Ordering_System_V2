@@ -17,7 +17,6 @@ import {
   Loader2,
   Plus,
   Search,
-  Users,
   ShoppingCart,
   Trash2,
   FileText,
@@ -29,11 +28,6 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { useQueryClient, useQuery } from '@tanstack/react-query';
 import type { TLStockRequest, TLRequestWithDetails, RequestCartItem } from '@/types/tlStockRequests.types';
-
-interface Manager {
-  id: string;
-  full_name: string;
-}
 
 interface TeamLeader {
   id: string;
@@ -55,7 +49,6 @@ export default function TLStockRequestPage() {
   const queryClient = useQueryClient();
   
   // Selection states
-  const [selectedManagerId, setSelectedManagerId] = useState<string>('');
   const [selectedSourceTLId, setSelectedSourceTLId] = useState<string>('');
   const [selectedSourceTL, setSelectedSourceTL] = useState<TeamLeader | null>(null);
   
@@ -78,60 +71,25 @@ export default function TLStockRequestPage() {
   // Signature
   const [signatureDataUrl, setSignatureDataUrl] = useState<string>('');
   
-  // Fetch managers
-  const { data: managers = [], isLoading: managersLoading } = useQuery({
-    queryKey: ['managers', user?.company_id],
-    queryFn: async () => {
-      if (!user?.company_id) return [];
-      
-      const { data, error } = await supabase
-        .from('sub_teams')
-        .select(`
-          manager_id,
-          manager:profiles!sub_teams_manager_id_fkey(id, full_name)
-        `)
-        .eq('company_id', user.company_id);
-      
-      if (error) throw error;
-      
-      // Get unique managers
-      const uniqueManagers = new Map<string, Manager>();
-      data?.forEach((item: any) => {
-        if (item.manager) {
-          uniqueManagers.set(item.manager.id, item.manager);
-        }
-      });
-      
-      const managerList = Array.from(uniqueManagers.values());
-      console.log('📋 Available Manager Teams:', managerList.length, managerList);
-      return managerList;
-    },
-    enabled: !!user?.company_id,
-  });
-  
-  // Fetch team leaders under selected manager
+  // All other active team leaders in this company (warehouse link not required).
   const { data: teamLeaders = [], isLoading: teamLeadersLoading } = useQuery({
-    queryKey: ['team-leaders', selectedManagerId, user?.company_id],
+    queryKey: ['tl-transfer-leaders', user?.company_id, user?.id],
     queryFn: async () => {
-      if (!selectedManagerId || !user?.company_id) return [];
-      
+      if (!user?.company_id || !user?.id) return [];
+
       const { data, error } = await supabase
-        .from('sub_teams')
-        .select(`
-          leader_id,
-          leader:profiles!sub_teams_leader_id_fkey(id, full_name, region)
-        `)
-        .eq('manager_id', selectedManagerId)
-        .eq('company_id', user.company_id);
-      
+        .from('profiles')
+        .select('id, full_name, region')
+        .eq('company_id', user.company_id)
+        .eq('role', 'team_leader')
+        .eq('status', 'active')
+        .neq('id', user.id)
+        .order('full_name');
+
       if (error) throw error;
-      
-      // Filter out current user
-      const leaders = (data?.map((item: any) => item.leader).filter((tl: TeamLeader) => tl && tl.id !== user.id) || []) as TeamLeader[];
-      console.log('👥 Team Leaders in selected manager team:', leaders.length, leaders);
-      return leaders;
+      return (data || []) as TeamLeader[];
     },
-    enabled: !!selectedManagerId && !!user?.company_id,
+    enabled: !!user?.company_id && !!user?.id,
   });
   
   // Fetch source TL inventory (without quantities)
@@ -292,7 +250,7 @@ export default function TLStockRequestPage() {
   
   // Submit requests
   const handleSubmitRequests = async () => {
-    if (!user?.company_id || !selectedSourceTLId || !selectedManagerId) return;
+    if (!user?.company_id || !selectedSourceTLId) return;
     if (cart.length === 0) {
       toast({
         title: 'Empty Cart',
@@ -490,8 +448,11 @@ export default function TLStockRequestPage() {
     <div className="container mx-auto p-4 space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-bold">Stock Requests from Team Leaders</h1>
-        <p className="text-muted-foreground">Request stock from another team leader in your company</p>
+        <h1 className="text-3xl font-bold">Stock transfers</h1>
+        <p className="text-muted-foreground">
+          Request stock from another team leader in your company. Super Admin approves, they
+          dispatch, then you receive. This does not need a warehouse link.
+        </p>
       </div>
       
       {/* Statistics */}
@@ -535,89 +496,50 @@ export default function TLStockRequestPage() {
             <Plus className="h-5 w-5" />
             Create New Request
           </CardTitle>
-          <CardDescription>Select a team leader and request stock from their inventory</CardDescription>
+          <CardDescription>
+            Choose any other team leader in this company and request stock from their bag.
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* Manager Selection */}
+          {/* Team Leader Selection */}
           <div className="space-y-2">
-            <Label htmlFor="manager">Select Manager Team</Label>
+            <Label htmlFor="source-tl">Select source team leader</Label>
             <Select
-              value={selectedManagerId}
+              value={selectedSourceTLId}
               onValueChange={(value) => {
-                setSelectedManagerId(value);
-                setSelectedSourceTLId('');
-                setSelectedSourceTL(null);
+                setSelectedSourceTLId(value);
+                const tl = teamLeaders.find((t) => t.id === value);
+                setSelectedSourceTL(tl || null);
                 setCart([]);
               }}
             >
-              <SelectTrigger id="manager">
-                <SelectValue placeholder="Select any manager team in your company" />
+              <SelectTrigger id="source-tl">
+                <SelectValue placeholder="Choose a team leader to request from" />
               </SelectTrigger>
               <SelectContent>
-                {managersLoading ? (
+                {teamLeadersLoading ? (
                   <SelectItem value="loading" disabled>
                     Loading...
                   </SelectItem>
-                ) : managers.length === 0 ? (
+                ) : teamLeaders.length === 0 ? (
                   <SelectItem value="none" disabled>
-                    No manager teams found
+                    No other team leaders found
                   </SelectItem>
                 ) : (
-                  managers.map((manager) => (
-                    <SelectItem key={manager.id} value={manager.id}>
-                      {manager.full_name}'s Team
+                  teamLeaders.map((tl) => (
+                    <SelectItem key={tl.id} value={tl.id}>
+                      {tl.full_name} {tl.region ? `(${tl.region})` : ''}
                     </SelectItem>
                   ))
                 )}
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              Choose from any manager team in your company ({managers.length} available)
+              {teamLeaders.length === 0
+                ? 'No other active team leaders in this company'
+                : `${teamLeaders.length} team leader(s) available (excluding yourself)`}
             </p>
           </div>
-          
-          {/* Team Leader Selection */}
-          {selectedManagerId && (
-            <div className="space-y-2">
-              <Label htmlFor="source-tl">Select Source Team Leader</Label>
-              <Select
-                value={selectedSourceTLId}
-                onValueChange={(value) => {
-                  setSelectedSourceTLId(value);
-                  const tl = teamLeaders.find((t) => t.id === value);
-                  setSelectedSourceTL(tl || null);
-                  setCart([]);
-                }}
-              >
-                <SelectTrigger id="source-tl">
-                  <SelectValue placeholder="Choose a team leader to request from" />
-                </SelectTrigger>
-                <SelectContent>
-                  {teamLeadersLoading ? (
-                    <SelectItem value="loading" disabled>
-                      Loading...
-                    </SelectItem>
-                  ) : teamLeaders.length === 0 ? (
-                    <SelectItem value="none" disabled>
-                      No team leaders found
-                    </SelectItem>
-                  ) : (
-                    teamLeaders.map((tl) => (
-                      <SelectItem key={tl.id} value={tl.id}>
-                        {tl.full_name} {tl.region ? `(${tl.region})` : ''}
-                      </SelectItem>
-                    ))
-                  )}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                {teamLeaders.length === 0 
-                  ? 'No other team leaders in this manager team'
-                  : `${teamLeaders.length} team leader(s) available (excluding yourself)`
-                }
-              </p>
-            </div>
-          )}
           
           {/* Source TL Inventory */}
           {selectedSourceTLId && (
