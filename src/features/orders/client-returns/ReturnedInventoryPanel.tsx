@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { RotateCcw, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -9,10 +8,10 @@ import {
   ListPagination,
   type PageSize,
 } from '@/features/shared/components/ListPagination';
-import { useToast } from '@/hooks/use-toast';
 import { NO_WAREHOUSE_DISPOSAL_NOTE, type ReturnedInventoryRow } from './clientReturnApi';
 import { AccordionBrandLinesTable, type AccordionBrandLine } from './AccordionBrandLinesTable';
 import { BulkReturnDialog } from './BulkReturnDialog';
+import { DisposeToWarehouseDialog } from './DisposeToWarehouseDialog';
 import { generateAndOpenReturnedInventoryPdf } from './generateReturnedInventoryPdf';
 
 const PAGE_SIZE: PageSize = 25;
@@ -28,6 +27,7 @@ type ReturnedInventoryPanelProps = {
   onRowClick: (row: ReturnedInventoryRow) => void;
   canBulkReturn?: boolean;
   companyId?: string;
+  userId?: string;
   submitterName?: string;
   holderRole?: string | null;
   hasWarehouseHubLink?: boolean;
@@ -68,31 +68,19 @@ export function ReturnedInventoryPanel({
   onRowClick,
   canBulkReturn = false,
   companyId,
+  userId,
   submitterName = '',
   holderRole,
   hasWarehouseHubLink = true,
   onSubmitted,
 }: ReturnedInventoryPanelProps) {
-  const navigate = useNavigate();
-  const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(PAGE_SIZE);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [disposeOpen, setDisposeOpen] = useState(false);
   const isTeamLeader = holderRole === 'team_leader';
   const canDisposeToWarehouse = isTeamLeader && rows.length > 0;
-
-  const handleDisposeToWarehouse = () => {
-    if (!hasWarehouseHubLink) {
-      toast({
-        title: 'Warehouse not linked',
-        description: NO_WAREHOUSE_DISPOSAL_NOTE,
-        variant: 'destructive',
-      });
-      return;
-    }
-    navigate('/inventory/return-to-warehouse');
-  };
 
   const filteredRows = useMemo(() => {
     const needle = searchQuery.trim().toLowerCase();
@@ -169,7 +157,7 @@ export function ReturnedInventoryPanel({
                 <Button
                   type="button"
                   className="w-full sm:w-auto"
-                  onClick={handleDisposeToWarehouse}
+                  onClick={() => setDisposeOpen(true)}
                 >
                   Dispose to warehouse
                 </Button>
@@ -243,6 +231,17 @@ export function ReturnedInventoryPanel({
         rows={rows}
         companyId={companyId}
         submitterName={submitterName}
+        onSubmitted={onSubmitted}
+      />
+
+      <DisposeToWarehouseDialog
+        open={disposeOpen}
+        onOpenChange={setDisposeOpen}
+        rows={rows}
+        companyId={companyId}
+        userId={userId}
+        submitterName={submitterName}
+        hasWarehouseHubLink={hasWarehouseHubLink}
         onSubmitted={onSubmitted}
       />
     </>

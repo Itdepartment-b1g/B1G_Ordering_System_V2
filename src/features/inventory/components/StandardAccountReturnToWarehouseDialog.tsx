@@ -69,6 +69,14 @@ export interface StandardAccountReturnToWarehouseDialogProps {
   userFullName?: string | null;
   /** main = company unallocated stock; leader = this user's agent_inventory */
   inventorySource?: 'main' | 'leader';
+  /**
+   * When set (e.g. dispose from Returned Items), only these variants are listed
+   * and quantity cannot exceed each row's `available` (disposal units).
+   */
+  inventoryRowsOverride?: InventoryReturnRow[] | null;
+  /** When false, form stays usable but Submit does not go through. */
+  allowSubmit?: boolean;
+  submitBlockedNote?: string | null;
   onSuccess?: () => void | Promise<void>;
 }
 
@@ -79,6 +87,9 @@ export function StandardAccountReturnToWarehouseDialog({
   userId,
   userFullName,
   inventorySource = 'main',
+  inventoryRowsOverride = null,
+  allowSubmit = true,
+  submitBlockedNote = null,
   onSuccess,
 }: StandardAccountReturnToWarehouseDialogProps) {
   const { toast } = useToast();
@@ -132,9 +143,15 @@ export function StandardAccountReturnToWarehouseDialog({
     setDestinationLocationId(main?.id || locations[0].id);
   }, [open, locations, destinationLocationId]);
 
-  const { data: rows = [], isLoading } = useQuery({
+  const useOverrideRows = Array.isArray(inventoryRowsOverride);
+
+  const { data: fetchedRows = [], isLoading: loadingFetchedRows } = useQuery({
     queryKey: ['sa-return-available-inventory', companyId, inventorySource, userId],
-    enabled: open && !!companyId && (inventorySource === 'main' || !!userId),
+    enabled:
+      open &&
+      !useOverrideRows &&
+      !!companyId &&
+      (inventorySource === 'main' || !!userId),
     staleTime: 0,
     refetchOnMount: 'always',
     queryFn: async (): Promise<InventoryReturnRow[]> => {
@@ -215,6 +232,19 @@ export function StandardAccountReturnToWarehouseDialog({
     },
   });
 
+  const rows = useMemo(() => {
+    if (!useOverrideRows) return fetchedRows;
+    return (inventoryRowsOverride ?? [])
+      .filter((row) => row.available > 0)
+      .map((row) => ({
+        ...row,
+        available: Math.max(0, Math.floor(Number(row.available) || 0)),
+      }));
+  }, [useOverrideRows, inventoryRowsOverride, fetchedRows]);
+
+  const isLoading = useOverrideRows ? false : loadingFetchedRows;
+  const quantityLabel = useOverrideRows ? 'disposal' : 'available';
+
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
     if (!q) return rows;
@@ -271,6 +301,11 @@ export function StandardAccountReturnToWarehouseDialog({
 
   const handleSubmit = async () => {
     setFormError(null);
+
+    if (!allowSubmit) {
+      setFormError(submitBlockedNote || 'This return cannot be submitted right now.');
+      return;
+    }
 
     if (!destinationLocationId) {
       setFormError('Choose main warehouse or a sub-warehouse for this return.');
@@ -422,6 +457,15 @@ export function StandardAccountReturnToWarehouseDialog({
           </DialogHeader>
 
           <div className="space-y-3 flex-1 overflow-y-auto min-h-0 pr-1">
+            {!allowSubmit && submitBlockedNote ? (
+              <div
+                role="status"
+                className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"
+              >
+                {submitBlockedNote}
+              </div>
+            ) : null}
+
             <div className="space-y-1.5">
               <Label>Return to location</Label>
               <Select
@@ -501,6 +545,7 @@ export function StandardAccountReturnToWarehouseDialog({
                               onChange={(e) => {
                                 const raw = e.target.value;
                                 if (raw === '') {
+                                  setFormError(null);
                                   setQuantities((prev) => {
                                     const next = { ...prev };
                                     delete next[row.variant_id];
@@ -508,11 +553,24 @@ export function StandardAccountReturnToWarehouseDialog({
                                   });
                                   return;
                                 }
-                                const n = Math.max(
-                                  0,
-                                  Math.min(row.available, Math.floor(Number(raw) || 0))
-                                );
-                                setQuantities((prev) => ({ ...prev, [row.variant_id]: n }));
+                                const parsed = Math.floor(Number(raw) || 0);
+                                if (parsed > row.available) {
+                                  setFormError(
+                                    `${row.variantName}: only ${row.available} unit${
+                                      row.available === 1 ? '' : 's'
+                                    } available.`
+                                  );
+                                  setQuantities((prev) => ({
+                                    ...prev,
+                                    [row.variant_id]: row.available,
+                                  }));
+                                  return;
+                                }
+                                setFormError(null);
+                                setQuantities((prev) => ({
+                                  ...prev,
+                                  [row.variant_id]: Math.max(0, parsed),
+                                }));
                               }}
                             />
                           </div>
@@ -631,6 +689,7 @@ export function StandardAccountReturnToWarehouseDialog({
             <Button
               onClick={() => void handleSubmit()}
               disabled={
+                !allowSubmit ||
                 submitting ||
                 summary.lineCount === 0 ||
                 !destinationLocationId ||

@@ -376,6 +376,7 @@ function ClientOrderReturnsView() {
                 }}
                 canBulkReturn={canBulkReturn}
                 companyId={user?.company_id}
+                userId={user?.id}
                 submitterName={user?.full_name}
                 holderRole={user?.role}
                 hasWarehouseHubLink={hasWarehouseHubLink}

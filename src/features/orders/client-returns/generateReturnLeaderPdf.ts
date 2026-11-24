@@ -59,23 +59,25 @@ function lineDescription(line: ReturnLeaderHandoverLine): string {
 }
 
 function lineRowsHtml(lines: ReturnLeaderHandoverLine[]): string {
-  const disposalLabel = formatClientReturnStockFate('disposal');
+  // RL handovers only move disposal holds; restock never enters this path.
+  const stockLabel = formatClientReturnStockFate('disposal');
   const rows = lines
     .filter((line) => (Number(line.quantity) || 0) > 0)
-    .map((line) => {
-      const typeLabel = `${formatVariantType(line.variantType)} (${disposalLabel})`;
-      return `
+    .map(
+      (line) => `
       <tr>
         <td class="col-desc">${escapeHtml(lineDescription(line))}</td>
         <td class="col-qty">${fmtQty(line.quantity)}</td>
-        <td class="col-qty">${escapeHtml(typeLabel)}</td>
-      </tr>`;
-    });
+        <td class="col-qty">${escapeHtml(formatVariantType(line.variantType))}</td>
+        <td class="col-qty">${escapeHtml(stockLabel)}</td>
+      </tr>`
+    );
 
   if (rows.length === 0) {
     rows.push(`
       <tr>
         <td class="col-desc">No disposal items</td>
+        <td class="col-qty">&nbsp;</td>
         <td class="col-qty">&nbsp;</td>
         <td class="col-qty">&nbsp;</td>
       </tr>`);
@@ -92,25 +94,6 @@ function detailField(label: string, value: string | null | undefined): string {
       <span class="fvalue">${
         trimmed ? escapeHtml(trimmed) : '<span class="muted">—</span>'
       }</span>
-    </div>`;
-}
-
-function personAtField(
-  label: string,
-  name: string | null | undefined,
-  at: string | null | undefined
-): string {
-  const displayName = name?.trim() || '—';
-  const displayAt = at ? formatDateTime(at) : '—';
-  return `
-    <div class="delivery-field">
-      <span class="flabel">${escapeHtml(label)}:</span>
-      <span class="fvalue">
-        <div class="person-at">
-          <div class="person-name">${escapeHtml(displayName)}</div>
-          <div class="person-time">${displayAt}</div>
-        </div>
-      </span>
     </div>`;
 }
 
@@ -271,12 +254,6 @@ function buildReturnLeaderHtml(row: ReturnLeaderHandover): string {
   }
   .delivery-field .fvalue { flex: 1; }
   .delivery-field .muted { color: #777; font-style: italic; }
-  .person-at .person-name { font-weight: 700; }
-  .person-at .person-time {
-    font-size: 10px;
-    color: #444;
-    margin-top: 2px;
-  }
   .signature-field { align-items: flex-start; }
   .sig-img {
     display: block;
@@ -331,6 +308,10 @@ function buildReturnLeaderHtml(row: ReturnLeaderHandover): string {
       <span class="value">${escapeHtml(returnedByName)}</span>
     </div>
     <div class="meta-row">
+      <span class="label">RETURNED AT:</span>
+      <span class="value">${formatDateTime(row.createdAt)}</span>
+    </div>
+    <div class="meta-row">
       <span class="label">RETURN TO:</span>
       <span class="value">${returnTo}</span>
     </div>
@@ -348,6 +329,7 @@ function buildReturnLeaderHtml(row: ReturnLeaderHandover): string {
           <th class="col-desc">Description</th>
           <th class="col-qty">Returned</th>
           <th class="col-qty">Type</th>
+          <th class="col-qty">Stock</th>
         </tr>
       </thead>
       <tbody>
@@ -357,17 +339,19 @@ function buildReturnLeaderHtml(row: ReturnLeaderHandover): string {
     <div class="totals-note">Total returned (${escapeHtml(disposalLabel).toLowerCase()}): ${fmtQty(qty)} unit(s)</div>
     <div class="delivery-section">
       <div class="section-label">Return Details:</div>
-      ${personAtField('RETURNED BY (MOBILE SALES)', returnedByName, row.createdAt)}
+      ${detailField('RETURNED BY (MOBILE SALES)', returnedByName)}
+      ${detailField('RETURNED AT', formatDateTime(row.createdAt))}
       ${detailField('RETURN TO', row.toHolderName?.trim() || 'Team Leader')}
       ${detailField('STOCK', disposalLabel)}
+      ${detailField('TOTAL RETURNED', `${fmtQty(qty)} unit(s)`)}
       ${
         row.status === 'received'
-          ? personAtField('RECEIVED BY', row.approvedByName, row.approvedAt)
+          ? `${detailField('RECEIVED BY', row.approvedByName)}${detailField('RECEIVED AT', formatDateTime(row.approvedAt))}`
           : ''
       }
       ${
         row.status === 'rejected'
-          ? `${personAtField('REJECTED BY', row.rejectedByName, row.rejectedAt)}${detailField('REJECTION', row.rejectionNote)}`
+          ? `${detailField('REJECTED BY', row.rejectedByName)}${detailField('REJECTED AT', formatDateTime(row.rejectedAt))}${detailField('REJECTION', row.rejectionNote)}`
           : ''
       }
       ${detailField('NOTES', row.notes)}
