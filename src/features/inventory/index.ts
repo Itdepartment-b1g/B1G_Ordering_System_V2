@@ -1,5 +1,6 @@
 export { default as MainInventoryPage } from './MainInventoryPage';
 export { default as MainInventoryReturnHistoryPage } from './MainInventoryReturnHistoryPage';
+export { default as MainInventoryReturnedDetailPage } from './MainInventoryReturnedDetailPage';
 export { default as VariantStockHoldersPage } from './VariantStockHoldersPage';
 export { default as MobileSalesReturnHistoryPage } from './MobileSalesReturnHistoryPage';
 export { default as MobileSalesReturnHistoryDetailPage } from './MobileSalesReturnHistoryDetailPage';

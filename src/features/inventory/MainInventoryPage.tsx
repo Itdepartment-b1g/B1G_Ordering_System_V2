@@ -52,7 +52,13 @@ import {
 import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
 import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
 import MainInventoryManual from '@/features/inventory/warehouse-manual/components/MainInventoryManual';
-
+import {
+  canShowClientOrderReturns,
+  CLIENT_ORDER_RETURNS_QUERY_KEY,
+  buildReturnedStockByVariantId,
+  fetchClientOrderReturns,
+  type ReturnedStockByVariant,
+} from '@/features/orders/client-returns/clientReturnApi';
 type OpenPoReservationDetail = {
   purchase_order_id: string;
   po_number: string;
@@ -235,6 +241,7 @@ export default function MainInventoryPage() {
   const [warehouseBrandForm, setWarehouseBrandForm] = useState({ name: '', description: '' });
   const [warehouseBrandSubmitting, setWarehouseBrandSubmitting] = useState(false);
   const [removeStockSubmitting, setRemoveStockSubmitting] = useState(false);
+  const [removeInventoryTarget, setRemoveInventoryTarget] = useState<Variant | null>(null);
 
   const { toast } = useToast();
 
@@ -950,30 +957,11 @@ export default function MainInventoryPage() {
   const showPendingAllocations = !isWarehouse;
   const showPoReservedColumn = isWarehouse;
 
-  const renderBatchViewButton = (variant: { id: string; name: string }, brandName: string) => {
-    if (!isWarehouse) return null;
-    if (isSubWarehouseUser && !membership.locationId) return null;
-    return (
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => {
-          void queryClient.invalidateQueries({ queryKey: ['variant-batch-lots'] });
-          setBatchViewTarget({
-            variantId: variant.id,
-            variantName: variant.name,
-            brandName,
-          });
-        }}
-      >
-        <Eye className="h-3 w-3 mr-1" />
-        View
-      </Button>
-    );
-  };
+  const canViewBatchLots =
+    isWarehouse && !(isSubWarehouseUser && !membership.locationId);
+  const canViewStockHolders = !isSubWarehouseUser;
 
-  /** CPC: per-variant Edit price + brand price history (sales companies only; warehouse never edits prices). */
-  const renderVariantPriceActions = (
+  const renderVariantActionsMenu = (
     brandId: string,
     brandName: string,
     variant: Variant,
@@ -981,14 +969,22 @@ export default function MainInventoryPage() {
   ) => {
     const showEditPrice = !isWarehouse;
     const showPriceHistory = useCompanyPriceChange;
-    if (!showEditPrice && !showPriceHistory) return null;
+    const showRemove = isWarehouse && !!variant.mainInventoryId;
+    const showStockHolders = canViewStockHolders;
+    const showBatchView = canViewBatchLots;
+    const hasPrimary =
+      showEditPrice || showPriceHistory || showStockHolders || showBatchView;
+
+    if (!hasPrimary && !showRemove) {
+      return null;
+    }
 
     return (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="icon" className="h-8 w-8">
             <MoreVertical className="h-4 w-4" />
-            <span className="sr-only">Price actions</span>
+            <span className="sr-only">Open actions</span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-52">
@@ -1011,24 +1007,41 @@ export default function MainInventoryPage() {
               Show price history
             </DropdownMenuItem>
           )}
+          {showStockHolders && (
+            <DropdownMenuItem
+              onClick={() => navigate(`/inventory/main/stock-holders/${variant.id}`)}
+            >
+              <Users className="mr-2 h-4 w-4" />
+              Stock holders
+            </DropdownMenuItem>
+          )}
+          {showBatchView && (
+            <DropdownMenuItem
+              onClick={() => {
+                void queryClient.invalidateQueries({ queryKey: ['variant-batch-lots'] });
+                setBatchViewTarget({
+                  variantId: variant.id,
+                  variantName: variant.name,
+                  brandName,
+                });
+              }}
+            >
+              <Eye className="mr-2 h-4 w-4" />
+              View batches
+            </DropdownMenuItem>
+          )}
+          {showRemove && hasPrimary && <DropdownMenuSeparator />}
+          {showRemove && (
+            <DropdownMenuItem
+              className="text-muted-foreground"
+              onClick={() => setRemoveInventoryTarget(variant)}
+            >
+              <Unlink className="mr-2 h-4 w-4" />
+              Remove from inventory
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
-    );
-  };
-
-  const renderViewHoldersButton = (variant: { id: string }) => {
-    if (isSubWarehouseUser) return null;
-    return (
-      <Button
-      variant="outline"
-      size="sm"
-      title="View stock holders"
-      onClick={() => navigate(`/inventory/main/stock-holders/${variant.id}`)}
-      className="h-8 gap-1.5 px-2.5 text-xs"
-    >
-      <Users className="h-3.5 w-3.5" />
-      Stock Holders
-    </Button>
     );
   };
 
@@ -1227,6 +1240,63 @@ export default function MainInventoryPage() {
       {getVariantGrossAllocated(variant)}
     </TableCell>
   );
+
+  const showReturnedColumn = canShowClientOrderReturns(hasWarehouseHubLink, user?.role) && !isWarehouse;
+
+  const { data: clientReturns = [] } = useQuery({
+    queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY, user?.company_id],
+    enabled: showReturnedColumn && !!user?.company_id,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    queryFn: fetchClientOrderReturns,
+  });
+
+  const returnedStockByVariantId = useMemo(
+    () =>
+      showReturnedColumn
+        ? buildReturnedStockByVariantId(clientReturns)
+        : new Map<string, ReturnedStockByVariant>(),
+    [clientReturns, showReturnedColumn]
+  );
+
+  const totalReturnedStock = useMemo(
+    () => Array.from(returnedStockByVariantId.values()).reduce((sum, stock) => sum + stock.qty, 0),
+    [returnedStockByVariantId]
+  );
+
+  const renderReturnedCell = (brandId: string, brandName: string, variant: Variant) => {
+    if (!showReturnedColumn) return null;
+    const stock = returnedStockByVariantId.get(variant.id);
+    const qty = stock?.qty || 0;
+    return (
+      <TableCell className="p-1 text-center">
+        <button
+          type="button"
+          className={`w-full min-h-10 rounded-md px-2 py-1.5 text-sm font-medium ${
+            qty > 0
+              ? 'text-rose-700 hover:bg-rose-50 hover:underline'
+              : 'text-muted-foreground hover:bg-muted/60'
+          }`}
+          title={
+            qty > 0
+              ? `${qty} returned unit${qty === 1 ? '' : 's'} — click to view`
+              : 'Click to view returned items'
+          }
+          onClick={(event) => {
+            event.stopPropagation();
+            const params = new URLSearchParams();
+            if (brandId) params.set('brandId', brandId);
+            if (brandName) params.set('brandName', brandName);
+            if (variant.name) params.set('variantName', variant.name);
+            const qs = params.toString();
+            navigate(`/inventory/main/returned/${variant.id}${qs ? `?${qs}` : ''}`);
+          }}
+        >
+          {qty > 0 ? qty : '—'}
+        </button>
+      </TableCell>
+    );
+  };
 
   const getOrderStageLabel = (stage: string) => {
     switch (stage) {
@@ -1496,7 +1566,7 @@ export default function MainInventoryPage() {
         </div>
       )}
 
-      {useCompanyPriceChange && !hasWarehouseHubLink && (
+      {/* {useCompanyPriceChange && !hasWarehouseHubLink && (
         <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-4 py-3 text-sm text-amber-950">
           Company-wide price edits update Main now; selecting Team Leaders pushes <strong>bags only</strong>{' '}
           (Main unchanged). Confirmers must agree before bags use the new prices. See{' '}
@@ -1505,18 +1575,26 @@ export default function MainInventoryPage() {
           </Link>
           .
         </div>
-      )}
+      )} */}
 
       {/* Stats Overview */}
       <div
         className={`grid grid-cols-2 ${
           isSubWarehouseUser
             ? showPoReservedColumn
-              ? 'md:grid-cols-5'
-              : 'md:grid-cols-3'
+              ? showReturnedColumn
+                ? 'md:grid-cols-6'
+                : 'md:grid-cols-5'
+              : showReturnedColumn
+                ? 'md:grid-cols-4'
+                : 'md:grid-cols-3'
             : showPoReservedColumn
-              ? 'md:grid-cols-6'
-              : 'md:grid-cols-5'
+              ? showReturnedColumn
+                ? 'md:grid-cols-7'
+                : 'md:grid-cols-6'
+              : showReturnedColumn
+                ? 'md:grid-cols-6'
+                : 'md:grid-cols-5'
         } gap-4`}
       >
         <Card>
@@ -1563,6 +1641,20 @@ export default function MainInventoryPage() {
                 <div>
                   <div className="text-2xl font-bold">{totalAllocatedStock.toLocaleString()}</div>
                   <div className="text-xs text-muted-foreground">Allocated Stock</div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {showReturnedColumn && (
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2">
+                <RotateCcw className="h-4 w-4 text-rose-600" />
+                <div>
+                  <div className="text-2xl font-bold">{totalReturnedStock.toLocaleString()}</div>
+                  <div className="text-xs text-muted-foreground">Returned Stock</div>
                 </div>
               </div>
             </CardContent>
@@ -1781,6 +1873,7 @@ export default function MainInventoryPage() {
                             isSubWarehouseUser={isSubWarehouseUser}
                             isWarehouse={isWarehouse}
                             showPoReservedColumn={showPoReservedColumn}
+                            showReturnedColumn={showReturnedColumn}
                             sortState={getVariantSortState('flavor')}
                             onSort={(key) => handleVariantSort('flavor', key)}
                           />
@@ -1804,6 +1897,7 @@ export default function MainInventoryPage() {
                                   </TableCell>
                                   <TableCell className="font-semibold text-center">{flavor.stock}</TableCell>
                                   {!isSubWarehouseUser && renderAllocatedCell(flavor)}
+                                  {showReturnedColumn && renderReturnedCell(brand.id, brand.name, flavor)}
                                   {showPoReservedColumn && renderPoReservedCell(brand.name, flavor)}
                                   {showPendingAllocations && renderPendingAllocatedCell(brand.name, flavor)}
                                   {(!isSubWarehouseUser || showPoReservedColumn) && renderAvailableCell(flavor, available)}
@@ -1836,86 +1930,7 @@ export default function MainInventoryPage() {
                                     </Badge>
                                   </TableCell>
                                   <TableCell className="text-center">
-                                    <div className="flex items-center justify-center gap-1">
-                                      {/* {!isWarehouse && (
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => handleEditVariant(brand.id, flavor, 'flavor')}
-                                      >
-                                        <Edit className="h-4 w-4" />
-                                      </Button>
-                                      )} */}
-
-                                      {isWarehouse && flavor.mainInventoryId && (
-                                        <AlertDialog>
-                                          <AlertDialogTrigger asChild>
-                                            <Button
-                                              variant="ghost"
-                                              size="sm"
-                                              className="text-muted-foreground hover:text-foreground"
-                                              title="Remove from main inventory"
-                                            >
-                                              <Unlink className="h-4 w-4" />
-                                            </Button>
-                                          </AlertDialogTrigger>
-                                          <AlertDialogContent>
-                                            <AlertDialogHeader>
-                                              <AlertDialogTitle>Remove from main inventory?</AlertDialogTitle>
-                                              <AlertDialogDescription>
-                                                This removes the stock line for <strong>{flavor.name}</strong>. The SKU stays in Brands &amp; Variants; allocated stock must be zero.
-                                              </AlertDialogDescription>
-                                            </AlertDialogHeader>
-                                            <AlertDialogFooter>
-                                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                              <AlertDialogAction
-                                                onClick={() => handleRemoveMainInventoryRow(flavor)}
-                                                disabled={removeStockSubmitting}
-                                              >
-                                                {removeStockSubmitting ? 'Removing…' : 'Remove'}
-                                              </AlertDialogAction>
-                                            </AlertDialogFooter>
-                                          </AlertDialogContent>
-                                        </AlertDialog>
-                                      )}
-
-                                      {renderVariantPriceActions(brand.id, brand.name, flavor, 'flavor')}
-                                      {renderViewHoldersButton(flavor)}
-                                      {renderBatchViewButton(flavor, brand.name)}
-
-                                      {!isWarehouse && (
-                                        <AlertDialog>
-                                          {/* <AlertDialogTrigger asChild>
-                                            <Button
-                                              variant="ghost"
-                                              size="sm"
-                                              className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                                              onClick={() => setDeleteVariantId(flavor.id)}
-                                            >
-                                              <Trash2 className="h-4 w-4" />
-                                            </Button>
-                                          </AlertDialogTrigger> */}
-                                          <AlertDialogContent>
-                                            <AlertDialogHeader>
-                                              <AlertDialogTitle>Archive this product?</AlertDialogTitle>
-                                              <AlertDialogDescription>
-                                                This will hide <strong>{flavor.name}</strong> from inventory. Existing purchase orders and history will be preserved.
-                                              </AlertDialogDescription>
-                                            </AlertDialogHeader>
-                                            <AlertDialogFooter>
-                                              <AlertDialogCancel onClick={() => setDeleteVariantId(null)}>Cancel</AlertDialogCancel>
-                                              <AlertDialogAction
-                                                onClick={() => deleteVariantId && handleDeleteVariant(deleteVariantId)}
-                                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                                disabled={isDeleting}
-                                              >
-                                                {isDeleting ? "Archiving..." : "Archive"}
-                                              </AlertDialogAction>
-                                            </AlertDialogFooter>
-                                          </AlertDialogContent>
-                                        </AlertDialog>
-                                      )}
-                                    </div>
+                                    {renderVariantActionsMenu(brand.id, brand.name, flavor, 'flavor')}
                                   </TableCell>
                                 </TableRow>
                               );
@@ -1955,6 +1970,7 @@ export default function MainInventoryPage() {
                             isSubWarehouseUser={isSubWarehouseUser}
                             isWarehouse={isWarehouse}
                             showPoReservedColumn={showPoReservedColumn}
+                            showReturnedColumn={showReturnedColumn}
                             sortState={getVariantSortState('battery')}
                             onSort={(key) => handleVariantSort('battery', key)}
                           />
@@ -1978,12 +1994,23 @@ export default function MainInventoryPage() {
                                   </TableCell>
                                   <TableCell className="font-semibold text-center">{battery.stock}</TableCell>
                                   {!isSubWarehouseUser && renderAllocatedCell(battery)}
+                                  {showReturnedColumn && renderReturnedCell(brand.id, brand.name, battery)}
                                   {showPoReservedColumn && renderPoReservedCell(brand.name, battery)}
                                   {showPendingAllocations && renderPendingAllocatedCell(brand.name, battery)}
                                   {(!isSubWarehouseUser || showPoReservedColumn) && renderAvailableCell(battery, available)}
                                   {!isWarehouse && (
                                     <TableCell className="text-center">
                                       {typeof (battery as any).sellingPrice === 'number' ? `₱${(battery as any).sellingPrice.toFixed(2)}` : '-'}
+                                    </TableCell>
+                                  )}
+                                  {!isWarehouse && (
+                                    <TableCell className="text-center">
+                                      {typeof (battery as any).dspPrice === 'number' ? `₱${(battery as any).dspPrice.toFixed(2)}` : '-'}
+                                    </TableCell>
+                                  )}
+                                  {!isWarehouse && (
+                                    <TableCell className="text-center">
+                                      {typeof (battery as any).rspPrice === 'number' ? `₱${(battery as any).rspPrice.toFixed(2)}` : '-'}
                                     </TableCell>
                                   )}
                                   <TableCell className="text-center">
@@ -2000,86 +2027,7 @@ export default function MainInventoryPage() {
                                     </Badge>
                                   </TableCell>
                                   <TableCell className="text-center">
-                                    <div className="flex items-center justify-center gap-1">
-                                      {!isWarehouse && (
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => handleEditVariant(brand.id, battery, 'battery')}
-                                      >
-                                        <Edit className="h-4 w-4" />
-                                      </Button>
-                                      )}
-
-                                      {isWarehouse && battery.mainInventoryId && (
-                                        <AlertDialog>
-                                          <AlertDialogTrigger asChild>
-                                            <Button
-                                              variant="ghost"
-                                              size="sm"
-                                              className="text-muted-foreground hover:text-foreground"
-                                              title="Remove from main inventory"
-                                            >
-                                              <Unlink className="h-4 w-4" />
-                                            </Button>
-                                          </AlertDialogTrigger>
-                                          <AlertDialogContent>
-                                            <AlertDialogHeader>
-                                              <AlertDialogTitle>Remove from main inventory?</AlertDialogTitle>
-                                              <AlertDialogDescription>
-                                                This removes the stock line for <strong>{battery.name}</strong>. The SKU stays in Brands &amp; Variants; allocated stock must be zero.
-                                              </AlertDialogDescription>
-                                            </AlertDialogHeader>
-                                            <AlertDialogFooter>
-                                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                              <AlertDialogAction
-                                                onClick={() => handleRemoveMainInventoryRow(battery)}
-                                                disabled={removeStockSubmitting}
-                                              >
-                                                {removeStockSubmitting ? 'Removing…' : 'Remove'}
-                                              </AlertDialogAction>
-                                            </AlertDialogFooter>
-                                          </AlertDialogContent>
-                                        </AlertDialog>
-                                      )}
-
-                                      {renderVariantPriceActions(brand.id, brand.name, battery, 'battery')}
-                                      {renderViewHoldersButton(battery)}
-                                      {renderBatchViewButton(battery, brand.name)}
-
-                                      {!isWarehouse && (
-                                        <AlertDialog>
-                                          {/* <AlertDialogTrigger asChild>
-                                            <Button
-                                              variant="ghost"
-                                              size="sm"
-                                              className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                                              onClick={() => setDeleteVariantId(battery.id)}
-                                            >
-                                              <Trash2 className="h-4 w-4" />
-                                            </Button>
-                                          </AlertDialogTrigger> */}
-                                          <AlertDialogContent>
-                                            <AlertDialogHeader>
-                                              <AlertDialogTitle>Archive this product?</AlertDialogTitle>
-                                              <AlertDialogDescription>
-                                                This will hide <strong>{battery.name}</strong> from inventory. Existing purchase orders and history will be preserved.
-                                              </AlertDialogDescription>
-                                            </AlertDialogHeader>
-                                            <AlertDialogFooter>
-                                              <AlertDialogCancel onClick={() => setDeleteVariantId(null)}>Cancel</AlertDialogCancel>
-                                              <AlertDialogAction
-                                                onClick={() => deleteVariantId && handleDeleteVariant(deleteVariantId)}
-                                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                                disabled={isDeleting}
-                                              >
-                                                {isDeleting ? "Archiving..." : "Archive"}
-                                              </AlertDialogAction>
-                                            </AlertDialogFooter>
-                                          </AlertDialogContent>
-                                        </AlertDialog>
-                                      )}
-                                    </div>
+                                    {renderVariantActionsMenu(brand.id, brand.name, battery, 'battery')}
                                   </TableCell>
                                 </TableRow>
                               );
@@ -2119,6 +2067,7 @@ export default function MainInventoryPage() {
                             isSubWarehouseUser={isSubWarehouseUser}
                             isWarehouse={isWarehouse}
                             showPoReservedColumn={showPoReservedColumn}
+                            showReturnedColumn={showReturnedColumn}
                             sortState={getVariantSortState('posm')}
                             onSort={(key) => handleVariantSort('posm', key)}
                           />
@@ -2142,6 +2091,7 @@ export default function MainInventoryPage() {
                                   </TableCell>
                                   <TableCell className="font-semibold text-center">{posm.stock}</TableCell>
                                   {!isSubWarehouseUser && renderAllocatedCell(posm)}
+                                  {showReturnedColumn && renderReturnedCell(brand.id, brand.name, posm)}
                                   {showPoReservedColumn && renderPoReservedCell(brand.name, posm)}
                                   {showPendingAllocations && renderPendingAllocatedCell(brand.name, posm)}
                                   {(!isSubWarehouseUser || showPoReservedColumn) && renderAvailableCell(posm, available)}
@@ -2172,84 +2122,7 @@ export default function MainInventoryPage() {
                                     </Badge>
                                   </TableCell>
                                   <TableCell className="text-center">
-                                    <div className="flex items-center justify-center gap-1">
-                                      {!isWarehouse && (
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => handleEditVariant(brand.id, posm, 'posm')}
-                                        className="text-purple-600 hover:text-purple-800 hover:bg-purple-100"
-                                      >
-                                        <Edit className="h-4 w-4" />
-                                      </Button>
-                                      )}
-                                      {isWarehouse && posm.mainInventoryId && (
-                                        <AlertDialog>
-                                          <AlertDialogTrigger asChild>
-                                            <Button
-                                              variant="ghost"
-                                              size="sm"
-                                              className="text-muted-foreground hover:text-foreground"
-                                              title="Remove from main inventory"
-                                            >
-                                              <Unlink className="h-4 w-4" />
-                                            </Button>
-                                          </AlertDialogTrigger>
-                                          <AlertDialogContent>
-                                            <AlertDialogHeader>
-                                              <AlertDialogTitle>Remove from main inventory?</AlertDialogTitle>
-                                              <AlertDialogDescription>
-                                                This removes the stock line for <strong>{posm.name}</strong>. The SKU stays in Brands &amp; Variants; allocated stock must be zero.
-                                              </AlertDialogDescription>
-                                            </AlertDialogHeader>
-                                            <AlertDialogFooter>
-                                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                              <AlertDialogAction
-                                                onClick={() => handleRemoveMainInventoryRow(posm as Variant)}
-                                                disabled={removeStockSubmitting}
-                                              >
-                                                {removeStockSubmitting ? 'Removing…' : 'Remove'}
-                                              </AlertDialogAction>
-                                            </AlertDialogFooter>
-                                          </AlertDialogContent>
-                                        </AlertDialog>
-                                      )}
-                                      {renderVariantPriceActions(brand.id, brand.name, posm, 'posm')}
-                                      {renderViewHoldersButton(posm)}
-                                      {renderBatchViewButton(posm, brand.name)}
-                                      {!isWarehouse && (
-                                        <AlertDialog>
-                                          {/* <AlertDialogTrigger asChild>
-                                            <Button
-                                              variant="ghost"
-                                              size="sm"
-                                              className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                                              onClick={() => setDeleteVariantId(posm.id)}
-                                            >
-                                              <Trash2 className="h-4 w-4" />
-                                            </Button>
-                                          </AlertDialogTrigger> */}
-                                          <AlertDialogContent>
-                                            <AlertDialogHeader>
-                                              <AlertDialogTitle>Archive this product?</AlertDialogTitle>
-                                              <AlertDialogDescription>
-                                                This will hide <strong>{posm.name}</strong> from inventory. Existing purchase orders and history will be preserved.
-                                              </AlertDialogDescription>
-                                            </AlertDialogHeader>
-                                            <AlertDialogFooter>
-                                              <AlertDialogCancel onClick={() => setDeleteVariantId(null)}>Cancel</AlertDialogCancel>
-                                              <AlertDialogAction
-                                                onClick={() => deleteVariantId && handleDeleteVariant(deleteVariantId)}
-                                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                                disabled={isDeleting}
-                                              >
-                                                {isDeleting ? 'Archiving...' : 'Archive'}
-                                              </AlertDialogAction>
-                                            </AlertDialogFooter>
-                                          </AlertDialogContent>
-                                        </AlertDialog>
-                                      )}
-                                    </div>
+                                    {renderVariantActionsMenu(brand.id, brand.name, posm, 'posm')}
                                   </TableCell>
                                 </TableRow>
                               );
@@ -2287,6 +2160,7 @@ export default function MainInventoryPage() {
                                 isSubWarehouseUser={isSubWarehouseUser}
                                 isWarehouse={isWarehouse}
                                 showPoReservedColumn={showPoReservedColumn}
+                                showReturnedColumn={showReturnedColumn}
                                 sortState={getVariantSortState(variantType)}
                                 onSort={(key) => handleVariantSort(variantType, key)}
                               />
@@ -2309,6 +2183,7 @@ export default function MainInventoryPage() {
                                       </TableCell>
                                       <TableCell className="font-semibold text-center">{variant.stock}</TableCell>
                                       {!isSubWarehouseUser && renderAllocatedCell(variant)}
+                                      {showReturnedColumn && renderReturnedCell(brand.id, brand.name, variant)}
                                       {showPoReservedColumn && renderPoReservedCell(brand.name, variant)}
                                       {showPendingAllocations && renderPendingAllocatedCell(brand.name, variant)}
                                       {(!isSubWarehouseUser || showPoReservedColumn) && renderAvailableCell(variant, available)}
@@ -2341,83 +2216,7 @@ export default function MainInventoryPage() {
                                         </Badge>
                                       </TableCell>
                                       <TableCell className="text-center">
-                                        <div className="flex items-center justify-center gap-1">
-                                          {!isWarehouse && (
-                                          <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            onClick={() => handleEditVariant(brand.id, variant, variantType as any)}
-                                          >
-                                            <Edit className="h-4 w-4" />
-                                          </Button>
-                                          )}
-                                          {isWarehouse && variant.mainInventoryId && (
-                                            <AlertDialog>
-                                              <AlertDialogTrigger asChild>
-                                                <Button
-                                                  variant="ghost"
-                                                  size="sm"
-                                                  className="text-muted-foreground hover:text-foreground"
-                                                  title="Remove from main inventory"
-                                                >
-                                                  <Unlink className="h-4 w-4" />
-                                                </Button>
-                                              </AlertDialogTrigger>
-                                              <AlertDialogContent>
-                                                <AlertDialogHeader>
-                                                  <AlertDialogTitle>Remove from main inventory?</AlertDialogTitle>
-                                                  <AlertDialogDescription>
-                                                    This removes the stock line for <strong>{variant.name}</strong>. The SKU stays in Brands &amp; Variants; allocated stock must be zero.
-                                                  </AlertDialogDescription>
-                                                </AlertDialogHeader>
-                                                <AlertDialogFooter>
-                                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                                  <AlertDialogAction
-                                                    onClick={() => handleRemoveMainInventoryRow(variant)}
-                                                    disabled={removeStockSubmitting}
-                                                  >
-                                                    {removeStockSubmitting ? 'Removing…' : 'Remove'}
-                                                  </AlertDialogAction>
-                                                </AlertDialogFooter>
-                                              </AlertDialogContent>
-                                            </AlertDialog>
-                                          )}
-                                          {renderVariantPriceActions(brand.id, brand.name, variant, variantType)}
-                                          {renderViewHoldersButton(variant)}
-                                          {renderBatchViewButton(variant, brand.name)}
-                                          {!isWarehouse && (
-                                            <AlertDialog>
-                                              <AlertDialogTrigger asChild>
-                                                <Button
-                                                  variant="ghost"
-                                                  size="sm"
-                                                  className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                                                  onClick={() => setDeleteVariantId(variant.id)}
-                                                >
-                                                  <Trash2 className="h-4 w-4" />
-                                                </Button>
-                                              </AlertDialogTrigger>
-                                              <AlertDialogContent>
-                                                <AlertDialogHeader>
-                                                  <AlertDialogTitle>Archive this product?</AlertDialogTitle>
-                                                  <AlertDialogDescription>
-                                                    This will hide <strong>{variant.name}</strong> from inventory. Existing purchase orders and history will be preserved.
-                                                  </AlertDialogDescription>
-                                                </AlertDialogHeader>
-                                                <AlertDialogFooter>
-                                                  <AlertDialogCancel onClick={() => setDeleteVariantId(null)}>Cancel</AlertDialogCancel>
-                                                  <AlertDialogAction
-                                                    onClick={() => deleteVariantId && handleDeleteVariant(deleteVariantId)}
-                                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                                    disabled={isDeleting}
-                                                  >
-                                                    {isDeleting ? "Archiving..." : "Archive"}
-                                                  </AlertDialogAction>
-                                                </AlertDialogFooter>
-                                              </AlertDialogContent>
-                                            </AlertDialog>
-                                          )}
-                                        </div>
+                                        {renderVariantActionsMenu(brand.id, brand.name, variant, variantType)}
                                       </TableCell>
                                     </TableRow>
                                   );
@@ -3196,7 +2995,6 @@ export default function MainInventoryPage() {
         </DialogContent>
       </Dialog>
 
-
       <VariantBatchLotsDialog
         open={!!batchViewTarget}
         onOpenChange={(open) => {
@@ -3225,6 +3023,37 @@ export default function MainInventoryPage() {
         brandId={brandPriceHistory?.brandId ?? null}
         brandName={brandPriceHistory?.brandName ?? ''}
       />
+
+      <AlertDialog
+        open={!!removeInventoryTarget}
+        onOpenChange={(open) => {
+          if (!open) setRemoveInventoryTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove from main inventory?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the stock line for{' '}
+              <strong>{removeInventoryTarget?.name}</strong>. The SKU stays in Brands &amp;
+              Variants; allocated stock must be zero.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (removeInventoryTarget) {
+                  void handleRemoveMainInventoryRow(removeInventoryTarget);
+                }
+              }}
+              disabled={removeStockSubmitting}
+            >
+              {removeStockSubmitting ? 'Removing…' : 'Remove'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
     </div>
   );
