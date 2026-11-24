@@ -8,10 +8,10 @@ import {
   ListPagination,
   type PageSize,
 } from '@/features/shared/components/ListPagination';
+import { StandardAccountReturnToWarehouseDialog } from '@/features/inventory/components/StandardAccountReturnToWarehouseDialog';
 import { NO_WAREHOUSE_DISPOSAL_NOTE, type ReturnedInventoryRow } from './clientReturnApi';
 import { AccordionBrandLinesTable, type AccordionBrandLine } from './AccordionBrandLinesTable';
 import { BulkReturnDialog } from './BulkReturnDialog';
-import { DisposeToWarehouseDialog } from './DisposeToWarehouseDialog';
 import { generateAndOpenReturnedInventoryPdf } from './generateReturnedInventoryPdf';
 
 const PAGE_SIZE: PageSize = 25;
@@ -234,15 +234,18 @@ export function ReturnedInventoryPanel({
         onSubmitted={onSubmitted}
       />
 
-      <DisposeToWarehouseDialog
+      <StandardAccountReturnToWarehouseDialog
         open={disposeOpen}
         onOpenChange={setDisposeOpen}
-        rows={rows}
-        companyId={companyId}
-        userId={userId}
-        submitterName={submitterName}
-        hasWarehouseHubLink={hasWarehouseHubLink}
-        onSubmitted={onSubmitted}
+        companyId={companyId ?? null}
+        userId={userId ?? null}
+        userFullName={submitterName || null}
+        inventorySource="leader"
+        initialStockKind="item_disposal"
+        lockStockKind
+        allowSubmit={hasWarehouseHubLink}
+        submitBlockedNote={hasWarehouseHubLink ? null : NO_WAREHOUSE_DISPOSAL_NOTE}
+        onSuccess={onSubmitted}
       />
     </>
   );

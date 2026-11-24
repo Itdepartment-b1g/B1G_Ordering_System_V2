@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ImagePlus, Loader2, PenTool, Trash2 } from 'lucide-react';
+import { ImagePlus, Loader2, Package, PackageMinus, PenTool, Trash2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
@@ -45,6 +45,11 @@ type LinkedWarehouseLocation = {
   is_main: boolean;
 };
 
+/** my_inventory = sellable stock; item_disposal = client-returned / holds stock. */
+export type ReturnStockKind = 'my_inventory' | 'item_disposal';
+
+type DialogStep = 'choose' | 'form';
+
 const ACCEPTED_PROOF_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_PROOF_IMAGE_BYTES = 5 * 1024 * 1024;
 
@@ -67,13 +72,15 @@ export interface StandardAccountReturnToWarehouseDialogProps {
   companyId: string | null;
   userId: string | null;
   userFullName?: string | null;
-  /** main = company unallocated stock; leader = this user's agent_inventory */
+  /** main = company unallocated stock; leader = this user's agent_inventory / holds */
   inventorySource?: 'main' | 'leader';
   /**
-   * When set (e.g. dispose from Returned Items), only these variants are listed
-   * and quantity cannot exceed each row's `available` (disposal units).
+   * When set, skip the choose step and open directly on that stock kind.
+   * Use `item_disposal` from Returned Items → Dispose to warehouse.
    */
-  inventoryRowsOverride?: InventoryReturnRow[] | null;
+  initialStockKind?: ReturnStockKind | null;
+  /** Hide "Change type" when opened from a locked entry point. */
+  lockStockKind?: boolean;
   /** When false, form stays usable but Submit does not go through. */
   allowSubmit?: boolean;
   submitBlockedNote?: string | null;
@@ -87,7 +94,8 @@ export function StandardAccountReturnToWarehouseDialog({
   userId,
   userFullName,
   inventorySource = 'main',
-  inventoryRowsOverride = null,
+  initialStockKind = null,
+  lockStockKind = false,
   allowSubmit = true,
   submitBlockedNote = null,
   onSuccess,
@@ -96,6 +104,8 @@ export function StandardAccountReturnToWarehouseDialog({
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [step, setStep] = useState<DialogStep>('choose');
+  const [stockKind, setStockKind] = useState<ReturnStockKind>('my_inventory');
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [filter, setFilter] = useState('');
   const [notes, setNotes] = useState('');
@@ -106,24 +116,50 @@ export function StandardAccountReturnToWarehouseDialog({
   const [signatureOpen, setSignatureOpen] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  const resetFormFields = () => {
+    setQuantities({});
+    setFilter('');
+    setNotes('');
+    setDestinationLocationId('');
+    setProofImageDataUrl('');
+    setProofImageName('');
+    setSignatureDataUrl('');
+    setSignatureOpen(false);
+    setFormError(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
   useEffect(() => {
     if (!open) {
-      setQuantities({});
-      setFilter('');
-      setNotes('');
-      setDestinationLocationId('');
-      setProofImageDataUrl('');
-      setProofImageName('');
-      setSignatureDataUrl('');
-      setSignatureOpen(false);
-      setFormError(null);
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      resetFormFields();
+      setStep('choose');
+      setStockKind('my_inventory');
+      setSubmitting(false);
+      return;
     }
-  }, [open]);
+
+    if (initialStockKind) {
+      setStockKind(initialStockKind);
+      setStep('form');
+    } else {
+      setStockKind('my_inventory');
+      setStep('choose');
+    }
+    resetFormFields();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only when dialog opens/closes or locked kind changes
+  }, [open, initialStockKind]);
+
+  const selectStockKind = (kind: ReturnStockKind) => {
+    setStockKind(kind);
+    setQuantities({});
+    setFilter('');
+    setFormError(null);
+    setStep('form');
+  };
 
   const { data: locations = [], isLoading: loadingLocations } = useQuery({
     queryKey: ['sa-return-linked-warehouse-locations', companyId],
-    enabled: open && !!companyId,
+    enabled: open && !!companyId && allowSubmit,
     staleTime: 0,
     refetchOnMount: 'always',
     queryFn: async (): Promise<LinkedWarehouseLocation[]> => {
@@ -138,23 +174,94 @@ export function StandardAccountReturnToWarehouseDialog({
   });
 
   useEffect(() => {
-    if (!open || destinationLocationId || locations.length === 0) return;
+    if (!open || step !== 'form' || destinationLocationId || locations.length === 0) return;
     const main = locations.find((l) => l.is_main);
     setDestinationLocationId(main?.id || locations[0].id);
-  }, [open, locations, destinationLocationId]);
+  }, [open, step, locations, destinationLocationId]);
 
-  const useOverrideRows = Array.isArray(inventoryRowsOverride);
-
-  const { data: fetchedRows = [], isLoading: loadingFetchedRows } = useQuery({
-    queryKey: ['sa-return-available-inventory', companyId, inventorySource, userId],
+  const { data: rows = [], isLoading } = useQuery({
+    queryKey: ['sa-return-available-inventory', companyId, inventorySource, userId, stockKind],
     enabled:
       open &&
-      !useOverrideRows &&
+      step === 'form' &&
       !!companyId &&
       (inventorySource === 'main' || !!userId),
     staleTime: 0,
     refetchOnMount: 'always',
     queryFn: async (): Promise<InventoryReturnRow[]> => {
+      const mapVariantRow = (
+        variantId: string,
+        availableRaw: number,
+        variantRaw: unknown
+      ): InventoryReturnRow | null => {
+        const available = Math.max(0, Number(availableRaw) || 0);
+        if (available <= 0) return null;
+        const variant = Array.isArray(variantRaw) ? variantRaw[0] : variantRaw;
+        const brand =
+          variant &&
+          (Array.isArray((variant as { brand?: unknown }).brand)
+            ? (variant as { brand: unknown[] }).brand[0]
+            : (variant as { brand?: unknown }).brand);
+        return {
+          variant_id: variantId,
+          brandName: (brand as { name?: string })?.name ?? 'Unknown Brand',
+          variantName: (variant as { name?: string })?.name ?? variantId,
+          variantType: (variant as { variant_type?: string })?.variant_type ?? 'unknown',
+          available,
+        };
+      };
+
+      if (stockKind === 'item_disposal') {
+        if (inventorySource === 'leader') {
+          const { data, error } = await supabase
+            .from('client_return_stock_holds')
+            .select(
+              `
+              variant_id,
+              qty_on_hand,
+              variant:variants (
+                name,
+                variant_type,
+                brand:brands ( name )
+              )
+            `
+            )
+            .eq('company_id', companyId!)
+            .eq('holder_id', userId!)
+            .gt('qty_on_hand', 0);
+          if (error) throw error;
+          return (data ?? [])
+            .map((row) => {
+              const r = row as Record<string, unknown>;
+              return mapVariantRow(String(r.variant_id), Number(r.qty_on_hand) || 0, r.variant);
+            })
+            .filter(Boolean) as InventoryReturnRow[];
+        }
+
+        const { data, error } = await supabase
+          .from('main_inventory')
+          .select(
+            `
+            variant_id,
+            returned_stock,
+            variant:variants (
+              name,
+              variant_type,
+              brand:brands ( name )
+            )
+          `
+          )
+          .eq('company_id', companyId!)
+          .gt('returned_stock', 0);
+        if (error) throw error;
+        return (data ?? [])
+          .map((row) => {
+            const r = row as Record<string, unknown>;
+            return mapVariantRow(String(r.variant_id), Number(r.returned_stock) || 0, r.variant);
+          })
+          .filter(Boolean) as InventoryReturnRow[];
+      }
+
       if (inventorySource === 'leader') {
         const { data, error } = await supabase
           .from('agent_inventory')
@@ -177,18 +284,7 @@ export function StandardAccountReturnToWarehouseDialog({
         return (data ?? [])
           .map((row) => {
             const r = row as Record<string, unknown>;
-            const variant = Array.isArray(r.variant) ? r.variant[0] : r.variant;
-            const brand =
-              variant && (Array.isArray(variant.brand) ? variant.brand[0] : variant.brand);
-            const available = Math.max(0, Number(r.stock) || 0);
-            if (available <= 0) return null;
-            return {
-              variant_id: r.variant_id as string,
-              brandName: (brand as { name?: string })?.name ?? 'Unknown Brand',
-              variantName: (variant as { name?: string })?.name ?? String(r.variant_id),
-              variantType: (variant as { variant_type?: string })?.variant_type ?? 'unknown',
-              available,
-            } satisfies InventoryReturnRow;
+            return mapVariantRow(String(r.variant_id), Number(r.stock) || 0, r.variant);
           })
           .filter(Boolean) as InventoryReturnRow[];
       }
@@ -214,36 +310,15 @@ export function StandardAccountReturnToWarehouseDialog({
       return (data ?? [])
         .map((row) => {
           const r = row as Record<string, unknown>;
-          const variant = Array.isArray(r.variant) ? r.variant[0] : r.variant;
-          const brand = variant && (Array.isArray(variant.brand) ? variant.brand[0] : variant.brand);
           const stock = Number(r.stock) || 0;
           const allocated = Number(r.allocated_stock) || 0;
-          const available = Math.max(0, stock - allocated);
-          if (available <= 0) return null;
-          return {
-            variant_id: r.variant_id as string,
-            brandName: (brand as { name?: string })?.name ?? 'Unknown Brand',
-            variantName: (variant as { name?: string })?.name ?? String(r.variant_id),
-            variantType: (variant as { variant_type?: string })?.variant_type ?? 'unknown',
-            available,
-          } satisfies InventoryReturnRow;
+          return mapVariantRow(String(r.variant_id), Math.max(0, stock - allocated), r.variant);
         })
         .filter(Boolean) as InventoryReturnRow[];
     },
   });
 
-  const rows = useMemo(() => {
-    if (!useOverrideRows) return fetchedRows;
-    return (inventoryRowsOverride ?? [])
-      .filter((row) => row.available > 0)
-      .map((row) => ({
-        ...row,
-        available: Math.max(0, Math.floor(Number(row.available) || 0)),
-      }));
-  }, [useOverrideRows, inventoryRowsOverride, fetchedRows]);
-
-  const isLoading = useOverrideRows ? false : loadingFetchedRows;
-  const quantityLabel = useOverrideRows ? 'disposal' : 'available';
+  const quantityLabel = stockKind === 'item_disposal' ? 'disposal' : 'available';
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -340,7 +415,9 @@ export function StandardAccountReturnToWarehouseDialog({
     for (const item of items) {
       const row = rows.find((r) => r.variant_id === item.client_variant_id);
       if (!row || item.quantity > row.available) {
-        setFormError(`${row?.variantName ?? 'Product'}: exceeds available stock.`);
+        setFormError(
+          `${row?.variantName ?? 'Product'}: exceeds ${quantityLabel} stock.`
+        );
         return;
       }
     }
@@ -368,6 +445,7 @@ export function StandardAccountReturnToWarehouseDialog({
         p_signature_path: signature.path,
         p_proof_image_url: proof.url,
         p_proof_image_path: proof.path,
+        p_return_type: stockKind,
       });
       if (error) throw error;
       const result = data as {
@@ -399,6 +477,8 @@ export function StandardAccountReturnToWarehouseDialog({
         destinationIsMain: dest?.is_main ?? null,
         createdByName: userFullName ?? null,
         signatureUrl: signatureDataUrl || signature.url,
+        footerNote:
+          stockKind === 'item_disposal' ? 'Disposal stock return to warehouse.' : undefined,
         lines: items.map((item) => {
           const row = rows.find((r) => r.variant_id === item.client_variant_id);
           return {
@@ -416,7 +496,7 @@ export function StandardAccountReturnToWarehouseDialog({
       });
 
       toast({
-        title: 'Return submitted',
+        title: stockKind === 'item_disposal' ? 'Disposal submitted' : 'Return submitted',
         description:
           returnStatus === 'pending_approval'
             ? `${result.request_number} submitted for super admin approval. PDF opened for print/save.`
@@ -429,6 +509,7 @@ export function StandardAccountReturnToWarehouseDialog({
       await queryClient.invalidateQueries({ queryKey: ['sa-return-available-inventory'] });
       await queryClient.invalidateQueries({ queryKey: ['agent-inventory'] });
       await queryClient.invalidateQueries({ queryKey: ['my-inventory'] });
+      await queryClient.invalidateQueries({ queryKey: ['client-return-stock-holds'] });
       await onSuccess?.();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to create return';
@@ -443,20 +524,110 @@ export function StandardAccountReturnToWarehouseDialog({
     }
   };
 
+  const showChoose = open && step === 'choose' && !initialStockKind;
+  const showForm = open && step === 'form';
+  const canChangeType = !lockStockKind && !initialStockKind;
+
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
+      <Dialog
+        open={showChoose}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) onOpenChange(false);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>New return</DialogTitle>
+            <DialogDescription>Choose what you want to return to the warehouse.</DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-3 py-1">
+            <button
+              type="button"
+              className="rounded-lg border p-4 text-left hover:bg-muted/50 hover:border-primary/40 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => selectStockKind('my_inventory')}
+            >
+              <div className="flex items-start gap-3">
+                <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted">
+                  <Package className="h-4 w-4" />
+                </span>
+                <div className="min-w-0 space-y-1">
+                  <h3 className="font-semibold leading-none">Stock Return</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Return sellable stock from your inventory to the warehouse.
+                  </p>
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              className="rounded-lg border p-4 text-left hover:bg-muted/50 hover:border-primary/40 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => selectStockKind('item_disposal')}
+            >
+              <div className="flex items-start gap-3">
+                <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted">
+                  <PackageMinus className="h-4 w-4" />
+                </span>
+                <div className="min-w-0 space-y-1">
+                  <h3 className="font-semibold leading-none">For Disposal</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Return client-order disposal stock only. Not sellable; warehouse inspects as
+                    disposal.
+                  </p>
+                </div>
+              </div>
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={showForm}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) onOpenChange(false);
+        }}
+      >
         <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>Return stock to warehouse</DialogTitle>
+            <DialogTitle>
+              {stockKind === 'item_disposal'
+                ? 'Return for item disposal'
+                : 'Return stock to warehouse'}
+            </DialogTitle>
             <DialogDescription>
-              {inventorySource === 'leader'
-                ? 'Choose main or a sub-warehouse, select products from your inventory, attach a proof photo, and sign. Your stock and company allocated stock are deducted when submitted; the warehouse inspects good vs damaged and picks the batch lot.'
-                : 'Choose main or a sub-warehouse, select products, attach a proof photo, and sign. Stock is held when submitted; the warehouse inspects good vs damaged and picks the batch lot.'}
+              {stockKind === 'item_disposal'
+                ? 'Select client-returned disposal stock only. Qty cannot exceed disposal units.'
+                : inventorySource === 'leader'
+                  ? 'Choose main or a sub-warehouse, select products from your inventory, attach a proof photo, and sign.'
+                  : 'Choose main or a sub-warehouse, select products, attach a proof photo, and sign.'}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3 flex-1 overflow-y-auto min-h-0 pr-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="secondary">
+                {stockKind === 'item_disposal' ? 'For Disposal' : 'Stock Return'}
+              </Badge>
+              {canChangeType ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => {
+                    setQuantities({});
+                    setFilter('');
+                    setFormError(null);
+                    setStep('choose');
+                  }}
+                >
+                  Change type
+                </Button>
+              ) : null}
+            </div>
+
             {!allowSubmit && submitBlockedNote ? (
               <div
                 role="status"
@@ -471,12 +642,16 @@ export function StandardAccountReturnToWarehouseDialog({
               <Select
                 value={destinationLocationId}
                 onValueChange={setDestinationLocationId}
-                disabled={loadingLocations || locations.length === 0}
+                disabled={!allowSubmit || loadingLocations || locations.length === 0}
               >
                 <SelectTrigger>
                   <SelectValue
                     placeholder={
-                      loadingLocations ? 'Loading locations…' : 'Select warehouse location'
+                      !allowSubmit
+                        ? 'Warehouse not linked'
+                        : loadingLocations
+                          ? 'Loading locations…'
+                          : 'Select warehouse location'
                     }
                   />
                 </SelectTrigger>
@@ -508,11 +683,15 @@ export function StandardAccountReturnToWarehouseDialog({
                 <div className="flex items-center justify-center py-12 text-muted-foreground">
                   <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading inventory…
                 </div>
-                  ) : byBrand.length === 0 ? (
+              ) : byBrand.length === 0 ? (
                 <div className="py-12 text-center text-sm text-muted-foreground">
-                  {inventorySource === 'leader'
-                    ? 'No stock in your inventory to return.'
-                    : 'No available stock to return.'}
+                  {stockKind === 'item_disposal'
+                    ? inventorySource === 'leader'
+                      ? 'No returned stock held for disposal.'
+                      : 'No company returned stock for disposal.'
+                    : inventorySource === 'leader'
+                      ? 'No stock in your inventory to return.'
+                      : 'No available stock to return.'}
                 </div>
               ) : (
                 <Accordion type="multiple" className="w-full">
@@ -533,7 +712,8 @@ export function StandardAccountReturnToWarehouseDialog({
                             <div className="flex-1 min-w-0">
                               <div className="text-sm font-medium truncate">{row.variantName}</div>
                               <div className="text-xs text-muted-foreground">
-                                {normalizeTypeLabel(row.variantType)} · available {row.available}
+                                {normalizeTypeLabel(row.variantType)} · {quantityLabel}{' '}
+                                {row.available}
                               </div>
                             </div>
                             <Input
@@ -558,7 +738,7 @@ export function StandardAccountReturnToWarehouseDialog({
                                   setFormError(
                                     `${row.variantName}: only ${row.available} unit${
                                       row.available === 1 ? '' : 's'
-                                    } available.`
+                                    } ${quantityLabel}.`
                                   );
                                   setQuantities((prev) => ({
                                     ...prev,
@@ -699,7 +879,7 @@ export function StandardAccountReturnToWarehouseDialog({
               }
             >
               {submitting && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-              Submit return
+              {stockKind === 'item_disposal' ? 'Submit disposal' : 'Submit return'}
             </Button>
           </DialogFooter>
         </DialogContent>
