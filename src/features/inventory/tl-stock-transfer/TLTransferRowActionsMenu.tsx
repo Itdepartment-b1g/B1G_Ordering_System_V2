@@ -32,12 +32,22 @@ export function TLTransferRowActionsMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-8 w-8 p-0"
+          onClick={(event) => event.stopPropagation()}
+        >
           <MoreHorizontal className="h-4 w-4" />
           <span className="sr-only">Open actions</span>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-48">
+      <DropdownMenuContent
+        align="end"
+        className="w-48"
+        onClick={(event) => event.stopPropagation()}
+      >
         {onView ? (
           <DropdownMenuItem onClick={onView}>
             <Eye className="mr-2 h-4 w-4" />

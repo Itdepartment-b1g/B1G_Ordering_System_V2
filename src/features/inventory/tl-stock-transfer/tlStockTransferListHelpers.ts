@@ -1,11 +1,127 @@
 import { isDateInRange } from '@/lib/dateRangePresets';
 import type { SortDirection } from '@/features/shared/components/SortableTableHead';
+import {
+  matchesQuickFilterAndClauses,
+  type QuickFilterAndClause,
+} from '@/features/shared/components/QuickFilterSheet';
 import type { TLRequestWithDetails } from '@/types/tlStockRequests.types';
 import {
   tlRemainingToDispatch,
   tlStatusLabel,
   type TLRequestGroup,
 } from './tlStockTransferShared';
+
+export type TlTransferQuickColumn =
+  | 'request_number'
+  | 'tdr_number'
+  | 'from'
+  | 'to'
+  | 'brand'
+  | 'region';
+
+export type TlTransferQuickStatus =
+  | 'all'
+  | 'pending_admin'
+  | 'pending_source_tl'
+  | 'pending_receipt'
+  | 'incomplete'
+  | 'completed'
+  | 'rejected'
+  | 'cancelled';
+
+export const TL_TRANSFER_QUICK_STATUS_OPTIONS: Array<{
+  value: TlTransferQuickStatus;
+  label: string;
+}> = [
+  { value: 'all', label: 'All' },
+  { value: 'pending_admin', label: 'Pending Super Admin' },
+  { value: 'pending_source_tl', label: 'Awaiting dispatch' },
+  { value: 'pending_receipt', label: 'In transit' },
+  { value: 'incomplete', label: 'Incomplete' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'rejected', label: 'Rejected' },
+  { value: 'cancelled', label: 'Cancelled' },
+];
+
+export function tlTransferMatchesQuickStatus(
+  status: string,
+  filter: TlTransferQuickStatus
+): boolean {
+  if (filter === 'all') return true;
+  if (filter === 'rejected') {
+    return status === 'admin_rejected' || status === 'source_tl_rejected';
+  }
+  if (filter === 'pending_source_tl') {
+    return status === 'pending_source_tl' || status === 'admin_approved';
+  }
+  if (filter === 'pending_receipt') {
+    return status === 'pending_receipt' || status === 'source_tl_approved';
+  }
+  return status === filter;
+}
+
+export function uniqueTlTransferQuickOptions(
+  groups: TLRequestGroup[],
+  field: TlTransferQuickColumn
+): string[] {
+  const values = new Set<string>();
+  for (const group of groups) {
+    switch (field) {
+      case 'request_number':
+        if (group.request_number) values.add(group.request_number);
+        break;
+      case 'tdr_number':
+        if (group.tdr_number) values.add(group.tdr_number);
+        break;
+      case 'from':
+        if (group.source?.full_name) values.add(group.source.full_name);
+        break;
+      case 'to':
+        if (group.requester?.full_name) values.add(group.requester.full_name);
+        break;
+      case 'brand':
+        for (const item of group.items) {
+          const brand = item.variant?.brand_name?.trim();
+          if (brand) values.add(brand);
+        }
+        break;
+      case 'region': {
+        const sourceRegion = group.source?.region?.trim();
+        const requesterRegion = group.requester?.region?.trim();
+        if (sourceRegion) values.add(sourceRegion);
+        if (requesterRegion) values.add(requesterRegion);
+        break;
+      }
+    }
+  }
+  return [...values].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
+function groupMatchesQuickColumns(
+  group: TLRequestGroup,
+  columnClauses?: QuickFilterAndClause<TlTransferQuickColumn>[]
+): boolean {
+  return matchesQuickFilterAndClauses(columnClauses, (field, value) => {
+    switch (field) {
+      case 'request_number':
+        return group.request_number === value;
+      case 'tdr_number':
+        return (group.tdr_number || '') === value;
+      case 'from':
+        return (group.source?.full_name || '') === value;
+      case 'to':
+        return (group.requester?.full_name || '') === value;
+      case 'brand':
+        return group.items.some((item) => (item.variant?.brand_name || '') === value);
+      case 'region':
+        return (
+          (group.source?.region || '') === value || (group.requester?.region || '') === value
+        );
+      default:
+        return false;
+    }
+  });
+}
 
 export type TlTransferListSortKey =
   | 'request_number'
@@ -89,14 +205,23 @@ export function filterTlTransferRows(
   });
 }
 
+export type FilterTlTransferGroupsOptions = {
+  status?: TlTransferQuickStatus;
+  columnClauses?: QuickFilterAndClause<TlTransferQuickColumn>[];
+};
+
 export function filterTlTransferGroups(
   groups: TLRequestGroup[],
   searchQuery: string,
-  dateRange: TlTransferDateRange
+  dateRange: TlTransferDateRange,
+  options?: FilterTlTransferGroupsOptions
 ): TLRequestGroup[] {
   const q = searchQuery.trim().toLowerCase();
+  const status = options?.status ?? 'all';
   return groups.filter((group) => {
     if (!isDateInRange(group.created_at, dateRange.start, dateRange.end)) return false;
+    if (!tlTransferMatchesQuickStatus(String(group.status), status)) return false;
+    if (!groupMatchesQuickColumns(group, options?.columnClauses)) return false;
     if (q && !groupSearchHaystack(group).includes(q)) return false;
     return true;
   });

@@ -516,7 +516,7 @@ export function TLTransferDetailsDialog({ open, onOpenChange, request, allReques
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="space-y-1">
               <DialogTitle className="text-xl">Transfer details</DialogTitle>
-              <DialogDescription className="font-mono text-sm text-foreground">
+              <DialogDescription className="font-mono text-sm text-foreground whitespace-nowrap">
                 {headerRequest.request_number}
                 {headerRequest.tdr_number ? ` · ${headerRequest.tdr_number}` : ''}
               </DialogDescription>

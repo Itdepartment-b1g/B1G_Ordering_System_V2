@@ -9,7 +9,6 @@ import {
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -35,9 +34,7 @@ import {
   ListPagination,
   type PageSize,
 } from '@/features/shared/components/ListPagination';
-import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
 import {
-  getTableSortDisplayDirection,
   resolveTableSortDirection,
   type TableSortCycleState,
 } from '@/features/shared/utils/tableSortCycle';
@@ -69,7 +66,7 @@ import {
 import { exportTlTdrPdf, printTlStockTransferRequest, tlTdrPdfFromDispatch } from '../tl-stock-transfer/exportTlTransferPdfs';
 import { TLTransferHistoryDialog } from '../tl-stock-transfer/TLTransferHistoryDialog';
 import { TLTransferDetailsDialog } from '../tl-stock-transfer/TLTransferDetailsDialog';
-import { TLTransferRowActionsMenu } from '../tl-stock-transfer/TLTransferRowActionsMenu';
+import { TlTransferAccordionList, TransferNumber } from '../tl-stock-transfer/TlTransferAccordionList';
 import { useTlTransferRealtime } from '../tl-stock-transfer/useTlTransferRealtime';
 import { useAppDispatch, useAppSelector } from '@/store/store';
 import {
@@ -78,6 +75,7 @@ import {
   refreshTlTransferLists,
   rejectTlStockTransfer,
 } from '@/store/slices/motosales/tl-stock-transfers';
+import type { QuickFilterAndClause } from '@/features/shared/components/QuickFilterSheet';
 import {
   DEFAULT_TL_TRANSFER_SORT_DIRECTION,
   DEFAULT_TL_TRANSFER_SORT_KEY,
@@ -85,6 +83,8 @@ import {
   sortTlTransferGroups,
   type TlTransferDateRange,
   type TlTransferListSortKey,
+  type TlTransferQuickColumn,
+  type TlTransferQuickStatus,
 } from '../tl-stock-transfer/tlStockTransferListHelpers';
 
 type DispatchLine = TLRequestWithDetails & { available: number };
@@ -92,6 +92,8 @@ type DispatchLine = TLRequestWithDetails & { available: number };
 export type IncomingTlListControls = {
   searchQuery: string;
   dateRange: TlTransferDateRange;
+  status?: TlTransferQuickStatus;
+  columnClauses?: QuickFilterAndClause<TlTransferQuickColumn>[];
   page: number;
   pageSize: PageSize;
   sortState: TableSortCycleState<TlTransferListSortKey>;
@@ -145,7 +147,11 @@ export default function IncomingTLRequestsSection({ embedded = false, listContro
     return filterTlTransferGroups(
       incomingGroups,
       listControls.searchQuery,
-      listControls.dateRange
+      listControls.dateRange,
+      {
+        status: listControls.status,
+        columnClauses: listControls.columnClauses,
+      }
     );
   }, [incomingGroups, listControls]);
 
@@ -452,125 +458,37 @@ export default function IncomingTLRequestsSection({ embedded = false, listContro
     </div>
   ) : (
     <div className="space-y-4">
-      <div className="border rounded-lg overflow-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              {listControls ? (
-                <>
-                  <SortableTableHead
-                    label="Transfer #"
-                    sortKey="request_number"
-                    sortDirection={getTableSortDisplayDirection(listControls.sortState, 'request_number')}
-                    onSort={listControls.onSort}
-                  />
-                  <SortableTableHead
-                    label="Requester"
-                    sortKey="counterpart"
-                    sortDirection={getTableSortDisplayDirection(listControls.sortState, 'counterpart')}
-                    onSort={listControls.onSort}
-                  />
-                  <SortableTableHead
-                    label="Items"
-                    sortKey="item"
-                    sortDirection={getTableSortDisplayDirection(listControls.sortState, 'item')}
-                    onSort={listControls.onSort}
-                  />
-                  <SortableTableHead
-                    label="To dispatch"
-                    sortKey="to_dispatch"
-                    sortDirection={getTableSortDisplayDirection(listControls.sortState, 'to_dispatch')}
-                    onSort={listControls.onSort}
-                    className="text-right"
-                  />
-                  <SortableTableHead
-                    label="Date"
-                    sortKey="created_at"
-                    sortDirection={getTableSortDisplayDirection(listControls.sortState, 'created_at')}
-                    onSort={listControls.onSort}
-                  />
-                </>
-              ) : (
-                <>
-                  <TableHead>Transfer #</TableHead>
-                  <TableHead>Requester</TableHead>
-                  <TableHead>Items</TableHead>
-                  <TableHead className="text-right">To dispatch</TableHead>
-                  <TableHead>Date</TableHead>
-                </>
-              )}
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {incomingPagination.pagedItems.map((group) => {
-              const remainingTotal = group.items.reduce(
-                (sum, item) => sum + tlRemainingToDispatch(item),
-                0
-              );
-              const canReject = group.items.every((item) => item.received_quantity == null);
-              return (
-                <TableRow key={group.request_number}>
-                  <TableCell className="font-medium">{group.request_number}</TableCell>
-                  <TableCell>
-                    <p className="font-medium">{group.requester.full_name}</p>
-                    {group.requester.region ? (
-                      <p className="text-sm text-muted-foreground">{group.requester.region}</p>
-                    ) : null}
-                  </TableCell>
-                  <TableCell>
-                    <p className="font-medium">
-                      {group.items[0]?.variant.brand_name} · {group.items[0]?.variant.name}
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      {group.items.length === 1
-                        ? group.items[0]?.variant.type
-                        : `${group.items.length} items`}
-                    </p>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Badge variant="secondary" className="text-base font-semibold">
-                      {remainingTotal}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>{new Date(group.created_at).toLocaleDateString()}</TableCell>
-                  <TableCell className="text-right">
-                    <TLTransferRowActionsMenu
-                      onView={() => {
-                        setViewRequest(group.items[0] ?? null);
-                        setViewOpen(true);
-                      }}
-                      onHistory={() => {
-                        setHistoryLines(group.items);
-                        setHistoryOpen(true);
-                      }}
-                      onPrint={() => {
-                        void printTlStockTransferRequest(group.items).catch((error: any) => {
-                          toast({
-                            title: 'Could not print transfer',
-                            description: error?.message || 'Failed to open the print view.',
-                            variant: 'destructive',
-                          });
-                        });
-                      }}
-                      onDispatch={() => openDispatch(group)}
-                      onReject={
-                        canReject
-                          ? () => {
-                              setSelectedGroup(group);
-                              setRejectionReason('');
-                              setRejectOpen(true);
-                            }
-                          : undefined
-                      }
-                    />
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      </div>
+      <TlTransferAccordionList
+        groups={incomingPagination.pagedItems}
+        mode="incoming"
+        counterpartLabel="Requester"
+        counterpartField="requester"
+        sortState={listControls?.sortState}
+        onSort={listControls?.onSort}
+        onView={(group) => {
+          setViewRequest(group.items[0] ?? null);
+          setViewOpen(true);
+        }}
+        onHistory={(group) => {
+          setHistoryLines(group.items);
+          setHistoryOpen(true);
+        }}
+        onPrint={(group) => {
+          void printTlStockTransferRequest(group.items).catch((error: any) => {
+            toast({
+              title: 'Could not print transfer',
+              description: error?.message || 'Failed to open the print view.',
+              variant: 'destructive',
+            });
+          });
+        }}
+        onDispatch={(group) => openDispatch(group)}
+        onReject={(group) => {
+          setSelectedGroup(group);
+          setRejectionReason('');
+          setRejectOpen(true);
+        }}
+      />
       {listControls && sortedIncomingGroups.length > 0 ? (
         <ListPagination
           pageSize={listControls.pageSize}
@@ -641,7 +559,7 @@ export default function IncomingTLRequestsSection({ embedded = false, listContro
               <div className="grid grid-cols-2 gap-3 rounded-lg bg-muted/40 p-3 text-sm sm:grid-cols-3">
                 <div>
                   <p className="text-muted-foreground">Transfer #</p>
-                  <p className="font-medium font-mono">{selectedGroup.request_number}</p>
+                  <TransferNumber value={selectedGroup.request_number} />
                 </div>
                 <div>
                   <p className="text-muted-foreground">Requester</p>
@@ -851,7 +769,7 @@ export default function IncomingTLRequestsSection({ embedded = false, listContro
           <div className="space-y-3 text-sm">
             <div className="rounded-md bg-muted/50 p-3">
               <p className="text-muted-foreground">Transfer</p>
-              <p className="font-medium font-mono">{selectedGroup?.request_number}</p>
+              <TransferNumber value={selectedGroup?.request_number || '—'} />
             </div>
             <div className="max-h-56 overflow-auto rounded-md border">
               <Table>

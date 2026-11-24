@@ -401,7 +401,10 @@ export function TLStockDispatchDialog({ open, requests, onOpenChange }: Props) {
                 {first ? (
                   <>
                     {' '}
-                    for <span className="font-mono font-medium">{first.request_number}</span>
+                    for{' '}
+                    <span className="font-mono font-medium whitespace-nowrap">
+                      {first.request_number}
+                    </span>
                   </>
                 ) : null}
                 .

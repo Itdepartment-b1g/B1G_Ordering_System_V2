@@ -638,8 +638,12 @@ export default function AdminTLRequestsPage() {
                     <TableBody>
                       {pagedItems.map((group) => (
                         <TableRow key={group.request_number}>
-                          <TableCell className="font-medium">{group.request_number}</TableCell>
-                          <TableCell className="font-mono text-sm">{group.tdr_number || '—'}</TableCell>
+                          <TableCell className="min-w-[11rem] font-mono text-sm font-medium whitespace-nowrap">
+                            {group.request_number}
+                          </TableCell>
+                          <TableCell className="font-mono text-sm whitespace-nowrap">
+                            {group.tdr_number || '—'}
+                          </TableCell>
                           <TableCell>
                             <div>
                               <p className="font-medium">{group.requester.full_name}</p>
@@ -768,7 +772,9 @@ export default function AdminTLRequestsPage() {
               <div className="grid grid-cols-2 gap-4 rounded-lg bg-secondary p-4 text-sm lg:grid-cols-4">
                 <div>
                   <Label className="text-muted-foreground">Request Number</Label>
-                  <p className="font-medium font-mono">{selectedGroup.request_number}</p>
+                  <p className="font-medium font-mono whitespace-nowrap">
+                    {selectedGroup.request_number}
+                  </p>
                 </div>
                 <div>
                   <Label className="text-muted-foreground">Latest TDR</Label>

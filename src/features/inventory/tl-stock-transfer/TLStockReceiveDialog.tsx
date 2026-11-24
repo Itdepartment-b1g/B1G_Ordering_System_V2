@@ -288,7 +288,7 @@ export function TLStockReceiveDialog({ open, request, allRequests = [], onOpenCh
               <div className="grid grid-cols-2 gap-3 rounded-lg bg-muted/40 p-3 text-sm sm:grid-cols-4">
                 <div>
                   <p className="text-muted-foreground">Transfer #</p>
-                  <p className="font-medium font-mono">{request.request_number}</p>
+                  <p className="font-medium font-mono whitespace-nowrap">{request.request_number}</p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">TDR</p>
@@ -520,7 +520,7 @@ export function TLStockReceiveDialog({ open, request, allRequests = [], onOpenCh
           <div className="space-y-3 text-sm">
             <div className="rounded-md bg-muted/50 p-3">
               <p className="text-muted-foreground">Transfer</p>
-              <p className="font-medium font-mono">{request?.request_number}</p>
+              <p className="font-medium font-mono whitespace-nowrap">{request?.request_number}</p>
             </div>
             <div className="max-h-56 overflow-auto rounded-md border">
               <Table>
