@@ -51,9 +51,8 @@ BEGIN
     RETURN json_build_object('success', false, 'error', 'Not authenticated');
   END IF;
 
-  IF public.get_linked_warehouse_company_id() IS NULL THEN
-    RETURN json_build_object('success', false, 'error', 'Company is not linked to a warehouse');
-  END IF;
+  -- Warehouse hub is not required for MS → TL disposal handoff.
+  -- (Dispose to warehouse remains hub-gated elsewhere.)
 
   SELECT role, full_name INTO v_role, v_name
   FROM public.profiles

@@ -391,7 +391,6 @@ function ClientOrderReturnsView() {
             isLoading={rlLoading}
             isError={rlIsError}
             error={rlError}
-            hasWarehouseHubLink={hasWarehouseHubLink}
             canReviewLeader={(row) => canReviewReturnLeaderAsLeader(user?.role, row, user?.id)}
             canReviewSuperAdmin={(row) => canReviewReturnLeaderAsSuperAdmin(user?.role, row)}
             onView={(row) => {

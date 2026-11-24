@@ -42,7 +42,6 @@ import {
   type TableSortCycleState,
 } from '@/features/shared/utils/tableSortCycle';
 import { AccordionBrandLinesTable } from './AccordionBrandLinesTable';
-import { NO_WAREHOUSE_DISPOSAL_NOTE } from './clientReturnApi';
 import {
   getReturnLeaderLineQty,
   returnLeaderStatusBadgeClass,
@@ -285,7 +284,6 @@ type ReturnToLeaderPanelProps = {
   isLoading: boolean;
   isError: boolean;
   error: unknown;
-  hasWarehouseHubLink?: boolean;
   canReviewLeader: (row: ReturnLeaderHandover) => boolean;
   canReviewSuperAdmin: (row: ReturnLeaderHandover) => boolean;
   onView: (row: ReturnLeaderHandover) => void;
@@ -503,7 +501,6 @@ export function ReturnToLeaderPanel({
   isLoading,
   isError,
   error,
-  hasWarehouseHubLink = true,
   canReviewLeader,
   canReviewSuperAdmin,
   onView,
@@ -637,19 +634,9 @@ export function ReturnToLeaderPanel({
     setSortState((current) => getNextTableSortCycleState(current, key));
   };
 
-  const showWarehouseNote = !hasWarehouseHubLink && rows.length > 0;
-
   return (
     <Card className="min-w-0 overflow-hidden">
       <CardHeader className="pb-3 space-y-3 px-4 sm:px-6">
-        {showWarehouseNote ? (
-          <div
-            role="status"
-            className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"
-          >
-            {NO_WAREHOUSE_DISPOSAL_NOTE}
-          </div>
-        ) : null}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="min-w-0">
             <h2 className="font-semibold">Return to leader</h2>
