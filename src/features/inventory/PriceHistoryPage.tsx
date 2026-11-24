@@ -251,7 +251,12 @@ function BatchDetail({
         </TabsList>
 
         <TabsContent value="price-changes" className="mt-3 focus-visible:outline-none">
-          <PriceChangeItemsGroupedTable batch={batch} viewMode="table" />
+          <div className="md:hidden">
+            <PriceChangeItemsGroupedTable batch={batch} viewMode="cards" />
+          </div>
+          <div className="hidden md:block">
+            <PriceChangeItemsGroupedTable batch={batch} viewMode="table" />
+          </div>
         </TabsContent>
 
         <TabsContent value="who-confirmed" className="mt-3 space-y-3 focus-visible:outline-none">
@@ -283,7 +288,40 @@ function BatchDetail({
                   </div>
                 </dl>
               )}
-              <div className="rounded-md border overflow-x-auto">
+              {/* Mobile confirmer cards */}
+              <div className="md:hidden space-y-2">
+                {sortedAgreements.map((a) => (
+                  <div key={a.id} className="rounded-md border p-3 space-y-1.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="font-medium text-sm">
+                        {viewerRole === 'mobile_sales' ? 'You' : a.profile_name}
+                      </p>
+                      <Badge
+                        variant="outline"
+                        className={
+                          a.status === 'confirmed'
+                            ? 'bg-green-50 text-green-900 border-green-200 font-normal capitalize shrink-0'
+                            : a.status === 'pending'
+                              ? 'bg-amber-50 text-amber-900 border-amber-200 font-normal capitalize shrink-0'
+                              : 'font-normal capitalize shrink-0'
+                        }
+                      >
+                        {a.status}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {priceAgreementRoleLabel(a, leaderNameByAgentId)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Confirmed{' '}
+                      {a.confirmed_at ? new Date(a.confirmed_at).toLocaleString() : '—'}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Desktop confirmer table */}
+              <div className="hidden md:block rounded-md border overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -459,8 +497,8 @@ export default function PriceHistoryPage() {
   }
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
+    <div className="space-y-6 p-4 md:p-6">
+      <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Price history</h1>
           <p className="text-sm text-muted-foreground mt-1">
@@ -468,7 +506,7 @@ export default function PriceHistoryPage() {
           </p>
         </div>
         <Input
-          className="max-w-xs"
+          className="w-full sm:max-w-xs"
           placeholder="Search batch, creator, note…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -486,67 +524,42 @@ export default function PriceHistoryPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="rounded-lg border bg-card overflow-x-auto">
-          <div className="min-w-[1100px]">
-            {/* Header */}
-            <div className="grid grid-cols-[40px_minmax(140px,1.1fr)_minmax(120px,0.9fr)_minmax(180px,1.3fr)_minmax(130px,0.9fr)_minmax(120px,0.85fr)_minmax(150px,0.95fr)] gap-3 px-4 py-2.5 border-b bg-muted/40 text-xs font-semibold uppercase tracking-wide text-muted-foreground sticky top-0 z-[1]">
-              <div aria-hidden />
-              <div>Price batch</div>
-              <div>Performed by</div>
-              <div>Type</div>
-              <div>Status</div>
-              <div>Total confirmed</div>
-              <div>Created at</div>
-            </div>
+        <>
+          {/* Mobile card list */}
+          <div className="md:hidden space-y-3">
+            {filtered.map((batch: CompanyPriceChangeBatch) => {
+              const open = expanded === batch.id;
+              const visibleAgreements = filterVisiblePriceAgreements(batch.agreements, {
+                role: user?.role,
+                profileId: user?.id,
+                teamReportIds,
+              });
+              const progress = agreementProgress(visibleAgreements);
+              const confirmedLabel =
+                progress.total > 0 ? `${progress.confirmed} / ${progress.total}` : '—';
+              const isTeam = batch.scope_type === 'team';
 
-            <div className="divide-y">
-              {filtered.map((batch: CompanyPriceChangeBatch) => {
-                const open = expanded === batch.id;
-                const visibleAgreements = filterVisiblePriceAgreements(batch.agreements, {
-                  role: user?.role,
-                  profileId: user?.id,
-                  teamReportIds,
-                });
-                const progress = agreementProgress(visibleAgreements);
-                const confirmedLabel =
-                  progress.total > 0 ? `${progress.confirmed} / ${progress.total}` : '—';
-                const isTeam = batch.scope_type === 'team';
-
-                return (
-                  <div key={batch.id} className={cn(open && 'bg-muted/10')}>
-                    <button
-                      type="button"
-                      className="w-full text-left px-4 py-3 hover:bg-muted/30 transition-colors"
-                      onClick={() => setExpanded(open ? null : batch.id)}
-                      aria-expanded={open}
-                    >
-                      <div className="grid grid-cols-[40px_minmax(140px,1.1fr)_minmax(120px,0.9fr)_minmax(180px,1.3fr)_minmax(130px,0.9fr)_minmax(120px,0.85fr)_minmax(150px,0.95fr)] gap-3 items-center">
-                        <div className="flex items-center justify-center">
-                          {open ? (
-                            <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <span className="font-mono font-semibold text-sm">
+              return (
+                <Card key={batch.id} className={cn('overflow-hidden', open && 'ring-1 ring-border')}>
+                  <button
+                    type="button"
+                    className="w-full text-left px-4 py-3 hover:bg-muted/30 transition-colors"
+                    onClick={() => setExpanded(open ? null : batch.id)}
+                    aria-expanded={open}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="mt-0.5 shrink-0">
+                        {open ? (
+                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                        ) : (
+                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1 space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono font-semibold text-sm break-all">
                             {batch.batch_number}
                           </span>
-                        </div>
-                        <div className="text-sm truncate">{batch.created_by_name || '—'}</div>
-                        <div className="min-w-0">
-                          <Badge
-                            variant="secondary"
-                            className={cn(
-                              'font-normal max-w-full truncate',
-                              isTeam && 'bg-sky-50 text-sky-900 border-sky-200'
-                            )}
-                            title={typeLabel(batch)}
-                          >
-                            {typeLabel(batch)}
-                          </Badge>
-                        </div>
-                        <div>
                           <Badge
                             variant="outline"
                             className={cn('font-normal text-xs', statusBadge(batch.status))}
@@ -554,43 +567,163 @@ export default function PriceHistoryPage() {
                             {statusLabel(batch.status)}
                           </Badge>
                         </div>
-                        <div
-                          className="text-sm tabular-nums"
-                          title={progress.total > 0 ? progress.label : undefined}
+                        <p className="text-sm">
+                          <span className="text-muted-foreground">By </span>
+                          {batch.created_by_name || '—'}
+                        </p>
+                        <Badge
+                          variant="secondary"
+                          className={cn(
+                            'font-normal max-w-full',
+                            isTeam && 'bg-sky-50 text-sky-900 border-sky-200'
+                          )}
+                          title={typeLabel(batch)}
                         >
-                          {confirmedLabel}
-                        </div>
-                        <div className="text-sm text-muted-foreground whitespace-nowrap">
-                          {new Date(batch.created_at).toLocaleString()}
+                          {typeLabel(batch)}
+                        </Badge>
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                          <p>
+                            <span className="text-muted-foreground">Confirmed </span>
+                            <span className="tabular-nums font-medium">{confirmedLabel}</span>
+                          </p>
+                          <p className="text-muted-foreground">
+                            {new Date(batch.created_at).toLocaleString()}
+                          </p>
                         </div>
                       </div>
-                    </button>
+                    </div>
+                  </button>
 
-                    {open && (
-                      <div className="px-4 pb-2 border-t bg-background/80">
-                        <BatchDetail
-                          batchId={batch.id}
-                          canCancel={canCancel}
-                          viewerRole={user?.role}
-                          viewerId={user?.id}
-                          teamReportIds={teamReportIds}
-                          leaderNameByAgentId={leaderNameByAgentId}
-                          onCancelled={() => {
-                            qc.invalidateQueries({ queryKey: ['price-history'] });
-                            qc.invalidateQueries({
-                              queryKey: ['price-history-detail', batch.id],
-                            });
-                            qc.invalidateQueries({ queryKey: ['inventory'] });
-                          }}
-                        />
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+                  {open && (
+                    <CardContent className="pt-0 border-t px-4 pb-3">
+                      <BatchDetail
+                        batchId={batch.id}
+                        canCancel={canCancel}
+                        viewerRole={user?.role}
+                        viewerId={user?.id}
+                        teamReportIds={teamReportIds}
+                        leaderNameByAgentId={leaderNameByAgentId}
+                        onCancelled={() => {
+                          qc.invalidateQueries({ queryKey: ['price-history'] });
+                          qc.invalidateQueries({
+                            queryKey: ['price-history-detail', batch.id],
+                          });
+                          qc.invalidateQueries({ queryKey: ['inventory'] });
+                        }}
+                      />
+                    </CardContent>
+                  )}
+                </Card>
+              );
+            })}
+          </div>
+
+          {/* Desktop table */}
+          <div className="hidden md:block rounded-lg border bg-card overflow-x-auto">
+            <div className="min-w-[1100px]">
+              <div className="grid grid-cols-[40px_minmax(140px,1.1fr)_minmax(120px,0.9fr)_minmax(180px,1.3fr)_minmax(130px,0.9fr)_minmax(120px,0.85fr)_minmax(150px,0.95fr)] gap-3 px-4 py-2.5 border-b bg-muted/40 text-xs font-semibold uppercase tracking-wide text-muted-foreground sticky top-0 z-[1]">
+                <div aria-hidden />
+                <div>Price batch</div>
+                <div>Performed by</div>
+                <div>Type</div>
+                <div>Status</div>
+                <div>Total confirmed</div>
+                <div>Created at</div>
+              </div>
+
+              <div className="divide-y">
+                {filtered.map((batch: CompanyPriceChangeBatch) => {
+                  const open = expanded === batch.id;
+                  const visibleAgreements = filterVisiblePriceAgreements(batch.agreements, {
+                    role: user?.role,
+                    profileId: user?.id,
+                    teamReportIds,
+                  });
+                  const progress = agreementProgress(visibleAgreements);
+                  const confirmedLabel =
+                    progress.total > 0 ? `${progress.confirmed} / ${progress.total}` : '—';
+                  const isTeam = batch.scope_type === 'team';
+
+                  return (
+                    <div key={batch.id} className={cn(open && 'bg-muted/10')}>
+                      <button
+                        type="button"
+                        className="w-full text-left px-4 py-3 hover:bg-muted/30 transition-colors"
+                        onClick={() => setExpanded(open ? null : batch.id)}
+                        aria-expanded={open}
+                      >
+                        <div className="grid grid-cols-[40px_minmax(140px,1.1fr)_minmax(120px,0.9fr)_minmax(180px,1.3fr)_minmax(130px,0.9fr)_minmax(120px,0.85fr)_minmax(150px,0.95fr)] gap-3 items-center">
+                          <div className="flex items-center justify-center">
+                            {open ? (
+                              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <span className="font-mono font-semibold text-sm">
+                              {batch.batch_number}
+                            </span>
+                          </div>
+                          <div className="text-sm truncate">{batch.created_by_name || '—'}</div>
+                          <div className="min-w-0">
+                            <Badge
+                              variant="secondary"
+                              className={cn(
+                                'font-normal max-w-full truncate',
+                                isTeam && 'bg-sky-50 text-sky-900 border-sky-200'
+                              )}
+                              title={typeLabel(batch)}
+                            >
+                              {typeLabel(batch)}
+                            </Badge>
+                          </div>
+                          <div>
+                            <Badge
+                              variant="outline"
+                              className={cn('font-normal text-xs', statusBadge(batch.status))}
+                            >
+                              {statusLabel(batch.status)}
+                            </Badge>
+                          </div>
+                          <div
+                            className="text-sm tabular-nums"
+                            title={progress.total > 0 ? progress.label : undefined}
+                          >
+                            {confirmedLabel}
+                          </div>
+                          <div className="text-sm text-muted-foreground whitespace-nowrap">
+                            {new Date(batch.created_at).toLocaleString()}
+                          </div>
+                        </div>
+                      </button>
+
+                      {open && (
+                        <div className="px-4 pb-2 border-t bg-background/80">
+                          <BatchDetail
+                            batchId={batch.id}
+                            canCancel={canCancel}
+                            viewerRole={user?.role}
+                            viewerId={user?.id}
+                            teamReportIds={teamReportIds}
+                            leaderNameByAgentId={leaderNameByAgentId}
+                            onCancelled={() => {
+                              qc.invalidateQueries({ queryKey: ['price-history'] });
+                              qc.invalidateQueries({
+                                queryKey: ['price-history-detail', batch.id],
+                              });
+                              qc.invalidateQueries({ queryKey: ['inventory'] });
+                            }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   );

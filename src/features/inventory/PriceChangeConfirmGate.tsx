@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
+import { Separator } from '@/components/ui/separator';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import {
   AlertDialog,
@@ -22,6 +23,7 @@ import {
 import {
   confirmCompanyPriceChange,
   fetchMyPendingPriceAgreements,
+  priceChangeScopeLabel,
 } from '@/features/inventory/companyPriceChangeApi';
 import { PriceChangeItemsFlatTable } from '@/features/inventory/PriceChangeItemsFlatTable';
 import type { PriceItemsViewMode } from '@/features/inventory/PriceChangeItemsGroupedTable';
@@ -297,12 +299,70 @@ export function PriceChangeConfirmGate() {
             'sm:max-h-[90vh]',
           ].join(' ')}
         >
-          <AlertDialogHeader className="shrink-0 space-y-2 p-4 pb-3 text-left sm:p-6 sm:pb-3">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <AlertDialogTitle className="text-base sm:text-lg leading-snug pr-1">
-                Confirm company price change
-              </AlertDialogTitle>
-              <div className="flex items-center gap-2">
+          {/* Scrollable body: title → batch → prices → note */}
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            <AlertDialogHeader className="space-y-3 p-4 pb-3 text-left sm:p-6 sm:pb-4">
+              <div className="flex items-start justify-between gap-2">
+                <AlertDialogTitle className="text-base sm:text-lg leading-snug pr-1">
+                  Confirm company price change
+                </AlertDialogTitle>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0"
+                  onClick={dismissForLater}
+                  aria-label="Confirm later"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+              <AlertDialogDescription className="text-xs sm:text-sm leading-relaxed text-left">
+                Main Inventory already uses these prices. You can confirm now or later — your bag
+                keeps previous prices until you confirm. A reminder stays on screen until you do.
+              </AlertDialogDescription>
+              <div className="rounded-md border bg-muted/40 px-3 py-2.5 space-y-1">
+                <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+                  Batch number
+                </p>
+                <p className="font-mono text-sm font-semibold text-foreground break-all">
+                  {current.batch_number}
+                </p>
+                <div className="flex flex-wrap gap-1.5 pt-0.5">
+                  <Badge variant="secondary" className="font-normal text-xs">
+                    {priceChangeScopeLabel(current)}
+                  </Badge>
+                  <Badge variant="outline" className="font-normal text-xs">
+                    {brandCount} brand{brandCount === 1 ? '' : 's'} · {variantCount} variant
+                    {variantCount === 1 ? '' : 's'}
+                  </Badge>
+                  {remaining > 1 && (
+                    <Badge variant="secondary" className="font-normal text-xs">
+                      {remaining} batches waiting
+                    </Badge>
+                  )}
+                </div>
+                {(current.created_by_name || current.created_at) && (
+                  <p className="text-xs text-muted-foreground pt-0.5">
+                    Created by {current.created_by_name || '—'}
+                    {current.created_at
+                      ? ` · ${new Date(current.created_at).toLocaleString()}`
+                      : ''}
+                  </p>
+                )}
+              </div>
+            </AlertDialogHeader>
+
+            <Separator />
+
+            <div className="px-4 pt-3 pb-2 sm:px-6">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <p className="text-sm font-semibold">
+                  Price changes
+                  <span className="ml-1.5 font-normal text-muted-foreground">
+                    ({variantCount} item{variantCount === 1 ? '' : 's'})
+                  </span>
+                </p>
                 <ToggleGroup
                   type="single"
                   size="sm"
@@ -315,70 +375,37 @@ export function PriceChangeConfirmGate() {
                 >
                   <ToggleGroupItem value="cards" aria-label="Card view" className="gap-1 px-2 h-8">
                     <LayoutGrid className="h-3.5 w-3.5" />
-                    <span className="text-xs sm:inline">Cards</span>
+                    <span className="text-xs">Cards</span>
                   </ToggleGroupItem>
                   <ToggleGroupItem value="table" aria-label="Table view" className="gap-1 px-2 h-8">
                     <Table2 className="h-3.5 w-3.5" />
-                    <span className="text-xs sm:inline">Table</span>
+                    <span className="text-xs">Table</span>
                   </ToggleGroupItem>
                 </ToggleGroup>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 shrink-0"
-                  onClick={dismissForLater}
-                  aria-label="Confirm later"
-                >
-                  <X className="h-4 w-4" />
-                </Button>
+              </div>
+              <PriceChangeItemsFlatTable
+                batch={current}
+                myAgreement={myAgreement}
+                compact
+                viewMode={viewMode}
+              />
+            </div>
+
+            <Separator />
+
+            <div className="px-4 py-3 sm:px-6 sm:pb-4">
+              <div className="rounded-md border bg-muted/40 px-3 py-2.5 space-y-0.5">
+                <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+                  Note
+                </p>
+                <p className="text-sm text-foreground whitespace-pre-wrap">
+                  {current.note?.trim() ? current.note : '—'}
+                </p>
               </div>
             </div>
-            <AlertDialogDescription asChild>
-              <div className="space-y-2 text-sm text-muted-foreground text-left">
-                <p className="text-xs sm:text-sm leading-relaxed">
-                  Main Inventory already uses these prices. You can confirm now or later — your bag
-                  keeps previous prices until you confirm. A reminder stays on screen until you do.
-                </p>
-                <p className="font-mono text-foreground font-medium text-xs sm:text-sm break-all">
-                  {current.batch_number}
-                </p>
-                <p className="text-xs sm:text-sm">
-                  Created by {current.created_by_name || '—'}
-                  {current.created_at
-                    ? ` · ${new Date(current.created_at).toLocaleString()}`
-                    : ''}
-                </p>
-                <div className="rounded-md border bg-muted/40 px-3 py-2 space-y-0.5">
-                  <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
-                    Change note
-                  </p>
-                  <p className="text-sm text-foreground whitespace-pre-wrap">
-                    {current.note?.trim() ? current.note : '—'}
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2 pt-0.5">
-                  <Badge variant="outline" className="font-normal">
-                    {brandCount} brand{brandCount === 1 ? '' : 's'} · {variantCount} variant
-                    {variantCount === 1 ? '' : 's'}
-                  </Badge>
-                  {remaining > 1 && (
-                    <Badge variant="secondary">{remaining} batches waiting</Badge>
-                  )}
-                </div>
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 sm:px-6 max-sm:flex-1 sm:max-h-[calc(90vh-14rem)]">
-            <PriceChangeItemsFlatTable
-              batch={current}
-              myAgreement={myAgreement}
-              compact
-              viewMode={viewMode}
-            />
           </div>
 
+          {/* Sticky footer — ack + buttons */}
           <div className="shrink-0 border-t bg-background p-4 space-y-3 sm:p-6 sm:pt-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
             <div className="flex items-start gap-3">
               <Checkbox
