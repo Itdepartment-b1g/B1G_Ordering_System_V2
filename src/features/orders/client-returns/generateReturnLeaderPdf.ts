@@ -112,7 +112,7 @@ function buildReturnLeaderHtml(row: ReturnLeaderHandover): string {
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Stock Return Receipt (Disposal) – ${returnNo}</title>
+<title>Client Stock Return (Disposal) – ${returnNo}</title>
 <style>
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
@@ -168,7 +168,15 @@ function buildReturnLeaderHtml(row: ReturnLeaderHandover): string {
     font-size: 22px;
     font-weight: 800;
     letter-spacing: 0.06em;
-    margin: 10px 0 14px;
+    margin: 10px 0 4px;
+  }
+  .doc-subtitle {
+    text-align: center;
+    font-size: 11px;
+    font-weight: 600;
+    color: #444;
+    margin: 0 0 14px;
+    line-height: 1.4;
   }
   .dr-number-row {
     display: flex;
@@ -286,7 +294,7 @@ function buildReturnLeaderHtml(row: ReturnLeaderHandover): string {
 <body>
   <div class="toolbar">
     <div class="toolbar-left">
-      <h1>Stock Return Receipt (Disposal)
+      <h1>Client Stock Return (Disposal)
         <span class="hint">Use <b>Print</b> (Ctrl/⌘ + P), turn off <b>Headers and footers</b>, then save as PDF.</span>
       </h1>
     </div>
@@ -299,6 +307,9 @@ function buildReturnLeaderHtml(row: ReturnLeaderHandover): string {
   </div>
   <div class="page">
     <div class="doc-title">CLIENT STOCK RETURN (DISPOSAL)</div>
+    <div class="doc-subtitle">
+      Disposal items returned by mobile sales under team leader ${returnTo}.
+    </div>
     <div class="dr-number-row">
       <span class="label">RETURN NUMBER:</span>
       <span class="value">${returnNo}</span>
