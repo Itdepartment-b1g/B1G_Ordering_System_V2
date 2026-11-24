@@ -57,6 +57,7 @@ import {
 import { getDateRangeFromPreset } from '@/lib/dateRangePresets';
 import {
   groupTlRequests,
+  tlStatusLabelForGroup,
   type TLRequestGroup,
 } from './tl-stock-transfer/tlStockTransferShared';
 import {
@@ -414,42 +415,48 @@ export default function AdminTLRequestsPage() {
     }
   };
   
-  // Status badge helper
-  const getStatusBadge = (status: string) => {
-    switch (status) {
+  const getStatusBadge = (group: {
+    status: string;
+    source?: { full_name?: string | null } | null;
+    requester?: { full_name?: string | null } | null;
+  }) => {
+    const label = tlStatusLabelForGroup(group);
+    switch (group.status) {
       case 'pending_admin':
         return (
           <Badge variant="secondary" className="bg-yellow-50 text-yellow-700 border-yellow-200">
             <Clock className="h-3 w-3 mr-1" />
-            Pending Admin
+            {label}
           </Badge>
         );
       case 'pending_source_tl':
+      case 'admin_approved':
         return (
           <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200">
             <Clock className="h-3 w-3 mr-1" />
-            Awaiting Dispatch
+            {label}
           </Badge>
         );
       case 'pending_receipt':
+      case 'source_tl_approved':
         return (
           <Badge variant="secondary" className="bg-purple-50 text-purple-700 border-purple-200">
             <AlertCircle className="h-3 w-3 mr-1" />
-            In Transit
+            {label}
           </Badge>
         );
       case 'incomplete':
         return (
           <Badge variant="secondary" className="bg-orange-50 text-orange-800 border-orange-200">
             <AlertCircle className="h-3 w-3 mr-1" />
-            Incomplete
+            {label}
           </Badge>
         );
       case 'completed':
         return (
           <Badge variant="secondary" className="bg-green-50 text-green-700 border-green-200">
             <CheckCircle2 className="h-3 w-3 mr-1" />
-            Completed
+            {label}
           </Badge>
         );
       case 'admin_rejected':
@@ -457,11 +464,11 @@ export default function AdminTLRequestsPage() {
         return (
           <Badge variant="secondary" className="bg-red-50 text-red-700 border-red-200">
             <XCircle className="h-3 w-3 mr-1" />
-            Rejected
+            {label}
           </Badge>
         );
       default:
-        return <Badge>{status}</Badge>;
+        return <Badge>{label}</Badge>;
     }
   };
   
@@ -671,7 +678,7 @@ export default function AdminTLRequestsPage() {
                             </p>
                           </TableCell>
                           <TableCell className="text-right tabular-nums">{group.totalRequested}</TableCell>
-                          <TableCell>{getStatusBadge(group.status)}</TableCell>
+                          <TableCell>{getStatusBadge(group)}</TableCell>
                           <TableCell>{new Date(group.created_at).toLocaleDateString()}</TableCell>
                           <TableCell className="text-right">
                             <TLTransferRowActionsMenu
@@ -782,7 +789,7 @@ export default function AdminTLRequestsPage() {
                 </div>
                 <div>
                   <Label className="text-muted-foreground">Status</Label>
-                  <div className="mt-1">{getStatusBadge(selectedGroup.status)}</div>
+                  <div className="mt-1">{getStatusBadge(selectedGroup)}</div>
                 </div>
                 <div>
                   <Label className="text-muted-foreground">Requested by</Label>

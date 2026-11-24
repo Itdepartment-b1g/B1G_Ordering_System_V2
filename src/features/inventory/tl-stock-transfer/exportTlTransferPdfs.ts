@@ -3,7 +3,7 @@
  * Same HTML print → Save as PDF pattern as PO DR / internal stock DR.
  */
 import type { TLRequestWithDetails } from '@/types/tlStockRequests.types';
-import { tlStatusLabel, tlTdrKindLabel } from './tlStockTransferShared';
+import { tlStatusLabelForRequest, tlTdrKindLabel } from './tlStockTransferShared';
 
 function escapeHtml(value: unknown): string {
   if (value == null) return '';
@@ -606,7 +606,7 @@ export function tlTransferRequestPdfFromLines(
   if (!header) return null;
   return {
     requestNumber: header.request_number,
-    statusLabel: tlStatusLabel(header.status),
+    statusLabel: tlStatusLabelForRequest(header),
     createdAt: header.created_at,
     requesterName: header.requester?.full_name || '—',
     requesterRegion: header.requester?.region,

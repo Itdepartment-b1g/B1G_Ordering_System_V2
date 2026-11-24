@@ -8,6 +8,8 @@ import type { TLRequestWithDetails } from '@/types/tlStockRequests.types';
 import {
   tlRemainingToDispatch,
   tlStatusLabel,
+  tlStatusLabelForGroup,
+  tlStatusLabelForRequest,
   type TLRequestGroup,
 } from './tlStockTransferShared';
 
@@ -34,9 +36,9 @@ export const TL_TRANSFER_QUICK_STATUS_OPTIONS: Array<{
   label: string;
 }> = [
   { value: 'all', label: 'All' },
-  { value: 'pending_admin', label: 'Pending Super Admin' },
+  { value: 'pending_admin', label: 'Awaiting approval' },
   { value: 'pending_source_tl', label: 'Awaiting dispatch' },
-  { value: 'pending_receipt', label: 'In transit' },
+  { value: 'pending_receipt', label: 'Awaiting receive' },
   { value: 'incomplete', label: 'Incomplete' },
   { value: 'completed', label: 'Completed' },
   { value: 'rejected', label: 'Rejected' },
@@ -169,6 +171,7 @@ function rowSearchHaystack(row: TLRequestWithDetails): string {
     row.source?.full_name ?? '',
     row.source?.region ?? '',
     itemLabel(row),
+    tlStatusLabelForRequest(row),
     tlStatusLabel(row.status),
     row.status,
   ]
@@ -184,6 +187,7 @@ function groupSearchHaystack(group: TLRequestGroup): string {
     group.requester?.full_name ?? '',
     group.requester?.region ?? '',
     group.source?.full_name ?? '',
+    tlStatusLabelForGroup(group),
     tlStatusLabel(group.status),
     group.status,
     itemText,
@@ -275,7 +279,7 @@ export function sortTlTransferRows(
         result = tlRemainingToDispatch(a) - tlRemainingToDispatch(b);
         break;
       case 'status':
-        result = compareText(tlStatusLabel(a.status), tlStatusLabel(b.status));
+        result = compareText(tlStatusLabelForRequest(a), tlStatusLabelForRequest(b));
         break;
       case 'created_at':
         result = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
@@ -333,7 +337,7 @@ export function sortTlTransferGroups(
         result = aToDispatch - bToDispatch;
         break;
       case 'status':
-        result = compareText(tlStatusLabel(a.status), tlStatusLabel(b.status));
+        result = compareText(tlStatusLabelForGroup(a), tlStatusLabelForGroup(b));
         break;
       case 'created_at':
         result = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();

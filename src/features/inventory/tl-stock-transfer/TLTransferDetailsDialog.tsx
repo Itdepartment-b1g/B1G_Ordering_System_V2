@@ -26,7 +26,7 @@ import {
   tlDispatchShortfallSummary,
   tlDispatchedQty,
   tlRollupItemStatus,
-  tlStatusLabel,
+  tlStatusLabelForRequest,
   tlTdrKindLabel,
 } from './tlStockTransferShared';
 import { exportTlTdrPdf, printTlStockTransferRequest } from './exportTlTransferPdfs';
@@ -546,7 +546,10 @@ export function TLTransferDetailsDialog({ open, onOpenChange, request, allReques
                 Print transfer
               </Button>
               <Badge variant="secondary" className={statusBadgeClass(displayStatus)}>
-                {tlStatusLabel(displayStatus)}
+                {tlStatusLabelForRequest({
+                  ...headerRequest,
+                  status: displayStatus as typeof headerRequest.status,
+                })}
               </Badge>
             </div>
           </div>

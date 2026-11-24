@@ -23,7 +23,7 @@ import {
   tlDispatchShortfallSummary,
   tlRemainingToDispatch,
   tlRemainingToReceive,
-  tlStatusLabel,
+  tlStatusLabelForGroup,
   type TLRequestGroup,
 } from './tlStockTransferShared';
 import type { TlTransferListSortKey } from './tlStockTransferListHelpers';
@@ -490,7 +490,7 @@ export function TlTransferAccordionList({
                       </TableCell>
                       <TableCell>
                         <Badge variant="secondary" className={statusBadgeClass(group.status)}>
-                          {tlStatusLabel(group.status)}
+                          {tlStatusLabelForGroup(group)}
                         </Badge>
                       </TableCell>
                     </>
@@ -580,7 +580,7 @@ export function TlTransferAccordionList({
                                   variant="secondary"
                                   className={statusBadgeClass(group.status)}
                                 >
-                                  {tlStatusLabel(group.status)}
+                                  {tlStatusLabelForGroup(group)}
                                 </Badge>
                               }
                             />

@@ -231,15 +231,35 @@ export function tlTdrKindLabel(kind: string) {
   }
 }
 
-export function tlStatusLabel(status: TLRequestStatus | string): string {
+export type TlStatusLabelContext = {
+  sourceName?: string | null;
+  requesterName?: string | null;
+  adminName?: string | null;
+};
+
+export function tlStatusLabel(
+  status: TLRequestStatus | string,
+  context?: TlStatusLabelContext
+): string {
+  const sourceName = context?.sourceName?.trim() || null;
+  const requesterName = context?.requesterName?.trim() || null;
+  const adminName = context?.adminName?.trim() || null;
+
   switch (status) {
     case 'pending_admin':
-      return 'Pending Super Admin';
+      return adminName
+        ? `Awaiting approval by ${adminName}`
+        : 'Awaiting approval by Super Admin';
     case 'pending_source_tl':
     case 'admin_approved':
-      return 'Awaiting dispatch';
+      return sourceName
+        ? `Awaiting dispatch by ${sourceName}`
+        : 'Awaiting dispatch';
     case 'pending_receipt':
-      return 'In transit';
+    case 'source_tl_approved':
+      return requesterName
+        ? `Awaiting receive by ${requesterName}`
+        : 'Awaiting receive';
     case 'completed':
       return 'Completed';
     case 'incomplete':
@@ -252,6 +272,26 @@ export function tlStatusLabel(status: TLRequestStatus | string): string {
     default:
       return status;
   }
+}
+
+export function tlStatusLabelForRequest(
+  row: Pick<TLRequestWithDetails, 'status' | 'source' | 'requester'>
+): string {
+  return tlStatusLabel(row.status, {
+    sourceName: row.source?.full_name,
+    requesterName: row.requester?.full_name,
+  });
+}
+
+export function tlStatusLabelForGroup(group: {
+  status: TLRequestStatus | string;
+  source?: { full_name?: string | null } | null;
+  requester?: { full_name?: string | null } | null;
+}): string {
+  return tlStatusLabel(group.status, {
+    sourceName: group.source?.full_name,
+    requesterName: group.requester?.full_name,
+  });
 }
 
 /** Same priority as `_tl_refresh_request_status`: open work beats completed. */
