@@ -510,7 +510,7 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
       <img class="logo-img" src="${logoUrl}" alt="B1G Corporation" />
     </div>
 
-    <div class="doc-title">STOCK RETURN RECEIPT</div>
+    <div class="doc-title"></div>
 
     <div class="dr-number-row">
       <span class="label">RETURN NUMBER:</span>

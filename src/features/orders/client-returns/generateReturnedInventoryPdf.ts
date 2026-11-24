@@ -363,7 +363,7 @@ function buildReturnedInventoryHtml(row: ReturnedInventoryRow): string {
   </div>
 
   <div class="page">
-    <div class="doc-title">RETURNED STOCK (DISPOSAL)</div>
+    <div class="doc-title">CLIENT STOCK RETURN (DISPOSAL)</div>
 
     <div class="dr-number-row">
       <span class="label">VARIANT:</span>

@@ -298,7 +298,7 @@ function buildReturnLeaderHtml(row: ReturnLeaderHandover): string {
     </div>
   </div>
   <div class="page">
-    <div class="doc-title">STOCK RETURN RECEIPT (DISPOSAL)</div>
+    <div class="doc-title">CLIENT STOCK RETURN (DISPOSAL)</div>
     <div class="dr-number-row">
       <span class="label">RETURN NUMBER:</span>
       <span class="value">${returnNo}</span>
