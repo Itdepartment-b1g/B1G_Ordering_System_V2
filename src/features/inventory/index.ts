@@ -35,6 +35,8 @@ export { default as MobileSalesStockRequestDetailPage } from './MobileSalesStock
 export { default as LeaderPoReceivePage } from './LeaderPoReceivePage';
 export { default as MobileSalesAllocationHistoryPage } from './MobileSalesAllocationHistoryPage';
 export { default as MobileSalesAllocationHistoryDetailPage } from './MobileSalesAllocationHistoryDetailPage';
+export { default as PriceAgreementPage } from './PriceAgreementPage';
+export { default as PriceHistoryPage } from './PriceHistoryPage';
 
 export { InventoryProvider, useInventory, type Brand, type Variant } from './InventoryContext';
 export { AgentInventoryProvider } from './AgentInventoryContext';

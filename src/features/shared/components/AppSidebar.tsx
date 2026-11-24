@@ -43,6 +43,7 @@ import {
   Layers,
   ClipboardCheck,
   Book,
+  CheckCircle2,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -93,6 +94,7 @@ const adminMenuItems: MenuItem[] = [
       { title: 'TL Stock Requests', url: '/inventory/admin-tl-requests', icon: Users },
       { title: 'Team Remittances', url: '/inventory/admin-team-remittances', icon: Users },
       { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
+      { title: 'Price History', url: '/inventory/price-history', icon: History },
     ]
   },
   {
@@ -278,6 +280,8 @@ const agentMenuItems: MenuItem[] = [
   { title: 'Return History', url: '/inventory/my-returns', icon: RotateCcw },
   { title: 'Allocation History', url: '/my-allocation-history', icon: Package2Icon },
   { title: 'Request Inventory', url: '/inventory/mobile-request', icon: Send },
+  { title: 'Price Agreements', url: '/inventory/price-agreements', icon: CheckCircle2 },
+  { title: 'Price History', url: '/inventory/price-history', icon: History },
   { title: 'My Clients', url: '/my-clients', icon: ShoppingBag },
   { title: 'My Orders', url: '/my-orders', icon: ShoppingCart },
   { title: 'Client Returns', url: '/client-order-returns', icon: RotateCcw },
@@ -310,6 +314,8 @@ const leaderMenuItems: MenuItem[] = [
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: DollarSign },
       { title: 'PO Receiving', url: '/inventory/po-receive', icon: PackageCheck },
       { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
+      { title: 'Price Agreements', url: '/inventory/price-agreements', icon: CheckCircle2 },
+      { title: 'Price History', url: '/inventory/price-history', icon: History },
       // { title: 'Returns to Super Admin', url: '/inventory/main/returns', icon: RotateCcw },
     ]
   },
@@ -483,6 +489,7 @@ const superAdminMenuItems: MenuItem[] = [
       { title: 'Inventory Requests', url: '/inventory/admin-requests', icon: Send },
       { title: 'Team Remittances', url: '/inventory/admin-team-remittances', icon: Users },
       { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
+      { title: 'Price History', url: '/inventory/price-history', icon: History },
     ]
   },
   {
@@ -560,11 +567,19 @@ export function AppSidebar() {
   // Get menu items based on role, then filter by permissions
   const menuItems = useMemo(() => {
     const canSeeReturnToWarehouse = hasWarehouseHubLink === true;
+    // Price agreements / history for all sales companies (not warehouse hub accounts)
+    const canSeePriceChangePages = user?.role !== 'warehouse';
+
+    const isPriceChangeRoute = (url: string) =>
+      url === '/inventory/price-history' || url === '/inventory/price-agreements';
 
     // Filter menu items based on permissions
     const filterMenuItems = (items: MenuItem[]): MenuItem[] => {
       return items
         .filter(item => {
+          if (isPriceChangeRoute(item.url) && !canSeePriceChangePages) {
+            return false;
+          }
           // Check if user has permission for this route
           if (!checkPermission(item.url)) {
             return false;
@@ -573,6 +588,9 @@ export function AppSidebar() {
           if (item.hasSubmenu && item.submenu) {
             const filteredSubmenu = item.submenu.filter((subItem) => {
               if (subItem.url === '/inventory/return-to-warehouse' && !canSeeReturnToWarehouse) {
+                return false;
+              }
+              if (isPriceChangeRoute(subItem.url) && !canSeePriceChangePages) {
                 return false;
               }
               return checkPermission(subItem.url);
@@ -589,6 +607,9 @@ export function AppSidebar() {
               ...item,
               submenu: item.submenu.filter((subItem) => {
                 if (subItem.url === '/inventory/return-to-warehouse' && !canSeeReturnToWarehouse) {
+                  return false;
+                }
+                if (isPriceChangeRoute(subItem.url) && !canSeePriceChangePages) {
                   return false;
                 }
                 return checkPermission(subItem.url);
@@ -638,7 +659,7 @@ export function AppSidebar() {
 
     // Filter menu items based on permissions
     return filterMenuItems(baseMenuItems);
-  }, [user?.role, checkPermission, impersonatedCompany, hasWarehouseHubLink]);
+  }, [user?.role, checkPermission, impersonatedCompany, hasWarehouseHubLink, user]);
 
   const toggleSubmenu = (menuTitle: string) => {
     setExpandedMenus(prev =>

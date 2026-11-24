@@ -411,6 +411,8 @@ export default function PriceHistoryPage() {
     queryKey: ['price-history', user?.company_id],
     queryFn: () => fetchPriceChangeBatches(user!.company_id!),
     enabled: !!user?.company_id && canAccess,
+    staleTime: 0,
+    refetchOnMount: 'always',
   });
 
   // Live updates when batches / items / agreements change (create, confirm, cancel, append)
