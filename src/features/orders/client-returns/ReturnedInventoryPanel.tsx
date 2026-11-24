@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ChevronDown, ChevronRight, RotateCcw, Search } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -9,7 +10,8 @@ import {
   ListPagination,
   type PageSize,
 } from '@/features/shared/components/ListPagination';
-import type { ReturnedInventoryRow } from './clientReturnApi';
+import { useToast } from '@/hooks/use-toast';
+import { NO_WAREHOUSE_DISPOSAL_NOTE, type ReturnedInventoryRow } from './clientReturnApi';
 import { formatVariantType, variantTypeBadgeClass } from './ClientReturnBrandTable';
 import { BulkReturnDialog } from './BulkReturnDialog';
 
@@ -29,6 +31,7 @@ type ReturnedInventoryPanelProps = {
   companyId?: string;
   submitterName?: string;
   holderRole?: string | null;
+  hasWarehouseHubLink?: boolean;
   onSubmitted?: () => void;
 };
 
@@ -57,14 +60,30 @@ export function ReturnedInventoryPanel({
   companyId,
   submitterName = '',
   holderRole,
+  hasWarehouseHubLink = true,
   onSubmitted,
 }: ReturnedInventoryPanelProps) {
+  const navigate = useNavigate();
+  const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(PAGE_SIZE);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [openBrands, setOpenBrands] = useState<Set<string>>(new Set());
   const isTeamLeader = holderRole === 'team_leader';
+  const canDisposeToWarehouse = isTeamLeader && rows.length > 0;
+
+  const handleDisposeToWarehouse = () => {
+    if (!hasWarehouseHubLink) {
+      toast({
+        title: 'Warehouse not linked',
+        description: NO_WAREHOUSE_DISPOSAL_NOTE,
+        variant: 'destructive',
+      });
+      return;
+    }
+    navigate('/inventory/return-to-warehouse');
+  };
 
   const filteredRows = useMemo(() => {
     const needle = searchQuery.trim().toLowerCase();
@@ -104,10 +123,20 @@ export function ReturnedInventoryPanel({
     });
   };
 
+  const showWarehouseNote = !hasWarehouseHubLink && rows.length > 0;
+
   return (
     <>
       <Card>
         <CardHeader className="pb-4 space-y-3">
+          {showWarehouseNote ? (
+            <div
+              role="status"
+              className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"
+            >
+              {NO_WAREHOUSE_DISPOSAL_NOTE}
+            </div>
+          ) : null}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h2 className="font-semibold">
@@ -126,6 +155,15 @@ export function ReturnedInventoryPanel({
               {canBulkReturn && rows.length > 0 ? (
                 <Button type="button" onClick={() => setBulkOpen(true)} className="w-full sm:w-auto">
                   Return to TL
+                </Button>
+              ) : null}
+              {canDisposeToWarehouse ? (
+                <Button
+                  type="button"
+                  className="w-full sm:w-auto"
+                  onClick={handleDisposeToWarehouse}
+                >
+                  Dispose to warehouse
                 </Button>
               ) : null}
               <div className="relative w-full sm:w-64">

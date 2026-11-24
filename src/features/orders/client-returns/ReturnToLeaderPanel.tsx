@@ -6,6 +6,8 @@ import {
   Clock,
   Eye,
   FilterX,
+  LayoutGrid,
+  List,
   Loader2,
   MoreVertical,
   Printer,
@@ -40,6 +42,7 @@ import {
   type TableSortCycleState,
 } from '@/features/shared/utils/tableSortCycle';
 import { AccordionBrandLinesTable } from './AccordionBrandLinesTable';
+import { NO_WAREHOUSE_DISPOSAL_NOTE } from './clientReturnApi';
 import {
   getReturnLeaderLineQty,
   returnLeaderStatusBadgeClass,
@@ -64,6 +67,14 @@ import { ReturnLeaderTimeline } from './ReturnLeaderTimeline';
 import { generateAndOpenReturnLeaderPdf } from './generateReturnLeaderPdf';
 
 const TABLE_COL_SPAN = 9;
+const VIEW_MODE_KEY = 'return-to-leader-view';
+type RlViewMode = 'table' | 'cards';
+
+function readStoredViewMode(): RlViewMode {
+  if (typeof window === 'undefined') return 'table';
+  const saved = window.localStorage.getItem(VIEW_MODE_KEY);
+  return saved === 'cards' ? 'cards' : 'table';
+}
 
 function receivedByLabel(row: ReturnLeaderHandover): string {
   if (row.status === 'received') return row.approvedByName || '—';
@@ -74,6 +85,41 @@ function receivedByLabel(row: ReturnLeaderHandover): string {
 function receivedAtLabel(row: ReturnLeaderHandover): string {
   if (row.status !== 'received') return '—';
   return formatHandoverWhen(row.approvedAt, 'MMM d, yyyy · h:mm a');
+}
+
+function ViewModeToggle({
+  value,
+  onChange,
+}: {
+  value: RlViewMode;
+  onChange: (mode: RlViewMode) => void;
+}) {
+  const options: { id: RlViewMode; label: string; icon: typeof List }[] = [
+    { id: 'table', label: 'Table', icon: List },
+    { id: 'cards', label: 'Cards', icon: LayoutGrid },
+  ];
+
+  return (
+    <div className="flex rounded-md border p-0.5 shrink-0">
+      {options.map((option) => {
+        const Icon = option.icon;
+        const active = value === option.id;
+        return (
+          <Button
+            key={option.id}
+            type="button"
+            variant={active ? 'default' : 'ghost'}
+            size="sm"
+            className="h-8 gap-1.5 px-2.5 text-xs"
+            onClick={() => onChange(option.id)}
+          >
+            <Icon className="h-3.5 w-3.5" />
+            {option.label}
+          </Button>
+        );
+      })}
+    </div>
+  );
 }
 
 function ReturnLeaderDetails({ row }: { row: ReturnLeaderHandover }) {
@@ -239,6 +285,7 @@ type ReturnToLeaderPanelProps = {
   isLoading: boolean;
   isError: boolean;
   error: unknown;
+  hasWarehouseHubLink?: boolean;
   canReviewLeader: (row: ReturnLeaderHandover) => boolean;
   canReviewSuperAdmin: (row: ReturnLeaderHandover) => boolean;
   onView: (row: ReturnLeaderHandover) => void;
@@ -310,48 +357,32 @@ function ReturnLeaderCard({
   const lines = row.lines || [];
   const skuCount = lines.length;
   const previewLines = lines.slice(0, 3);
+  const clientNames = uniqueReturnLeaderClientNames(lines);
 
   return (
     <div
-      className={`rounded-xl border bg-background p-3.5 ${
+      className={`rounded-2xl border bg-background p-4 shadow-sm ${
         pending ? 'border-l-[3px] border-l-amber-400' : ''
       }`}
     >
-      <div className="flex items-start gap-2">
-        <button type="button" className="min-w-0 flex-1 text-left space-y-1.5" onClick={onView}>
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="font-mono text-[13px] font-semibold leading-tight break-all">
-              {row.returnNumber}
-            </p>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 space-y-1">
+          <p className="font-mono font-semibold text-sm truncate">{row.returnNumber}</p>
+          <div className="flex flex-wrap gap-1.5">
             <Badge
               variant="outline"
-              className={`h-5 px-1.5 text-[10px] font-medium ${returnLeaderStatusBadgeClass(row.status)}`}
+              className={`font-normal text-[11px] px-1.5 py-0 h-5 ${returnLeaderStatusBadgeClass(row.status)}`}
             >
               {returnLeaderStatusLabel(row.status)}
             </Badge>
+            <Badge
+              variant="outline"
+              className="font-normal text-[11px] px-1.5 py-0 h-5 bg-rose-50 text-rose-700 border-rose-200"
+            >
+              Disposal
+            </Badge>
           </div>
-          <p className="text-sm font-medium text-foreground/90 truncate">{row.submittedByName}</p>
-          <p className="text-xs text-muted-foreground">
-            {formatHandoverWhen(row.createdAt, 'MMM d · h:mm a')}
-            <span className="mx-1.5 text-border">·</span>
-            <span className="font-semibold tabular-nums text-rose-700">
-              {qty} unit{qty === 1 ? '' : 's'}
-            </span>
-            {skuCount > 0 ? (
-              <>
-                <span className="mx-1.5 text-border">·</span>
-                <span className="tabular-nums">
-                  {skuCount} SKU{skuCount === 1 ? '' : 's'}
-                </span>
-              </>
-            ) : null}
-          </p>
-          <p className="text-xs text-muted-foreground truncate">
-            Received by {receivedByLabel(row)}
-            <span className="mx-1.5 text-border">·</span>
-            {receivedAtLabel(row)}
-          </p>
-        </button>
+        </div>
         <ReturnLeaderRowMenu
           row={row}
           onView={onView}
@@ -360,37 +391,90 @@ function ReturnLeaderCard({
         />
       </div>
 
-      {previewLines.length > 0 ? (
-        <button type="button" className="mt-3 w-full text-left space-y-1.5" onClick={onView}>
-          {previewLines.map((line) => (
-            <div
-              key={`${line.variantId}-${line.variantName}`}
-              className="flex items-center gap-2 rounded-lg bg-muted/40 px-2.5 py-1.5"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium truncate">
-                  <span className="text-muted-foreground">{line.brandName}</span>
-                  <span className="mx-1 text-muted-foreground/60">·</span>
-                  {line.variantName}
-                </p>
-              </div>
-              <span className="shrink-0 text-xs font-semibold tabular-nums text-rose-700">
-                {line.quantity}
-              </span>
-            </div>
-          ))}
-          {lines.length > previewLines.length ? (
-            <p className="px-0.5 text-[11px] text-muted-foreground">
-              +{lines.length - previewLines.length} more
+      <button type="button" className="mt-3 w-full text-left space-y-3" onClick={onView}>
+        <p className="text-lg font-bold tracking-tight truncate">{row.submittedByName}</p>
+
+        <div className="grid grid-cols-2 gap-x-3 gap-y-3">
+          <div className="min-w-0">
+            <p className="text-xs text-muted-foreground">Submitted</p>
+            <p className="font-semibold text-sm">
+              {formatHandoverWhen(row.createdAt, 'MMM d, yyyy · h:mm a')}
             </p>
-          ) : null}
-        </button>
-      ) : skuCount === 0 ? (
-        <p className="mt-3 text-xs text-muted-foreground">Open View for full details.</p>
-      ) : null}
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs text-muted-foreground">Qty</p>
+            <p className="font-semibold text-sm tabular-nums text-rose-700">
+              {qty} unit{qty === 1 ? '' : 's'}
+              {skuCount > 0 ? (
+                <span className="ml-1 font-normal text-muted-foreground">
+                  · {skuCount} SKU{skuCount === 1 ? '' : 's'}
+                </span>
+              ) : null}
+            </p>
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs text-muted-foreground">Received by</p>
+            <p className="font-semibold text-sm truncate">{receivedByLabel(row)}</p>
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs text-muted-foreground">Received at</p>
+            <p className="font-semibold text-sm">{receivedAtLabel(row)}</p>
+          </div>
+          <div className="min-w-0 col-span-2">
+            <p className="text-xs text-muted-foreground">Clients</p>
+            {clientNames.length === 0 ? (
+              <p className="font-semibold text-sm">—</p>
+            ) : (
+              <div className="mt-0.5 flex flex-wrap gap-1">
+                {clientNames.map((name) => (
+                  <Badge
+                    key={name}
+                    variant="secondary"
+                    className="font-normal text-[11px] px-1.5 py-0 h-5 max-w-[9rem] truncate"
+                  >
+                    {name}
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="min-w-0 col-span-2">
+            <p className="text-xs text-muted-foreground">Notes</p>
+            <p className="font-semibold text-sm break-words">{row.notes?.trim() || '—'}</p>
+          </div>
+        </div>
+
+        {previewLines.length > 0 ? (
+          <div className="space-y-1.5">
+            <p className="text-xs font-semibold text-muted-foreground">Disposal items</p>
+            {previewLines.map((line) => (
+              <div
+                key={`${line.variantId}-${line.variantName}`}
+                className="flex items-center gap-2 rounded-lg bg-muted/40 px-2.5 py-1.5"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-medium truncate">
+                    <span className="text-muted-foreground">{line.brandName}</span>
+                    <span className="mx-1 text-muted-foreground/60">·</span>
+                    {line.variantName}
+                  </p>
+                </div>
+                <span className="shrink-0 text-xs font-semibold tabular-nums text-rose-700">
+                  {line.quantity}
+                </span>
+              </div>
+            ))}
+            {lines.length > previewLines.length ? (
+              <p className="px-0.5 text-[11px] text-muted-foreground">
+                +{lines.length - previewLines.length} more
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+      </button>
 
       {pending ? (
-        <div className="mt-3 pt-3 border-t grid grid-cols-2 gap-2">
+        <div className="mt-4 pt-3 border-t grid grid-cols-2 gap-2">
           <Button
             type="button"
             variant="outline"
@@ -419,6 +503,7 @@ export function ReturnToLeaderPanel({
   isLoading,
   isError,
   error,
+  hasWarehouseHubLink = true,
   canReviewLeader,
   canReviewSuperAdmin,
   onView,
@@ -437,6 +522,12 @@ export function ReturnToLeaderPanel({
     useState<TableSortCycleState<ReturnLeaderSortKey>>(createInitialTableSortCycle);
   const [timelineRow, setTimelineRow] = useState<ReturnLeaderHandover | null>(null);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [viewMode, setViewMode] = useState<RlViewMode>(readStoredViewMode);
+
+  const setAndStoreViewMode = (mode: RlViewMode) => {
+    setViewMode(mode);
+    window.localStorage.setItem(VIEW_MODE_KEY, mode);
+  };
 
   const filters = useMemo(
     () => ({
@@ -546,9 +637,19 @@ export function ReturnToLeaderPanel({
     setSortState((current) => getNextTableSortCycleState(current, key));
   };
 
+  const showWarehouseNote = !hasWarehouseHubLink && rows.length > 0;
+
   return (
     <Card className="min-w-0 overflow-hidden">
       <CardHeader className="pb-3 space-y-3 px-4 sm:px-6">
+        {showWarehouseNote ? (
+          <div
+            role="status"
+            className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"
+          >
+            {NO_WAREHOUSE_DISPOSAL_NOTE}
+          </div>
+        ) : null}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="min-w-0">
             <h2 className="font-semibold">Return to leader</h2>
@@ -585,6 +686,9 @@ export function ReturnToLeaderPanel({
               onStatusChange={setStatusFilter}
               onClear={clearQuickFilters}
             />
+            <div className="hidden md:block">
+              <ViewModeToggle value={viewMode} onChange={setAndStoreViewMode} />
+            </div>
           </div>
         </div>
       </CardHeader>
@@ -611,7 +715,7 @@ export function ReturnToLeaderPanel({
           </div>
         ) : (
           <>
-            <div className="md:hidden space-y-3">
+            <div className={viewMode === 'table' ? 'space-y-3 md:hidden' : 'space-y-3'}>
               {pagedItems.map((row) => {
                 const canReview = canReviewLeader(row) || canReviewSuperAdmin(row);
                 return (
@@ -629,6 +733,7 @@ export function ReturnToLeaderPanel({
               })}
             </div>
 
+            {viewMode === 'table' ? (
             <div className="hidden md:block rounded-md border overflow-x-auto">
               <Table>
                 <TableHeader>
@@ -782,6 +887,7 @@ export function ReturnToLeaderPanel({
                 </TableBody>
               </Table>
             </div>
+            ) : null}
 
             <div className="mt-4">
               <ListPagination

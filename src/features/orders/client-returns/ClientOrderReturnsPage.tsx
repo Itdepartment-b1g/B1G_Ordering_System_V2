@@ -14,7 +14,6 @@ import {
   canShowClientOrderReturns,
   CLIENT_ORDER_RETURNS_QUERY_KEY,
   fetchClientOrderReturns,
-  NO_WAREHOUSE_DISPOSAL_NOTE,
   type ReturnedInventoryRow,
 } from './clientReturnApi';
 import { ClientReturnHistoryList } from './ClientReturnHistoryList';
@@ -314,15 +313,6 @@ function ClientOrderReturnsView() {
         </p>
       </div>
 
-      {!hasWarehouseHubLink ? (
-        <div
-          role="status"
-          className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"
-        >
-          {NO_WAREHOUSE_DISPOSAL_NOTE}
-        </div>
-      ) : null}
-
       <Tabs value={pageTab} onValueChange={(value) => setPageTab(value as PageTab)} className="space-y-4">
         <TabsList
           className={`grid w-full h-auto p-1 ${isSuperAdmin ? 'grid-cols-2' : 'grid-cols-3'}`}
@@ -394,6 +384,7 @@ function ClientOrderReturnsView() {
                 companyId={user?.company_id}
                 submitterName={user?.full_name}
                 holderRole={user?.role}
+                hasWarehouseHubLink={hasWarehouseHubLink}
                 onSubmitted={() => void refreshInventoryQueries()}
               />
             )}
@@ -406,6 +397,7 @@ function ClientOrderReturnsView() {
             isLoading={rlLoading}
             isError={rlIsError}
             error={rlError}
+            hasWarehouseHubLink={hasWarehouseHubLink}
             canReviewLeader={(row) => canReviewReturnLeaderAsLeader(user?.role, row, user?.id)}
             canReviewSuperAdmin={(row) => canReviewReturnLeaderAsSuperAdmin(user?.role, row)}
             onView={(row) => {
