@@ -1,3 +1,5 @@
+import { formatVariantType } from './ClientReturnBrandTable';
+import { formatClientReturnStockFate } from './clientReturnPreview';
 import {
   getReturnLeaderLineQty,
   returnLeaderStatusLabel,
@@ -57,21 +59,23 @@ function lineDescription(line: ReturnLeaderHandoverLine): string {
 }
 
 function lineRowsHtml(lines: ReturnLeaderHandoverLine[]): string {
+  const disposalLabel = formatClientReturnStockFate('disposal');
   const rows = lines
     .filter((line) => (Number(line.quantity) || 0) > 0)
-    .map(
-      (line) => `
+    .map((line) => {
+      const typeLabel = `${formatVariantType(line.variantType)} (${disposalLabel})`;
+      return `
       <tr>
         <td class="col-desc">${escapeHtml(lineDescription(line))}</td>
         <td class="col-qty">${fmtQty(line.quantity)}</td>
-        <td class="col-qty">${escapeHtml(line.variantType || '—')}</td>
-      </tr>`
-    );
+        <td class="col-qty">${escapeHtml(typeLabel)}</td>
+      </tr>`;
+    });
 
   if (rows.length === 0) {
     rows.push(`
       <tr>
-        <td class="col-desc">No returned items</td>
+        <td class="col-desc">No disposal items</td>
         <td class="col-qty">&nbsp;</td>
         <td class="col-qty">&nbsp;</td>
       </tr>`);
@@ -91,11 +95,31 @@ function detailField(label: string, value: string | null | undefined): string {
     </div>`;
 }
 
+function personAtField(
+  label: string,
+  name: string | null | undefined,
+  at: string | null | undefined
+): string {
+  const displayName = name?.trim() || '—';
+  const displayAt = at ? formatDateTime(at) : '—';
+  return `
+    <div class="delivery-field">
+      <span class="flabel">${escapeHtml(label)}:</span>
+      <span class="fvalue">
+        <div class="person-at">
+          <div class="person-name">${escapeHtml(displayName)}</div>
+          <div class="person-time">${displayAt}</div>
+        </div>
+      </span>
+    </div>`;
+}
+
 function buildReturnLeaderHtml(row: ReturnLeaderHandover): string {
   const returnNo = escapeHtml(row.returnNumber);
   const status = escapeHtml(returnLeaderStatusLabel(row.status));
   const returnTo = escapeHtml(row.toHolderName?.trim() || 'Team Leader');
-  const fromName = row.fromHolderName?.trim() || row.submittedByName;
+  const returnedByName = row.fromHolderName?.trim() || row.submittedByName?.trim() || 'Mobile sales';
+  const disposalLabel = formatClientReturnStockFate('disposal');
   const qty = getReturnLeaderLineQty(row);
   const signatureHtml = row.agentSignatureUrl
     ? `<img class="sig-img" src="${escapeHtml(row.agentSignatureUrl)}" alt="Return signature" />`
@@ -105,7 +129,7 @@ function buildReturnLeaderHtml(row: ReturnLeaderHandover): string {
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Stock Return Receipt – ${returnNo}</title>
+<title>Stock Return Receipt (Disposal) – ${returnNo}</title>
 <style>
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
@@ -242,11 +266,17 @@ function buildReturnLeaderHtml(row: ReturnLeaderHandover): string {
   }
   .delivery-field .flabel {
     font-weight: 800;
-    min-width: 140px;
+    min-width: 200px;
     flex-shrink: 0;
   }
   .delivery-field .fvalue { flex: 1; }
   .delivery-field .muted { color: #777; font-style: italic; }
+  .person-at .person-name { font-weight: 700; }
+  .person-at .person-time {
+    font-size: 10px;
+    color: #444;
+    margin-top: 2px;
+  }
   .signature-field { align-items: flex-start; }
   .sig-img {
     display: block;
@@ -279,26 +309,34 @@ function buildReturnLeaderHtml(row: ReturnLeaderHandover): string {
 <body>
   <div class="toolbar">
     <div class="toolbar-left">
-      <h1>Stock Return Receipt
+      <h1>Stock Return Receipt (Disposal)
         <span class="hint">Use <b>Print</b> (Ctrl/⌘ + P), turn off <b>Headers and footers</b>, then save as PDF.</span>
       </h1>
     </div>
     <div class="toolbar-center">
-      <div class="warehouse-badge">Return to: <span>${returnTo}</span></div>
+      <div class="warehouse-badge">Stock: <span>${escapeHtml(disposalLabel)}</span> · Mobile sales</div>
     </div>
     <div class="toolbar-right">
       <button type="button" onclick="window.print()">Print</button>
     </div>
   </div>
   <div class="page">
-    <div class="doc-title">STOCK RETURN RECEIPT</div>
+    <div class="doc-title">STOCK RETURN RECEIPT (DISPOSAL)</div>
     <div class="dr-number-row">
       <span class="label">RETURN NUMBER:</span>
       <span class="value">${returnNo}</span>
     </div>
     <div class="meta-row return-to-row">
+      <span class="label">RETURNED BY (MOBILE SALES):</span>
+      <span class="value">${escapeHtml(returnedByName)}</span>
+    </div>
+    <div class="meta-row">
       <span class="label">RETURN TO:</span>
       <span class="value">${returnTo}</span>
+    </div>
+    <div class="meta-row">
+      <span class="label">STOCK:</span>
+      <span class="value">${escapeHtml(disposalLabel)}</span>
     </div>
     <div class="meta-row">
       <span class="label">STATUS:</span>
@@ -316,21 +354,20 @@ function buildReturnLeaderHtml(row: ReturnLeaderHandover): string {
         ${lineRowsHtml(row.lines)}
       </tbody>
     </table>
-    <div class="totals-note">Total returned: ${fmtQty(qty)} unit(s)</div>
+    <div class="totals-note">Total returned (${escapeHtml(disposalLabel).toLowerCase()}): ${fmtQty(qty)} unit(s)</div>
     <div class="delivery-section">
       <div class="section-label">Return Details:</div>
-      ${detailField('FROM', fromName)}
+      ${personAtField('RETURNED BY (MOBILE SALES)', returnedByName, row.createdAt)}
       ${detailField('RETURN TO', row.toHolderName?.trim() || 'Team Leader')}
-      ${detailField('SUBMITTED AT', formatDateTime(row.createdAt))}
-      ${detailField('SUBMITTED BY', row.submittedByName)}
+      ${detailField('STOCK', disposalLabel)}
       ${
-        row.status === 'received' && row.approvedByName
-          ? detailField('RECEIVED BY', row.approvedByName)
+        row.status === 'received'
+          ? personAtField('RECEIVED BY', row.approvedByName, row.approvedAt)
           : ''
       }
       ${
         row.status === 'rejected'
-          ? `${detailField('REJECTED BY', row.rejectedByName)}${detailField('REJECTION', row.rejectionNote)}`
+          ? `${personAtField('REJECTED BY', row.rejectedByName, row.rejectedAt)}${detailField('REJECTION', row.rejectionNote)}`
           : ''
       }
       ${detailField('NOTES', row.notes)}
@@ -340,7 +377,7 @@ function buildReturnLeaderHtml(row: ReturnLeaderHandover): string {
       </div>
     </div>
     <div class="footer-note">
-      Return to team leader · ${escapeHtml(formatDateTime(new Date().toISOString()))}
+      Returned by mobile sales · ${escapeHtml(disposalLabel)} only · ${escapeHtml(formatDateTime(new Date().toISOString()))}
     </div>
   </div>
 </body>
