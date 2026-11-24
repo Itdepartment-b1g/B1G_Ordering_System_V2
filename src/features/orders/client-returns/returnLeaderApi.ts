@@ -13,6 +13,13 @@ export type ReturnLeaderStatus =
   | 'rejected'
   | 'cancelled';
 
+export type ReturnLeaderLineSource = {
+  clientOrderReturnId: string;
+  returnNumber: string;
+  clientName: string;
+  quantity: number;
+};
+
 export type ReturnLeaderHandoverLine = {
   variantId: string;
   brandId?: string;
@@ -21,6 +28,7 @@ export type ReturnLeaderHandoverLine = {
   variantName: string;
   variantType: string;
   quantity: number;
+  sources: ReturnLeaderLineSource[];
 };
 
 export type ReturnLeaderProofPhoto = {
@@ -80,6 +88,24 @@ function parseRpcResult(data: unknown, fallbackError: string): RpcResult {
   throw new Error(fallbackError);
 }
 
+function mapLineSources(value: unknown): ReturnLeaderLineSource[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((raw) => {
+      const row = asRecord(raw);
+      const quantity = Number(row.quantity) || 0;
+      const clientName = String(row.client_name || row.clientName || '').trim();
+      if (quantity <= 0 || !clientName) return null;
+      return {
+        clientOrderReturnId: String(row.client_order_return_id || row.clientOrderReturnId || ''),
+        returnNumber: String(row.return_number || row.returnNumber || ''),
+        clientName,
+        quantity,
+      } satisfies ReturnLeaderLineSource;
+    })
+    .filter(Boolean) as ReturnLeaderLineSource[];
+}
+
 function mapLine(item: Record<string, unknown>): ReturnLeaderHandoverLine {
   const variant = nestedRecord(item.variant ?? item.variants);
   const brand = nestedRecord(variant.brand ?? variant.brands);
@@ -91,6 +117,7 @@ function mapLine(item: Record<string, unknown>): ReturnLeaderHandoverLine {
     variantName: String(variant.name || 'Unknown'),
     variantType: String(variant.variant_type || 'flavor'),
     quantity: Number(item.quantity) || 0,
+    sources: mapLineSources(item.sources),
   };
 }
 
@@ -149,6 +176,7 @@ const HANDOVER_SELECT = `
     brand_id,
     variant_type_id,
     quantity,
+    sources,
     variant:variants (
       name,
       variant_type,
@@ -277,9 +305,61 @@ export async function fetchAvailableReturnQty(
   return Math.max(0, Number(data) || 0);
 }
 
+/** FIFO-allocate selected qty across disposal CR lines for a returned inventory row. */
+export function allocateReturnLeaderSources(
+  row: ReturnedInventoryRow,
+  quantity: number
+): ReturnLeaderLineSource[] {
+  let remaining = Math.max(0, Math.floor(quantity));
+  if (remaining <= 0) return [];
+
+  const ordered = [...(row.returns || [])].sort((a, b) =>
+    String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
+  );
+  const sources: ReturnLeaderLineSource[] = [];
+
+  for (const cr of ordered) {
+    if (remaining <= 0) break;
+    const disposalQty = (cr.lines || []).reduce((sum, line) => {
+      if (line.variantId && line.variantId !== row.variantId) return sum;
+      if (!line.variantId && line.variantName !== row.variantName) return sum;
+      if (line.stockFate === 'restock') return sum;
+      return sum + (Number(line.quantity) || 0);
+    }, 0);
+    if (disposalQty <= 0) continue;
+    const take = Math.min(remaining, disposalQty);
+    sources.push({
+      clientOrderReturnId: cr.id,
+      returnNumber: cr.returnNumber,
+      clientName: cr.clientName || 'Unknown',
+      quantity: take,
+    });
+    remaining -= take;
+  }
+
+  return sources;
+}
+
+export function uniqueReturnLeaderClientNames(lines: ReturnLeaderHandoverLine[] | null | undefined): string[] {
+  const names = new Set<string>();
+  for (const line of lines || []) {
+    for (const source of line.sources || []) {
+      const name = source.clientName?.trim();
+      if (name) names.add(name);
+    }
+  }
+  return Array.from(names).sort((a, b) => a.localeCompare(b));
+}
+
 export async function createReturnLeaderHandover(input: {
   companyId: string;
-  items: Array<{ variantId: string; brandId?: string; variantTypeId?: string; quantity: number }>;
+  items: Array<{
+    variantId: string;
+    brandId?: string;
+    variantTypeId?: string;
+    quantity: number;
+    sources?: ReturnLeaderLineSource[];
+  }>;
   notes?: string;
   photos: PackageProofPhotoItem[];
   signatureDataUrl: string;
@@ -305,6 +385,12 @@ export async function createReturnLeaderHandover(input: {
       brand_id: item.brandId || null,
       variant_type_id: item.variantTypeId || null,
       quantity: item.quantity,
+      sources: (item.sources || []).map((source) => ({
+        client_order_return_id: source.clientOrderReturnId || null,
+        return_number: source.returnNumber || null,
+        client_name: source.clientName,
+        quantity: source.quantity,
+      })),
     })),
     p_notes: input.notes?.trim() || null,
     p_attachments: attachments,

@@ -188,6 +188,8 @@ export type ReturnLeaderSortKey =
   | 'submittedByName'
   | 'createdAt'
   | 'status'
+  | 'approvedByName'
+  | 'approvedAt'
   | 'qty';
 
 export const DEFAULT_RETURN_LEADER_SORT_KEY: ReturnLeaderSortKey = 'createdAt';
@@ -199,6 +201,8 @@ export function sortReturnLeaderHandovers<
     submittedByName: string;
     createdAt: string;
     status: string;
+    approvedByName?: string | null;
+    approvedAt?: string | null;
     lines: Array<{ quantity: number }>;
   },
 >(rows: T[], sortKey: ReturnLeaderSortKey, sortDirection: SortDirection): T[] {
@@ -218,6 +222,13 @@ export function sortReturnLeaderHandovers<
         break;
       case 'status':
         result = a.status.localeCompare(b.status);
+        break;
+      case 'approvedByName':
+        result = String(a.approvedByName || '').localeCompare(String(b.approvedByName || ''));
+        break;
+      case 'approvedAt':
+        result =
+          new Date(a.approvedAt || 0).getTime() - new Date(b.approvedAt || 0).getTime();
         break;
       case 'qty': {
         const qtyA = a.lines.reduce((sum, line) => sum + line.quantity, 0);

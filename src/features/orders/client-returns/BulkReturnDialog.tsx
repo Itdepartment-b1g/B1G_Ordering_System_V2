@@ -34,6 +34,7 @@ import { cn } from '@/lib/utils';
 import { CLIENT_ORDER_RETURNS_QUERY_KEY, type ReturnedInventoryRow } from './clientReturnApi';
 import {
   CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY,
+  allocateReturnLeaderSources,
   createReturnLeaderHandover,
   RETURN_LEADER_HANDOVERS_QUERY_KEY,
 } from './returnLeaderApi';
@@ -311,11 +312,17 @@ export function BulkReturnDialog({
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const items = Array.from(selected.values()).map((item) => ({
-        variantId: item.row.variantId,
-        brandId: item.row.brandId,
-        quantity: item.qty,
-      }));
+      const items = Array.from(selected.values()).map((item) => {
+        const sources = allocateReturnLeaderSources(item.row, item.qty);
+        const sourceQty = sources.reduce((sum, source) => sum + source.quantity, 0);
+        // Only send sources when they fully cover qty (RPC requires sum === qty).
+        return {
+          variantId: item.row.variantId,
+          brandId: item.row.brandId,
+          quantity: item.qty,
+          sources: sourceQty === item.qty ? sources : [],
+        };
+      });
       await createReturnLeaderHandover({
         companyId: companyId!,
         items,

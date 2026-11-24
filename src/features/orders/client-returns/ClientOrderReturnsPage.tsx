@@ -344,7 +344,7 @@ function ClientOrderReturnsView() {
           <TabsTrigger value="returnToLeader" className="h-auto gap-1.5 whitespace-normal py-2.5 text-xs sm:text-sm">
             <Truck className="h-4 w-4 shrink-0" />
             <span className="sm:hidden">Return (Disposals)</span>
-            <span className="hidden sm:inline">Return to TL</span>
+            <span className="hidden sm:inline">Return to TL (Disposals)</span>
             {pendingRlCount > 0 ? (
               <span className="tabular-nums opacity-80">({pendingRlCount})</span>
             ) : null}
@@ -357,6 +357,7 @@ function ClientOrderReturnsView() {
             isLoading={isLoading}
             isError={isError}
             error={error}
+            showConditionFilter={false}
             getDetailHref={(row) => `/client-order-returns/cr/${row.id}`}
           />
         </TabsContent>

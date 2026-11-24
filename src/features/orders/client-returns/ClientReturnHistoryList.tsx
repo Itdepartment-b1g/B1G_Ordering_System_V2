@@ -68,10 +68,10 @@ import {
   getReturnActionActor,
   type ClientReturnKind,
   type PreviewClientReturn,
-  type PreviewClientReturnLine,
   type PreviewClientReturnStatus,
 } from './clientReturnPreview';
-import { formatVariantType, groupLinesByBrand } from './ClientReturnBrandTable';
+import { AccordionBrandLinesTable } from './AccordionBrandLinesTable';
+import { groupLinesByBrand } from './ClientReturnBrandTable';
 import { ClientReturnExpandedMeta } from './ClientReturnExpandedMeta';
 import type { PackageProofPhotoItem } from '@/features/shared/components/MultiProofPhotoField';
 import {
@@ -485,88 +485,30 @@ function ReturnHistoryCard({
   );
 }
 
-function AccordionBrandLinesTable({
-  lines,
-  qtyClassName = 'text-rose-700',
-}: {
-  lines: PreviewClientReturnLine[];
-  qtyClassName?: string;
-}) {
-  const groups = groupLinesByBrand(lines);
-  if (groups.length === 0) {
-    return <p className="text-sm text-muted-foreground">No item lines.</p>;
-  }
-
-  return (
-    <div className="space-y-2">
-      {groups.map((group) => {
-        const totalUnits = group.variants.reduce((sum, line) => sum + (line.quantity || 0), 0);
-        return (
-          <div key={group.brandName} className="rounded-md border bg-background">
-            <div className="flex items-center justify-between gap-2 border-b bg-muted/40 px-3 py-2">
-              <p className="text-sm font-semibold truncate">{group.brandName}</p>
-              <span className={`text-xs font-semibold tabular-nums shrink-0 ${qtyClassName}`}>
-                {totalUnits.toLocaleString()} units
-              </span>
-            </div>
-            <Table className="w-full min-w-[22rem]">
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead className="h-8 px-3 text-[11px] uppercase tracking-wide text-muted-foreground">
-                    Variant
-                  </TableHead>
-                  <TableHead className="h-8 px-3 text-[11px] uppercase tracking-wide text-muted-foreground whitespace-nowrap">
-                    Type
-                  </TableHead>
-                  <TableHead className="h-8 px-3 text-[11px] uppercase tracking-wide text-muted-foreground text-right whitespace-nowrap">
-                    Unit
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {group.variants.map((line, index) => (
-                  <TableRow
-                    key={`${group.brandName}-${line.variantName}-${line.stockFate || ''}-${index}`}
-                    className="hover:bg-transparent"
-                  >
-                    <TableCell className="px-3 py-2 text-sm font-medium whitespace-nowrap">
-                      {line.variantName}
-                    </TableCell>
-                    <TableCell className="px-3 py-2 text-sm text-muted-foreground whitespace-nowrap">
-                      {formatVariantType(line.variantType)}
-                    </TableCell>
-                    <TableCell
-                      className={`px-3 py-2 text-right text-sm font-semibold tabular-nums whitespace-nowrap ${qtyClassName}`}
-                    >
-                      {(line.quantity || 0).toLocaleString()}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function ReturnHistoryDetails({ row }: { row: PreviewClientReturn }) {
   const changeLines = row.changeLines || [];
   const showChange = changeLines.length > 0;
+  const isRefund = row.returnType === 'refund';
   return (
     <div className="w-max min-w-full space-y-3">
       <div className="min-w-[36rem]">
         <ClientReturnExpandedMeta row={row} />
       </div>
       <div className="flex gap-3">
-        <div className="w-[28rem] shrink-0 space-y-2">
-          <p className="text-xs font-semibold">Returned</p>
-          <AccordionBrandLinesTable lines={row.lines} />
+        <div className="w-[32rem] shrink-0 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-xs font-semibold">Returned</p>
+            <ReturnTypeBadge type={row.returnType} />
+            <StockFateBadges row={row} />
+          </div>
+          <AccordionBrandLinesTable lines={row.lines} showStockFate />
         </div>
-        {showChange ? (
+        {showChange && !isRefund ? (
           <div className="w-[28rem] shrink-0 space-y-2">
-            <p className="text-xs font-semibold">Change item</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-xs font-semibold">Change item</p>
+              <ReturnTypeBadge type="change_item" />
+            </div>
             <AccordionBrandLinesTable lines={changeLines} qtyClassName="text-emerald-700" />
           </div>
         ) : null}

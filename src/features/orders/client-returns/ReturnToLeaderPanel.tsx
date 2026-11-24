@@ -1,6 +1,18 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
-import { Check, Clock, Eye, FilterX, Loader2, MoreVertical, Printer, RotateCcw, Search, X } from 'lucide-react';
+import {
+  Check,
+  ChevronDown,
+  Clock,
+  Eye,
+  FilterX,
+  Loader2,
+  MoreVertical,
+  Printer,
+  RotateCcw,
+  Search,
+  X,
+} from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -19,7 +31,6 @@ import {
 } from '@/features/shared/components/ListPagination';
 import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
 import { ALL_TIME_DATE_RANGE } from '@/features/shared/components/DateRangeFilterPopover';
-import { ConditionFilterSheet } from '@/features/shared/components/ConditionFilterSheet';
 import { QuickFilterSheet, createQuickFilterAndClause, countActiveQuickFilterAndClauses, type QuickFilterColumn } from '@/features/shared/components/QuickFilterSheet';
 import {
   createInitialTableSortCycle,
@@ -28,10 +39,12 @@ import {
   resolveTableSortDirection,
   type TableSortCycleState,
 } from '@/features/shared/utils/tableSortCycle';
+import { AccordionBrandLinesTable } from './AccordionBrandLinesTable';
 import {
   getReturnLeaderLineQty,
   returnLeaderStatusBadgeClass,
   returnLeaderStatusLabel,
+  uniqueReturnLeaderClientNames,
   type ReturnLeaderHandover,
   type ReturnLeaderStatus,
 } from './returnLeaderApi';
@@ -42,15 +55,171 @@ import {
   type ReturnLeaderSortKey,
 } from './utils/clientReturnsSorting';
 import {
-  buildReturnLeaderFilterFields,
   matchesReturnLeaderFilters,
   uniqueReturnNumbers,
   uniqueSubmittedByNames,
-  type ReturnLeaderFilterCondition,
   type ReturnLeaderQuickColumn,
 } from './utils/returnLeaderFilters';
 import { ReturnLeaderTimeline } from './ReturnLeaderTimeline';
 import { generateAndOpenReturnLeaderPdf } from './generateReturnLeaderPdf';
+
+const TABLE_COL_SPAN = 9;
+
+function receivedByLabel(row: ReturnLeaderHandover): string {
+  if (row.status === 'received') return row.approvedByName || '—';
+  if (row.status === 'rejected') return '—';
+  return 'Waiting';
+}
+
+function receivedAtLabel(row: ReturnLeaderHandover): string {
+  if (row.status !== 'received') return '—';
+  return formatHandoverWhen(row.approvedAt, 'MMM d, yyyy · h:mm a');
+}
+
+function ReturnLeaderDetails({ row }: { row: ReturnLeaderHandover }) {
+  const disposalLines = (row.lines || []).map((line) => ({
+    ...line,
+    stockFate: 'disposal' as const,
+  }));
+  const clientNames = uniqueReturnLeaderClientNames(row.lines);
+  const sourceRows = (row.lines || []).flatMap((line) =>
+    (line.sources || []).map((source) => ({
+      key: `${line.variantId}-${source.clientOrderReturnId}-${source.returnNumber}-${source.clientName}`,
+      variantName: line.variantName,
+      returnNumber: source.returnNumber,
+      clientName: source.clientName,
+      quantity: source.quantity,
+    }))
+  );
+
+  return (
+    <div className="w-max min-w-full space-y-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-2 text-xs text-muted-foreground min-w-[36rem]">
+        <p>
+          Submitted by{' '}
+          <span className="font-medium text-foreground">{row.submittedByName || '—'}</span>
+        </p>
+        <p>
+          Submitted{' '}
+          <span className="font-medium text-foreground">
+            {formatHandoverWhen(row.createdAt, 'MMM d, yyyy · h:mm a')}
+          </span>
+        </p>
+        <p>
+          Status{' '}
+          <span className="font-medium text-foreground">{returnLeaderStatusLabel(row.status)}</span>
+        </p>
+        <p>
+          Received by{' '}
+          <span className="font-medium text-foreground">
+            {row.status === 'received'
+              ? row.approvedByName || '—'
+              : row.status === 'rejected'
+                ? '—'
+                : 'Waiting'}
+          </span>
+        </p>
+        <p>
+          Received at{' '}
+          <span className="font-medium text-foreground">
+            {row.status === 'received'
+              ? formatHandoverWhen(row.approvedAt, 'MMM d, yyyy · h:mm a')
+              : '—'}
+          </span>
+        </p>
+        {row.status === 'rejected' ? (
+          <p>
+            Rejected by{' '}
+            <span className="font-medium text-foreground">{row.rejectedByName || '—'}</span>
+            {row.rejectedAt ? (
+              <>
+                {' · '}
+                <span className="font-medium text-foreground">
+                  {formatHandoverWhen(row.rejectedAt, 'MMM d, yyyy · h:mm a')}
+                </span>
+              </>
+            ) : null}
+          </p>
+        ) : null}
+        <div className="sm:col-span-3 space-y-1">
+          <p>
+            Clients{' '}
+            {clientNames.length === 0 ? (
+              <span className="font-medium text-foreground">—</span>
+            ) : (
+              <span className="inline-flex flex-wrap gap-1 align-middle">
+                {clientNames.map((name) => (
+                  <Badge key={name} variant="secondary" className="font-normal text-[11px] px-1.5 py-0 h-5">
+                    {name}
+                  </Badge>
+                ))}
+              </span>
+            )}
+          </p>
+        </div>
+        <p className="sm:col-span-3">
+          Notes{' '}
+          <span className="font-medium text-foreground">{row.notes?.trim() || '—'}</span>
+        </p>
+      </div>
+      <div className="w-[32rem] shrink-0 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-xs font-semibold">Disposal items</p>
+          <Badge
+            variant="outline"
+            className="font-normal text-[11px] px-1.5 py-0 h-5 bg-rose-50 text-rose-700 border-rose-200"
+          >
+            Disposal
+          </Badge>
+        </div>
+        <AccordionBrandLinesTable lines={disposalLines} showStockFate />
+      </div>
+      {sourceRows.length > 0 ? (
+        <div className="w-[36rem] shrink-0 space-y-2">
+          <p className="text-xs font-semibold">Source clients</p>
+          <div className="rounded-md border bg-background overflow-hidden">
+            <Table className="w-full min-w-[32rem]">
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="h-8 px-3 text-[11px] uppercase tracking-wide text-muted-foreground">
+                    Client
+                  </TableHead>
+                  <TableHead className="h-8 px-3 text-[11px] uppercase tracking-wide text-muted-foreground">
+                    CR
+                  </TableHead>
+                  <TableHead className="h-8 px-3 text-[11px] uppercase tracking-wide text-muted-foreground">
+                    Variant
+                  </TableHead>
+                  <TableHead className="h-8 px-3 text-[11px] uppercase tracking-wide text-muted-foreground text-right">
+                    Unit
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sourceRows.map((source) => (
+                  <TableRow key={source.key} className="hover:bg-transparent">
+                    <TableCell className="px-3 py-2 text-sm font-medium whitespace-nowrap">
+                      {source.clientName}
+                    </TableCell>
+                    <TableCell className="px-3 py-2 text-sm font-mono text-muted-foreground whitespace-nowrap">
+                      {source.returnNumber || '—'}
+                    </TableCell>
+                    <TableCell className="px-3 py-2 text-sm text-muted-foreground whitespace-nowrap">
+                      {source.variantName}
+                    </TableCell>
+                    <TableCell className="px-3 py-2 text-right text-sm font-semibold tabular-nums text-rose-700">
+                      {source.quantity.toLocaleString()}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 function formatHandoverWhen(value: string | null | undefined, pattern: string): string {
   if (!value) return '—';
@@ -177,6 +346,11 @@ function ReturnLeaderCard({
               </>
             ) : null}
           </p>
+          <p className="text-xs text-muted-foreground truncate">
+            Received by {receivedByLabel(row)}
+            <span className="mx-1.5 text-border">·</span>
+            {receivedAtLabel(row)}
+          </p>
         </button>
         <ReturnLeaderRowMenu
           row={row}
@@ -257,22 +431,22 @@ export function ReturnToLeaderPanel({
   const [columnClauses, setColumnClauses] = useState(() => [
     createQuickFilterAndClause<ReturnLeaderQuickColumn>(),
   ]);
-  const [conditions, setConditions] = useState<ReturnLeaderFilterCondition[]>([]);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(PAGE_SIZE);
   const [sortState, setSortState] =
     useState<TableSortCycleState<ReturnLeaderSortKey>>(createInitialTableSortCycle);
   const [timelineRow, setTimelineRow] = useState<ReturnLeaderHandover | null>(null);
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
   const filters = useMemo(
     () => ({
-      conditions,
+      conditions: [],
       search: searchQuery,
       status: statusFilter,
       dateRange: dateRangeFilter,
       columnClauses,
     }),
-    [conditions, searchQuery, statusFilter, dateRangeFilter, columnClauses]
+    [searchQuery, statusFilter, dateRangeFilter, columnClauses]
   );
 
   const counts = useMemo(() => {
@@ -289,10 +463,6 @@ export function ReturnToLeaderPanel({
 
   const submittedByOptions = useMemo(() => uniqueSubmittedByNames(rows), [rows]);
   const returnNumberOptions = useMemo(() => uniqueReturnNumbers(rows), [rows]);
-  const filterFields = useMemo(
-    () => buildReturnLeaderFilterFields({ counts, submittedByOptions, returnNumberOptions }),
-    [counts, submittedByOptions, returnNumberOptions]
-  );
 
   const filtered = useMemo(() => {
     const matched = rows.filter((row) => matchesReturnLeaderFilters(row, filters));
@@ -306,7 +476,6 @@ export function ReturnToLeaderPanel({
 
   const { pagedItems, safePage, pageCount } = getListPaginationSlice(filtered, page, pageSize);
   const hasActiveFilters =
-    conditions.length > 0 ||
     searchQuery.trim().length > 0 ||
     statusFilter !== 'all' ||
     dateRangeFilter.preset !== 'all' ||
@@ -319,9 +488,17 @@ export function ReturnToLeaderPanel({
   };
 
   const clearFilters = () => {
-    setConditions([]);
     setSearchQuery('');
     clearQuickFilters();
+  };
+
+  const toggleExpanded = (id: string) => {
+    setExpandedRows((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
   const rlQuickColumns = useMemo(
@@ -363,7 +540,7 @@ export function ReturnToLeaderPanel({
 
   useEffect(() => {
     setPage(0);
-  }, [searchQuery, pageSize, conditions, statusFilter, dateRangeFilter, columnClauses, sortState]);
+  }, [searchQuery, pageSize, statusFilter, dateRangeFilter, columnClauses, sortState]);
 
   const handleSort = (key: ReturnLeaderSortKey) => {
     setSortState((current) => getNextTableSortCycleState(current, key));
@@ -407,15 +584,6 @@ export function ReturnToLeaderPanel({
               statusOptions={rlStatusOptions}
               onStatusChange={setStatusFilter}
               onClear={clearQuickFilters}
-            />
-            <ConditionFilterSheet
-              fields={filterFields}
-              conditions={conditions}
-              onAddCondition={(condition) => setConditions((current) => [...current, condition])}
-              onRemoveCondition={(id) =>
-                setConditions((current) => current.filter((condition) => condition.id !== id))
-              }
-              onClear={() => setConditions([])}
             />
           </div>
         </div>
@@ -461,10 +629,11 @@ export function ReturnToLeaderPanel({
               })}
             </div>
 
-            <div className="hidden md:block rounded-md border overflow-hidden">
+            <div className="hidden md:block rounded-md border overflow-x-auto">
               <Table>
                 <TableHeader>
-                  <TableRow>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="w-10 px-2" />
                     <SortableTableHead
                       label="RL Number"
                       sortKey="returnNumber"
@@ -490,6 +659,18 @@ export function ReturnToLeaderPanel({
                       onSort={handleSort}
                     />
                     <SortableTableHead
+                      label="Received by"
+                      sortKey="approvedByName"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'approvedByName')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Received at"
+                      sortKey="approvedAt"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'approvedAt')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
                       label="Qty"
                       sortKey="qty"
                       sortDirection={getTableSortDisplayDirection(sortState, 'qty')}
@@ -506,60 +687,96 @@ export function ReturnToLeaderPanel({
                     const pending =
                       canReview &&
                       (row.status === 'pending_leader' || row.status === 'pending_super_admin');
+                    const isOpen = expandedRows.has(row.id);
                     return (
-                      <TableRow key={row.id} className="cursor-pointer" onClick={() => onView(row)}>
-                        <TableCell className="font-mono text-xs font-semibold whitespace-nowrap">
-                          {row.returnNumber}
-                        </TableCell>
-                        <TableCell className="font-medium">{row.submittedByName}</TableCell>
-                        <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                          {formatHandoverWhen(row.createdAt, 'MMM d, yyyy · h:mm a')}
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant="outline"
-                            className={`font-normal ${returnLeaderStatusBadgeClass(row.status)}`}
-                          >
-                            {returnLeaderStatusLabel(row.status)}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right font-semibold tabular-nums text-rose-700">
-                          {qty}
-                        </TableCell>
-                        <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                          <div className="inline-flex items-center justify-end gap-1.5">
-                            {pending ? (
-                              <>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-8 text-red-700 border-red-200"
-                                  onClick={() => onReject(row)}
-                                >
-                                  <X className="h-3.5 w-3.5" />
-                                  Reject
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  className="h-8 bg-emerald-600 hover:bg-emerald-700"
-                                  onClick={() => onApprove(row)}
-                                >
-                                  <Check className="h-3.5 w-3.5" />
-                                  Confirm
-                                </Button>
-                              </>
-                            ) : null}
-                            <ReturnLeaderRowMenu
-                              row={row}
-                              onView={() => onView(row)}
-                              onOpenTimeline={() => setTimelineRow(row)}
-                              onPrint={() => generateAndOpenReturnLeaderPdf(row)}
-                            />
-                          </div>
-                        </TableCell>
-                      </TableRow>
+                      <Fragment key={row.id}>
+                        <TableRow className={isOpen ? 'bg-muted/20' : undefined}>
+                          <TableCell className="px-2">
+                            <button
+                              type="button"
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
+                              onClick={() => toggleExpanded(row.id)}
+                              aria-expanded={isOpen}
+                              aria-label={isOpen ? 'Collapse handover details' : 'Expand handover details'}
+                            >
+                              <ChevronDown
+                                className={`h-4 w-4 text-muted-foreground transition-transform ${
+                                  isOpen ? 'rotate-180' : ''
+                                }`}
+                              />
+                            </button>
+                          </TableCell>
+                          <TableCell className="font-mono text-xs font-semibold whitespace-nowrap">
+                            {row.returnNumber}
+                          </TableCell>
+                          <TableCell className="font-medium">{row.submittedByName}</TableCell>
+                          <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                            {formatHandoverWhen(row.createdAt, 'MMM d, yyyy · h:mm a')}
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant="outline"
+                              className={`font-normal ${returnLeaderStatusBadgeClass(row.status)}`}
+                            >
+                              {returnLeaderStatusLabel(row.status)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="font-medium truncate max-w-[10rem]" title={receivedByLabel(row)}>
+                            {receivedByLabel(row)}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                            {receivedAtLabel(row)}
+                          </TableCell>
+                          <TableCell className="text-right font-semibold tabular-nums text-rose-700">
+                            {qty}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="inline-flex items-center justify-end gap-1.5">
+                              {pending ? (
+                                <>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 text-red-700 border-red-200"
+                                    onClick={() => onReject(row)}
+                                  >
+                                    <X className="h-3.5 w-3.5" />
+                                    Reject
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    className="h-8 bg-emerald-600 hover:bg-emerald-700"
+                                    onClick={() => onApprove(row)}
+                                  >
+                                    <Check className="h-3.5 w-3.5" />
+                                    Confirm
+                                  </Button>
+                                </>
+                              ) : null}
+                              <ReturnLeaderRowMenu
+                                row={row}
+                                onView={() => onView(row)}
+                                onOpenTimeline={() => setTimelineRow(row)}
+                                onPrint={() => generateAndOpenReturnLeaderPdf(row)}
+                              />
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                        {isOpen ? (
+                          <TableRow className="hover:bg-transparent">
+                            <TableCell colSpan={TABLE_COL_SPAN} className="bg-muted/10 p-0">
+                              <div
+                                className="sticky left-0 overflow-x-auto overscroll-x-contain p-4"
+                                style={{ width: 'min(56rem, calc(100vw - 3rem))' }}
+                              >
+                                <ReturnLeaderDetails row={row} />
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ) : null}
+                      </Fragment>
                     );
                   })}
                 </TableBody>
