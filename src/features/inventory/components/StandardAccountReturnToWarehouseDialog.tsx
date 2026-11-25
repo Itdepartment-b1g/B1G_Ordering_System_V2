@@ -472,6 +472,7 @@ export function StandardAccountReturnToWarehouseDialog({
         status: returnStatus,
         createdAt: new Date().toISOString(),
         notes: notes.trim(),
+        returnType: stockKind,
         clientCompanyName: companyRow?.company_name ?? null,
         destinationLocationName: dest?.name ?? null,
         destinationIsMain: dest?.is_main ?? null,

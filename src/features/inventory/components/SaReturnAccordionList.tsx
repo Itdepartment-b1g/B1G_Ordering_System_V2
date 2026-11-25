@@ -332,6 +332,9 @@ export function SaReturnExpandedPanel({
 
   const statusText = saReturnStatusLabel(row, { pendingApproverName });
   const returnKind = saReturnKind(row);
+  const { stockReturn, disposal } = classificationTotals(row.items);
+  const totalReturned = row.items.reduce((sum, item) => sum + item.return_quantity, 0);
+  const totalInspected = row.items.reduce((sum, item) => sum + item.inspected_quantity, 0);
 
   return (
     <div className="space-y-5">
@@ -391,6 +394,20 @@ export function SaReturnExpandedPanel({
           <DetailField
             label="Destination Warehouse"
             value={destinationLabel(row)}
+          />
+          <DetailField label="Total Returned" value={totalReturned} />
+          <DetailField label="Total Inspected" value={totalInspected} />
+          <DetailField
+            label="Stock Return Qty"
+            value={
+              <span className="text-emerald-700 tabular-nums">{stockReturn}</span>
+            }
+          />
+          <DetailField
+            label="Disposal Qty"
+            value={
+              <span className="text-destructive tabular-nums">{disposal}</span>
+            }
           />
           <DetailField label="Returned at" value={formatDateTimeLong(row.created_at)} />
           <DetailField label="Approved at" value={formatDateTimeLong(row.approved_at)} />

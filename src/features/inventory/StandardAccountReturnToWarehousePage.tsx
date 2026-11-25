@@ -253,6 +253,8 @@ function mapRow(raw: Record<string, unknown>): SaReturnRow {
   };
 }
 
+const SaReturnList = SaReturnAccordionList<SaReturnRow>;
+
 export default function StandardAccountReturnToWarehousePage() {
   const { user } = useAuth();
   const { hasWarehouseHubLink } = usePermissions();
@@ -420,7 +422,10 @@ export default function StandardAccountReturnToWarehousePage() {
         request_number: row.request_number,
         status: row.status,
         created_at: row.created_at,
+        approved_at: row.approved_at,
+        inspected_at: row.inspected_at,
         notes: row.notes,
+        return_type: row.return_type,
         signature_url: row.signature_url,
         signature_path: row.signature_path,
         client_company: companyRow?.company_name
@@ -428,6 +433,8 @@ export default function StandardAccountReturnToWarehousePage() {
           : null,
         destination_location: row.destination_location,
         created_by_user: row.created_by_user,
+        approved_by_user: row.approved_by_user,
+        inspected_by_user: row.inspected_by_user,
         items: row.items.map((item) => ({
           warehouse_variant_id: item.warehouse_variant_id,
           return_quantity: item.return_quantity,
@@ -435,6 +442,7 @@ export default function StandardAccountReturnToWarehousePage() {
           variant: item.variant,
         })),
         receipts: row.receipts.map((receipt) => ({
+          received_at: receipt.received_at,
           lines: receipt.lines.map((line) => ({
             warehouseVariantId: line.warehouse_variant_id,
             brandName: line.variant?.brand?.name ?? null,
@@ -610,7 +618,7 @@ export default function StandardAccountReturnToWarehousePage() {
             <div className="py-12 text-center text-sm text-muted-foreground">No returns yet.</div>
           ) : (
             <div className="space-y-4">
-              <SaReturnAccordionList
+              <SaReturnList
                 rows={pagedItems}
                 isCompanyAdmin={isCompanyAdmin}
                 approvingId={approvingId}
@@ -621,7 +629,7 @@ export default function StandardAccountReturnToWarehousePage() {
                 onApprove={
                   isCompanyAdmin ? (row) => void handleApprove(row) : undefined
                 }
-                onCancel={setCancelTarget}
+                onCancel={(row) => setCancelTarget(row)}
               />
               <ListPagination
                 pageSize={pageSize}
