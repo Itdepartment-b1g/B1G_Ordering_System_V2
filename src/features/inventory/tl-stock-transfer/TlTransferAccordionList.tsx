@@ -41,6 +41,7 @@ type ItemsSortKey =
   | 'variant'
   | 'variant_type'
   | 'requested'
+  | 'dispatched'
   | 'to_dispatch'
   | 'received_qty';
 
@@ -145,6 +146,9 @@ function sortTransferItems(
       case 'requested':
         result = Number(a.requested_quantity || 0) - Number(b.requested_quantity || 0);
         break;
+      case 'dispatched':
+        result = Number(a.dispatched_quantity || 0) - Number(b.dispatched_quantity || 0);
+        break;
       case 'to_dispatch':
         result = tlRemainingToDispatch(a) - tlRemainingToDispatch(b);
         break;
@@ -196,6 +200,12 @@ export function TransferItemsBreakdownTable({
     (sum, item) => sum + Number(item.requested_quantity || 0),
     0
   );
+  const allTotalDispatched = items.reduce(
+    (sum, item) => sum + Number(item.dispatched_quantity || 0),
+    0
+  );
+  const hasAnyDispatched = items.some((item) => item.dispatched_quantity != null);
+  const hasAnyReceived = items.some((item) => item.received_quantity != null);
   const allTotalToDispatch = items.reduce(
     (sum, item) => sum + tlRemainingToDispatch(item),
     0
@@ -217,7 +227,7 @@ export function TransferItemsBreakdownTable({
   return (
     <div className="space-y-3">
       <div className="overflow-x-auto border border-[#E5E7EB]">
-        <Table className="min-w-[32rem]">
+        <Table className="min-w-[40rem]">
           <TableHeader>
             <TableRow className="border-[#E5E7EB] hover:bg-transparent">
               {head('Brand', 'brand')}
@@ -225,11 +235,15 @@ export function TransferItemsBreakdownTable({
               {head('Variant Type', 'variant_type')}
               {mode === 'incoming' ? (
                 <>
-                  {head('Requested', 'requested', 'text-right')}
+                  {head('Requested Qty', 'requested', 'text-right')}
                   {head('To dispatch', 'to_dispatch', 'text-right')}
                 </>
               ) : (
-                head('Received Qty', 'received_qty', 'text-right')
+                <>
+                  {head('Requested Qty', 'requested', 'text-right')}
+                  {head('Dispatched Qty', 'dispatched', 'text-right')}
+                  {head('Received Qty', 'received_qty', 'text-right')}
+                </>
               )}
             </TableRow>
           </TableHeader>
@@ -260,9 +274,17 @@ export function TransferItemsBreakdownTable({
                     </TableCell>
                   </>
                 ) : (
-                  <TableCell className={cn(ITEMS_CELL_CLASS, 'text-right tabular-nums')}>
-                    {item.received_quantity != null ? item.received_quantity : '—'}
-                  </TableCell>
+                  <>
+                    <TableCell className={cn(ITEMS_CELL_CLASS, 'text-right tabular-nums')}>
+                      {item.requested_quantity}
+                    </TableCell>
+                    <TableCell className={cn(ITEMS_CELL_CLASS, 'text-right tabular-nums')}>
+                      {item.dispatched_quantity != null ? item.dispatched_quantity : '—'}
+                    </TableCell>
+                    <TableCell className={cn(ITEMS_CELL_CLASS, 'text-right tabular-nums')}>
+                      {item.received_quantity != null ? item.received_quantity : '—'}
+                    </TableCell>
+                  </>
                 )}
               </TableRow>
             ))}
@@ -286,11 +308,23 @@ export function TransferItemsBreakdownTable({
                   </TableCell>
                 </>
               ) : (
-                <TableCell
-                  className={cn(ITEMS_CELL_CLASS, 'py-2 text-right text-xs font-semibold tabular-nums')}
-                >
-                  {allTotalReceived}
-                </TableCell>
+                <>
+                  <TableCell
+                    className={cn(ITEMS_CELL_CLASS, 'py-2 text-right text-xs font-semibold tabular-nums')}
+                  >
+                    {allTotalRequested}
+                  </TableCell>
+                  <TableCell
+                    className={cn(ITEMS_CELL_CLASS, 'py-2 text-right text-xs font-semibold tabular-nums')}
+                  >
+                    {hasAnyDispatched ? allTotalDispatched : '—'}
+                  </TableCell>
+                  <TableCell
+                    className={cn(ITEMS_CELL_CLASS, 'py-2 text-right text-xs font-semibold tabular-nums')}
+                  >
+                    {hasAnyReceived ? allTotalReceived : '—'}
+                  </TableCell>
+                </>
               )}
             </TableRow>
           </TableBody>
@@ -666,9 +700,9 @@ export function TlTransferAccordionList({
               head('To dispatch', 'to_dispatch', 'text-right')
             ) : (
               <>
-                {head('Requested', 'requested_quantity', 'text-right')}
-                {head('Dispatched', 'dispatched_quantity', 'text-right')}
-                {head('Received', 'received_quantity', 'text-right')}
+                {head('Requested Qty', 'requested_quantity', 'text-right')}
+                {head('Dispatched Qty', 'dispatched_quantity', 'text-right')}
+                {head('Received Qty', 'received_quantity', 'text-right')}
                 {head('Status', 'status', 'min-w-[14rem]')}
               </>
             )}

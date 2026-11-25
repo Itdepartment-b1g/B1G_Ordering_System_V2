@@ -66,6 +66,7 @@ import {
   getClientReturnStockFateQty,
   getPreviewReturnLineQty,
   getReturnActionActor,
+  lineMatchesReturnedVariant,
   type ClientReturnKind,
   type PreviewClientReturn,
   type PreviewClientReturnStatus,
@@ -233,8 +234,26 @@ function ReturnedBrandBadges({ brands }: { brands: string[] }) {
   );
 }
 
-function StockFateBadges({ row }: { row: PreviewClientReturn }) {
-  const { restock, disposal } = getClientReturnStockFateQty(row);
+function StockFateBadges({
+  row,
+  variantId,
+}: {
+  row: PreviewClientReturn;
+  /** When set, restock/disposal badges only count this SKU (variant detail pages). */
+  variantId?: string;
+}) {
+  const { restock, disposal } = variantId
+    ? (row.lines || []).reduce(
+        (sum, line) => {
+          if (!lineMatchesReturnedVariant(line, variantId)) return sum;
+          const qty = Number(line.quantity) || 0;
+          if (line.stockFate === 'restock') sum.restock += qty;
+          else sum.disposal += qty;
+          return sum;
+        },
+        { restock: 0, disposal: 0 }
+      )
+    : getClientReturnStockFateQty(row);
   if (restock <= 0 && disposal <= 0) {
     return <span className="text-xs text-muted-foreground">—</span>;
   }
@@ -378,6 +397,7 @@ function uniqueReturnBrands(lines: PreviewClientReturn['lines']): string[] {
 function ReturnHistoryCard({
   row,
   canReview,
+  stockFateVariantId,
   onView,
   onOpenTimeline,
   onPrint,
@@ -386,6 +406,7 @@ function ReturnHistoryCard({
 }: {
   row: PreviewClientReturn;
   canReview: boolean;
+  stockFateVariantId?: string;
   onView: () => void;
   onOpenTimeline: () => void;
   onPrint: () => void;
@@ -407,7 +428,7 @@ function ReturnHistoryCard({
           <div className="flex flex-wrap gap-1.5">
             <ReturnTypeBadge type={row.returnType} />
             <ReturnStatusBadge status={row.status} />
-            <StockFateBadges row={row} />
+            <StockFateBadges row={row} variantId={stockFateVariantId} />
           </div>
         </div>
         <ReturnRowMenu row={row} onView={onView} onOpenTimeline={onOpenTimeline} onPrint={onPrint} />
@@ -566,6 +587,8 @@ export type ClientReturnHistoryListProps = {
   filteredEmptyDescription?: string;
   /** When set, mobile View navigates here; desktop still opens the dialog. */
   getDetailHref?: (row: PreviewClientReturn) => string;
+  /** Scope Type-column restock/disposal badges to one SKU (variant detail pages). */
+  stockFateVariantId?: string;
 };
 
 export function ClientReturnHistoryList({
@@ -580,6 +603,7 @@ export function ClientReturnHistoryList({
   emptyDescription = 'Returns filed from an approved order will show up here.',
   filteredEmptyDescription = 'Try another date, person, status, or search.',
   getDetailHref,
+  stockFateVariantId,
 }: ClientReturnHistoryListProps) {
   const rows = useMemo(() => (Array.isArray(incomingRows) ? incomingRows : []), [incomingRows]);
   const { user } = useAuth();
@@ -1125,6 +1149,7 @@ export function ClientReturnHistoryList({
               key={row.id}
               row={row}
               canReview={canReviewClientReturn(user?.role, row)}
+              stockFateVariantId={stockFateVariantId}
               onView={() => openView(row)}
               onOpenTimeline={() => openTimeline(row)}
               onPrint={() => handlePrintReturn(row)}
@@ -1267,7 +1292,7 @@ export function ClientReturnHistoryList({
                       <TableCell className="align-top">
                         <div className="flex flex-col gap-1.5">
                           <ReturnTypeBadge type={row.returnType} />
-                          <StockFateBadges row={row} />
+                          <StockFateBadges row={row} variantId={stockFateVariantId} />
                         </div>
                       </TableCell>
                       <TableCell className="align-top">

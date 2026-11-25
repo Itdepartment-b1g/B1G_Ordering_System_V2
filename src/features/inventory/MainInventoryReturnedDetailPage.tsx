@@ -4,10 +4,11 @@ import { useQuery } from '@tanstack/react-query';
 import {
   ArrowLeft,
   ArrowLeftRight,
+  Banknote,
   Loader2,
-  Package,
   PackageOpen,
   RotateCcw,
+  Tags,
   Trash2,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -20,6 +21,7 @@ import {
   fetchClientOrderReturns,
 } from '@/features/orders/client-returns/clientReturnApi';
 import {
+  formatClientReturnPeso,
   type PreviewClientReturn,
   type PreviewClientReturnLine,
 } from '@/features/orders/client-returns/clientReturnPreview';
@@ -132,10 +134,11 @@ export default function MainInventoryReturnedDetailPage() {
   }, [scopedRows, variantId, brandId, brandNameParam, variantNameParam]);
 
   const stats = useMemo(() => {
-    let totalUnits = 0;
+    const brands = new Set<string>();
     let totalRestock = 0;
     let totalDisposals = 0;
     let changeItemCount = 0;
+    let totalRefund = 0;
 
     for (const row of scopedRows) {
       if (row.returnType === 'change_item') changeItemCount += 1;
@@ -144,20 +147,31 @@ export default function MainInventoryReturnedDetailPage() {
         ? (row.lines || []).filter((line) => lineMatchesVariant(line, variantId, brandId || null))
         : row.lines || [];
 
+      if (row.returnType === 'refund') {
+        for (const line of lines) {
+          const lineTotal = Number(line.lineTotal);
+          if (Number.isFinite(lineTotal) && lineTotal > 0) totalRefund += lineTotal;
+          else totalRefund += (Number(line.quantity) || 0) * (Number(line.unitPrice) || 0);
+        }
+      }
+
       for (const line of lines) {
         const qty = Number(line.quantity) || 0;
-        totalUnits += qty;
         if (line.stockFate === 'restock') totalRestock += qty;
         else totalDisposals += qty;
+
+        const brand = String(line.brandName || '').trim();
+        if (brand) brands.add(brand);
       }
     }
 
     return {
       totalReturns: scopedRows.length,
-      totalUnits,
+      totalBrand: brands.size,
       totalRestock,
       totalDisposals,
       changeItemCount,
+      totalRefund,
     };
   }, [scopedRows, variantId, brandId]);
 
@@ -217,7 +231,7 @@ export default function MainInventoryReturnedDetailPage() {
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-6">
         <StatCard
           label="Total Returns"
           value={stats.totalReturns.toLocaleString()}
@@ -225,9 +239,9 @@ export default function MainInventoryReturnedDetailPage() {
           accentClassName="bg-sky-50 text-sky-700"
         />
         <StatCard
-          label="Total Units"
-          value={stats.totalUnits.toLocaleString()}
-          icon={Package}
+          label="Total Brand"
+          value={stats.totalBrand.toLocaleString()}
+          icon={Tags}
           accentClassName="bg-slate-100 text-slate-700"
         />
         <StatCard
@@ -248,6 +262,12 @@ export default function MainInventoryReturnedDetailPage() {
           icon={ArrowLeftRight}
           accentClassName="bg-amber-50 text-amber-800"
         />
+        <StatCard
+          label="Total Refund"
+          value={formatClientReturnPeso(stats.totalRefund)}
+          icon={Banknote}
+          accentClassName="bg-violet-50 text-violet-700"
+        />
       </div>
 
       {isLoading ? (
@@ -261,6 +281,7 @@ export default function MainInventoryReturnedDetailPage() {
           showConditionFilter={false}
           resetKey={`${variantId}|${brandId}|${scopedRows.length}`}
           rows={scopedRows}
+          stockFateVariantId={variantId || undefined}
           emptyTitle={
             variantId
               ? 'No returned stock for this variant'

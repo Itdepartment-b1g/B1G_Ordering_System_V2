@@ -35,7 +35,6 @@ import {
   fetchClientOrderReturns,
 } from '@/features/orders/client-returns/clientReturnApi';
 import type { PreviewClientReturn } from '@/features/orders/client-returns/clientReturnPreview';
-import { ReturnedStockDetailDialog } from '@/features/orders/client-returns/ReturnedStockDetailDialog';
 import { ALL_TIME_DATE_RANGE } from '@/features/shared/components/DateRangeFilterPopover';
 import {
   getListPaginationSlice,
@@ -298,16 +297,6 @@ export default function MyInventory() {
   const [showOrderDetailsModal, setShowOrderDetailsModal] = useState(false);
   const [returnDialogOpen, setReturnDialogOpen] = useState(false);
   const [returnToMainDialogOpen, setReturnToMainDialogOpen] = useState(false);
-  const [returnedDialog, setReturnedDialog] = useState<{
-    variantName: string;
-    brandName: string;
-    variantId?: string;
-    variantType?: string;
-    totalReturned: number;
-    restockQty: number;
-    disposalQty: number;
-    returns: PreviewClientReturn[];
-  } | null>(null);
   const [exportingExcel, setExportingExcel] = useState(false);
 
   // Confirmation checkboxes for each section
@@ -387,30 +376,25 @@ export default function MyInventory() {
     return buildReturnedStockByVariantId(clientReturns, { holderId: user?.id });
   }, [clientReturns, showReturnedColumn, user?.id]);
 
-  const openReturnedDialog = (args: {
-    brandName: string;
-    variantName: string;
-    variantId?: string;
-    variantType?: string;
-    qty: number;
-    restockQty: number;
-    disposalQty: number;
-    returns: PreviewClientReturn[];
-  }) => {
-    setReturnedDialog({
-      brandName: args.brandName,
-      variantName: args.variantName,
-      variantId: args.variantId,
-      variantType: args.variantType,
-      totalReturned: args.qty,
-      restockQty: args.restockQty,
-      disposalQty: args.disposalQty,
-      returns: args.returns,
-    });
-  };
-
   const getReturnedStock = (variantId: string) =>
     returnedStockByVariantId.get(variantId) || emptyReturnedStock();
+
+  const openReturnedStockDetail = (variantId: string) => {
+    if (!variantId) return;
+    navigate(`/client-order-returns/item/${variantId}`);
+  };
+
+  /** Brand/type totals have no single variant — open detail when one match, else expand the brand. */
+  const openReturnedStockFromGroup = (brandId: string, variantIds: string[]) => {
+    const withReturns = variantIds.filter((id) => (getReturnedStock(id).qty || 0) > 0);
+    if (withReturns.length === 1) {
+      openReturnedStockDetail(withReturns[0]);
+      return;
+    }
+    if (withReturns.length > 1 && !expandedBrands.includes(brandId)) {
+      setExpandedBrands((prev) => [...prev, brandId]);
+    }
+  };
 
   const getBrandReturnedStock = (brand: { allVariants?: Array<{ id: string }> }) => {
     const returnsById = new Map<string, PreviewClientReturn>();
@@ -1635,18 +1619,19 @@ export default function MyInventory() {
                                 className={`w-full min-h-9 rounded-md px-2 py-1.5 text-sm font-semibold tabular-nums ${
                                   brandReturned.qty > 0
                                     ? 'text-rose-700 hover:bg-rose-50 hover:underline'
-                                    : 'text-muted-foreground hover:bg-muted/60'
+                                    : 'text-muted-foreground'
                                 }`}
-                                title="Click to view restock and disposal returns"
+                                title={
+                                  brandReturned.qty > 0
+                                    ? 'View returned stock detail'
+                                    : undefined
+                                }
+                                disabled={brandReturned.qty <= 0}
                                 onClick={() =>
-                                  openReturnedDialog({
-                                    brandName: brand.name,
-                                    variantName: 'All variants',
-                                    qty: brandReturned.qty,
-                                    restockQty: brandReturned.restockQty,
-                                    disposalQty: brandReturned.disposalQty,
-                                    returns: brandReturned.returns,
-                                  })
+                                  openReturnedStockFromGroup(
+                                    brand.id,
+                                    (brand.allVariants || []).map((v: { id: string }) => v.id)
+                                  )
                                 }
                               >
                                 {brandReturned.qty || '—'}
@@ -1713,15 +1698,17 @@ export default function MyInventory() {
                                                 ? 'text-rose-700 font-semibold hover:underline'
                                                 : 'text-muted-foreground'
                                             }`}
+                                            disabled={typeReturned.qty <= 0}
+                                            title={
+                                              typeReturned.qty > 0
+                                                ? 'View returned stock detail'
+                                                : undefined
+                                            }
                                             onClick={() =>
-                                              openReturnedDialog({
-                                                brandName: brand.name,
-                                                variantName: formatVariantTypeLabel(type, true),
-                                                qty: typeReturned.qty,
-                                                restockQty: typeReturned.restockQty,
-                                                disposalQty: typeReturned.disposalQty,
-                                                returns: typeReturned.returns,
-                                              })
+                                              openReturnedStockFromGroup(
+                                                brand.id,
+                                                variants.map((v) => v.id)
+                                              )
                                             }
                                           >
                                             Returned {typeReturned.qty || '—'}
@@ -1766,22 +1753,17 @@ export default function MyInventory() {
                                                       className={`w-full min-h-9 rounded-md px-2 py-1.5 text-sm font-semibold ${
                                                         getReturnedStock(variant.id).qty > 0
                                                           ? 'text-rose-700 hover:bg-rose-50 hover:underline'
-                                                          : 'text-muted-foreground hover:bg-muted/60'
+                                                          : 'text-muted-foreground'
                                                       }`}
-                                                      title="Click to view restock and disposal returns"
-                                                      onClick={() => {
-                                                        const stock = getReturnedStock(variant.id);
-                                                        openReturnedDialog({
-                                                          brandName: brand.name,
-                                                          variantName: variant.name,
-                                                          variantId: variant.id,
-                                                          variantType: variant.variantType,
-                                                          qty: stock.qty,
-                                                          restockQty: stock.restockQty,
-                                                          disposalQty: stock.disposalQty,
-                                                          returns: stock.returns,
-                                                        });
-                                                      }}
+                                                      title={
+                                                        getReturnedStock(variant.id).qty > 0
+                                                          ? 'View returned stock detail'
+                                                          : undefined
+                                                      }
+                                                      disabled={getReturnedStock(variant.id).qty <= 0}
+                                                      onClick={() =>
+                                                        openReturnedStockDetail(variant.id)
+                                                      }
                                                     >
                                                       {getReturnedStock(variant.id).qty || '—'}
                                                     </button>
@@ -2923,23 +2905,6 @@ export default function MyInventory() {
         open={returnToMainDialogOpen}
         onOpenChange={setReturnToMainDialogOpen}
       />
-
-      {showReturnedColumn && (
-        <ReturnedStockDetailDialog
-          open={!!returnedDialog}
-          onOpenChange={(open) => {
-            if (!open) setReturnedDialog(null);
-          }}
-          brandName={returnedDialog?.brandName}
-          variantName={returnedDialog?.variantName || ''}
-          variantId={returnedDialog?.variantId}
-          variantType={returnedDialog?.variantType}
-          totalReturned={returnedDialog?.totalReturned || 0}
-          restockQty={returnedDialog?.restockQty || 0}
-          disposalQty={returnedDialog?.disposalQty || 0}
-          returns={returnedDialog?.returns || []}
-        />
-      )}
     </div>
   );
 }

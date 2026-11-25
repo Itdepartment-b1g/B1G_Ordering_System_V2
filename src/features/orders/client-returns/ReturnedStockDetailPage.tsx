@@ -4,10 +4,11 @@ import { useQuery } from '@tanstack/react-query';
 import {
   ArrowLeft,
   ArrowLeftRight,
+  Banknote,
   Loader2,
-  Package,
   PackageOpen,
   RotateCcw,
+  Tags,
   Trash2,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -20,12 +21,16 @@ import {
   canShowClientOrderReturns,
   CLIENT_ORDER_RETURNS_QUERY_KEY,
   fetchClientOrderReturns,
+  getReturnedStockFateQtyForVariant,
   type ReturnedInventoryRow,
 } from './clientReturnApi';
 import { CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY, fetchClientReturnStockHolds } from './returnLeaderApi';
 import { formatVariantType, variantTypeBadgeClass } from './ClientReturnBrandTable';
 import { ClientReturnHistoryList } from './ClientReturnHistoryList';
-import type { PreviewClientReturn } from './clientReturnPreview';
+import {
+  formatClientReturnPeso,
+  type PreviewClientReturn,
+} from './clientReturnPreview';
 
 const EMPTY_RETURNS: PreviewClientReturn[] = [];
 const EMPTY_HOLDS: ReturnedInventoryRow[] = [];
@@ -103,38 +108,44 @@ export default function ReturnedStockDetailPage() {
   const scopedReturns = inventoryRow?.returns || EMPTY_RETURNS;
 
   const stats = useMemo(() => {
-    let totalUnits = 0;
-    let totalRestock = 0;
-    let totalDisposals = 0;
+    const brands = new Set<string>();
     let changeItemCount = 0;
+    let totalRefund = 0;
 
     for (const row of scopedReturns) {
       if (row.returnType === 'change_item') changeItemCount += 1;
 
-      const lines = (row.lines || []).filter((line) => !variantId || line.variantId === variantId);
+      const lines = (row.lines || []).filter(
+        (line) => !variantId || line.variantId === variantId
+      );
+
+      if (row.returnType === 'refund') {
+        for (const line of lines) {
+          const lineTotal = Number(line.lineTotal);
+          if (Number.isFinite(lineTotal) && lineTotal > 0) totalRefund += lineTotal;
+          else totalRefund += (Number(line.quantity) || 0) * (Number(line.unitPrice) || 0);
+        }
+      }
+
       for (const line of lines) {
-        const qty = Number(line.quantity) || 0;
-        totalUnits += qty;
-        if (line.stockFate === 'restock') totalRestock += qty;
-        else totalDisposals += qty;
+        const brand = String(line.brandName || '').trim();
+        if (brand) brands.add(brand);
       }
     }
 
-    // Held disposal qty is the source of truth for this page when CR history is incomplete.
-    const heldQty = inventoryRow?.qty || 0;
-    if (heldQty > totalUnits) {
-      totalDisposals += heldQty - totalUnits;
-      totalUnits = heldQty;
-    }
+    const fateQty = getReturnedStockFateQtyForVariant(scopedReturns, {
+      variantId: variantId || undefined,
+    });
 
     return {
       totalReturns: scopedReturns.length,
-      totalUnits,
-      totalRestock,
-      totalDisposals,
+      totalBrand: brands.size,
+      totalRestock: fateQty.restockQty,
+      totalDisposals: fateQty.disposalQty,
       changeItemCount,
+      totalRefund,
     };
-  }, [scopedReturns, variantId, inventoryRow?.qty]);
+  }, [scopedReturns, variantId]);
 
   const loading = listLoading || holdsLoading;
 
@@ -217,7 +228,7 @@ export default function ReturnedStockDetailPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-6">
         <StatCard
           label="Total Returns"
           value={stats.totalReturns.toLocaleString()}
@@ -225,9 +236,9 @@ export default function ReturnedStockDetailPage() {
           accentClassName="bg-sky-50 text-sky-700"
         />
         <StatCard
-          label="Total Units"
-          value={stats.totalUnits.toLocaleString()}
-          icon={Package}
+          label="Total Brand"
+          value={stats.totalBrand.toLocaleString()}
+          icon={Tags}
           accentClassName="bg-slate-100 text-slate-700"
         />
         <StatCard
@@ -248,6 +259,12 @@ export default function ReturnedStockDetailPage() {
           icon={ArrowLeftRight}
           accentClassName="bg-amber-50 text-amber-800"
         />
+        <StatCard
+          label="Total Refund"
+          value={formatClientReturnPeso(stats.totalRefund)}
+          icon={Banknote}
+          accentClassName="bg-violet-50 text-violet-700"
+        />
       </div>
 
       {loading ? (
@@ -261,6 +278,7 @@ export default function ReturnedStockDetailPage() {
           showConditionFilter={false}
           resetKey={inventoryRow.variantId}
           rows={scopedReturns}
+          stockFateVariantId={inventoryRow.variantId}
           emptyTitle={
             inventoryRow.qty > 0 ? 'No matching client returns' : 'No returns for this variant'
           }

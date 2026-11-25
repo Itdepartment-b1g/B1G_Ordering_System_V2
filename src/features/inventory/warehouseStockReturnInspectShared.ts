@@ -72,14 +72,14 @@ export function buildInspectPayload(items: InspectRequestItem[]): InspectRpcLine
 export function getInspectValidationError(items: InspectRequestItem[]): string | null {
   const payload = buildInspectPayload(items);
   if (payload.length === 0) {
-    return 'Enter good or damaged quantities for at least one distribution row.';
+    return 'Classify at least one quantity as Stock Return or Disposal.';
   }
 
   for (const item of items) {
     const remaining = getInspectRemaining(item);
     const allocated = getItemAllocatedQty(item);
     if (allocated > remaining) {
-      return `${item.variant_name}: distributed qty (${allocated}) exceeds remaining (${remaining}).`;
+      return `${item.variant_name}: Stock Return + Disposal (${allocated}) exceeds remaining returned qty (${remaining}).`;
     }
 
     for (const split of item.splits) {
@@ -89,14 +89,14 @@ export function getInspectValidationError(items: InspectRequestItem[]): string |
         return 'Quantities cannot be negative.';
       }
       if (!split.destination_lot_id) {
-        return `Select a main warehouse batch for each row with quantity (${item.variant_name}).`;
+        return `Select a destination batch for each classified row (${item.variant_name}).`;
       }
     }
   }
 
   for (const line of payload) {
     if (!line.destination_lot_id) {
-      return 'Main warehouse batch lot selection is required for each distribution row.';
+      return 'Destination batch is required for each Stock Return / Disposal row.';
     }
   }
 

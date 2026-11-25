@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { AlertCircle, Eye, FileText, Loader2, MoreHorizontal, RotateCcw, Search, SearchCheck, XCircle } from 'lucide-react';
+import { AlertCircle, FileText, Loader2, RotateCcw, Search, SearchCheck } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
@@ -9,6 +9,10 @@ import PageManualDialog from '@/features/inventory/warehouse-manual/components/P
 import ClientStockReturnsManual from '@/features/inventory/warehouse-manual/components/ClientStockReturnsManual';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import { WarehouseStockReturnInspectDialog } from './components/WarehouseStockReturnInspectDialog';
+import {
+  SaReturnAccordionList,
+  SaReturnExpandedPanel,
+} from './components/SaReturnAccordionList';
 import {
   buildInspectPayload,
   createInspectSplit,
@@ -29,8 +33,6 @@ import {
 } from '@/features/shared/components/DateRangeFilterPopover';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -39,13 +41,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import {
   Select,
   SelectContent,
@@ -102,6 +97,9 @@ type ClientReturnRow = {
   status: ReturnStatus;
   notes: string | null;
   created_at: string;
+  approved_at: string | null;
+  inspected_at: string | null;
+  return_type: 'my_inventory' | 'item_disposal';
   destination_location_id: string | null;
   signature_url: string | null;
   signature_path: string | null;
@@ -109,11 +107,16 @@ type ClientReturnRow = {
   proof_image_path: string | null;
   client_company: { company_name: string } | null;
   destination_location: { id: string; name: string; is_main: boolean | null } | null;
+  created_by_user: { full_name: string } | null;
+  approved_by_user: { full_name: string } | null;
+  inspected_by_user: { full_name: string } | null;
   items: Array<{
     id: string;
     warehouse_variant_id: string;
     return_quantity: number;
     inspected_quantity: number;
+    stock_return_quantity: number;
+    disposal_quantity: number;
     variant: {
       id: string;
       name: string;
@@ -122,23 +125,6 @@ type ClientReturnRow = {
     } | null;
   }>;
   receipts: ClientReturnReceipt[];
-};
-
-const STATUS_LABELS: Record<ReturnStatus, string> = {
-  pending_receive: 'Pending inspect',
-  partially_received: 'Partially inspected',
-  fully_received: 'Fully inspected',
-  cancelled: 'Cancelled',
-};
-
-const STATUS_VARIANT: Record<
-  ReturnStatus,
-  'default' | 'secondary' | 'outline' | 'destructive'
-> = {
-  pending_receive: 'secondary',
-  partially_received: 'default',
-  fully_received: 'outline',
-  cancelled: 'destructive',
 };
 
 function firstRelation<T>(value: T | T[] | null | undefined): T | null {
@@ -158,15 +144,6 @@ function formatInspectLotLabel(lot: InspectLotOption): string {
   return `${lot.batch_number}${exp} · ${lot.quantity_remaining} on hand`;
 }
 
-function formatReceiptLotLabel(
-  batchNumber: string | null | undefined,
-  expirationDate: string | null | undefined
-): string {
-  const batch = batchNumber?.trim() || '—';
-  if (!expirationDate) return batch;
-  return `${batch} · exp ${formatLotDate(expirationDate)}`;
-}
-
 function mapRow(raw: Record<string, unknown>): ClientReturnRow {
   const clientCompany = firstRelation(
     raw.client_company as ClientReturnRow['client_company'] | ClientReturnRow['client_company'][]
@@ -176,35 +153,20 @@ function mapRow(raw: Record<string, unknown>): ClientReturnRow {
       | ClientReturnRow['destination_location']
       | ClientReturnRow['destination_location'][]
   );
-
-  const items = ((raw.items as unknown[]) ?? []).map((item) => {
-    const row = item as Record<string, unknown>;
-    const variant = firstRelation(
-      row.warehouse_variant as
-        | ClientReturnRow['items'][0]['variant']
-        | ClientReturnRow['items'][0]['variant'][]
-    );
-    const brand = variant?.brand
-      ? firstRelation(variant.brand as { name: string } | { name: string }[])
-      : null;
-    return {
-      id: row.id as string,
-      warehouse_variant_id: row.warehouse_variant_id as string,
-      return_quantity: row.return_quantity as number,
-      inspected_quantity: row.inspected_quantity as number,
-      variant: variant
-        ? {
-            id: (variant.id as string) ?? (row.warehouse_variant_id as string),
-            name: variant.name,
-            variant_type: variant.variant_type ?? '',
-            brand: brand ? { name: brand.name } : null,
-          }
-        : null,
-    };
-  });
+  const createdBy = firstRelation(
+    raw.created_by_user as ClientReturnRow['created_by_user'] | ClientReturnRow['created_by_user'][]
+  );
+  const approvedBy = firstRelation(
+    raw.approved_by_user as
+      | ClientReturnRow['approved_by_user']
+      | ClientReturnRow['approved_by_user'][]
+  );
 
   const receipts = ((raw.receipts as unknown[]) ?? []).map((receipt) => {
     const r = receipt as Record<string, unknown>;
+    const receivedBy = firstRelation(
+      r.received_by_user as { full_name: string } | { full_name: string }[] | null
+    );
     const lines = ((r.lines as unknown[]) ?? []).map((line) => {
       const l = line as Record<string, unknown>;
       const variant = firstRelation(
@@ -248,13 +210,65 @@ function mapRow(raw: Record<string, unknown>): ClientReturnRow {
       id: r.id as string,
       received_at: r.received_at as string,
       notes: (r.notes as string | null) ?? null,
+      received_by_user: receivedBy,
       lines,
-    } satisfies ClientReturnReceipt;
+    };
   });
 
   receipts.sort(
     (a, b) => new Date(b.received_at).getTime() - new Date(a.received_at).getTime()
   );
+
+  const inspectedAt = receipts.find((receipt) => receipt.received_at)?.received_at ?? null;
+  const inspectedBy =
+    receipts
+      .map((receipt) => receipt.received_by_user)
+      .find((user) => user?.full_name?.trim()) ?? null;
+
+  const classificationByVariant = new Map<string, { stockReturn: number; disposal: number }>();
+  for (const receipt of receipts) {
+    for (const line of receipt.lines) {
+      const key = line.warehouse_variant_id;
+      if (!key) continue;
+      const current = classificationByVariant.get(key) ?? { stockReturn: 0, disposal: 0 };
+      current.stockReturn += Number(line.qty_good) || 0;
+      current.disposal += Number(line.qty_damaged) || 0;
+      classificationByVariant.set(key, current);
+    }
+  }
+
+  const items = ((raw.items as unknown[]) ?? []).map((item) => {
+    const row = item as Record<string, unknown>;
+    const variant = firstRelation(
+      row.warehouse_variant as
+        | ClientReturnRow['items'][0]['variant']
+        | ClientReturnRow['items'][0]['variant'][]
+    );
+    const brand = variant?.brand
+      ? firstRelation(variant.brand as { name: string } | { name: string }[])
+      : null;
+    const warehouseVariantId = row.warehouse_variant_id as string;
+    const classification = classificationByVariant.get(warehouseVariantId) ?? {
+      stockReturn: 0,
+      disposal: 0,
+    };
+    return {
+      id: row.id as string,
+      warehouse_variant_id: warehouseVariantId,
+      return_quantity: row.return_quantity as number,
+      inspected_quantity: row.inspected_quantity as number,
+      stock_return_quantity: classification.stockReturn,
+      disposal_quantity: classification.disposal,
+      variant: variant
+        ? {
+            id: (variant.id as string) ?? warehouseVariantId,
+            name: variant.name,
+            variant_type: variant.variant_type ?? '',
+            brand: brand ? { name: brand.name } : null,
+          }
+        : null,
+    };
+  });
 
   return {
     id: raw.id as string,
@@ -262,6 +276,9 @@ function mapRow(raw: Record<string, unknown>): ClientReturnRow {
     status: raw.status as ReturnStatus,
     notes: (raw.notes as string | null) ?? null,
     created_at: raw.created_at as string,
+    approved_at: (raw.approved_at as string | null) ?? null,
+    inspected_at: inspectedAt,
+    return_type: raw.return_type === 'item_disposal' ? 'item_disposal' : 'my_inventory',
     destination_location_id: (raw.destination_location_id as string | null) ?? null,
     signature_url: (raw.signature_url as string | null) ?? null,
     signature_path: (raw.signature_path as string | null) ?? null,
@@ -275,8 +292,11 @@ function mapRow(raw: Record<string, unknown>): ClientReturnRow {
           is_main: destinationLocation.is_main ?? null,
         }
       : null,
+    created_by_user: createdBy,
+    approved_by_user: approvedBy,
+    inspected_by_user: inspectedBy,
     items,
-    receipts,
+    receipts: receipts.map(({ received_by_user: _ignored, ...receipt }) => receipt),
   };
 }
 
@@ -347,6 +367,8 @@ export default function WarehouseClientStockReturnsPage() {
           status,
           notes,
           created_at,
+          approved_at,
+          return_type,
           destination_location_id,
           signature_url,
           signature_path,
@@ -360,6 +382,8 @@ export default function WarehouseClientStockReturnsPage() {
             name,
             is_main
           ),
+          created_by_user:profiles!created_by ( full_name ),
+          approved_by_user:profiles!approved_by ( full_name ),
           items:standard_account_stock_return_request_items (
             id,
             warehouse_variant_id,
@@ -376,6 +400,7 @@ export default function WarehouseClientStockReturnsPage() {
             id,
             received_at,
             notes,
+            received_by_user:profiles!received_by ( full_name ),
             lines:standard_account_stock_return_receipt_lines (
               warehouse_variant_id,
               qty_good,
@@ -762,9 +787,9 @@ export default function WarehouseClientStockReturnsPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All statuses</SelectItem>
-                <SelectItem value="pending_receive">Pending inspect</SelectItem>
+                <SelectItem value="pending_receive">Pending inspection</SelectItem>
                 <SelectItem value="partially_received">Partially inspected</SelectItem>
-                <SelectItem value="fully_received">Fully inspected</SelectItem>
+                <SelectItem value="fully_received">Completed</SelectItem>
                 <SelectItem value="cancelled">Cancelled</SelectItem>
               </SelectContent>
             </Select>
@@ -797,97 +822,22 @@ export default function WarehouseClientStockReturnsPage() {
               )}
             </div>
           ) : (
-            <>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Return #</TableHead>
-                  <TableHead>Client</TableHead>
-                  <TableHead>Destination</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Items</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {pagedItems.map((row) => {
-                  const totalQty = row.items.reduce((s, i) => s + i.return_quantity, 0);
-                  const inspected = row.items.reduce((s, i) => s + i.inspected_quantity, 0);
-                  const destLabel = row.destination_location
-                    ? `${row.destination_location.name}${
-                        row.destination_location.is_main ? ' (Main)' : ' (Sub)'
-                      }`
-                    : '—';
-                  return (
-                    <TableRow key={row.id}>
-                      <TableCell className="font-medium">{row.request_number}</TableCell>
-                      <TableCell>{row.client_company?.company_name ?? '—'}</TableCell>
-                      <TableCell className="text-sm">{destLabel}</TableCell>
-                      <TableCell>
-                        <Badge variant={STATUS_VARIANT[row.status]}>
-                          {STATUS_LABELS[row.status]}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {row.items.length} SKU · {inspected}/{totalQty} inspected
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {format(new Date(row.created_at), 'MMM d, yyyy HH:mm')}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8">
-                              <MoreHorizontal className="h-4 w-4" />
-                              <span className="sr-only">Open actions</span>
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-48">
-                            <DropdownMenuItem onClick={() => void openDetail(row)}>
-                              <Eye className="mr-2 h-4 w-4" />
-                              View
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              disabled={exportingPdfId === row.id}
-                              onClick={() => void handleExportPdf(row)}
-                            >
-                              {exportingPdfId === row.id ? (
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              ) : (
-                                <FileText className="mr-2 h-4 w-4" />
-                              )}
-                              Print PDF
-                            </DropdownMenuItem>
-                            {canInspectRow(row) && (
-                              <DropdownMenuItem onClick={() => openInspect(row)}>
-                                <SearchCheck className="mr-2 h-4 w-4" />
-                                Inspect
-                              </DropdownMenuItem>
-                            )}
-                            {(isMainWarehouseUser ||
-                              row.destination_location_id === membership.locationId) &&
-                              row.status === 'pending_receive' && (
-                                <>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem
-                                    className="text-destructive focus:text-destructive"
-                                    onClick={() => setCancelTarget(row)}
-                                  >
-                                    <XCircle className="mr-2 h-4 w-4" />
-                                    Cancel
-                                  </DropdownMenuItem>
-                                </>
-                              )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-            <div className="pt-4">
+            <div className="space-y-4">
+              <SaReturnAccordionList
+                mode="warehouse"
+                rows={pagedItems}
+                exportingPdfId={exportingPdfId}
+                onView={(row) => void openDetail(row)}
+                onPrintPdf={(row) => void handleExportPdf(row)}
+                onInspect={openInspect}
+                canInspect={canInspectRow}
+                canCancelRow={(row) =>
+                  (isMainWarehouseUser ||
+                    row.destination_location_id === membership.locationId) &&
+                  row.status === 'pending_receive'
+                }
+                onCancel={setCancelTarget}
+              />
               <ListPagination
                 pageSize={pageSize}
                 safePage={safePage}
@@ -897,7 +847,6 @@ export default function WarehouseClientStockReturnsPage() {
                 onNext={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
               />
             </div>
-            </>
           )}
         </CardContent>
       </Card>
@@ -936,169 +885,28 @@ export default function WarehouseClientStockReturnsPage() {
             </div>
           </DialogHeader>
           {detailReturn && (
-            <div className="space-y-4 text-sm">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <span className="text-muted-foreground">Client</span>
-                  <p className="font-medium">
-                    {detailReturn.client_company?.company_name ?? '—'}
-                  </p>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Destination</span>
-                  <p className="font-medium">
-                    {detailReturn.destination_location
-                      ? `${detailReturn.destination_location.name}${
-                          detailReturn.destination_location.is_main ? ' (Main)' : ' (Sub)'
-                        }`
-                      : '—'}
-                  </p>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Status</span>
-                  <div className="mt-1">
-                    <Badge variant={STATUS_VARIANT[detailReturn.status]}>
-                      {STATUS_LABELS[detailReturn.status]}
-                    </Badge>
-                  </div>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Created</span>
-                  <p>{format(new Date(detailReturn.created_at), 'PPp')}</p>
-                </div>
-              </div>
-
-              {detailReturn.notes && (
-                <div>
-                  <span className="text-muted-foreground">Notes</span>
-                  <p>{detailReturn.notes}</p>
-                </div>
-              )}
-
-              <div>
-                <h4 className="font-medium mb-2">Lines</h4>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Product</TableHead>
-                      <TableHead className="text-right">Returned</TableHead>
-                      <TableHead className="text-right">Inspected</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {detailReturn.items.map((item) => (
-                      <TableRow key={item.id}>
-                        <TableCell>
-                          {item.variant?.brand?.name ? `${item.variant.brand.name} · ` : ''}
-                          {item.variant?.name ?? item.warehouse_variant_id}
-                        </TableCell>
-                        <TableCell className="text-right">{item.return_quantity}</TableCell>
-                        <TableCell className="text-right">{item.inspected_quantity}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-
-              {detailReturn.receipts.length > 0 ? (
-                <div>
-                  <h4 className="font-medium mb-2">Inspection history</h4>
-                  <div className="space-y-3">
-                    {detailReturn.receipts.map((receipt) => (
-                      <div key={receipt.id} className="border rounded-lg p-3 space-y-3">
-                        <p className="text-xs text-muted-foreground">
-                          {format(new Date(receipt.received_at), 'PPp')}
-                        </p>
-                        {receipt.notes?.trim() ? (
-                          <p className="text-xs text-muted-foreground">
-                            Notes: {receipt.notes.trim()}
-                          </p>
-                        ) : null}
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Product</TableHead>
-                              <TableHead>Batch</TableHead>
-                              <TableHead className="text-right">Good</TableHead>
-                              <TableHead className="text-right">Damaged</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {receipt.lines.map((line, idx) => (
-                              <TableRow key={`${receipt.id}-${idx}`}>
-                                <TableCell>
-                                  {line.variant?.brand?.name
-                                    ? `${line.variant.brand.name} · `
-                                    : ''}
-                                  {line.variant?.name ?? 'SKU'}
-                                </TableCell>
-                                <TableCell className="font-mono text-xs text-muted-foreground">
-                                  {formatReceiptLotLabel(
-                                    line.destination_lot?.batch?.batch_number,
-                                    line.destination_lot?.expiration_date
-                                  )}
-                                </TableCell>
-                                <TableCell className="text-right text-green-700 dark:text-green-400">
-                                  {line.qty_good}
-                                </TableCell>
-                                <TableCell className="text-right text-destructive">
-                                  {line.qty_damaged}
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  No inspection recorded yet. Inspect to assign batch and good/damaged qty.
-                </p>
-              )}
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <h4 className="font-medium">Return proof</h4>
-                  {detailProofUrl ? (
-                    <a href={detailProofUrl} target="_blank" rel="noreferrer">
-                      <img
-                        src={detailProofUrl}
-                        alt="Return proof"
-                        className="max-h-48 w-full rounded-md border object-contain bg-muted/20"
-                      />
-                    </a>
-                  ) : (
-                    <p className="text-muted-foreground text-xs">No proof photo attached.</p>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <h4 className="font-medium">Signature</h4>
-                  {detailSignatureUrl ? (
-                    <img
-                      src={detailSignatureUrl}
-                      alt="Return signature"
-                      className="max-h-36 w-full rounded-md border object-contain bg-white"
-                    />
-                  ) : (
-                    <p className="text-muted-foreground text-xs">No signature attached.</p>
-                  )}
-                </div>
-              </div>
-
-              {canInspectRow(detailReturn) && (
-                <div className="flex justify-end pt-2">
+            <div className="space-y-4">
+              <SaReturnExpandedPanel
+                row={{
+                  ...detailReturn,
+                  proof_image_url: detailProofUrl ?? detailReturn.proof_image_url,
+                  signature_url: detailSignatureUrl ?? detailReturn.signature_url,
+                }}
+              />
+              {canInspectRow(detailReturn) ? (
+                <div className="flex justify-end">
                   <Button
+                    type="button"
                     onClick={() => {
                       setDetailOpen(false);
                       openInspect(detailReturn);
                     }}
                   >
+                    <SearchCheck className="mr-2 h-4 w-4" />
                     Inspect return
                   </Button>
                 </div>
-              )}
+              ) : null}
             </div>
           )}
         </DialogContent>

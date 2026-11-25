@@ -274,7 +274,7 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
     : `<span class="sline"></span>`;
 
   const totalsExtra = itemResult.hasFilledInspection
-    ? ` · Good: ${fmtQty(itemResult.totalGood)} · Damaged: ${fmtQty(itemResult.totalDamaged)}`
+    ? ` · Stock Return: ${fmtQty(itemResult.totalGood)} · Disposal: ${fmtQty(itemResult.totalDamaged)}`
     : '';
 
   return `<!doctype html>
@@ -530,8 +530,8 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
         <tr>
           <th class="col-desc">Description</th>
           <th class="col-qty">Returned</th>
-          <th class="col-qty">Good</th>
-          <th class="col-qty">Damaged</th>
+          <th class="col-qty">Stock Return</th>
+          <th class="col-qty">Disposal</th>
           <th class="col-batch">Batch (good)</th>
         </tr>
       </thead>
