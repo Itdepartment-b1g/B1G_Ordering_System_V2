@@ -12,6 +12,7 @@ type Props = {
   onView?: () => void;
   onHistory?: () => void;
   onPrint?: () => void;
+  onPrintTdr?: () => void;
   onReceive?: () => void;
   onDispatch?: () => void;
   onReview?: () => void;
@@ -22,6 +23,7 @@ export function TLTransferRowActionsMenu({
   onView,
   onHistory,
   onPrint,
+  onPrintTdr,
   onReceive,
   onDispatch,
   onReview,
@@ -45,7 +47,7 @@ export function TLTransferRowActionsMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
-        className="w-48"
+        className="w-60"
         onClick={(event) => event.stopPropagation()}
       >
         {onView ? (
@@ -63,7 +65,13 @@ export function TLTransferRowActionsMenu({
         {onPrint ? (
           <DropdownMenuItem onClick={onPrint}>
             <Printer className="mr-2 h-4 w-4" />
-            Print
+            Print TL Stock Transfer
+          </DropdownMenuItem>
+        ) : null}
+        {onPrintTdr ? (
+          <DropdownMenuItem onClick={onPrintTdr}>
+            <Printer className="mr-2 h-4 w-4" />
+            Print Delivery receipt
           </DropdownMenuItem>
         ) : null}
         {hasWorkflow ? <DropdownMenuSeparator /> : null}

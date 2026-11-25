@@ -64,6 +64,7 @@ import {
   type TLRequestGroup,
 } from '../tl-stock-transfer/tlStockTransferShared';
 import { exportTlTdrPdf, printTlStockTransferRequest, tlTdrPdfFromDispatch } from '../tl-stock-transfer/exportTlTransferPdfs';
+import { printTlTransferGroupTdrs } from '../tl-stock-transfer/tlTransferTdrReceipts';
 import { TLTransferHistoryDialog } from '../tl-stock-transfer/TLTransferHistoryDialog';
 import { TLTransferDetailsDialog } from '../tl-stock-transfer/TLTransferDetailsDialog';
 import { TlTransferAccordionList, TransferNumber } from '../tl-stock-transfer/TlTransferAccordionList';
@@ -72,6 +73,7 @@ import { useAppDispatch, useAppSelector } from '@/store/store';
 import {
   dispatchTlStockTransfer,
   fetchIncomingTlTransfers,
+  fetchTlTransferTdrDetails,
   refreshTlTransferLists,
   rejectTlStockTransfer,
 } from '@/store/slices/motosales/tl-stock-transfers';
@@ -475,6 +477,17 @@ export default function IncomingTLRequestsSection({ embedded = false, listContro
           void printTlStockTransferRequest(group.items).catch((error: any) => {
             toast({
               title: 'Could not print transfer',
+              description: error?.message || 'Failed to open the print view.',
+              variant: 'destructive',
+            });
+          });
+        }}
+        onPrintTdr={(group) => {
+          void printTlTransferGroupTdrs(group.items, (requestId) =>
+            dispatch(fetchTlTransferTdrDetails(requestId)).unwrap()
+          ).catch((error: any) => {
+            toast({
+              title: 'Could not print delivery receipt',
               description: error?.message || 'Failed to open the print view.',
               variant: 'destructive',
             });

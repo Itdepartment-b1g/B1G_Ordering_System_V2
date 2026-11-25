@@ -3,7 +3,12 @@
  * Same HTML print → Save as PDF pattern as PO DR / internal stock DR.
  */
 import type { TLRequestWithDetails } from '@/types/tlStockRequests.types';
-import { tlStatusLabelForRequest, tlTdrKindLabel } from './tlStockTransferShared';
+import {
+  tlDispatchedQty,
+  tlRollupItemStatus,
+  tlStatusLabelForRequest,
+  tlTdrKindLabel,
+} from './tlStockTransferShared';
 
 function escapeHtml(value: unknown): string {
   if (value == null) return '';
@@ -163,7 +168,6 @@ function sharedStyles(): string {
     vertical-align: top;
   }
   .items-table tr.brand-row td {
-    background: #f3f4f6;
     font-weight: 800;
     border-bottom: 1px solid #000;
     padding: 6px 4px;
@@ -180,6 +184,12 @@ function sharedStyles(): string {
     white-space: nowrap;
     width: 78px;
   }
+  .items-table tr.total-row td {
+    font-weight: 800;
+    border-bottom: none;
+    border-top: 2px solid #000;
+    padding-top: 8px;
+  }
   .line-variance {
     font-size: 9px;
     font-weight: 600;
@@ -188,9 +198,10 @@ function sharedStyles(): string {
   }
   .total-qty-row {
     display: flex;
-    justify-content: flex-start;
+    justify-content: space-between;
     align-items: baseline;
     gap: 10px;
+    width: 100%;
     margin: 4px 0 8px;
     font-size: 10px;
   }
@@ -198,8 +209,8 @@ function sharedStyles(): string {
   .total-qty-row .value {
     font-weight: 800;
     font-variant-numeric: tabular-nums;
-    min-width: 90px;
     text-align: right;
+    margin-left: auto;
   }
   .delivery-section {
     margin: 18px 0;
@@ -285,19 +296,31 @@ function sharedStyles(): string {
 export type TlStockTransferRequestPdfLine = {
   label: string;
   brand?: string | null;
+  variantType?: string | null;
   requested: number;
   approved?: number | null;
+  dispatched?: number | null;
+  received?: number | null;
 };
 
 export type TlStockTransferRequestPdfOptions = {
   requestNumber: string;
+  tdrNumber?: string | null;
   statusLabel: string;
   createdAt: string;
+  requestedAt?: string | null;
+  dispatchedAt?: string | null;
+  receivedAt?: string | null;
   requesterName: string;
   requesterRegion?: string | null;
   sourceName: string;
   sourceRegion?: string | null;
+  dispatchedBy?: string | null;
+  receivedBy?: string | null;
   notes?: string | null;
+  adminNotes?: string | null;
+  dispatcherNotes?: string | null;
+  rejectionReason?: string | null;
   lines: TlStockTransferRequestPdfLine[];
 };
 
@@ -336,54 +359,84 @@ function requestLineLabel(line: TlStockTransferRequestPdfLine): string {
   return line.label;
 }
 
-function groupRequestLinesByBrand(lines: TlStockTransferRequestPdfLine[]) {
-  const map = new Map<string, TlStockTransferRequestPdfLine[]>();
-  for (const line of lines) {
-    const brand = requestLineBrand(line);
-    const list = map.get(brand) ?? [];
-    list.push(line);
-    map.set(brand, list);
+function transferRequestDescription(line: TlStockTransferRequestPdfLine): string {
+  const brand = requestLineBrand(line);
+  const label = requestLineLabel(line);
+  if (brand === 'Unbranded') return label;
+  if (line.brand?.trim()) return `${brand} — ${label}`;
+  // label already may include brand · name
+  if (line.label.includes(' · ') || line.label.includes(' — ')) {
+    return line.label.replace(' · ', ' — ');
   }
-  return [...map.entries()]
-    .sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
-    .map(([brand, items]) => ({
-      brand,
-      items: [...items].sort((a, b) =>
-        requestLineLabel(a).localeCompare(requestLineLabel(b), undefined, { sensitivity: 'base' })
-      ),
-    }));
+  return `${brand} — ${label}`;
+}
+
+function qtyOrDash(value: number | null | undefined): string {
+  return value == null ? '—' : fmtQty(value);
+}
+
+function detailField(label: string, value: string) {
+  return `
+      <div class="delivery-field">
+        <span class="flabel">${label}:</span>
+        <span class="fvalue">${value}</span>
+      </div>`;
 }
 
 function buildTransferRequestHtml(options: TlStockTransferRequestPdfOptions): string {
   const requestNo = escapeHtml(options.requestNumber);
   const totalRequested = options.lines.reduce((sum, line) => sum + Math.max(0, line.requested), 0);
   const showApproved = options.lines.some((line) => line.approved != null);
-  const qtyCols = showApproved ? 3 : 2;
-  const groups = groupRequestLinesByBrand(options.lines);
+  const showDispatched = options.lines.some((line) => line.dispatched != null);
+  const showReceived = options.lines.some((line) => line.received != null);
+  const totalApproved = options.lines.reduce(
+    (sum, line) => sum + Math.max(0, Number(line.approved || 0)),
+    0
+  );
+  const totalDispatched = options.lines.reduce(
+    (sum, line) => sum + Math.max(0, Number(line.dispatched || 0)),
+    0
+  );
+  const totalReceived = options.lines.reduce(
+    (sum, line) => sum + Math.max(0, Number(line.received || 0)),
+    0
+  );
+  const sortedLines = [...options.lines].sort((a, b) =>
+    transferRequestDescription(a).localeCompare(transferRequestDescription(b), undefined, {
+      sensitivity: 'base',
+    })
+  );
   const itemRows =
-    groups
-      .map((group) => {
-        const header = `
-      <tr class="brand-row">
-        <td colspan="${qtyCols}">${escapeHtml(group.brand)}<span class="brand-count">${group.items.length} item${group.items.length === 1 ? '' : 's'}</span></td>
-      </tr>`;
-        const rows = group.items
-          .map(
-            (line) => `
+    sortedLines
+      .map((line) => {
+        const typeBit = line.variantType?.trim()
+          ? `<div class="line-variance" style="color:#444;font-weight:500;">${escapeHtml(line.variantType.trim())}</div>`
+          : '';
+        return `
       <tr>
-        <td>${escapeHtml(requestLineLabel(line))}</td>
+        <td class="col-desc">${escapeHtml(transferRequestDescription(line))}${typeBit}</td>
         <td class="col-qty">${fmtQty(line.requested)}</td>
         ${showApproved ? `<td class="col-qty">${line.approved == null ? '—' : fmtQty(line.approved)}</td>` : ''}
-      </tr>`
-          )
-          .join('');
-        return header + rows;
+        ${showDispatched ? `<td class="col-qty">${qtyOrDash(line.dispatched)}</td>` : ''}
+        ${showReceived ? `<td class="col-qty">${qtyOrDash(line.received)}</td>` : ''}
+      </tr>`;
       })
       .join('') ||
-    `<tr><td>&nbsp;</td><td class="col-qty">&nbsp;</td>${showApproved ? '<td class="col-qty">&nbsp;</td>' : ''}</tr>`;
+    `<tr><td class="col-desc">&nbsp;</td><td class="col-qty">&nbsp;</td>${showApproved ? '<td class="col-qty">&nbsp;</td>' : ''}${showDispatched ? '<td class="col-qty">&nbsp;</td>' : ''}${showReceived ? '<td class="col-qty">&nbsp;</td>' : ''}</tr>`;
+
+  const totalRow = `
+      <tr class="total-row">
+        <td class="col-desc">Total</td>
+        <td class="col-qty">${fmtQty(totalRequested)}</td>
+        ${showApproved ? `<td class="col-qty">${fmtQty(totalApproved)}</td>` : ''}
+        ${showDispatched ? `<td class="col-qty">${fmtQty(totalDispatched)}</td>` : ''}
+        ${showReceived ? `<td class="col-qty">${fmtQty(totalReceived)}</td>` : ''}
+      </tr>`;
 
   const requester = [options.requesterName, options.requesterRegion].filter(Boolean).join(' · ');
   const source = [options.sourceName, options.sourceRegion].filter(Boolean).join(' · ');
+  const noteValue = (value?: string | null) =>
+    value?.trim() ? escapeHtml(value.trim()) : '—';
 
   return `<!doctype html>
 <html lang="en">
@@ -413,38 +466,40 @@ function buildTransferRequestHtml(options: TlStockTransferRequestPdfOptions): st
       <span class="label">TRANSFER NO:</span>
       <span class="value">${requestNo}</span>
     </div>
+    ${
+      options.tdrNumber
+        ? `<div class="dr-number-row">
+      <span class="label">TDR:</span>
+      <span class="value">${escapeHtml(options.tdrNumber)}</span>
+    </div>`
+        : ''
+    }
     <table class="items-table">
       <thead>
         <tr>
           <th>Description</th>
           <th class="col-qty">Requested</th>
           ${showApproved ? '<th class="col-qty">Approved</th>' : ''}
+          ${showDispatched ? '<th class="col-qty">Dispatched</th>' : ''}
+          ${showReceived ? '<th class="col-qty">Received</th>' : ''}
         </tr>
       </thead>
-      <tbody>${itemRows}</tbody>
+      <tbody>${itemRows}${totalRow}</tbody>
     </table>
-    <div class="total-qty-row">
-      <span class="label">Total requested:</span>
-      <span class="value">${fmtQty(totalRequested)}</span>
-    </div>
     <div class="delivery-section">
       <div class="section-label">Transfer details:</div>
-      <div class="delivery-field">
-        <span class="flabel">REQUESTED BY:</span>
-        <span class="fvalue">${escapeHtml(requester)}</span>
-      </div>
-      <div class="delivery-field">
-        <span class="flabel">FROM (SOURCE TL):</span>
-        <span class="fvalue">${escapeHtml(source)}</span>
-      </div>
-      <div class="delivery-field">
-        <span class="flabel">CREATED:</span>
-        <span class="fvalue">${escapeHtml(formatDateTime(options.createdAt))}</span>
-      </div>
-      <div class="delivery-field">
-        <span class="flabel">NOTES:</span>
-        <span class="fvalue">${options.notes?.trim() ? escapeHtml(options.notes.trim()) : '—'}</span>
-      </div>
+      ${detailField('REQUESTED BY', escapeHtml(requester))}
+      ${detailField('REQUESTED FROM', escapeHtml(source))}
+      ${detailField('REQUEST AT', escapeHtml(formatDateTime(options.requestedAt || options.createdAt)))}
+      ${detailField('DISPATCH AT', escapeHtml(formatDateTime(options.dispatchedAt)))}
+      ${detailField('RECEIVE AT', escapeHtml(formatDateTime(options.receivedAt)))}
+      ${detailField('DISPATCHED BY', escapeHtml(options.dispatchedBy || '—'))}
+      ${detailField('RECEIVED BY', escapeHtml(options.receivedBy || '—'))}
+      ${detailField('STATUS', escapeHtml(options.statusLabel))}
+      ${detailField('REQUEST NOTES', noteValue(options.notes))}
+      ${detailField('ADMIN NOTES', noteValue(options.adminNotes))}
+      ${detailField('DISPATCHER NOTES', noteValue(options.dispatcherNotes))}
+      ${detailField('REJECTION REASON', noteValue(options.rejectionReason))}
     </div>
   </div>
 </body>
@@ -594,9 +649,19 @@ export async function exportTlStockTransferRequestPdf(
   openPrintableHtml(`Stock Transfer — ${options.requestNumber}`, html);
 }
 
+export function buildTlTdrPdfHtml(options: TlTdrPdfOptions): string {
+  return buildTdrHtml(options);
+}
+
 export async function exportTlTdrPdf(options: TlTdrPdfOptions): Promise<void> {
-  const html = buildTdrHtml(options);
-  openPrintableHtml(`TDR — ${options.tdrNumber}`, html);
+  openPrintableHtml(`TDR — ${options.tdrNumber}`, buildTlTdrPdfHtml(options));
+}
+
+function firstTimestamp(values: Array<string | null | undefined>) {
+  for (const value of values) {
+    if (value) return value;
+  }
+  return null;
 }
 
 export function tlTransferRequestPdfFromLines(
@@ -604,20 +669,50 @@ export function tlTransferRequestPdfFromLines(
 ): TlStockTransferRequestPdfOptions | null {
   const header = lines[0];
   if (!header) return null;
+  const rollupStatus = tlRollupItemStatus(lines);
+  const statusHeader = {
+    ...header,
+    status: rollupStatus as typeof header.status,
+  };
+  const dispatchedAt = firstTimestamp(lines.map((line) => line.dispatched_at));
+  const receivedAt = firstTimestamp(lines.map((line) => line.received_at));
+  const tdrNumber =
+    lines.find((line) => line.tdr_number)?.tdr_number ||
+    header.tdr_number ||
+    header.tdrs?.[0]?.tdr_number ||
+    null;
+
   return {
     requestNumber: header.request_number,
-    statusLabel: tlStatusLabelForRequest(header),
+    tdrNumber,
+    statusLabel: tlStatusLabelForRequest(statusHeader),
     createdAt: header.created_at,
+    requestedAt: header.created_at,
+    dispatchedAt,
+    receivedAt,
     requesterName: header.requester?.full_name || '—',
     requesterRegion: header.requester?.region,
     sourceName: header.source?.full_name || '—',
     sourceRegion: header.source?.region,
+    dispatchedBy: dispatchedAt ? header.source?.full_name || null : null,
+    receivedBy: receivedAt ? header.requester?.full_name || null : null,
     notes: header.requester_notes,
+    adminNotes:
+      lines.map((line) => line.admin_notes?.trim()).find(Boolean) || header.admin_notes,
+    dispatcherNotes:
+      lines.map((line) => line.source_tl_notes?.trim()).find(Boolean) ||
+      header.source_tl_notes,
+    rejectionReason:
+      lines.map((line) => line.rejection_reason?.trim()).find(Boolean) ||
+      header.rejection_reason,
     lines: lines.map((line) => ({
       brand: line.variant?.brand_name?.trim() || 'Unbranded',
       label: line.variant?.name || 'Item',
+      variantType: line.variant?.type || null,
       requested: Number(line.requested_quantity || 0),
       approved: line.admin_approved_quantity,
+      dispatched: line.dispatched_quantity != null ? tlDispatchedQty(line) : null,
+      received: line.received_quantity,
     })),
   };
 }

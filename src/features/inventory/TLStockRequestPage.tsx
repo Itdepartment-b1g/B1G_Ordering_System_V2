@@ -51,10 +51,12 @@ import {
   fetchDispatchedTlTransfers,
   fetchIncomingTlTransfers,
   fetchMyTlTransfers,
+  fetchTlTransferTdrDetails,
 } from '@/store/slices/motosales/tl-stock-transfers';
 import { TLTransferLostItemsPanel } from './tl-stock-transfer/TLTransferLostItemsPanel';
 import { useTlLostItemTabCount } from './tl-stock-transfer/tlTransferLostItems';
 import { printTlStockTransferRequest } from './tl-stock-transfer/exportTlTransferPdfs';
+import { printTlTransferGroupTdrs } from './tl-stock-transfer/tlTransferTdrReceipts';
 import {
   DEFAULT_TL_TRANSFER_SORT_DIRECTION,
   DEFAULT_TL_TRANSFER_SORT_KEY,
@@ -345,6 +347,18 @@ export default function TLStockRequestPage() {
     });
   };
 
+  const printDeliveryReceipt = (group: TLRequestGroup) => {
+    void printTlTransferGroupTdrs(group.items, (requestId) =>
+      dispatch(fetchTlTransferTdrDetails(requestId)).unwrap()
+    ).catch((error: any) => {
+      toast({
+        title: 'Could not print delivery receipt',
+        description: error?.message || 'Failed to open the print view.',
+        variant: 'destructive',
+      });
+    });
+  };
+
   const openGroup = (group: TLRequestGroup) => {
     setSelected(group.items[0] ?? null);
     setViewOpen(true);
@@ -376,11 +390,11 @@ export default function TLStockRequestPage() {
       </div>
     );
   }
-
+  
   return (
     <div className="container mx-auto p-4 space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
+      <div>
           <h1 className="text-2xl font-bold">Stock transfers</h1>
           <p className="text-muted-foreground">
             Request stock from another team leader. Super Admin approves, they dispatch, then you
@@ -392,7 +406,7 @@ export default function TLStockRequestPage() {
           New transfer
         </Button>
       </div>
-
+      
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         {[
           ['Total', stats.total],
@@ -405,11 +419,11 @@ export default function TLStockRequestPage() {
             <CardContent className="pt-5">
               <div className="text-2xl font-bold tabular-nums">{value}</div>
               <p className="text-xs text-muted-foreground">{label}</p>
-            </CardContent>
-          </Card>
+          </CardContent>
+        </Card>
         ))}
       </div>
-
+      
       <Card>
         <CardHeader>
           <CardTitle>Transfers</CardTitle>
@@ -475,17 +489,17 @@ export default function TLStockRequestPage() {
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <div className="relative min-w-0 flex-1">
                 <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  <Input
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder={
                     activeTab === 'lost'
                       ? 'Search SKU, transfer #…'
                       : 'Search transfer #, TDR, name…'
                   }
                   className="h-9 pl-8"
-                />
-              </div>
+                  />
+                </div>
               <div className="flex w-full gap-2 sm:w-auto shrink-0">
                 <DateRangeFilterPopover
                   value={dateRangeFilter}
@@ -506,20 +520,20 @@ export default function TLStockRequestPage() {
                   showStatus={activeTab !== 'lost'}
                 />
                 {hasActiveFilters ? (
-                  <Button
+                              <Button
                     type="button"
-                    variant="ghost"
-                    size="sm"
+                      variant="ghost"
+                      size="sm"
                     className="h-9 px-2 text-xs shrink-0"
                     onClick={clearFilters}
-                  >
+                    >
                     <FilterX className="h-3.5 w-3.5 mr-1" />
                     Clear
-                  </Button>
+                    </Button>
                 ) : null}
+                  </div>
               </div>
-            </div>
-
+              
             <TabsContent value="incoming" className="mt-0">
               <p className="mb-3 text-sm text-muted-foreground">
                 Dispatch from your stock. You can send less than approved if you give a reason.
@@ -555,6 +569,7 @@ export default function TLStockRequestPage() {
                       setSortState((current) => getNextTableSortCycleState(current, key))
                     }
                     onPrint={printGroup}
+                    onPrintTdr={printDeliveryReceipt}
                     onView={openGroup}
                     onHistory={openHistory}
                   />
@@ -607,6 +622,7 @@ export default function TLStockRequestPage() {
                       setSortState((current) => getNextTableSortCycleState(current, key))
                     }
                     onPrint={printGroup}
+                    onPrintTdr={printDeliveryReceipt}
                     onView={openGroup}
                     onHistory={openHistory}
                     onReceive={receiveGroup}
@@ -623,8 +639,8 @@ export default function TLStockRequestPage() {
                       )
                     }
                   />
-                </div>
-              )}
+            </div>
+          )}
             </TabsContent>
 
             <TabsContent value="lost" className="mt-0">

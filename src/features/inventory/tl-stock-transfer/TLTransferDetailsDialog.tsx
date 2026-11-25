@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Expand, History, Loader2, Printer } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -10,32 +10,63 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableFooter,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { TLRequestStatus, TLRequestWithDetails } from '@/types/tlStockRequests.types';
 import { formatShortfallReasonLabel } from '@/features/orders/deliveryDiscrepancyShared';
 import {
-  TL_DISPATCH_SHORTFALL_LABELS,
   tlDispatchShortfallSummary,
   tlDispatchedQty,
   tlRollupItemStatus,
   tlStatusLabelForRequest,
-  tlTdrKindLabel,
 } from './tlStockTransferShared';
-import { exportTlTdrPdf, printTlStockTransferRequest } from './exportTlTransferPdfs';
+import {
+  TransferItemsBreakdownTable,
+  TransferNumber,
+  TlTransferDetailField,
+} from './TlTransferAccordionList';
+import {
+  buildTlTdrPdfHtml,
+  printTlStockTransferRequest,
+  type TlTdrPdfOptions,
+} from './exportTlTransferPdfs';
 import { TLTransferHistoryDialog } from './TLTransferHistoryDialog';
 import { useAppDispatch } from '@/store/store';
 import {
   fetchTlTransferTdrDetails,
   type TlTdrDetails,
 } from '@/store/slices/motosales/tl-stock-transfers';
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleDateString();
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleString();
+}
+
+function firstTimestamp(values: Array<string | null | undefined>) {
+  for (const value of values) {
+    if (value) return value;
+  }
+  return null;
+}
+
+function brandNames(lines: TLRequestWithDetails[]) {
+  const names = [
+    ...new Set(
+      lines
+        .map((item) => item.variant?.brand_name?.trim())
+        .filter((name): name is string => !!name)
+    ),
+  ];
+  return names.length > 0 ? names.join(', ') : '—';
+}
 
 type Props = {
   open: boolean;
@@ -65,32 +96,6 @@ function statusBadgeClass(status: TLRequestStatus | string) {
     default:
       return base;
   }
-}
-
-function qtyDisplay(value: number | null | undefined) {
-  return value == null ? '—' : value;
-}
-
-function lineNotes(line: TLRequestWithDetails) {
-  const notes: string[] = [];
-  const dispatchShort = tlDispatchShortfallSummary(line);
-  if (dispatchShort?.reasonLabel) {
-    notes.push(`Dispatch: ${dispatchShort.reasonLabel}`);
-  } else if (line.dispatch_shortfall_reason) {
-    notes.push(`Dispatch: ${TL_DISPATCH_SHORTFALL_LABELS[line.dispatch_shortfall_reason]}`);
-  }
-  if (dispatchShort?.notes) {
-    notes.push(dispatchShort.notes);
-  }
-  if (line.receive_shortfall_reason) {
-    notes.push(
-      `Receive: ${formatShortfallReasonLabel(line.receive_shortfall_reason, line.receive_shortfall_notes)}`
-    );
-  }
-  if (line.rejection_reason) {
-    notes.push(line.rejection_reason);
-  }
-  return notes;
 }
 
 function lineBrandName(line: {
@@ -293,41 +298,23 @@ export function TLTransferDetailsDialog({ open, onOpenChange, request, allReques
   const [fullImage, setFullImage] = useState<{ url: string; title: string } | null>(null);
   const [printing, setPrinting] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [detailTab, setDetailTab] = useState<'details' | 'receipts'>('details');
   const lines = useMemo(() => {
     if (!request) return [];
     const grouped = allRequests.filter((row) => row.request_number === request.request_number);
     return grouped.length > 0 ? grouped : [request];
   }, [allRequests, request]);
 
-  const linesByBrand = useMemo(() => {
-    const map = new Map<string, TLRequestWithDetails[]>();
-    for (const line of lines) {
-      const brand = lineBrandName(line);
-      const list = map.get(brand) ?? [];
-      list.push(line);
-      map.set(brand, list);
-    }
-    return [...map.entries()]
-      .sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
-      .map(([brand, items]) => ({
-        brand,
-        items: [...items].sort((a, b) =>
-          (a.variant?.name || '').localeCompare(b.variant?.name || '', undefined, { sensitivity: 'base' })
-        ),
-      }));
-  }, [lines]);
-
   const totals = useMemo(
     () =>
       lines.reduce(
         (acc, line) => {
           acc.requested += Number(line.requested_quantity || 0);
-          acc.approved += Number(line.admin_approved_quantity || 0);
           acc.dispatched += tlDispatchedQty(line);
           acc.received += Number(line.received_quantity || 0);
           return acc;
         },
-        { requested: 0, approved: 0, dispatched: 0, received: 0 }
+        { requested: 0, dispatched: 0, received: 0 }
       ),
     [lines]
   );
@@ -348,7 +335,12 @@ export function TLTransferDetailsDialog({ open, onOpenChange, request, allReques
   const [tdrQuery, setTdrQuery] = useState<TlTdrDetails | null>(null);
 
   useEffect(() => {
-    if (!open || !headerId) {
+    if (!open) {
+      setDetailTab('details');
+      setTdrQuery(null);
+      return;
+    }
+    if (!headerId) {
       setTdrQuery(null);
       return;
     }
@@ -366,10 +358,36 @@ export function TLTransferDetailsDialog({ open, onOpenChange, request, allReques
     };
   }, [dispatch, open, headerId]);
 
+  const detailSummary = useMemo(() => {
+    if (!headerRequest) return null;
+    const brands = brandNames(lines);
+    const requestedAt = headerRequest.created_at;
+    const dispatchedAt = firstTimestamp(lines.map((line) => line.dispatched_at));
+    const receivedAt = firstTimestamp(lines.map((line) => line.received_at));
+    const hasDispatched = lines.some((line) => line.dispatched_quantity != null);
+    const hasReceived = lines.some((line) => line.received_quantity != null);
+    const dispatchedBy = dispatchedAt ? headerRequest.source?.full_name : null;
+    const receivedBy = receivedAt ? headerRequest.requester?.full_name : null;
+    const dispatchShort = lines
+      .map((line) => tlDispatchShortfallSummary(line))
+      .find((summary) => summary?.reasonLabel);
+    return {
+      brands,
+      requestedAt,
+      dispatchedAt,
+      receivedAt,
+      hasDispatched,
+      hasReceived,
+      dispatchedBy,
+      receivedBy,
+      dispatchShort,
+    };
+  }, [headerRequest, lines]);
+
   const tdrDisplays = useMemo((): TdrDisplay[] => {
     const fetchedTdrs = tdrQuery?.tdrs || [];
     const shortages = tdrQuery?.shortages || [];
-    const source =
+    const rawSource =
       fetchedTdrs.length > 0
         ? fetchedTdrs
         : headerRequest?.tdrs && headerRequest.tdrs.length > 0
@@ -385,6 +403,37 @@ export function TLTransferDetailsDialog({ open, onOpenChange, request, allReques
               ]
             : [];
 
+    const source = rawSource
+      .map((entry) => {
+        const row = entry as {
+          tdr_number?: unknown;
+          kind?: unknown;
+          created_at?: unknown;
+          items?: unknown;
+        };
+        const tdrNumber = typeof row.tdr_number === 'string' ? row.tdr_number : '';
+        if (!tdrNumber) return null;
+        return {
+          tdr_number: tdrNumber,
+          kind: typeof row.kind === 'string' ? row.kind : 'dispatch',
+          created_at:
+            typeof row.created_at === 'string'
+              ? row.created_at
+              : headerRequest?.created_at || new Date().toISOString(),
+          items: Array.isArray(row.items) ? row.items : [],
+        };
+      })
+      .filter(
+        (
+          entry
+        ): entry is {
+          tdr_number: string;
+          kind: string;
+          created_at: string;
+          items: unknown[];
+        } => !!entry
+      );
+
     const fromMovements = reconstructTdrLinesFromMovements(
       source,
       lines,
@@ -392,17 +441,27 @@ export function TLTransferDetailsDialog({ open, onOpenChange, request, allReques
     );
     const fromShortages = reconstructTdrLinesFromShortages(source, lines, shortages);
 
-    return source.map((entry: any, index: number) => {
-      const stored = Array.isArray(entry.items) ? entry.items : [];
+    return source.map((entry, index) => {
+      const stored = entry.items;
       const fromStore: TdrDisplayLine[] = stored
-        .map((item: any) => {
-          const match = lines.find((line) => line.id === item.request_item_id);
+        .map((item) => {
+          const row = item as {
+            request_item_id?: string;
+            dispatched_quantity?: number;
+            received_quantity?: number;
+            variant?: {
+              name?: string | null;
+              brand_name?: string | null;
+              brand?: { name?: string | null } | null;
+            };
+          };
+          const match = lines.find((line) => line.id === row.request_item_id);
           return displayLine(
-            `${entry.tdr_number}-${item.request_item_id}`,
-            variantLabel(match || item),
-            Number(item.dispatched_quantity || 0),
-            Number(item.received_quantity || 0),
-            item.request_item_id,
+            `${entry.tdr_number}-${row.request_item_id}`,
+            variantLabel(match || row),
+            Number(row.dispatched_quantity || 0),
+            Number(row.received_quantity || 0),
+            row.request_item_id,
             match?.received_quantity != null
           );
         })
@@ -447,57 +506,62 @@ export function TLTransferDetailsDialog({ open, onOpenChange, request, allReques
     }
   };
 
-  const printTdr = async (entry: TdrDisplay) => {
-    if (!headerRequest) return;
-    if (entry.lines.length === 0) {
-      toast({
-        title: 'Nothing to print on this TDR',
-        description: 'This receipt has no dispatched quantities yet.',
-        variant: 'destructive',
-      });
-      return;
-    }
-    setPrinting(entry.tdr_number);
-    try {
-      await exportTlTdrPdf({
-        tdrNumber: entry.tdr_number,
-        kind: entry.kind,
-        dispatchedAt: entry.created_at,
-        requestNumber: headerRequest.request_number,
-        requesterName: headerRequest.requester?.full_name || '—',
-        sourceName: headerRequest.source?.full_name || '—',
-        lines: entry.lines.map((line) => {
-          const match = lines.find((sku) => sku.id === line.requestItemId);
-          const short = Math.max(0, line.dispatched - line.received);
-          const receiveConfirmed = match?.received_quantity != null;
-          const shortfallReason =
-            short > 0 && receiveConfirmed && match?.receive_shortfall_reason
-              ? formatShortfallReasonLabel(
-                  match.receive_shortfall_reason,
-                  match.receive_shortfall_notes
-                )
-              : null;
-          return {
-            label: line.label.includes(' · ')
-              ? line.label.replace(' · ', ' — ')
-              : line.label,
-            dispatched: line.dispatched,
-            received: line.received,
-            shortfallReason,
-            receiveConfirmed,
-          };
-        }),
-      });
-    } catch (error: any) {
-      toast({
-        title: 'Could not print TDR',
-        description: error?.message || 'Failed to open the print view.',
-        variant: 'destructive',
-      });
-    } finally {
-      setPrinting(null);
-    }
+  const buildTdrOptions = (entry: TdrDisplay): TlTdrPdfOptions | null => {
+    if (!headerRequest || entry.lines.length === 0) return null;
+    return {
+      tdrNumber: entry.tdr_number,
+      kind: entry.kind,
+      dispatchedAt: entry.created_at,
+      requestNumber: headerRequest.request_number,
+      requesterName: headerRequest.requester?.full_name || '—',
+      sourceName: headerRequest.source?.full_name || '—',
+      lines: entry.lines.map((line) => {
+        const match = lines.find((sku) => sku.id === line.requestItemId);
+        const short = Math.max(0, line.dispatched - line.received);
+        const receiveConfirmed = match?.received_quantity != null;
+        const shortfallReason =
+          short > 0 && receiveConfirmed && match?.receive_shortfall_reason
+            ? formatShortfallReasonLabel(
+                match.receive_shortfall_reason,
+                match.receive_shortfall_notes
+              )
+            : null;
+        return {
+          label: line.label.includes(' · ')
+            ? line.label.replace(' · ', ' — ')
+            : line.label,
+          dispatched: line.dispatched,
+          received: line.received,
+          shortfallReason,
+          receiveConfirmed,
+        };
+      }),
+    };
   };
+
+  const receiptPreviews = useMemo(() => {
+    return tdrDisplays
+      .map((entry) => {
+        const options = buildTdrOptions(entry);
+        if (!options) return null;
+        return {
+          key: entry.tdr_number,
+          title: `TDR — ${entry.tdr_number}`,
+          html: buildTlTdrPdfHtml(options),
+          options,
+        };
+      })
+      .filter(
+        (
+          preview
+        ): preview is {
+          key: string;
+          title: string;
+          html: string;
+          options: TlTdrPdfOptions;
+        } => !!preview
+      );
+  }, [tdrDisplays, headerRequest, lines]);
 
   return (
     <>
@@ -507,20 +571,21 @@ export function TLTransferDetailsDialog({ open, onOpenChange, request, allReques
         if (!next) {
           setFullImage(null);
           setHistoryOpen(false);
+          setDetailTab('details');
         }
         onOpenChange(next);
       }}
     >
-      {headerRequest ? (
-        <DialogContent className="flex w-[95vw] max-w-4xl max-h-[90vh] flex-col gap-0 overflow-hidden p-0">
+      {headerRequest && detailSummary ? (
+        <DialogContent className="flex w-[95vw] max-w-5xl max-h-[90vh] flex-col gap-0 overflow-hidden p-0">
         <DialogHeader className="shrink-0 space-y-3 border-b px-6 py-5 pr-12 text-left">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="space-y-1">
               <DialogTitle className="text-xl">Transfer details</DialogTitle>
-              <DialogDescription className="font-mono text-sm text-foreground whitespace-nowrap">
+              {/* <DialogDescription className="font-mono text-sm text-foreground whitespace-nowrap">
                 {headerRequest.request_number}
                 {headerRequest.tdr_number ? ` · ${headerRequest.tdr_number}` : ''}
-              </DialogDescription>
+              </DialogDescription> */}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <Button
@@ -544,7 +609,7 @@ export function TLTransferDetailsDialog({ open, onOpenChange, request, allReques
                 ) : (
                   <Printer className="mr-1 h-4 w-4" />
                 )}
-                Print transfer
+                Print TL Stock Transfer
               </Button>
               <Badge variant="secondary" className={statusBadgeClass(displayStatus)}>
                 {tlStatusLabelForRequest({
@@ -556,246 +621,229 @@ export function TLTransferDetailsDialog({ open, onOpenChange, request, allReques
           </div>
         </DialogHeader>
 
-        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5">
-          <div className="grid grid-cols-1 gap-4 rounded-lg border bg-muted/30 p-4 text-sm sm:grid-cols-2">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Requested by
-              </p>
-              <p className="mt-1 font-medium">{headerRequest.requester?.full_name || '—'}</p>
-              {headerRequest.requester?.region ? (
-                <p className="text-xs text-muted-foreground">{headerRequest.requester.region}</p>
-              ) : null}
-            </div>
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">To</p>
-              <p className="mt-1 font-medium">{headerRequest.source?.full_name || '—'}</p>
-              {headerRequest.source?.region ? (
-                <p className="text-xs text-muted-foreground">{headerRequest.source.region}</p>
-              ) : null}
-            </div>
+        <Tabs
+          value={detailTab}
+          onValueChange={(value) => setDetailTab(value as 'details' | 'receipts')}
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          <div className="shrink-0 border-b px-6 pt-3">
+            <TabsList className="grid w-full grid-cols-2 sm:w-auto sm:inline-flex">
+              <TabsTrigger value="details">Transfer details</TabsTrigger>
+              <TabsTrigger value="receipts" className="gap-2">
+                Delivery receipts
+                {tdrDisplays.length > 0 ? (
+                  <Badge variant="secondary" className="h-5 min-w-5 px-1.5">
+                    {tdrDisplays.length}
+                  </Badge>
+                ) : null}
+              </TabsTrigger>
+            </TabsList>
           </div>
 
-          {tdrDisplays.length > 0 ? (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-3">
-                <h3 className="text-sm font-semibold">Delivery receipts</h3>
-                {headerRequest.tdr_number ? (
-                  <p className="font-mono text-xs text-muted-foreground">Latest {headerRequest.tdr_number}</p>
-                ) : null}
-              </div>
-              <div className="space-y-3">
-                {tdrDisplays.map((entry) => (
-                  <div key={entry.tdr_number} className="rounded-lg border bg-muted/20 p-4 space-y-3 text-sm">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div className="grid flex-1 gap-2 sm:grid-cols-2">
-                        <div>
-                          <p className="text-xs uppercase tracking-wide text-muted-foreground">TDR number</p>
-                          <p className="font-mono font-medium">{entry.tdr_number}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs uppercase tracking-wide text-muted-foreground">Type</p>
-                          <p className="font-medium">{tlTdrKindLabel(entry.kind)}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs uppercase tracking-wide text-muted-foreground">Dispatched Date</p>
-                          <p className="font-medium">{new Date(entry.created_at).toLocaleString()}</p>
-                        </div>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="shrink-0"
-                        onClick={() => void printTdr(entry)}
-                        disabled={printing === entry.tdr_number}
-                      >
-                        {printing === entry.tdr_number ? (
-                          <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Printer className="mr-1 h-3.5 w-3.5" />
-                        )}
-                        Print TDR
-                      </Button>
-                    </div>
-                    {entry.lines.length > 0 ? (
-                      <div className="rounded-md border bg-background p-2 space-y-1">
-                        <p className="text-xs text-muted-foreground">
-                          Items quantities dispatched / received
-                        </p>
-                        {entry.lines.map((line) => (
-                          <div key={line.key} className="flex justify-between gap-2 text-xs">
-                            <span className="truncate">{line.label}</span>
-                            <span className="shrink-0 font-medium tabular-nums">
-                              recv {line.received}/{line.dispatched}
-                              {line.pendingNote}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
+          <TabsContent
+            value="details"
+            className="mt-0 min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5 data-[state=inactive]:hidden"
+          >
+            <section>
+              <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Details
+              </h4>
+              <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+                <TlTransferDetailField
+                  label="Transfer Number"
+                  value={<TransferNumber value={headerRequest.request_number} />}
+                />
+                <TlTransferDetailField
+                  label="TDR"
+                  value={headerRequest.tdr_number || '—'}
+                />
+                <TlTransferDetailField
+                  label="Requested by"
+                  value={
+                    headerRequest.requester?.region
+                      ? `${headerRequest.requester.full_name} · ${headerRequest.requester.region}`
+                      : headerRequest.requester?.full_name || '—'
+                  }
+                />
+                <TlTransferDetailField
+                  label="Requested from"
+                  value={
+                    headerRequest.source?.region
+                      ? `${headerRequest.source.full_name} · ${headerRequest.source.region}`
+                      : headerRequest.source?.full_name || '—'
+                  }
+                />
+                <TlTransferDetailField label="Brand" value={detailSummary.brands} />
+                <TlTransferDetailField
+                  label="Requested Total Qty"
+                  value={totals.requested}
+                />
+                <TlTransferDetailField
+                  label="Dispatched Total Qty"
+                  value={detailSummary.hasDispatched ? totals.dispatched : '—'}
+                />
+                <TlTransferDetailField
+                  label="Received Total Qty"
+                  value={detailSummary.hasReceived ? totals.received : '—'}
+                />
+                <TlTransferDetailField
+                  label="Request At"
+                  value={formatDateTime(detailSummary.requestedAt)}
+                />
+                <TlTransferDetailField
+                  label="Dispatch At"
+                  value={formatDateTime(detailSummary.dispatchedAt)}
+                />
+                <TlTransferDetailField
+                  label="Receive At"
+                  value={formatDateTime(detailSummary.receivedAt)}
+                />
+                <TlTransferDetailField
+                  label="Dispatched By"
+                  value={detailSummary.dispatchedBy || '—'}
+                />
+                <TlTransferDetailField
+                  label="Received By"
+                  value={detailSummary.receivedBy || '—'}
+                />
+                <TlTransferDetailField
+                  label="Status"
+                  value={
+                    <Badge
+                      variant="secondary"
+                      className={statusBadgeClass(displayStatus)}
+                    >
+                      {tlStatusLabelForRequest({
+                        ...headerRequest,
+                        status: displayStatus as typeof headerRequest.status,
+                      })}
+                    </Badge>
+                  }
+                />
+                <TlTransferDetailField
+                  label="Date"
+                  value={formatDate(headerRequest.created_at)}
+                />
+              </dl>
+              {detailSummary.dispatchShort?.reasonLabel ? (
+                <p className="mt-3 text-xs text-amber-800">
+                  Dispatch note: {detailSummary.dispatchShort.reasonLabel}
+                </p>
+              ) : null}
+
+              <div className="mt-5 space-y-3">
+                <h5 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Notes
+                </h5>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="rounded-md border px-3 py-2.5 text-sm">
+                    <p className="text-xs text-muted-foreground">Request notes</p>
+                    <p className="mt-1 whitespace-pre-wrap">
+                      {headerRequest.requester_notes?.trim() || '—'}
+                    </p>
                   </div>
+                  <div className="rounded-md border px-3 py-2.5 text-sm">
+                    <p className="text-xs text-muted-foreground">Admin notes</p>
+                    <p className="mt-1 whitespace-pre-wrap">
+                      {headerRequest.admin_notes?.trim() || '—'}
+                    </p>
+                  </div>
+                  <div className="rounded-md border px-3 py-2.5 text-sm">
+                    <p className="text-xs text-muted-foreground">Dispatcher notes</p>
+                    <p className="mt-1 whitespace-pre-wrap">
+                      {headerRequest.source_tl_notes?.trim() || '—'}
+                    </p>
+                  </div>
+                  <div
+                    className={`rounded-md border px-3 py-2.5 text-sm ${
+                      headerRequest.rejection_reason
+                        ? 'border-destructive/30 bg-destructive/5'
+                        : ''
+                    }`}
+                  >
+                    <p className="text-xs text-muted-foreground">Rejection reason</p>
+                    <p
+                      className={`mt-1 whitespace-pre-wrap ${
+                        headerRequest.rejection_reason ? 'text-destructive' : ''
+                      }`}
+                    >
+                      {headerRequest.rejection_reason?.trim() || '—'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-5 space-y-3">
+                <h5 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Photos
+                </h5>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <ProofStrip
+                    title="Dispatch photos"
+                    urls={proofUrls.dispatch}
+                    emptyLabel="No dispatch photos yet"
+                    onView={(url, index) =>
+                      setFullImage({
+                        url,
+                        title:
+                          proofUrls.dispatch.length > 1
+                            ? `Dispatch photo ${index + 1}`
+                            : 'Dispatch photo',
+                      })
+                    }
+                  />
+                  <ProofStrip
+                    title="Receive photos"
+                    urls={proofUrls.receive}
+                    emptyLabel="No receive photos yet"
+                    onView={(url, index) =>
+                      setFullImage({
+                        url,
+                        title:
+                          proofUrls.receive.length > 1
+                            ? `Receive photo ${index + 1}`
+                            : 'Receive photo',
+                      })
+                    }
+                  />
+                </div>
+              </div>
+            </section>
+
+            <section>
+              <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Received Items
+              </h4>
+              <TransferItemsBreakdownTable items={lines} mode="transfers" />
+            </section>
+          </TabsContent>
+
+          <TabsContent
+            value="receipts"
+            className="mt-0 min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6 data-[state=inactive]:hidden"
+          >
+            {receiptPreviews.length > 0 ? (
+              <div className="space-y-4">
+                {receiptPreviews.map((preview) => (
+                  <iframe
+                    key={preview.key}
+                    title={preview.title}
+                    srcDoc={preview.html}
+                    className="h-[min(70vh,760px)] w-full rounded-lg border bg-white"
+                  />
                 ))}
               </div>
-            </div>
-          ) : null}
-
-          {headerRequest.requester_notes ? (
-            <div className="rounded-lg border bg-muted/20 px-4 py-3 text-sm">
-              <p className="font-medium">Request notes</p>
-              <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{headerRequest.requester_notes}</p>
-            </div>
-          ) : null}
-
-          {headerRequest.admin_notes ? (
-            <div className="rounded-lg border bg-muted/20 px-4 py-3 text-sm">
-              <p className="font-medium">Admin notes</p>
-              <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{headerRequest.admin_notes}</p>
-            </div>
-          ) : null}
-
-          {headerRequest.source_tl_notes ? (
-            <div className="rounded-lg border bg-muted/20 px-4 py-3 text-sm">
-              <p className="font-medium">Dispatcher notes</p>
-              <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{headerRequest.source_tl_notes}</p>
-            </div>
-          ) : null}
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-sm font-semibold">Items</h3>
-              <p className="text-xs text-muted-foreground">
-                {lines.length} item{lines.length === 1 ? '' : 's'} · {totals.requested} units requested
-              </p>
-            </div>
-            <div className="max-h-[46vh] overflow-auto rounded-lg border">
-              <Table>
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead className="min-w-[220px] bg-muted/40">Item</TableHead>
-                    <TableHead className="bg-muted/40 text-right">Requested</TableHead>
-                    <TableHead className="bg-muted/40 text-right">Approved</TableHead>
-                    <TableHead className="bg-muted/40 text-right">Dispatched </TableHead>
-                    <TableHead className="bg-muted/40 text-right">Received</TableHead>
-                    <TableHead className="min-w-[180px] bg-muted/40">Notes</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {linesByBrand.map((group) => (
-                    <Fragment key={group.brand}>
-                      <TableRow className="bg-muted/50 hover:bg-muted/50">
-                        <TableCell colSpan={6} className="py-2">
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold">{group.brand}</span>
-                            <Badge variant="outline" className="text-[10px] font-normal">
-                              {group.items.length} item{group.items.length === 1 ? '' : 's'}
-                            </Badge>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                      {group.items.map((line) => {
-                        const notes = lineNotes(line);
-                        return (
-                          <TableRow key={line.id}>
-                            <TableCell>
-                              <p className="font-medium">{line.variant.name}</p>
-                              <p className="text-xs text-muted-foreground">{line.variant.type}</p>
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">
-                              {line.requested_quantity}
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">
-                              {qtyDisplay(line.admin_approved_quantity)}
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">
-                              {line.dispatched_quantity == null && !line.dispatched_at
-                                ? '—'
-                                : tlDispatchedQty(line)}
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">
-                              {qtyDisplay(line.received_quantity)}
-                            </TableCell>
-                            <TableCell>
-                              {notes.length > 0 ? (
-                                <div className="space-y-1 text-xs text-muted-foreground">
-                                  {notes.map((note) => (
-                                    <p key={note}>{note}</p>
-                                  ))}
-                                </div>
-                              ) : (
-                                <span className="text-muted-foreground">—</span>
-                              )}
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </Fragment>
-                  ))}
-                </TableBody>
-                <TableFooter>
-                  <TableRow>
-                    <TableCell>Total</TableCell>
-                    <TableCell className="text-right tabular-nums">{totals.requested}</TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {lines.some((line) => line.admin_approved_quantity != null)
-                        ? totals.approved
-                        : '—'}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {lines.some((line) => line.dispatched_quantity != null || line.dispatched_at)
-                        ? totals.dispatched
-                        : '—'}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {lines.some((line) => line.received_quantity != null) ? totals.received : '—'}
-                    </TableCell>
-                    <TableCell />
-                  </TableRow>
-                </TableFooter>
-              </Table>
-            </div>
-          </div>
-
-          {headerRequest.rejection_reason ? (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
-              <p className="font-medium text-destructive">Rejected</p>
-              <p className="mt-1 text-muted-foreground">{headerRequest.rejection_reason}</p>
-            </div>
-          ) : null}
-
-          {proofUrls.dispatch.length > 0 || proofUrls.receive.length > 0 ? (
-            <div className="grid gap-4 sm:grid-cols-2">
-              {proofUrls.dispatch.length > 0 ? (
-                <ProofStrip
-                  title="Dispatch photos"
-                  urls={proofUrls.dispatch}
-                  onView={(url, index) =>
-                    setFullImage({
-                      url,
-                      title:
-                        proofUrls.dispatch.length > 1
-                          ? `Dispatch photo ${index + 1}`
-                          : 'Dispatch photo',
-                    })
-                  }
-                />
-              ) : null}
-              {proofUrls.receive.length > 0 ? (
-                <ProofStrip
-                  title="Receive photos"
-                  urls={proofUrls.receive}
-                  onView={(url, index) =>
-                    setFullImage({
-                      url,
-                      title:
-                        proofUrls.receive.length > 1 ? `Receive photo ${index + 1}` : 'Receive photo',
-                    })
-                  }
-                />
-              ) : null}
-            </div>
-          ) : null}
-        </div>
+            ) : (
+              <div className="space-y-1 py-12 text-center">
+                <p className="text-sm font-medium">No delivery receipt yet</p>
+                <p className="text-sm text-muted-foreground">
+                  There is no delivery receipt for this transaction yet. It will
+                  appear here once stock is dispatched.
+                </p>
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
         </DialogContent>
       ) : null}
     </Dialog>
@@ -830,40 +878,52 @@ export function TLTransferDetailsDialog({ open, onOpenChange, request, allReques
 function ProofStrip({
   title,
   urls,
+  emptyLabel = 'No photos yet',
   onView,
 }: {
   title: string;
   urls: string[];
+  emptyLabel?: string;
   onView: (url: string, index: number) => void;
 }) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 rounded-md border px-3 py-2.5">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-medium">{title}</p>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 px-2 text-xs"
-          onClick={() => onView(urls[0], 0)}
-        >
-          <Expand className="h-3.5 w-3.5 mr-1" />
-          View full
-        </Button>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {urls.map((url, index) => (
-          <button
-            key={url}
+        <p className="text-xs text-muted-foreground">{title}</p>
+        {urls.length > 0 ? (
+          <Button
             type="button"
-            className="block h-16 w-16 overflow-hidden rounded-md border bg-muted cursor-pointer hover:opacity-90 transition-opacity"
-            onClick={() => onView(url, index)}
-            title="View full size"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            onClick={() => onView(urls[0], 0)}
           >
-            <img src={url} alt={`${title} ${index + 1}`} className="h-full w-full object-cover" />
-          </button>
-        ))}
+            <Expand className="mr-1 h-3.5 w-3.5" />
+            View full
+          </Button>
+        ) : null}
       </div>
+      {urls.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {urls.map((url, index) => (
+            <button
+              key={url}
+              type="button"
+              className="block h-16 w-16 cursor-pointer overflow-hidden rounded-md border bg-muted transition-opacity hover:opacity-90"
+              onClick={() => onView(url, index)}
+              title="View full size"
+            >
+              <img
+                src={url}
+                alt={`${title} ${index + 1}`}
+                className="h-full w-full object-cover"
+              />
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">{emptyLabel}</p>
+      )}
     </div>
   );
 }

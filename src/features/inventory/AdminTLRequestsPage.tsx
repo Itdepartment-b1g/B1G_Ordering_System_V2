@@ -33,6 +33,7 @@ import {
   adminRejectTlStockTransfer,
   fetchAdminTlTransfers,
   fetchTlSourceAvailability,
+  fetchTlTransferTdrDetails,
   refreshTlTransferLists,
 } from '@/store/slices/motosales/tl-stock-transfers';
 import type { TLRequestWithDetails } from '@/types/tlStockRequests.types';
@@ -69,6 +70,7 @@ import {
 } from './tl-stock-transfer/tlStockTransferListHelpers';
 import { useTlTransferRealtime } from './tl-stock-transfer/useTlTransferRealtime';
 import { printTlStockTransferRequest } from './tl-stock-transfer/exportTlTransferPdfs';
+import { printTlTransferGroupTdrs } from './tl-stock-transfer/tlTransferTdrReceipts';
 import { TLTransferDetailsDialog } from './tl-stock-transfer/TLTransferDetailsDialog';
 import { TLTransferHistoryDialog } from './tl-stock-transfer/TLTransferHistoryDialog';
 import { TLTransferRowActionsMenu } from './tl-stock-transfer/TLTransferRowActionsMenu';
@@ -711,6 +713,18 @@ export default function AdminTLRequestsPage() {
                                   });
                                 });
                               }}
+                              onPrintTdr={() => {
+                                void printTlTransferGroupTdrs(group.items, (requestId) =>
+                                  dispatch(fetchTlTransferTdrDetails(requestId)).unwrap()
+                                ).catch((error: any) => {
+                                  toast({
+                                    title: 'Could not print delivery receipt',
+                                    description:
+                                      error?.message || 'Failed to open the print view.',
+                                    variant: 'destructive',
+                                  });
+                                });
+                              }}
                               onReview={
                                 group.status === 'pending_admin'
                                   ? () => void handleReview(group)
@@ -786,7 +800,7 @@ export default function AdminTLRequestsPage() {
                     }}
                   >
                     <Printer className="mr-1 h-4 w-4" />
-                    Print transfer
+                    Print TL Stock Transfer
                   </Button>
                 </div>
               ) : null}

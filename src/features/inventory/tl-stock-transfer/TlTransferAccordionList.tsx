@@ -1,7 +1,8 @@
-import { Fragment, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   DEFAULT_PAGE_SIZE,
@@ -18,6 +19,11 @@ import {
   type TableSortCycleState,
 } from '@/features/shared/utils/tableSortCycle';
 import { cn } from '@/lib/utils';
+import { useAppDispatch } from '@/store/store';
+import {
+  fetchTlTransferTdrDetails,
+  type TlTdrDetails,
+} from '@/store/slices/motosales/tl-stock-transfers';
 import type { TLRequestStatus, TLRequestWithDetails } from '@/types/tlStockRequests.types';
 import {
   tlDispatchShortfallSummary,
@@ -28,6 +34,7 @@ import {
 } from './tlStockTransferShared';
 import type { TlTransferListSortKey } from './tlStockTransferListHelpers';
 import { TLTransferRowActionsMenu } from './TLTransferRowActionsMenu';
+import { buildTlTransferReceiptPreviews } from './tlTransferTdrReceipts';
 
 type ItemsSortKey =
   | 'brand'
@@ -102,7 +109,7 @@ function brandNames(group: TLRequestGroup) {
   return names.length > 0 ? names.join(', ') : '—';
 }
 
-function DetailField({ label, value }: { label: string; value: ReactNode }) {
+export function TlTransferDetailField({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="min-w-0">
       <dt className="text-xs text-muted-foreground">{label}</dt>
@@ -152,12 +159,12 @@ function sortTransferItems(
   });
 }
 
-function TransferItemsBreakdownTable({
+export function TransferItemsBreakdownTable({
   items,
-  mode,
+  mode = 'transfers',
 }: {
   items: TLRequestWithDetails[];
-  mode: Mode;
+  mode?: Mode;
 }) {
   const [sortState, setSortState] =
     useState<TableSortCycleState<ItemsSortKey>>(createInitialTableSortCycle);
@@ -327,6 +334,263 @@ function PersonCell({
   );
 }
 
+function TlTransferExpandedPanel({
+  group,
+  mode,
+}: {
+  group: TLRequestGroup;
+  mode: Mode;
+}) {
+  const dispatch = useAppDispatch();
+  const [detailTab, setDetailTab] = useState<'details' | 'receipts'>('details');
+  const [tdrQuery, setTdrQuery] = useState<TlTdrDetails | null>(null);
+  const headerId = group.items[0]?.request_id || null;
+
+  const brands = brandNames(group);
+  const hasDispatched = group.items.some((item) => item.dispatched_quantity != null);
+  const hasReceived = group.items.some((item) => item.received_quantity != null);
+  const remainingToDispatch = group.items.reduce(
+    (sum, item) => sum + tlRemainingToDispatch(item),
+    0
+  );
+  const requestedAt = group.created_at;
+  const dispatchedAt = firstTimestamp(group.items.map((item) => item.dispatched_at));
+  const receivedAt = firstTimestamp(group.items.map((item) => item.received_at));
+  const dispatchedBy = dispatchedAt ? group.source.full_name : null;
+  const receivedBy = receivedAt ? group.requester.full_name : null;
+  const dispatchShort = group.items
+    .map((item) => tlDispatchShortfallSummary(item))
+    .find((summary) => summary?.reasonLabel);
+  const dispatchPhotos = [
+    ...new Set(group.items.flatMap((item) => item.dispatch_proof_urls || [])),
+  ];
+  const receivePhotos = [
+    ...new Set(group.items.flatMap((item) => item.receive_proof_urls || [])),
+  ];
+  const adminNotes =
+    group.items.map((item) => item.admin_notes?.trim()).find(Boolean) || null;
+  const dispatcherNotes =
+    group.items.map((item) => item.source_tl_notes?.trim()).find(Boolean) || null;
+
+  useEffect(() => {
+    if (!headerId) {
+      setTdrQuery(null);
+      return;
+    }
+    let cancelled = false;
+    void dispatch(fetchTlTransferTdrDetails(headerId))
+      .unwrap()
+      .then((data) => {
+        if (!cancelled) setTdrQuery(data);
+      })
+      .catch(() => {
+        if (!cancelled) setTdrQuery(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dispatch, headerId]);
+
+  const receiptPreviews = useMemo(
+    () => buildTlTransferReceiptPreviews(group.items, tdrQuery),
+    [group.items, tdrQuery]
+  );
+
+  return (
+    <Tabs
+      value={detailTab}
+      onValueChange={(value) => setDetailTab(value as 'details' | 'receipts')}
+      className="w-full"
+    >
+      <div className="border-b pb-3">
+        <TabsList className="grid w-full grid-cols-2 sm:w-auto sm:inline-flex">
+          <TabsTrigger value="details">Transfer details</TabsTrigger>
+          <TabsTrigger value="receipts" className="gap-2">
+            Delivery receipts
+            {receiptPreviews.length > 0 ? (
+              <Badge variant="secondary" className="h-5 min-w-5 px-1.5">
+                {receiptPreviews.length}
+              </Badge>
+            ) : null}
+          </TabsTrigger>
+        </TabsList>
+      </div>
+
+      <TabsContent value="details" className="mt-4 space-y-5 data-[state=inactive]:hidden">
+        <section>
+          <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Details
+          </h4>
+          <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <TlTransferDetailField
+              label="Transfer Number"
+              value={<TransferNumber value={group.request_number} />}
+            />
+            {mode === 'transfers' ? (
+              <TlTransferDetailField label="TDR" value={group.tdr_number || '—'} />
+            ) : null}
+            <TlTransferDetailField
+              label="Requested by"
+              value={
+                group.requester.region
+                  ? `${group.requester.full_name} · ${group.requester.region}`
+                  : group.requester.full_name
+              }
+            />
+            <TlTransferDetailField
+              label="Requested from"
+              value={
+                group.source.region
+                  ? `${group.source.full_name} · ${group.source.region}`
+                  : group.source.full_name
+              }
+            />
+            <TlTransferDetailField label="Brand" value={brands} />
+            <TlTransferDetailField label="Requested Total Qty" value={group.totalRequested} />
+            {mode === 'incoming' ? (
+              <TlTransferDetailField label="To Dispatch" value={remainingToDispatch} />
+            ) : (
+              <>
+                <TlTransferDetailField
+                  label="Dispatched Total Qty"
+                  value={hasDispatched ? group.totalDispatched : '—'}
+                />
+                <TlTransferDetailField
+                  label="Received Total Qty"
+                  value={hasReceived ? group.totalReceived : '—'}
+                />
+              </>
+            )}
+            <TlTransferDetailField label="Request At" value={formatDateTime(requestedAt)} />
+            <TlTransferDetailField label="Dispatch At" value={formatDateTime(dispatchedAt)} />
+            <TlTransferDetailField label="Receive At" value={formatDateTime(receivedAt)} />
+            <TlTransferDetailField label="Dispatched By" value={dispatchedBy || '—'} />
+            <TlTransferDetailField label="Received By" value={receivedBy || '—'} />
+            <TlTransferDetailField
+              label="Status"
+              value={
+                <Badge variant="secondary" className={statusBadgeClass(group.status)}>
+                  {tlStatusLabelForGroup(group)}
+                </Badge>
+              }
+            />
+            <TlTransferDetailField label="Date" value={formatDate(group.created_at)} />
+          </dl>
+          {dispatchShort?.reasonLabel ? (
+            <p className="mt-3 text-xs text-amber-800">
+              Dispatch note: {dispatchShort.reasonLabel}
+            </p>
+          ) : null}
+
+          <div className="mt-5 space-y-3">
+            <h5 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Notes
+            </h5>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="rounded-md border px-3 py-2.5 text-sm">
+                <p className="text-xs text-muted-foreground">Request notes</p>
+                <p className="mt-1 whitespace-pre-wrap">{group.requester_notes?.trim() || '—'}</p>
+              </div>
+              <div className="rounded-md border px-3 py-2.5 text-sm">
+                <p className="text-xs text-muted-foreground">Admin notes</p>
+                <p className="mt-1 whitespace-pre-wrap">{adminNotes || '—'}</p>
+              </div>
+              <div className="rounded-md border px-3 py-2.5 text-sm">
+                <p className="text-xs text-muted-foreground">Dispatcher notes</p>
+                <p className="mt-1 whitespace-pre-wrap">{dispatcherNotes || '—'}</p>
+              </div>
+              {group.rejection_reason ? (
+                <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm">
+                  <p className="text-xs text-muted-foreground">Rejection reason</p>
+                  <p className="mt-1 whitespace-pre-wrap text-destructive">{group.rejection_reason}</p>
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="mt-5 space-y-3">
+            <h5 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Photos
+            </h5>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-md border px-3 py-2.5">
+                <p className="text-xs text-muted-foreground">Dispatch photos</p>
+                {dispatchPhotos.length > 0 ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {dispatchPhotos.map((url) => (
+                      <a
+                        key={url}
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block h-14 w-14 overflow-hidden rounded-md border bg-muted"
+                      >
+                        <img src={url} alt="Dispatch proof" className="h-full w-full object-cover" />
+                      </a>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-1 text-sm text-muted-foreground">No dispatch photos yet</p>
+                )}
+              </div>
+              <div className="rounded-md border px-3 py-2.5">
+                <p className="text-xs text-muted-foreground">Receive photos</p>
+                {receivePhotos.length > 0 ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {receivePhotos.map((url) => (
+                      <a
+                        key={url}
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block h-14 w-14 overflow-hidden rounded-md border bg-muted"
+                      >
+                        <img src={url} alt="Receive proof" className="h-full w-full object-cover" />
+                      </a>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-1 text-sm text-muted-foreground">No receive photos yet</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            {mode === 'incoming' ? 'Items' : 'Received Items'}
+          </h4>
+          <TransferItemsBreakdownTable items={group.items} mode={mode} />
+        </section>
+      </TabsContent>
+
+      <TabsContent value="receipts" className="mt-4 space-y-4 data-[state=inactive]:hidden">
+        {receiptPreviews.length > 0 ? (
+          <div className="space-y-4">
+            {receiptPreviews.map((preview) => (
+              <iframe
+                key={preview.key}
+                title={preview.title}
+                srcDoc={preview.html}
+                className="h-[min(70vh,760px)] w-full rounded-lg border bg-white"
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-1 py-10 text-center">
+            <p className="text-sm font-medium">No delivery receipt yet</p>
+            <p className="text-sm text-muted-foreground">
+              There is no delivery receipt for this transaction yet. It will appear here once stock
+              is dispatched.
+            </p>
+          </div>
+        )}
+      </TabsContent>
+    </Tabs>
+  );
+}
+
 type Props = {
   groups: TLRequestGroup[];
   mode?: Mode;
@@ -339,6 +603,7 @@ type Props = {
   onView: (group: TLRequestGroup) => void;
   onHistory: (group: TLRequestGroup) => void;
   onPrint: (group: TLRequestGroup) => void;
+  onPrintTdr?: (group: TLRequestGroup) => void;
   onReceive?: (group: TLRequestGroup) => void;
   onDispatch?: (group: TLRequestGroup) => void;
   onReject?: (group: TLRequestGroup) => void;
@@ -352,6 +617,7 @@ export function TlTransferAccordionList({
   onView,
   onHistory,
   onPrint,
+  onPrintTdr,
   onReceive,
   onDispatch,
   onReject,
@@ -427,16 +693,6 @@ export function TlTransferAccordionList({
               );
             const canReject =
               !!onReject && group.items.every((item) => item.received_quantity == null);
-
-            const requestedAt = group.created_at;
-            const dispatchedAt = firstTimestamp(group.items.map((item) => item.dispatched_at));
-            const receivedAt = firstTimestamp(group.items.map((item) => item.received_at));
-            const dispatchedBy = dispatchedAt ? group.source.full_name : null;
-            const receivedBy = receivedAt ? group.requester.full_name : null;
-            const dispatchShort = group.items
-              .map((item) => tlDispatchShortfallSummary(item))
-              .find((summary) => summary?.reasonLabel);
-
             return (
               <Fragment key={group.request_number}>
                 <TableRow
@@ -521,6 +777,7 @@ export function TlTransferAccordionList({
                       onView={() => onView(group)}
                       onHistory={() => onHistory(group)}
                       onPrint={() => onPrint(group)}
+                      onPrintTdr={onPrintTdr ? () => onPrintTdr(group) : undefined}
                       onReceive={canReceive ? () => onReceive?.(group) : undefined}
                       onDispatch={onDispatch ? () => onDispatch(group) : undefined}
                       onReject={canReject ? () => onReject?.(group) : undefined}
@@ -531,103 +788,8 @@ export function TlTransferAccordionList({
                 {open ? (
                   <TableRow className="hover:bg-transparent bg-muted/10">
                     <TableCell colSpan={colCount} className="p-0">
-                      <div className="space-y-5 border-t px-4 py-4 sm:px-5">
-                        <section>
-                          <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                            Details
-                          </h4>
-                          <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                            <DetailField
-                              label="Transfer Number"
-                              value={<TransferNumber value={group.request_number} />}
-                            />
-                            {mode === 'transfers' ? (
-                              <DetailField label="TDR" value={group.tdr_number || '—'} />
-                            ) : null}
-                            <DetailField
-                              label="Requested by"
-                              value={
-                                group.requester.region
-                                  ? `${group.requester.full_name} · ${group.requester.region}`
-                                  : group.requester.full_name
-                              }
-                            />
-                            <DetailField
-                              label="Requested from"
-                              value={
-                                group.source.region
-                                  ? `${group.source.full_name} · ${group.source.region}`
-                                  : group.source.full_name
-                              }
-                            />
-                            <DetailField label="Brand" value={brands} />
-                            <DetailField
-                              label="Requested Total Qty"
-                              value={group.totalRequested}
-                            />
-                            {mode === 'incoming' ? (
-                              <DetailField
-                                label="To Dispatch"
-                                value={remainingToDispatch}
-                              />
-                            ) : (
-                              <>
-                                <DetailField
-                                  label="Dispatched Total Qty"
-                                  value={hasDispatched ? group.totalDispatched : '—'}
-                                />
-                                <DetailField
-                                  label="Received Total Qty"
-                                  value={hasReceived ? group.totalReceived : '—'}
-                                />
-                              </>
-                            )}
-                            <DetailField
-                              label="Request At"
-                              value={formatDateTime(requestedAt)}
-                            />
-                            <DetailField
-                              label="Dispatch At"
-                              value={formatDateTime(dispatchedAt)}
-                            />
-                            <DetailField
-                              label="Receive At"
-                              value={formatDateTime(receivedAt)}
-                            />
-                            <DetailField label="Dispatched By" value={dispatchedBy || '—'} />
-                            <DetailField label="Received By" value={receivedBy || '—'} />
-                            <DetailField
-                              label="Status"
-                              value={
-                                <Badge
-                                  variant="secondary"
-                                  className={statusBadgeClass(group.status)}
-                                >
-                                  {tlStatusLabelForGroup(group)}
-                                </Badge>
-                              }
-                            />
-                            <DetailField label="Date" value={formatDate(group.created_at)} />
-                          </dl>
-                          {dispatchShort?.reasonLabel ? (
-                            <p className="mt-3 text-xs text-amber-800">
-                              Dispatch note: {dispatchShort.reasonLabel}
-                            </p>
-                          ) : null}
-                          {group.requester_notes ? (
-                            <p className="mt-3 text-sm text-muted-foreground">
-                              <span className="font-medium text-foreground">Notes: </span>
-                              {group.requester_notes}
-                            </p>
-                          ) : null}
-                        </section>
-
-                        <section>
-                          <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                            {mode === 'incoming' ? 'Items' : 'Received Items'}
-                          </h4>
-                          <TransferItemsBreakdownTable items={group.items} mode={mode} />
-                        </section>
+                      <div className="border-t px-4 py-4 sm:px-5">
+                        <TlTransferExpandedPanel group={group} mode={mode} />
                       </div>
                     </TableCell>
                   </TableRow>
