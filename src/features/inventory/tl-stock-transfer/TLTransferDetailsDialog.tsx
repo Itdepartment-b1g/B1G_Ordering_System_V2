@@ -45,24 +45,25 @@ type Props = {
 };
 
 function statusBadgeClass(status: TLRequestStatus | string) {
+  const base = 'whitespace-nowrap';
   switch (status) {
     case 'pending_admin':
-      return 'bg-yellow-50 text-yellow-800 border-yellow-200';
+      return `${base} bg-yellow-50 text-yellow-800 border-yellow-200`;
     case 'pending_source_tl':
     case 'admin_approved':
-      return 'bg-blue-50 text-blue-800 border-blue-200';
+      return `${base} bg-blue-50 text-blue-800 border-blue-200`;
     case 'pending_receipt':
-      return 'bg-purple-50 text-purple-800 border-purple-200';
+      return `${base} bg-purple-50 text-purple-800 border-purple-200`;
     case 'completed':
-      return 'bg-green-50 text-green-800 border-green-200';
+      return `${base} bg-green-50 text-green-800 border-green-200`;
     case 'incomplete':
-      return 'bg-orange-50 text-orange-800 border-orange-200';
+      return `${base} bg-orange-50 text-orange-800 border-orange-200`;
     case 'admin_rejected':
     case 'source_tl_rejected':
     case 'cancelled':
-      return 'bg-red-50 text-red-800 border-red-200';
+      return `${base} bg-red-50 text-red-800 border-red-200`;
     default:
-      return '';
+      return base;
   }
 }
 

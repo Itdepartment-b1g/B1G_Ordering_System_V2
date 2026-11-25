@@ -424,51 +424,69 @@ export default function AdminTLRequestsPage() {
     switch (group.status) {
       case 'pending_admin':
         return (
-          <Badge variant="secondary" className="bg-yellow-50 text-yellow-700 border-yellow-200">
-            <Clock className="h-3 w-3 mr-1" />
+          <Badge
+            variant="secondary"
+            className="whitespace-nowrap bg-yellow-50 text-yellow-700 border-yellow-200"
+          >
+            <Clock className="h-3 w-3 mr-1 shrink-0" />
             {label}
           </Badge>
         );
       case 'pending_source_tl':
       case 'admin_approved':
         return (
-          <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200">
-            <Clock className="h-3 w-3 mr-1" />
+          <Badge
+            variant="secondary"
+            className="whitespace-nowrap bg-blue-50 text-blue-700 border-blue-200"
+          >
+            <Clock className="h-3 w-3 mr-1 shrink-0" />
             {label}
           </Badge>
         );
       case 'pending_receipt':
       case 'source_tl_approved':
         return (
-          <Badge variant="secondary" className="bg-purple-50 text-purple-700 border-purple-200">
-            <AlertCircle className="h-3 w-3 mr-1" />
+          <Badge
+            variant="secondary"
+            className="whitespace-nowrap bg-purple-50 text-purple-700 border-purple-200"
+          >
+            <AlertCircle className="h-3 w-3 mr-1 shrink-0" />
             {label}
           </Badge>
         );
       case 'incomplete':
         return (
-          <Badge variant="secondary" className="bg-orange-50 text-orange-800 border-orange-200">
-            <AlertCircle className="h-3 w-3 mr-1" />
+          <Badge
+            variant="secondary"
+            className="whitespace-nowrap bg-orange-50 text-orange-800 border-orange-200"
+          >
+            <AlertCircle className="h-3 w-3 mr-1 shrink-0" />
             {label}
           </Badge>
         );
       case 'completed':
         return (
-          <Badge variant="secondary" className="bg-green-50 text-green-700 border-green-200">
-            <CheckCircle2 className="h-3 w-3 mr-1" />
+          <Badge
+            variant="secondary"
+            className="whitespace-nowrap bg-green-50 text-green-700 border-green-200"
+          >
+            <CheckCircle2 className="h-3 w-3 mr-1 shrink-0" />
             {label}
           </Badge>
         );
       case 'admin_rejected':
       case 'source_tl_rejected':
         return (
-          <Badge variant="secondary" className="bg-red-50 text-red-700 border-red-200">
-            <XCircle className="h-3 w-3 mr-1" />
+          <Badge
+            variant="secondary"
+            className="whitespace-nowrap bg-red-50 text-red-700 border-red-200"
+          >
+            <XCircle className="h-3 w-3 mr-1 shrink-0" />
             {label}
           </Badge>
         );
       default:
-        return <Badge>{label}</Badge>;
+        return <Badge className="whitespace-nowrap">{label}</Badge>;
     }
   };
   
@@ -653,7 +671,7 @@ export default function AdminTLRequestsPage() {
                           </TableCell>
                           <TableCell>
                             <div>
-                              <p className="font-medium">{group.requester.full_name}</p>
+                              <p className="font-normal">{group.requester.full_name}</p>
                               {group.requester.region && (
                                 <p className="text-sm text-muted-foreground">{group.requester.region}</p>
                               )}
@@ -661,14 +679,14 @@ export default function AdminTLRequestsPage() {
                           </TableCell>
                           <TableCell>
                             <div>
-                              <p className="font-medium">{group.source.full_name}</p>
+                              <p className="font-normal">{group.source.full_name}</p>
                               {group.source.region && (
                                 <p className="text-sm text-muted-foreground">{group.source.region}</p>
                               )}
                             </div>
                           </TableCell>
                           <TableCell>
-                            <p className="font-medium">
+                            <p className="font-normal">
                               {group.items[0]?.variant.brand_name} · {group.items[0]?.variant.name}
                             </p>
                             <p className="text-sm text-muted-foreground">
@@ -793,7 +811,7 @@ export default function AdminTLRequestsPage() {
                 </div>
                 <div>
                   <Label className="text-muted-foreground">Requested by</Label>
-                  <p className="font-medium">{selectedGroup.requester.full_name}</p>
+                  <p className="font-normal">{selectedGroup.requester.full_name}</p>
                   <p className="text-xs text-muted-foreground">
                     {selectedGroup.requester.region || 'No region'} · {selectedGroup.requester.email}
                   </p>

@@ -42,24 +42,25 @@ const ITEMS_HEAD_CLASS =
 const ITEMS_CELL_CLASS = 'whitespace-nowrap px-3 py-1.5';
 
 function statusBadgeClass(status: TLRequestStatus | string) {
+  const base = 'whitespace-nowrap';
   switch (status) {
     case 'pending_admin':
-      return 'bg-yellow-50 text-yellow-800 border-yellow-200';
+      return `${base} bg-yellow-50 text-yellow-800 border-yellow-200`;
     case 'pending_source_tl':
     case 'admin_approved':
-      return 'bg-blue-50 text-blue-800 border-blue-200';
+      return `${base} bg-blue-50 text-blue-800 border-blue-200`;
     case 'pending_receipt':
-      return 'bg-purple-50 text-purple-800 border-purple-200';
+      return `${base} bg-purple-50 text-purple-800 border-purple-200`;
     case 'completed':
-      return 'bg-green-50 text-green-800 border-green-200';
+      return `${base} bg-green-50 text-green-800 border-green-200`;
     case 'incomplete':
-      return 'bg-orange-50 text-orange-800 border-orange-200';
+      return `${base} bg-orange-50 text-orange-800 border-orange-200`;
     case 'admin_rejected':
     case 'source_tl_rejected':
     case 'cancelled':
-      return 'bg-red-50 text-red-800 border-red-200';
+      return `${base} bg-red-50 text-red-800 border-red-200`;
     default:
-      return '';
+      return base;
   }
 }
 
@@ -231,7 +232,7 @@ function TransferItemsBreakdownTable({
                 key={item.id}
                 className="border-[#E5E7EB] bg-white hover:bg-white"
               >
-                <TableCell className={cn(ITEMS_CELL_CLASS, 'font-medium')}>
+                <TableCell className={cn(ITEMS_CELL_CLASS, 'font-normal')}>
                   {item.variant.brand_name || '—'}
                 </TableCell>
                 <TableCell className={ITEMS_CELL_CLASS}>
@@ -309,10 +310,29 @@ function TransferItemsBreakdownTable({
   );
 }
 
+function PersonCell({
+  name,
+  region,
+}: {
+  name?: string | null;
+  region?: string | null;
+}) {
+  return (
+    <TableCell className="min-w-[10rem] whitespace-nowrap">
+      <p className="whitespace-nowrap font-normal">{name || '—'}</p>
+      {region ? (
+        <p className="text-sm text-muted-foreground whitespace-nowrap">{region}</p>
+      ) : null}
+    </TableCell>
+  );
+}
+
 type Props = {
   groups: TLRequestGroup[];
   mode?: Mode;
+  /** @deprecated Both Requested by and Requested from are always shown */
   counterpartLabel?: string;
+  /** @deprecated Both Requested by and Requested from are always shown */
   counterpartField?: 'requester' | 'source';
   sortState?: TableSortCycleState<TlTransferListSortKey>;
   onSort?: (key: TlTransferListSortKey) => void;
@@ -327,8 +347,6 @@ type Props = {
 export function TlTransferAccordionList({
   groups,
   mode = 'transfers',
-  counterpartLabel = 'From',
-  counterpartField = 'source',
   sortState,
   onSort,
   onView,
@@ -340,7 +358,8 @@ export function TlTransferAccordionList({
 }: Props) {
   const [openIds, setOpenIds] = useState<Set<string>>(() => new Set());
   const sortable = !!sortState && !!onSort;
-  const colCount = mode === 'incoming' ? 7 : 11;
+  // expand + transfer# + (tdr?) + requested by + requested from + brands + qtys/status + date + actions
+  const colCount = mode === 'incoming' ? 8 : 12;
 
   const toggle = (requestNumber: string) => {
     setOpenIds((prev) => {
@@ -374,7 +393,8 @@ export function TlTransferAccordionList({
             <TableHead className="w-10 px-2" aria-label="Expand" />
             {head('Transfer #', 'request_number', 'min-w-[11rem]')}
             {mode === 'transfers' ? head('TDR', 'tdr_number', 'whitespace-nowrap') : null}
-            {head(counterpartLabel, 'counterpart', 'min-w-[10rem]')}
+            {head('Requested by', 'counterpart', 'min-w-[10rem]')}
+            {head('Requested from', 'source', 'min-w-[10rem]')}
             {head('Brands', 'item', 'min-w-[8rem]')}
             {mode === 'incoming' ? (
               head('To dispatch', 'to_dispatch', 'text-right')
@@ -383,7 +403,7 @@ export function TlTransferAccordionList({
                 {head('Requested', 'requested_quantity', 'text-right')}
                 {head('Dispatched', 'dispatched_quantity', 'text-right')}
                 {head('Received', 'received_quantity', 'text-right')}
-                {head('Status', 'status')}
+                {head('Status', 'status', 'min-w-[14rem]')}
               </>
             )}
             {head('Date', 'created_at', 'whitespace-nowrap')}
@@ -394,14 +414,6 @@ export function TlTransferAccordionList({
           {groups.map((group) => {
             const open = openIds.has(group.request_number);
             const brands = brandNames(group);
-            const counterpart =
-              counterpartField === 'requester'
-                ? group.requester.full_name
-                : group.source.full_name;
-            const counterpartRegion =
-              counterpartField === 'requester'
-                ? group.requester.region
-                : group.source.region;
             const hasDispatched = group.items.some((item) => item.dispatched_quantity != null);
             const hasReceived = group.items.some((item) => item.received_quantity != null);
             const remainingToDispatch = group.items.reduce(
@@ -460,16 +472,16 @@ export function TlTransferAccordionList({
                       {group.tdr_number || '—'}
                     </TableCell>
                   ) : null}
-                  <TableCell className="min-w-[10rem] whitespace-nowrap">
-                    <p className="font-medium whitespace-nowrap">{counterpart}</p>
-                    {counterpartRegion ? (
-                      <p className="text-sm text-muted-foreground whitespace-nowrap">
-                        {counterpartRegion}
-                      </p>
-                    ) : null}
-                  </TableCell>
+                  <PersonCell
+                    name={group.requester.full_name}
+                    region={group.requester.region}
+                  />
+                  <PersonCell
+                    name={group.source.full_name}
+                    region={group.source.region}
+                  />
                   <TableCell className="min-w-[8rem]">
-                    <p className="font-medium whitespace-nowrap">{brands}</p>
+                    <p className="whitespace-nowrap font-normal">{brands}</p>
                   </TableCell>
                   {mode === 'incoming' ? (
                     <TableCell className="text-right">
@@ -488,8 +500,11 @@ export function TlTransferAccordionList({
                       <TableCell className="text-right tabular-nums">
                         {hasReceived ? group.totalReceived : '—'}
                       </TableCell>
-                      <TableCell>
-                        <Badge variant="secondary" className={statusBadgeClass(group.status)}>
+                      <TableCell className="min-w-[14rem] whitespace-nowrap">
+                        <Badge
+                          variant="secondary"
+                          className={statusBadgeClass(group.status)}
+                        >
                           {tlStatusLabelForGroup(group)}
                         </Badge>
                       </TableCell>
@@ -530,11 +545,19 @@ export function TlTransferAccordionList({
                               <DetailField label="TDR" value={group.tdr_number || '—'} />
                             ) : null}
                             <DetailField
-                              label={counterpartLabel}
+                              label="Requested by"
                               value={
-                                counterpartRegion
-                                  ? `${counterpart} · ${counterpartRegion}`
-                                  : counterpart
+                                group.requester.region
+                                  ? `${group.requester.full_name} · ${group.requester.region}`
+                                  : group.requester.full_name
+                              }
+                            />
+                            <DetailField
+                              label="Requested from"
+                              value={
+                                group.source.region
+                                  ? `${group.source.full_name} · ${group.source.region}`
+                                  : group.source.full_name
                               }
                             />
                             <DetailField label="Brand" value={brands} />

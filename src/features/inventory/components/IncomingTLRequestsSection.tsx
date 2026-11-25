@@ -461,8 +461,6 @@ export default function IncomingTLRequestsSection({ embedded = false, listContro
       <TlTransferAccordionList
         groups={incomingPagination.pagedItems}
         mode="incoming"
-        counterpartLabel="Requester"
-        counterpartField="requester"
         sortState={listControls?.sortState}
         onSort={listControls?.onSort}
         onView={(group) => {

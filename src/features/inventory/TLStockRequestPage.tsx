@@ -224,13 +224,13 @@ export default function TLStockRequestPage() {
       },
       {
         key: 'from',
-        label: 'From',
+        label: 'Requested from',
         options: option('from'),
         searchPlaceholder: 'Search source TL...',
       },
       {
         key: 'to',
-        label: 'To',
+        label: 'Requested by',
         options: option('to'),
         searchPlaceholder: 'Search requester...',
       },
@@ -282,7 +282,7 @@ export default function TLStockRequestPage() {
     [myGroups, searchQuery, dateRange, filterOptions]
   );
   const mySorted = useMemo(
-    () => sortTlTransferGroups(myFiltered, resolvedSortKey, resolvedSortDirection, 'source'),
+    () => sortTlTransferGroups(myFiltered, resolvedSortKey, resolvedSortDirection, 'requester'),
     [myFiltered, resolvedSortKey, resolvedSortDirection]
   );
   const myPagination = useMemo(
@@ -550,8 +550,6 @@ export default function TLStockRequestPage() {
                 <div className="space-y-4">
                   <TlTransferAccordionList
                     groups={dispatchedPagination.pagedItems}
-                    counterpartLabel="To"
-                    counterpartField="requester"
                     sortState={sortState}
                     onSort={(key) =>
                       setSortState((current) => getNextTableSortCycleState(current, key))
@@ -604,8 +602,6 @@ export default function TLStockRequestPage() {
                 <div className="space-y-4">
                   <TlTransferAccordionList
                     groups={myPagination.pagedItems}
-                    counterpartLabel="From"
-                    counterpartField="source"
                     sortState={sortState}
                     onSort={(key) =>
                       setSortState((current) => getNextTableSortCycleState(current, key))
