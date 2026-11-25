@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Eye, Loader2, MoreVertical, Printer, RotateCcw, Search, Users } from 'lucide-react';
 import { useAuth } from '@/features/auth';
 import { Badge } from '@/components/ui/badge';
@@ -62,8 +62,10 @@ export default function MobileSalesReturnHistoryPage() {
   const { user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const isMobile = useIsMobile();
   const queryClient = useQueryClient();
+  const variantIdFilter = searchParams.get('variantId');
   const [searchQuery, setSearchQuery] = useState('');
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
   const [statusTab, setStatusTab] = useState<'all' | 'pending' | 'approved'>('all');
@@ -124,6 +126,9 @@ export default function MobileSalesReturnHistoryPage() {
       if (statusTab === 'pending' && row.status !== 'pending') return false;
       if (statusTab === 'approved' && row.status !== 'approved') return false;
       if (!isDateInRange(row.returnedAt, dateRange.start, dateRange.end)) return false;
+      if (variantIdFilter && !row.lines.some((line) => line.variantId === variantIdFilter)) {
+        return false;
+      }
       if (!query) return true;
       return (
         row.returnedTo.toLowerCase().includes(query) ||
@@ -136,11 +141,11 @@ export default function MobileSalesReturnHistoryPage() {
         )
       );
     });
-  }, [returns, searchQuery, dateRange.start, dateRange.end, statusTab]);
+  }, [returns, searchQuery, dateRange.start, dateRange.end, statusTab, variantIdFilter]);
 
   useEffect(() => {
     setPage(0);
-  }, [searchQuery, dateRange.start, dateRange.end, pageSize, statusTab]);
+  }, [searchQuery, dateRange.start, dateRange.end, pageSize, statusTab, variantIdFilter]);
 
   const { pageCount, safePage, pagedItems } = getListPaginationSlice(visible, page, pageSize);
 

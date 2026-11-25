@@ -174,6 +174,7 @@ export function usePermissions() {
         '/inventory/stock-returns',
         '/inventory/client-stock-returns',
         '/inventory/stock-adjustments',
+        '/inventory/stock-movements',
         '/inventory/delivery-shortages',
         '/profile',
         '/warehouse-manual',

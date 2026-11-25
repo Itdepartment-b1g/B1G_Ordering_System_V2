@@ -18,7 +18,7 @@ import { OrdersPage, PurchaseOrdersPage, MyOrdersPage, OrderProvider, PurchaseOr
 import BrandsPage from "@/features/orders/BrandsPage";
 import VariantTypesPage from "@/features/orders/VariantTypesPage";
 import SuppliersPage from "@/features/orders/SuppliersPage";
-import {WarehouseDeliveryShortagesPage, MainInventoryPage, MainInventoryReturnHistoryPage, MainInventoryReturnedDetailPage, VariantStockHoldersPage, MobileSalesReturnHistoryPage, MobileSalesReturnHistoryDetailPage, LeaderAgentReturnsPage, WarehouseInventoryDashboardPage, SubWarehousesPage, SubWarehouseStockRequestPage, MainWarehouseSubStockRequestsPage, WarehouseDisposalsPage, WarehouseStockRequestsPage, WarehouseStockReturnsPage, WarehouseClientStockReturnsPage, StandardAccountReturnToWarehousePage, WarehouseStockAdjustmentsPage, WarehouseAllocationHistoryPage, BatchViewPage, PhysicalCountPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, MyInventoryBrandPage, RemittedStocksPage, AdminTeamRemittancesPage, LeaderRemittancePage, LeaderCashDepositsPage, PendingRequestsPage, AdminRequestsPage, LeaderStockRequestPage, MobileSalesStockRequestPage, MobileSalesStockRequestDetailPage, PriceAgreementPage, PriceHistoryPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
+import {WarehouseDeliveryShortagesPage, MainInventoryPage, MainInventoryReturnHistoryPage, MainInventoryReturnedDetailPage, VariantStockHoldersPage, MobileSalesReturnHistoryPage, MobileSalesReturnHistoryDetailPage, LeaderAgentReturnsPage, WarehouseInventoryDashboardPage, SubWarehousesPage, SubWarehouseStockRequestPage, MainWarehouseSubStockRequestsPage, WarehouseDisposalsPage, WarehouseStockRequestsPage, WarehouseStockReturnsPage, WarehouseClientStockReturnsPage, StandardAccountReturnToWarehousePage, WarehouseStockAdjustmentsPage, StockMovementsPage, WarehouseAllocationHistoryPage, BatchViewPage, PhysicalCountPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, MyInventoryBrandPage, RemittedStocksPage, AdminTeamRemittancesPage, LeaderRemittancePage, LeaderCashDepositsPage, PendingRequestsPage, AdminRequestsPage, LeaderStockRequestPage, MobileSalesStockRequestPage, MobileSalesStockRequestDetailPage, PriceAgreementPage, PriceHistoryPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
 import { PriceChangeConfirmGate } from "@/features/inventory/PriceChangeConfirmGate";
 import TLStockRequestPage from "@/features/inventory/TLStockRequestPage";
 import TLTransferShortagesPage from "@/features/inventory/TLTransferShortagesPage";
@@ -203,6 +203,23 @@ const App = () => (
                       element={
                         <ProtectedRoute allowedRoles={["warehouse"]}>
                           <WarehouseStockAdjustmentsPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/inventory/stock-movements"
+                      element={
+                        <ProtectedRoute
+                          allowedRoles={[
+                            "warehouse",
+                            "admin",
+                            "super_admin",
+                            "team_leader",
+                            "mobile_sales",
+                            "sales_agent",
+                          ]}
+                        >
+                          <StockMovementsPage />
                         </ProtectedRoute>
                       }
                     />

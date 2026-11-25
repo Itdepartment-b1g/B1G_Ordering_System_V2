@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, Edit, Package, ChevronRight, Users, TrendingUp, Eye, RefreshCw, Filter, Download, BarChart3, TrendingDown, AlertTriangle, CheckCircle, Trash2, RotateCcw, Loader2, Plus, Unlink, Clock, ClipboardList, Scale, History, MoreVertical } from 'lucide-react';
+import { Search, Edit, Package, ChevronRight, Users, TrendingUp, Eye, RefreshCw, Filter, Download, BarChart3, TrendingDown, AlertTriangle, CheckCircle, Trash2, RotateCcw, Loader2, Plus, Unlink, Clock, ClipboardList, Scale, History, MoreVertical, ArrowLeftRight } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -22,6 +22,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useInventory, type Variant, type Brand } from './InventoryContext';
+import { buildStockMovementsPath } from './stock-movements/stockMovementsPaths';
 import {
   createCompanyPriceChangeBatch,
   fetchActiveTeamLeaders,
@@ -960,6 +961,8 @@ export default function MainInventoryPage() {
   const canViewBatchLots =
     isWarehouse && !(isSubWarehouseUser && !membership.locationId);
   const canViewStockHolders = !isSubWarehouseUser;
+  const canViewStockMovements =
+    isWarehouse || user?.role === 'admin' || user?.role === 'super_admin';
 
   const renderVariantActionsMenu = (
     brandId: string,
@@ -972,8 +975,13 @@ export default function MainInventoryPage() {
     const showRemove = isWarehouse && !!variant.mainInventoryId;
     const showStockHolders = canViewStockHolders;
     const showBatchView = canViewBatchLots;
+    const showStockMovements = canViewStockMovements;
     const hasPrimary =
-      showEditPrice || showPriceHistory || showStockHolders || showBatchView;
+      showEditPrice ||
+      showPriceHistory ||
+      showStockHolders ||
+      showBatchView ||
+      showStockMovements;
 
     if (!hasPrimary && !showRemove) {
       return null;
@@ -1013,6 +1021,21 @@ export default function MainInventoryPage() {
             >
               <Users className="mr-2 h-4 w-4" />
               Stock holders
+            </DropdownMenuItem>
+          )}
+          {showStockMovements && (
+            <DropdownMenuItem
+              onClick={() =>
+                navigate(
+                  buildStockMovementsPath({
+                    brandId,
+                    variantId: variant.id,
+                  })
+                )
+              }
+            >
+              <ArrowLeftRight className="mr-2 h-4 w-4" />
+              Stock movements
             </DropdownMenuItem>
           )}
           {showBatchView && (

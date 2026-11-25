@@ -94,6 +94,7 @@ const adminMenuItems: MenuItem[] = [
       { title: 'Inventory Requests', url: '/inventory/admin-requests', icon: Send },
       { title: 'TL Stock Transfers', url: '/inventory/admin-tl-requests', icon: ArrowRightLeft },
       { title: 'Team Remittances', url: '/inventory/admin-team-remittances', icon: Users },
+      { title: 'Stock Movements', url: '/inventory/stock-movements', icon: ArrowRightLeft },
       { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
       { title: 'Price History', url: '/inventory/price-history', icon: History },
     ]
@@ -390,6 +391,7 @@ const warehouseMenuItems: MenuItem[] = [
       { title: 'Stock Returns', url: '/inventory/stock-returns', icon: RotateCcw },
       { title: 'Client Stock Returns', url: '/inventory/client-stock-returns', icon: RotateCcw },
       { title: 'Stock Adjustments', url: '/inventory/stock-adjustments', icon: Scale },
+      { title: 'Stock Movements', url: '/inventory/stock-movements', icon: ArrowRightLeft },
       { title: 'Delivery Shortages', url: '/inventory/delivery-shortages', icon: PackageSearch },
       { title: 'Batch View', url: '/inventory/batches', icon: Layers },
       { title: 'Physical Count', url: '/inventory/physical-count', icon: ClipboardCheck },
@@ -492,6 +494,7 @@ const superAdminMenuItems: MenuItem[] = [
       { title: 'Inventory Requests', url: '/inventory/admin-requests', icon: Send },
       { title: 'TL Stock Transfers', url: '/inventory/admin-tl-requests', icon: ArrowRightLeft },
       { title: 'Team Remittances', url: '/inventory/admin-team-remittances', icon: Users },
+      { title: 'Stock Movements', url: '/inventory/stock-movements', icon: ArrowRightLeft },
       { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
       { title: 'Price History', url: '/inventory/price-history', icon: History },
     ]

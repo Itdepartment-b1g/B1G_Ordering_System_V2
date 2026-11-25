@@ -10,10 +10,17 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Search, Package, Boxes, Store, Layers, TriangleAlert, ChevronDown, ArrowLeft, FileSignature, ShoppingCart, Loader2, CheckCircle2, ClipboardCheck, ClipboardList, History, PackageMinus, Info, FileDown, FileSpreadsheet, type LucideIcon } from 'lucide-react';
+import { Search, Package, Boxes, Store, Layers, TriangleAlert, ChevronDown, ArrowLeft, FileSignature, ShoppingCart, Loader2, CheckCircle2, ClipboardCheck, ClipboardList, History, PackageMinus, Info, FileDown, FileSpreadsheet, MoreVertical, ArrowLeftRight, type LucideIcon } from 'lucide-react';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { format } from 'date-fns';
 import { useAgentInventory } from './hooks';
 import { useAuth } from '@/features/auth';
@@ -27,6 +34,7 @@ import { ReturnToMainDialog } from './components/ReturnToMainDialog';
 import MyReturnRequestsSection from './components/MyReturnRequestsSection';
 import { exportMyInventoryPdf } from './utils/exportMyInventoryPdf';
 import { exportMyInventoryExcel } from './utils/exportMyInventoryExcel';
+import { buildStockMovementsPath } from './stock-movements/stockMovementsPaths';
 import type { AgentBrand, AgentVariant, RemittanceOrder, BankOrderNote } from './types';
 import {
   CLIENT_ORDER_RETURNS_QUERY_KEY,
@@ -298,6 +306,7 @@ export default function MyInventory() {
   const [returnDialogOpen, setReturnDialogOpen] = useState(false);
   const [returnToMainDialogOpen, setReturnToMainDialogOpen] = useState(false);
   const [exportingExcel, setExportingExcel] = useState(false);
+  const [exportingVariantId, setExportingVariantId] = useState<string | null>(null);
 
   // Confirmation checkboxes for each section
   const [unsoldConfirmed, setUnsoldConfirmed] = useState(false);
@@ -722,6 +731,134 @@ export default function MyInventory() {
       setExportingExcel(false);
     }
   };
+
+  const handleExportVariantPdf = (
+    brand: AgentBrand,
+    variant: AgentVariant,
+    variantType: string
+  ) => {
+    try {
+      exportMyInventoryPdf({
+        heldByName: user?.full_name,
+        lines: [
+          {
+            brandName: brand.name,
+            variantName: variant.name,
+            variantType: variant.variantType || variantType,
+            quantity: Number(variant.stock) || 0,
+          },
+        ],
+      });
+    } catch (error) {
+      toast({
+        title: 'Could not open print view',
+        description: error instanceof Error ? error.message : 'Try again.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleExportVariantExcel = async (
+    brand: AgentBrand,
+    variant: AgentVariant,
+    variantType: string
+  ) => {
+    setExportingVariantId(variant.id);
+    try {
+      await exportMyInventoryExcel({
+        heldByName: user?.full_name,
+        lines: [
+          {
+            brandId: brand.id,
+            brandName: brand.name,
+            variantName: variant.name,
+            variantType: variant.variantType || variantType,
+            qty: Number(variant.stock) || 0,
+          },
+        ],
+      });
+      toast({
+        title: 'Export complete',
+        description: `${brand.name} — ${variant.name} exported to Excel.`,
+      });
+    } catch (error) {
+      toast({
+        title: 'Export failed',
+        description: error instanceof Error ? error.message : 'Could not export this variant.',
+        variant: 'destructive',
+      });
+    } finally {
+      setExportingVariantId(null);
+    }
+  };
+
+  const returnHistoryPathForVariant = (variantId: string) => {
+    if (user?.role === 'team_leader') {
+      return `/inventory/main/returns?variantId=${encodeURIComponent(variantId)}`;
+    }
+    return `/inventory/my-returns?variantId=${encodeURIComponent(variantId)}`;
+  };
+
+  const canOpenReturnHistory =
+    user?.role === 'team_leader' ||
+    user?.role === 'mobile_sales' ||
+    user?.role === 'sales_agent';
+
+  const renderVariantActionsMenu = (
+    brand: AgentBrand,
+    variant: AgentVariant,
+    variantType: string
+  ) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          disabled={exportingVariantId === variant.id}
+        >
+          {exportingVariantId === variant.id ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <MoreVertical className="h-4 w-4" />
+          )}
+          <span className="sr-only">Open actions</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-52">
+        <DropdownMenuItem onClick={() => handleExportVariantPdf(brand, variant, variantType)}>
+          <FileDown className="mr-2 h-4 w-4" />
+          Export PDF
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => void handleExportVariantExcel(brand, variant, variantType)}
+        >
+          <FileSpreadsheet className="mr-2 h-4 w-4" />
+          Export Excel
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onClick={() =>
+            navigate(
+              buildStockMovementsPath({
+                brandId: brand.id,
+                variantId: variant.id,
+              })
+            )
+          }
+        >
+          <ArrowLeftRight className="mr-2 h-4 w-4" />
+          Stock movements
+        </DropdownMenuItem>
+        {canOpenReturnHistory ? (
+          <DropdownMenuItem onClick={() => navigate(returnHistoryPathForVariant(variant.id))}>
+            <History className="mr-2 h-4 w-4" />
+            Return history
+          </DropdownMenuItem>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 
   const getTotalVariants = () => {
     let count = 0;
@@ -1717,7 +1854,7 @@ export default function MyInventory() {
                                       </div>
 
                                       <div className="overflow-x-auto">
-                                        <Table className="min-w-[680px]">
+                                        <Table className="min-w-[720px]">
                                           <TableHeader>
                                             <TableRow className="hover:bg-transparent">
                                               <TableHead>Variant</TableHead>
@@ -1731,10 +1868,13 @@ export default function MyInventory() {
                                               <TableHead className="text-right">DSP</TableHead>
                                               <TableHead className="text-right">RSP</TableHead>
                                               <TableHead>Status</TableHead>
+                                              <TableHead className="w-12 text-right">
+                                                <span className="sr-only">Actions</span>
+                                              </TableHead>
                                             </TableRow>
                                           </TableHeader>
                                           <TableBody>
-                                            {variants.map((variant: any) => (
+                                            {variants.map((variant: AgentVariant) => (
                                               <TableRow key={variant.id}>
                                                 <TableCell className="font-medium">
                                                   {variant.name}
@@ -1806,6 +1946,9 @@ export default function MyInventory() {
                                                         ? 'Low stock'
                                                         : 'In Stock'}
                                                   </Badge>
+                                                </TableCell>
+                                                <TableCell className="text-right">
+                                                  {renderVariantActionsMenu(brand, variant, type)}
                                                 </TableCell>
                                               </TableRow>
                                             ))}

@@ -20,6 +20,7 @@ export { default as WarehouseStockReturnsPage } from './WarehouseStockReturnsPag
 export { default as WarehouseClientStockReturnsPage } from './WarehouseClientStockReturnsPage';
 export { default as StandardAccountReturnToWarehousePage } from './StandardAccountReturnToWarehousePage';
 export { default as WarehouseStockAdjustmentsPage } from './WarehouseStockAdjustmentsPage';
+export { default as StockMovementsPage } from './StockMovementsPage';
 export { default as WarehouseDeliveryShortagesPage } from './WarehouseDeliveryShortagesPage';
 export { default as WarehouseAllocationHistoryPage } from './WarehouseAllocationHistoryPage';
 export { default as BatchViewPage } from './BatchViewPage';

@@ -1,16 +1,38 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Loader2, Package, Printer, Search, Smartphone, UserCheck, Users } from 'lucide-react';
+import {
+  ArrowLeft,
+  ArrowLeftRight,
+  FileDown,
+  FileSpreadsheet,
+  Loader2,
+  MoreVertical,
+  Package,
+  Printer,
+  Search,
+  Smartphone,
+  UserCheck,
+  Users,
+} from 'lucide-react';
 import { useAuth } from '@/features/auth';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useToast } from '@/hooks/use-toast';
+import { exportVariantStockHoldersExcel } from './utils/exportVariantStockHoldersExcel';
 import { exportVariantStockHoldersPdf } from './utils/exportVariantStockHoldersPdf';
+import { buildStockMovementsPath } from './stock-movements/stockMovementsPaths';
 import {
   DEFAULT_PAGE_SIZE,
   getListPaginationSlice,
@@ -36,6 +58,7 @@ type VariantMeta = {
   id: string;
   name: string;
   variantType: string | null;
+  brandId: string | null;
   brandName: string;
 };
 
@@ -103,12 +126,24 @@ async function fetchVariantMeta(companyId: string, variantId: string): Promise<V
     id: data.id,
     name: data.name,
     variantType: data.variant_type,
+    brandId: brand?.id ?? null,
     brandName: brand?.name || 'Unknown brand',
+  };
+}
+
+function toExportLine(holder: VariantStockHolder) {
+  return {
+    holderName: holder.holderName,
+    role: holder.role,
+    leaderName: holder.leaderName,
+    status: holder.status,
+    qty: holder.qty,
   };
 }
 
 export default function VariantStockHoldersPage() {
   const { variantId } = useParams<{ variantId: string }>();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { toast } = useToast();
   const companyId = user?.company_id;
@@ -121,6 +156,7 @@ export default function VariantStockHoldersPage() {
   const [roleFilter, setRoleFilter] = useState<RoleFilter>('all');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [printing, setPrinting] = useState(false);
+  const [exportingExcel, setExportingExcel] = useState(false);
 
   const {
     data: variantMeta,
@@ -205,7 +241,7 @@ export default function VariantStockHoldersPage() {
     setSortState((prev) => getNextTableSortCycleState(prev, key));
   };
 
-  const handlePrint = () => {
+  const handlePrintList = () => {
     if (!variantMeta) return;
     setPrinting(true);
     try {
@@ -214,13 +250,7 @@ export default function VariantStockHoldersPage() {
         variantName: variantMeta.name,
         variantType: variantMeta.variantType,
         printedAt: new Date().toISOString(),
-        lines: sortedHolders.map((holder) => ({
-          holderName: holder.holderName,
-          role: holder.role,
-          leaderName: holder.leaderName,
-          status: holder.status,
-          qty: holder.qty,
-        })),
+        lines: sortedHolders.map(toExportLine),
       });
     } catch (err) {
       toast({
@@ -233,7 +263,82 @@ export default function VariantStockHoldersPage() {
     }
   };
 
-  const canPrint = showStats && holders.length > 0;
+  const handleExportListExcel = async () => {
+    if (!variantMeta) return;
+    setExportingExcel(true);
+    try {
+      await exportVariantStockHoldersExcel({
+        brandName: variantMeta.brandName,
+        variantName: variantMeta.name,
+        variantType: variantMeta.variantType,
+        lines: sortedHolders.map(toExportLine),
+      });
+      toast({ title: 'Export complete', description: 'Stock holders exported to Excel.' });
+    } catch (err) {
+      toast({
+        variant: 'destructive',
+        title: 'Export failed',
+        description: err instanceof Error ? err.message : 'Could not export to Excel.',
+      });
+    } finally {
+      setExportingExcel(false);
+    }
+  };
+
+  const handlePrintHolder = (holder: VariantStockHolder) => {
+    if (!variantMeta) return;
+    try {
+      exportVariantStockHoldersPdf({
+        brandName: variantMeta.brandName,
+        variantName: variantMeta.name,
+        variantType: variantMeta.variantType,
+        printedAt: new Date().toISOString(),
+        lines: [toExportLine(holder)],
+      });
+    } catch (err) {
+      toast({
+        variant: 'destructive',
+        title: 'Print failed',
+        description: err instanceof Error ? err.message : 'Could not open print view.',
+      });
+    }
+  };
+
+  const handleExportHolderExcel = async (holder: VariantStockHolder) => {
+    if (!variantMeta) return;
+    try {
+      await exportVariantStockHoldersExcel({
+        brandName: variantMeta.brandName,
+        variantName: variantMeta.name,
+        variantType: variantMeta.variantType,
+        lines: [toExportLine(holder)],
+        fileSuffix: holder.holderName,
+      });
+      toast({
+        title: 'Export complete',
+        description: `${holder.holderName} exported to Excel.`,
+      });
+    } catch (err) {
+      toast({
+        variant: 'destructive',
+        title: 'Export failed',
+        description: err instanceof Error ? err.message : 'Could not export to Excel.',
+      });
+    }
+  };
+
+  const openHolderStockMovements = (holder: VariantStockHolder) => {
+    if (!variantMeta || !variantId) return;
+    navigate(
+      buildStockMovementsPath({
+        brandId: variantMeta.brandId,
+        variantId,
+        agentId: holder.holderId,
+      })
+    );
+  };
+
+  const canExport = showStats && holders.length > 0;
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -352,20 +457,35 @@ export default function VariantStockHoldersPage() {
               <SelectItem value="inactive">Inactive</SelectItem>
             </SelectContent>
           </Select>
-          {canPrint && (
-            <Button
-              variant="outline"
-              onClick={handlePrint}
-              disabled={printing}
-              className="w-full sm:w-auto"
-            >
-              {printing ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Printer className="h-4 w-4 mr-2" />
-              )}
-              Print
-            </Button>
+          {canExport && (
+            <>
+              <Button
+                variant="outline"
+                onClick={handlePrintList}
+                disabled={printing || exportingExcel}
+                className="w-full sm:w-auto"
+              >
+                {printing ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Printer className="h-4 w-4 mr-2" />
+                )}
+                Print PDF
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => void handleExportListExcel()}
+                disabled={printing || exportingExcel}
+                className="w-full sm:w-auto"
+              >
+                {exportingExcel ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <FileSpreadsheet className="h-4 w-4 mr-2" />
+                )}
+                Export Excel
+              </Button>
+            </>
           )}
         </div>
       )}
@@ -431,6 +551,9 @@ export default function VariantStockHoldersPage() {
                         onSort={handleSort}
                         className="text-right"
                       />
+                      <TableHead className="w-12">
+                        <span className="sr-only">Actions</span>
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -459,6 +582,40 @@ export default function VariantStockHoldersPage() {
                         </TableCell>
                         <TableCell className="text-right font-semibold">
                           {holder.qty.toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                aria-label={`Actions for ${holder.holderName}`}
+                              >
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-52">
+                              <DropdownMenuItem onClick={() => handlePrintHolder(holder)}>
+                                <FileDown className="mr-2 h-4 w-4" />
+                                Print PDF
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => void handleExportHolderExcel(holder)}
+                              >
+                                <FileSpreadsheet className="mr-2 h-4 w-4" />
+                                Export Excel
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                onClick={() => openHolderStockMovements(holder)}
+                              >
+                                <ArrowLeftRight className="mr-2 h-4 w-4" />
+                                Stock movements
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </TableCell>
                       </TableRow>
                     ))}

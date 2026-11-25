@@ -1,11 +1,17 @@
-import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
+  ArrowLeftRight,
   Battery,
   ChevronRight,
+  FileDown,
+  FileSpreadsheet,
   Gift,
+  History,
+  Loader2,
+  MoreVertical,
   Package,
   RefreshCw,
   Search,
@@ -15,6 +21,17 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { useToast } from '@/hooks/use-toast';
+import { exportMyInventoryPdf } from './utils/exportMyInventoryPdf';
+import { exportMyInventoryExcel } from './utils/exportMyInventoryExcel';
+import { buildStockMovementsPath } from './stock-movements/stockMovementsPaths';
 import { ALL_TIME_DATE_RANGE } from '@/features/shared/components/DateRangeFilterPopover';
 import {
   QuickFilterSheet,
@@ -154,11 +171,13 @@ function VariantCard({
   returnedStock,
   accentClassName,
   onViewReturns,
+  actionsMenu,
 }: {
   variant: AgentVariant;
   returnedStock: ReturnedStockEntry;
   accentClassName: string;
   onViewReturns: () => void;
+  actionsMenu?: ReactNode;
 }) {
   const low = isLowStock(variant.stock) && variant.stock > 0;
   const prices = [
@@ -171,9 +190,10 @@ function VariantCard({
     <article className="rounded-lg border border-[#D5DCF3] bg-white px-3 py-2.5">
       <div className="flex items-center gap-2">
         <span className={`h-4 w-1 shrink-0 rounded-full ${accentClassName}`} aria-hidden />
-        <h3 className="min-w-0 text-[15px] font-semibold leading-snug break-words text-[#02066F]">
+        <h3 className="min-w-0 flex-1 text-[15px] font-semibold leading-snug break-words text-[#02066F]">
           {variant.name}
         </h3>
+        {actionsMenu}
       </div>
 
       <div className="mt-2.5 grid grid-cols-2 items-stretch gap-2">
@@ -223,6 +243,9 @@ function VariantCard({
 
 export default function MyInventoryBrandPage() {
   const { brandId = '' } = useParams<{ brandId: string }>();
+  const navigate = useNavigate();
+  const { toast } = useToast();
+  const [exportingVariantId, setExportingVariantId] = useState<string | null>(null);
 
   useLayoutEffect(() => {
     const main = document.querySelector('main');
@@ -234,6 +257,10 @@ export default function MyInventoryBrandPage() {
   const queryClient = useQueryClient();
   const { hasWarehouseHubLink } = usePermissions();
   const showReturnedColumn = canShowClientOrderReturns(hasWarehouseHubLink, user?.role);
+  const canOpenReturnHistory =
+    user?.role === 'team_leader' ||
+    user?.role === 'mobile_sales' ||
+    user?.role === 'sales_agent';
 
   const [returnedDialog, setReturnedDialog] = useState<{
     variantName: string;
@@ -623,6 +650,121 @@ export default function MyInventoryBrandPage() {
                           disposalQty: returnedStock.disposalQty,
                           returns: returnedStock.returns,
                         })
+                      }
+                      actionsMenu={
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 shrink-0"
+                              disabled={exportingVariantId === variant.id}
+                            >
+                              {exportingVariantId === variant.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <MoreVertical className="h-4 w-4" />
+                              )}
+                              <span className="sr-only">Open actions</span>
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-52">
+                            <DropdownMenuItem
+                              onClick={() => {
+                                try {
+                                  exportMyInventoryPdf({
+                                    heldByName: user?.full_name,
+                                    lines: [
+                                      {
+                                        brandName: brand.name,
+                                        variantName: variant.name,
+                                        variantType: variant.variantType || type,
+                                        quantity: Number(variant.stock) || 0,
+                                      },
+                                    ],
+                                  });
+                                } catch (error) {
+                                  toast({
+                                    title: 'Could not open print view',
+                                    description:
+                                      error instanceof Error ? error.message : 'Try again.',
+                                    variant: 'destructive',
+                                  });
+                                }
+                              }}
+                            >
+                              <FileDown className="mr-2 h-4 w-4" />
+                              Export PDF
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => {
+                                void (async () => {
+                                  setExportingVariantId(variant.id);
+                                  try {
+                                    await exportMyInventoryExcel({
+                                      heldByName: user?.full_name,
+                                      lines: [
+                                        {
+                                          brandId: brand.id,
+                                          brandName: brand.name,
+                                          variantName: variant.name,
+                                          variantType: variant.variantType || type,
+                                          qty: Number(variant.stock) || 0,
+                                        },
+                                      ],
+                                    });
+                                    toast({
+                                      title: 'Export complete',
+                                      description: `${brand.name} — ${variant.name} exported to Excel.`,
+                                    });
+                                  } catch (error) {
+                                    toast({
+                                      title: 'Export failed',
+                                      description:
+                                        error instanceof Error
+                                          ? error.message
+                                          : 'Could not export this variant.',
+                                      variant: 'destructive',
+                                    });
+                                  } finally {
+                                    setExportingVariantId(null);
+                                  }
+                                })();
+                              }}
+                            >
+                              <FileSpreadsheet className="mr-2 h-4 w-4" />
+                              Export Excel
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() =>
+                                navigate(
+                                  buildStockMovementsPath({
+                                    brandId: brand.id,
+                                    variantId: variant.id,
+                                  })
+                                )
+                              }
+                            >
+                              <ArrowLeftRight className="mr-2 h-4 w-4" />
+                              Stock movements
+                            </DropdownMenuItem>
+                            {canOpenReturnHistory ? (
+                              <DropdownMenuItem
+                                onClick={() =>
+                                  navigate(
+                                    user?.role === 'team_leader'
+                                      ? `/inventory/main/returns?variantId=${encodeURIComponent(variant.id)}`
+                                      : `/inventory/my-returns?variantId=${encodeURIComponent(variant.id)}`
+                                  )
+                                }
+                              >
+                                <History className="mr-2 h-4 w-4" />
+                                Return history
+                              </DropdownMenuItem>
+                            ) : null}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       }
                     />
                   );
