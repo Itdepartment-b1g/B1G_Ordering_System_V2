@@ -14,11 +14,8 @@ import {
   resolveTableSortDirection,
   type TableSortCycleState,
 } from '@/features/shared/utils/tableSortCycle';
-import {
-  clientReturnStockFateBadgeClass,
-  formatClientReturnStockFate,
-  type PreviewClientReturnLine,
-} from './clientReturnPreview';
+import { type PreviewClientReturnLine } from './clientReturnPreview';
+import { ClientReturnStockFateBadge } from './ClientReturnStockFateBadge';
 import {
   DEFAULT_BRAND_VARIANT_SORT_DIRECTION,
   DEFAULT_BRAND_VARIANT_SORT_KEY,
@@ -172,12 +169,11 @@ export function BrandReturnedTable({
               </TableCell>
               {includeStockFate ? (
                 <TableCell>
-                  <Badge
-                    variant="outline"
-                    className={`font-normal ${clientReturnStockFateBadgeClass(line.stockFate)}`}
-                  >
-                    {formatClientReturnStockFate(line.stockFate)}
-                  </Badge>
+                  {line.stockFate ? (
+                    <ClientReturnStockFateBadge fate={line.stockFate} showDescription />
+                  ) : (
+                    <span className="text-sm text-muted-foreground">—</span>
+                  )}
                 </TableCell>
               ) : null}
               <TableCell className={`text-right font-semibold tabular-nums ${qtyClassName}`}>

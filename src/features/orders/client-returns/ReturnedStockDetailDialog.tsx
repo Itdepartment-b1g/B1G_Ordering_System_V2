@@ -12,11 +12,8 @@ import { RotateCcw } from 'lucide-react';
 import { formatVariantType, variantTypeBadgeClass } from './ClientReturnBrandTable';
 import { ClientReturnHistoryList } from './ClientReturnHistoryList';
 import { getReturnedStockFateQtyForVariant } from './clientReturnApi';
-import {
-  clientReturnStockFateBadgeClass,
-  formatClientReturnStockFate,
-  type PreviewClientReturn,
-} from './clientReturnPreview';
+import { type PreviewClientReturn } from './clientReturnPreview';
+import { ClientReturnStockFateBadge } from './ClientReturnStockFateBadge';
 
 type ReturnedStockDetailDialogProps = {
   open: boolean;
@@ -107,18 +104,8 @@ export function ReturnedStockDetailDialog({
                 </Badge>
               ) : null}
               <div className="flex flex-wrap gap-1.5 pt-1">
-                <Badge
-                  variant="outline"
-                  className={`font-normal ${clientReturnStockFateBadgeClass('restock')}`}
-                >
-                  {formatClientReturnStockFate('restock')} {restockQty}
-                </Badge>
-                <Badge
-                  variant="outline"
-                  className={`font-normal ${clientReturnStockFateBadgeClass('disposal')}`}
-                >
-                  {formatClientReturnStockFate('disposal')} {disposalQty}
-                </Badge>
+                <ClientReturnStockFateBadge fate="restock" qty={restockQty} showDescription />
+                <ClientReturnStockFateBadge fate="disposal" qty={disposalQty} showDescription />
               </div>
             </div>
             <div className="shrink-0 text-right">

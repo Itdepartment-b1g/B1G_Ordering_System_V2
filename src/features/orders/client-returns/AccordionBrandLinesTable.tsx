@@ -1,5 +1,4 @@
 import { Eye, MoreVertical, Printer } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -9,11 +8,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatVariantType, groupLinesByBrand } from './ClientReturnBrandTable';
-import {
-  clientReturnStockFateBadgeClass,
-  formatClientReturnStockFate,
-  type PreviewClientReturnLine,
-} from './clientReturnPreview';
+import { type PreviewClientReturnLine } from './clientReturnPreview';
+import { ClientReturnStockFateBadge } from './ClientReturnStockFateBadge';
 
 export type AccordionBrandLine = Pick<
   PreviewClientReturnLine,
@@ -88,8 +84,8 @@ export function AccordionBrandLinesTable({
   const showActions = typeof onLineClick === 'function' || typeof onLinePrint === 'function';
   const tableMinWidth = showStockFate
     ? showActions
-      ? 'min-w-[30rem]'
-      : 'min-w-[28rem]'
+      ? 'min-w-[40rem]'
+      : 'min-w-[36rem]'
     : showActions
       ? 'min-w-[24rem]'
       : 'min-w-[22rem]';
@@ -146,14 +142,9 @@ export function AccordionBrandLinesTable({
                         {formatVariantType(line.variantType)}
                       </TableCell>
                       {showStockFate ? (
-                        <TableCell className="px-3 py-2 whitespace-nowrap">
+                        <TableCell className="px-3 py-2.5 whitespace-nowrap">
                           {line.stockFate ? (
-                            <Badge
-                              variant="outline"
-                              className={`font-normal text-[11px] px-1.5 py-0 h-5 ${clientReturnStockFateBadgeClass(line.stockFate)}`}
-                            >
-                              {formatClientReturnStockFate(line.stockFate)}
-                            </Badge>
+                            <ClientReturnStockFateBadge fate={line.stockFate} showDescription />
                           ) : (
                             <span className="text-sm text-muted-foreground">—</span>
                           )}

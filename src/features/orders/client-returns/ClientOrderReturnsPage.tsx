@@ -35,6 +35,7 @@ import {
 } from './returnLeaderApi';
 import type { PackageProofPhotoItem } from '@/features/shared/components/MultiProofPhotoField';
 import type { PreviewClientReturn } from './clientReturnPreview';
+import { ClientReturnStockFateLegend } from './ClientReturnStockFateBadge';
 
 type PageTab = 'history' | 'inventory' | 'returnToLeader';
 
@@ -308,15 +309,18 @@ function ClientOrderReturnsView() {
 
   return (
     <div className="w-full max-w-full min-w-0 overflow-x-hidden p-4 md:p-8 space-y-6">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Client Order Returns</h1>
-        <p className="text-sm sm:text-base text-muted-foreground mt-1">
-          {isSuperAdmin
-            ? 'CR history, refunds waiting for Super Admin, and team leader return handovers (RL). Super admin does not hold stock.'
-            : isLeader
-              ? 'CR history, returned items you hold, and RL handovers from your team.'
-              : 'CR history, your returned items, and submit RL handovers to your team leader.'}
-        </p>
+      <div className="space-y-3">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Client Order Returns</h1>
+          <p className="text-sm sm:text-base text-muted-foreground mt-1">
+            {isSuperAdmin
+              ? 'CR history, refunds waiting for Super Admin, and team leader return handovers (RL). Super admin does not hold stock.'
+              : isLeader
+                ? 'CR history, returned items you hold, and RL handovers from your team.'
+                : 'CR history, your returned items, and submit RL handovers to your team leader.'}
+          </p>
+        </div>
+        <ClientReturnStockFateLegend />
       </div>
 
       <Tabs value={pageTab} onValueChange={(value) => setPageTab(value as PageTab)} className="space-y-4">

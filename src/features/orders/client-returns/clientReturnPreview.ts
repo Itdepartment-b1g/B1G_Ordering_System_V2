@@ -146,9 +146,26 @@ export function parseClientReturnStockFate(value: unknown): ClientReturnStockFat
   return undefined;
 }
 
+/** Shared labels + short descriptions for restock vs disposal UI. */
+export const CLIENT_RETURN_STOCK_FATE_META = {
+  restock: {
+    label: 'Re-stock / Exchange',
+    legendLabel: 'Re-stock / Exchange',
+    description: 'Returned stock is still sellable',
+  },
+  disposal: {
+    label: 'Disposal',
+    legendLabel: 'Damaged (Disposals)',
+    description: 'Does not go back to sellable stock',
+  },
+} as const;
+
+export function getClientReturnStockFateMeta(fate: ClientReturnStockFate) {
+  return CLIENT_RETURN_STOCK_FATE_META[fate];
+}
+
 export function formatClientReturnStockFate(fate: ClientReturnStockFate | undefined): string {
-  if (fate === 'restock') return 'Restock';
-  if (fate === 'disposal') return 'Disposal';
+  if (fate === 'restock' || fate === 'disposal') return CLIENT_RETURN_STOCK_FATE_META[fate].label;
   return '—';
 }
 

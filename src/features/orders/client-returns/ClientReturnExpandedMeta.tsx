@@ -8,9 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Badge } from '@/components/ui/badge';
 import {
-  clientReturnStockFateBadgeClass,
   formatClientReturnReason,
   formatClientReturnStatus,
   formatClientReturnType,
@@ -21,6 +19,7 @@ import {
   type PreviewClientReturn,
 } from './clientReturnPreview';
 import { ClientReturnPayoutProofButton } from './ClientReturnPayoutProofDialog';
+import { ClientReturnStockFateBadge } from './ClientReturnStockFateBadge';
 
 function formatMetaDate(value: string | null | undefined, withTime = false): string {
   if (!value) return '—';
@@ -58,20 +57,10 @@ export function ClientReturnExpandedMeta({ row }: { row: PreviewClientReturn }) 
           <dt className="text-xs text-muted-foreground">Stock fate</dt>
           <dd className="flex flex-wrap gap-1.5">
             {fateQty.restock > 0 ? (
-              <Badge
-                variant="outline"
-                className={`font-normal ${clientReturnStockFateBadgeClass('restock')}`}
-              >
-                Restock {fateQty.restock}
-              </Badge>
+              <ClientReturnStockFateBadge fate="restock" qty={fateQty.restock} showDescription />
             ) : null}
             {fateQty.disposal > 0 ? (
-              <Badge
-                variant="outline"
-                className={`font-normal ${clientReturnStockFateBadgeClass('disposal')}`}
-              >
-                Disposal {fateQty.disposal}
-              </Badge>
+              <ClientReturnStockFateBadge fate="disposal" qty={fateQty.disposal} showDescription />
             ) : null}
             {fateQty.restock <= 0 && fateQty.disposal <= 0 ? (
               <span className="text-sm font-medium">—</span>

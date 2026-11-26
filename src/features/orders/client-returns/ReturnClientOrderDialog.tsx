@@ -48,6 +48,7 @@ import {
 } from '@/features/shared/components/MultiProofPhotoField';
 import {
   CLIENT_RETURN_REASON_OPTIONS,
+  CLIENT_RETURN_STOCK_FATE_META,
   formatClientReturnReason,
   formatClientReturnStockFate,
   type ClientReturnReasonOption,
@@ -270,27 +271,55 @@ function StockFateToggle({
           type="button"
           size="sm"
           variant={value === 'restock' ? 'default' : 'outline'}
-          className={cn('h-8 w-full', value === 'restock' && 'bg-emerald-600 hover:bg-emerald-700')}
+          className={cn(
+            'h-auto w-full flex-col items-start gap-0.5 whitespace-normal px-3 py-2.5 text-left',
+            value === 'restock' && 'bg-emerald-600 hover:bg-emerald-700'
+          )}
           disabled={disabled}
           onClick={() => onChange('restock')}
         >
-          Restock
+          <span className="text-xs font-semibold leading-tight">
+            {CLIENT_RETURN_STOCK_FATE_META.restock.legendLabel}
+          </span>
+          <span
+            className={cn(
+              'text-[10px] font-normal leading-snug',
+              value === 'restock' ? 'text-emerald-50/90' : 'text-muted-foreground'
+            )}
+          >
+            {CLIENT_RETURN_STOCK_FATE_META.restock.description}
+          </span>
         </Button>
         <Button
           type="button"
           size="sm"
           variant={value === 'disposal' ? 'default' : 'outline'}
-          className={cn('h-8 w-full', value === 'disposal' && 'bg-rose-600 hover:bg-rose-700')}
+          className={cn(
+            'h-auto w-full flex-col items-start gap-0.5 whitespace-normal px-3 py-2.5 text-left',
+            value === 'disposal' && 'bg-rose-600 hover:bg-rose-700'
+          )}
           disabled={disabled}
           onClick={() => onChange('disposal')}
         >
-          Disposal
+          <span className="text-xs font-semibold leading-tight">
+            {CLIENT_RETURN_STOCK_FATE_META.disposal.legendLabel}
+          </span>
+          <span
+            className={cn(
+              'text-[10px] font-normal leading-snug',
+              value === 'disposal' ? 'text-rose-50/90' : 'text-muted-foreground'
+            )}
+          >
+            {CLIENT_RETURN_STOCK_FATE_META.disposal.description}
+          </span>
         </Button>
       </div>
       {disabled ? (
         <p className="text-[10px] text-muted-foreground leading-tight">Fully returned</p>
       ) : invalid ? (
-        <p className="text-[10px] text-destructive leading-tight">Choose Restock or Disposal.</p>
+        <p className="text-[10px] text-destructive leading-tight">
+          Choose Re-stock / Exchange or Damaged.
+        </p>
       ) : null}
     </div>
   );
@@ -702,7 +731,7 @@ export function ReturnClientOrderDialog({
       const qty = quantities[line.id] || 0;
       if (qty > line.remaining) return `Cannot return more than remaining qty for ${line.variantName}.`;
       if (qty > 0 && stockFates[line.id] !== 'restock' && stockFates[line.id] !== 'disposal') {
-        return `Choose Restock or Disposal for ${line.variantName}.`;
+        return `Choose Re-stock / Exchange or Damaged for ${line.variantName}.`;
       }
     }
     return null;
@@ -1191,7 +1220,8 @@ export function ReturnClientOrderDialog({
                     </div>
                     <p className="font-semibold">Change item</p>
                     <p className="text-sm text-muted-foreground">
-                      Swap returned products for other sellable items of the same brand.
+                      Re-stock / Exchange for returned stock that is still sellable — swap for other items of
+                      the same brand.
                     </p>
                   </CardContent>
                 </Card>
@@ -1303,10 +1333,15 @@ export function ReturnClientOrderDialog({
                   </p>
                 ) : (
                   <p className="text-sm text-muted-foreground rounded-md border bg-muted/30 p-3">
-                    For each returned variant, choose <span className="font-medium text-foreground">Restock</span>{' '}
-                    (qty goes back to the agent bag) or{' '}
-                    <span className="font-medium text-foreground">Disposal</span> (does not go back to sellable
-                    stock).
+                    For each returned variant, choose{' '}
+                    <span className="font-medium text-foreground">
+                      {CLIENT_RETURN_STOCK_FATE_META.restock.legendLabel}
+                    </span>{' '}
+                    ({CLIENT_RETURN_STOCK_FATE_META.restock.description.toLowerCase()}) or{' '}
+                    <span className="font-medium text-foreground">
+                      {CLIENT_RETURN_STOCK_FATE_META.disposal.legendLabel}
+                    </span>{' '}
+                    ({CLIENT_RETURN_STOCK_FATE_META.disposal.description.toLowerCase()}).
                   </p>
                 )}
                 {remainingTotal > 0 ? (
@@ -1327,7 +1362,7 @@ export function ReturnClientOrderDialog({
                         });
                       }}
                     >
-                      Set all Restock
+                      Set all Re-stock / Exchange
                     </Button>
                     <Button
                       type="button"
@@ -1345,7 +1380,7 @@ export function ReturnClientOrderDialog({
                         });
                       }}
                     >
-                      Set all Disposal
+                      Set all Damaged
                     </Button>
                   </div>
                 ) : null}

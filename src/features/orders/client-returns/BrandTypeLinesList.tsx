@@ -1,10 +1,7 @@
 import { Badge } from '@/components/ui/badge';
-import {
-  clientReturnStockFateBadgeClass,
-  formatClientReturnStockFate,
-  type PreviewClientReturnLine,
-} from './clientReturnPreview';
+import { type PreviewClientReturnLine } from './clientReturnPreview';
 import { formatVariantType, variantTypeBadgeClass } from './ClientReturnBrandTable';
+import { ClientReturnStockFateBadge } from './ClientReturnStockFateBadge';
 
 function variantTypeOrder(type: string): number {
   const value = type.trim().toLowerCase();
@@ -115,12 +112,7 @@ export function BrandTypeLinesList({
                           <div className="min-w-0 space-y-1">
                             <p className="font-medium leading-snug">{line.variantName}</p>
                             {showStockFate && line.stockFate ? (
-                              <Badge
-                                variant="outline"
-                                className={`text-[10px] font-normal ${clientReturnStockFateBadgeClass(line.stockFate)}`}
-                              >
-                                {formatClientReturnStockFate(line.stockFate)}
-                              </Badge>
+                              <ClientReturnStockFateBadge fate={line.stockFate} showDescription />
                             ) : null}
                           </div>
                           <span className={`shrink-0 tabular-nums font-semibold ${qtyClassName}`}>

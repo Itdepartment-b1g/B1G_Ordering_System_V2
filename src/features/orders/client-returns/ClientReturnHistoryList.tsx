@@ -57,7 +57,6 @@ import {
   CLIENT_RETURN_REASON_OPTIONS,
   canReviewClientReturn,
   clientReturnStatusBadgeClass,
-  clientReturnStockFateBadgeClass,
   clientReturnTypeBadgeClass,
   formatClientReturnReason,
   formatClientReturnStatus,
@@ -74,6 +73,7 @@ import {
 import { AccordionBrandLinesTable } from './AccordionBrandLinesTable';
 import { groupLinesByBrand } from './ClientReturnBrandTable';
 import { ClientReturnExpandedMeta } from './ClientReturnExpandedMeta';
+import { ClientReturnStockFateBadge } from './ClientReturnStockFateBadge';
 import type { PackageProofPhotoItem } from '@/features/shared/components/MultiProofPhotoField';
 import {
   CLIENT_ORDER_RETURNS_QUERY_KEY,
@@ -120,7 +120,7 @@ function formatReturnWhen(value: string | null | undefined, pattern: string): st
 
 const HISTORY_PAGE_SIZE: PageSize = 25;
 const VIEW_MODE_KEY = 'client-order-returns-view';
-const TABLE_MIN_WIDTH = 'min-w-[112rem]';
+const TABLE_MIN_WIDTH = 'min-w-[120rem]';
 const TABLE_COL_SPAN = 14;
 
 type HistoryViewMode = 'table' | 'cards';
@@ -260,20 +260,10 @@ function StockFateBadges({
   return (
     <div className="flex flex-wrap gap-1">
       {restock > 0 ? (
-        <Badge
-          variant="outline"
-          className={`font-normal text-[11px] px-1.5 py-0 h-5 ${clientReturnStockFateBadgeClass('restock')}`}
-        >
-          Restock {restock}
-        </Badge>
+        <ClientReturnStockFateBadge fate="restock" qty={restock} showDescription />
       ) : null}
       {disposal > 0 ? (
-        <Badge
-          variant="outline"
-          className={`font-normal text-[11px] px-1.5 py-0 h-5 ${clientReturnStockFateBadgeClass('disposal')}`}
-        >
-          Disposal {disposal}
-        </Badge>
+        <ClientReturnStockFateBadge fate="disposal" qty={disposal} showDescription />
       ) : null}
     </div>
   );
@@ -1214,7 +1204,7 @@ export function ClientReturnHistoryList({
                   sortKey="returnType"
                   sortDirection={getTableSortDisplayDirection(historySortState, 'returnType')}
                   onSort={handleHistorySort}
-                  className="w-[8rem]"
+                  className="w-[16rem]"
                 />
                 <SortableTableHead
                   label="Status"
@@ -1304,8 +1294,8 @@ export function ClientReturnHistoryList({
                       <TableCell className="align-top">
                         <ReturnedBrandBadges brands={uniqueReturnBrands(row.lines)} />
                       </TableCell>
-                      <TableCell className="align-top">
-                        <div className="flex flex-col gap-1.5">
+                      <TableCell className="align-top whitespace-nowrap">
+                        <div className="flex flex-col items-start gap-1.5">
                           <ReturnTypeBadge type={row.returnType} />
                           <StockFateBadges row={row} variantId={stockFateVariantId} />
                         </div>
