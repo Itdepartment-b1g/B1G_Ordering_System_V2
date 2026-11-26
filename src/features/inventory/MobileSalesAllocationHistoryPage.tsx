@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import { FileDown, History, Loader2, Package, RefreshCw, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/features/auth';
+import {
+  preferAllocationSessionGroups,
+  readAllocationHistoryDeepLink,
+} from '@/features/inventory/stock-movements/stockMovementDocumentRefs';
 import { SuperAdminAllocationHistoryFilter } from '@/features/sales-agents/components/super-admin-allocation-history/filter/Filter';
 import { useAllocationHistoryOptions } from '@/features/sales-agents/components/super-admin-allocation-history/hooks/useAllocationHistoryOptions';
 import { useCompanyBrands } from '@/features/sales-agents/components/super-admin-allocation-history/hooks/useCompanyBrands';
@@ -46,6 +51,7 @@ import {
 export default function MobileSalesAllocationHistoryPage() {
   const { toast } = useToast();
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
   const { data: groups = [], isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: [MOBILE_SALES_ALLOCATION_HISTORY_QUERY_KEY, user?.id, user?.company_id],
     enabled: !!user?.id,
@@ -56,6 +62,7 @@ export default function MobileSalesAllocationHistoryPage() {
   const [filterValue, setFilterValue] = useState('');
   const [allocatedToRole, setAllocatedToRole] = useState<'team_leader' | 'mobile_sales' | ''>('');
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
+  const [sessionFilter, setSessionFilter] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [sortState, setSortState] =
@@ -72,6 +79,12 @@ export default function MobileSalesAllocationHistoryPage() {
       });
     }
   }, [isError, error, toast]);
+
+  useEffect(() => {
+    const deepLink = readAllocationHistoryDeepLink(searchParams);
+    if (deepLink.dateRange) setDateRangeFilter(deepLink.dateRange);
+    setSessionFilter(deepLink.sessionId);
+  }, [searchParams]);
 
   const recipients = useMemo((): CompanyRecipientOption[] => {
     const leaders = new Map<string, CompanyRecipientOption>();
@@ -111,10 +124,16 @@ export default function MobileSalesAllocationHistoryPage() {
     [dateRangeFilter]
   );
 
-  const filteredGroups = useMemo(
-    () => filterAllocationHistoryGroups(groups, selectedFilter, filterValue, fromDate, toDate),
-    [groups, selectedFilter, filterValue, fromDate, toDate]
-  );
+  const filteredGroups = useMemo(() => {
+    const dated = filterAllocationHistoryGroups(
+      groups,
+      selectedFilter,
+      filterValue,
+      fromDate,
+      toDate
+    );
+    return preferAllocationSessionGroups(dated, groups, sessionFilter);
+  }, [groups, selectedFilter, filterValue, fromDate, toDate, sessionFilter]);
 
   const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
     () =>
@@ -133,7 +152,7 @@ export default function MobileSalesAllocationHistoryPage() {
 
   useEffect(() => {
     setPage(0);
-  }, [selectedFilter, filterValue, allocatedToRole, dateRangeFilter, sortState, pageSize]);
+  }, [selectedFilter, filterValue, allocatedToRole, dateRangeFilter, sessionFilter, sortState, pageSize]);
 
   const { pageCount, safePage, pagedItems } = getListPaginationSlice(sortedGroups, page, pageSize);
 
@@ -149,10 +168,12 @@ export default function MobileSalesAllocationHistoryPage() {
     setFilterValue('');
     setAllocatedToRole('');
     setDateRangeFilter({ preset: 'all' });
+    setSessionFilter(null);
   };
 
   const hasActiveFilters =
     hasAllocationHistoryDateFilter(dateRangeFilter) ||
+    Boolean(sessionFilter) ||
     (selectedFilter !== 'all' && filterValue.trim().length > 0);
 
   const exportRows = async (rows: AllocationHistoryGroup[], filename: string, filtered: boolean) => {

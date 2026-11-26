@@ -3,7 +3,7 @@
 export function buildStockMovementsPath(opts?: {
   brandId?: string | null;
   variantId?: string | null;
-  /** Filter to movements that touch this agent's bag. */
+  /** Filter to movements that touch this agent's inventory. */
   agentId?: string | null;
 }): string {
   const params = new URLSearchParams();

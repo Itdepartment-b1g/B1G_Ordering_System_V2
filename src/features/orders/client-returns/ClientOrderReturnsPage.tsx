@@ -1,5 +1,5 @@
 import { Component, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ClipboardList, Loader2, Package, Truck } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -78,6 +78,7 @@ function ClientOrderReturnsView() {
   const { user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const isMobile = useIsMobile();
   const queryClient = useQueryClient();
   const { hasWarehouseHubLink, hasWarehouseHubLinkLoading } = usePermissions();
@@ -112,6 +113,13 @@ function ClientOrderReturnsView() {
   const [rlActionRow, setRlActionRow] = useState<ReturnLeaderHandover | null>(null);
   const [rlConfirmKind, setRlConfirmKind] = useState<RlConfirmKind>(null);
   const [rlActing, setRlActing] = useState(false);
+
+  useEffect(() => {
+    const fromUrl =
+      searchParams.get('q')?.trim() || searchParams.get('search')?.trim() || '';
+    if (!fromUrl) return;
+    setPageTab('history');
+  }, [searchParams]);
 
   const holderId =
     user?.role === 'mobile_sales' || user?.role === 'sales_agent' || user?.role === 'team_leader'

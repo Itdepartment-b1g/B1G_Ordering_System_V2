@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { FilterX, Loader2, Package, Plus, Search } from 'lucide-react';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
@@ -77,6 +77,7 @@ type TransferTab = 'incoming' | 'dispatched' | 'mine' | 'lost';
 export default function TLStockRequestPage() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const [searchParams] = useSearchParams();
   const [createOpen, setCreateOpen] = useState(false);
   const [viewOpen, setViewOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -84,7 +85,9 @@ export default function TLStockRequestPage() {
   const [selected, setSelected] = useState<TLRequestWithDetails | null>(null);
   const [historyLines, setHistoryLines] = useState<TLRequestWithDetails[]>([]);
   const [tab, setTab] = useState<TransferTab>();
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(
+    () => searchParams.get('q')?.trim() || searchParams.get('search')?.trim() || ''
+  );
   const [dateRangeFilter, setDateRangeFilter] =
     useState<DateRangeFilterValue>(ALL_TIME_DATE_RANGE);
   const [statusFilter, setStatusFilter] = useState<TlTransferQuickStatus>('all');
@@ -95,6 +98,15 @@ export default function TLStockRequestPage() {
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [sortState, setSortState] =
     useState<TableSortCycleState<TlTransferListSortKey>>(createInitialTableSortCycle);
+
+  useEffect(() => {
+    const fromUrl =
+      searchParams.get('q')?.trim() || searchParams.get('search')?.trim() || '';
+    if (!fromUrl) return;
+    setSearchQuery(fromUrl);
+    setStatusFilter('all');
+    setDateRangeFilter(ALL_TIME_DATE_RANGE);
+  }, [searchParams]);
 
   const dispatch = useAppDispatch();
   const myRequests = useAppSelector((state) => state.motoSalesTlTransfers.myRequests);

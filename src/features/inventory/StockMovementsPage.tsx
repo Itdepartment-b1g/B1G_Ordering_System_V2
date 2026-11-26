@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowDownLeft,
@@ -9,8 +9,12 @@ import {
   ArrowUpRight,
   ChevronLeft,
   ChevronRight,
+  FileDown,
+  FileSpreadsheet,
+  LayoutGrid,
   Loader2,
   Search,
+  Table2,
   X,
 } from 'lucide-react';
 import { useAuth } from '@/features/auth';
@@ -46,6 +50,7 @@ import {
   resolveTableSortDirection,
   type TableSortCycleState,
 } from '@/features/shared/utils/tableSortCycle';
+import { useToast } from '@/hooks/use-toast';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import {
@@ -56,11 +61,32 @@ import {
   type StockMovementRow,
 } from './stock-movements/stockMovementsApi';
 import {
+  formatStockMovementQtyDisplay,
   friendlyTechnicalLocationLabel,
   STOCK_MOVEMENT_CATEGORY_FILTER_OPTIONS,
-  STOCK_MOVEMENT_CATEGORY_LABELS,
   type StockMovementCategory,
 } from './stock-movements/stockMovementTypes';
+import {
+  buildStockMovementDocumentPath,
+  formatStockMovementAllocationDateLabel,
+  splitStockMovementNoteParts,
+  toStockMovementManilaYmd,
+} from './stock-movements/stockMovementDocumentRefs';
+import { exportStockMovementsExcel } from './utils/exportStockMovementsExcel';
+import { exportStockMovementsPdf } from './utils/exportStockMovementsPdf';
+
+type ViewMode = 'table' | 'cards';
+const VIEW_MODE_STORAGE_KEY = 'stock-movements-view-mode';
+
+function readStoredViewMode(): ViewMode {
+  try {
+    const saved = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+    if (saved === 'table' || saved === 'cards') return saved;
+  } catch {
+    /* ignore */
+  }
+  return 'table';
+}
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
 const DEFAULT_PAGE_SIZE = PAGE_SIZE_OPTIONS[0];
@@ -180,8 +206,151 @@ function LocationPartyCell({
   );
 }
 
+function quantityDisplayText(
+  row: StockMovementRow,
+  scope?: { agentId?: string | null; warehouseLocationId?: string | null }
+): string {
+  return formatStockMovementQtyDisplay({
+    quantity: row.quantity,
+    direction: row.direction,
+    fromLocationRaw: row.fromLocationRaw,
+    toLocationRaw: row.toLocationRaw,
+    fromQtyBefore: row.fromQtyBefore,
+    fromQtyAfter: row.fromQtyAfter,
+    toQtyBefore: row.toQtyBefore,
+    toQtyAfter: row.toQtyAfter,
+    scopeAgentId: scope?.agentId,
+    scopeWarehouseLocationId: scope?.warehouseLocationId,
+  });
+}
+
+function allocationNoteLinkMeta(row: StockMovementRow) {
+  const isAllocation =
+    row.transactionType === 'allocated_to_agent' ||
+    row.referenceType === 'allocation_history' ||
+    row.referenceType === 'warehouse_allocation_history';
+  if (!isAllocation) return null;
+  const dateLabel = formatStockMovementAllocationDateLabel(row.createdAt);
+  const dateYmd = toStockMovementManilaYmd(row.createdAt);
+  if (!dateLabel || !dateYmd) return null;
+  return {
+    dateLabel,
+    dateYmd,
+    sessionId: row.referenceId,
+    referenceType: row.referenceType,
+  };
+}
+
+function NotesWithDocLinks({
+  notes,
+  role,
+  row,
+  empty = '—',
+}: {
+  notes: string | null | undefined;
+  role?: string | null;
+  row?: StockMovementRow | null;
+  empty?: string;
+}) {
+  const text = (notes ?? '').trim();
+  if (!text) return <>{empty}</>;
+
+  const allocation = row ? allocationNoteLinkMeta(row) : null;
+  const parts = splitStockMovementNoteParts(text, { allocation });
+  return (
+    <span className="whitespace-normal">
+      {parts.map((part, index) => {
+        if (part.type === 'text') {
+          return <span key={`t-${index}`}>{part.value}</span>;
+        }
+        return (
+          <Link
+            key={`d-${index}-${part.value}`}
+            to={buildStockMovementDocumentPath(part.kind, part.value, role, {
+              sessionId: part.sessionId,
+              dateYmd: part.dateYmd,
+              referenceType: part.referenceType,
+            })}
+            className="font-medium text-primary underline-offset-2 hover:underline"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {part.value}
+          </Link>
+        );
+      })}
+    </span>
+  );
+}
+
+function MovementCard({
+  row,
+  role,
+  qtyScope,
+}: {
+  row: StockMovementRow;
+  role?: string | null;
+  qtyScope?: { agentId?: string | null; warehouseLocationId?: string | null };
+}) {
+  return (
+    <Card className="hover:shadow-md transition-shadow">
+      <CardContent className="space-y-3 p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 space-y-1">
+            <div className="font-medium whitespace-normal">{row.typeLabel}</div>
+            <div className="text-xs text-muted-foreground whitespace-normal">
+              <NotesWithDocLinks notes={row.typeDescription} role={role} row={row} empty="" />
+            </div>
+          </div>
+          <div className="shrink-0 text-right">
+            <div className="text-lg font-semibold tabular-nums">
+              {quantityDisplayText(row, qtyScope)}
+            </div>
+            <div className="mt-1">{directionBadge(row)}</div>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-medium">{row.productName}</span>
+          {row.variantType ? (
+            <Badge variant="outline" className="text-[10px] font-normal">
+              {row.variantType}
+            </Badge>
+          ) : null}
+        </div>
+        <div className="grid gap-2 text-sm sm:grid-cols-2">
+          <div>
+            <div className="text-xs text-muted-foreground">From</div>
+            <LocationPartyCell label={row.fromLabel} partyTag={row.fromPartyTag} />
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground">To</div>
+            <LocationPartyCell label={row.toLabel} partyTag={row.toPartyTag} />
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          <span>{format(new Date(row.createdAt), 'MMM d, yyyy HH:mm')}</span>
+          <span>{formatReference(row)}</span>
+          <span className="inline-flex items-center gap-1">
+            {row.performedByName}
+            {row.performedByRoleTag ? (
+              <Badge variant="outline" className="text-[10px] font-normal">
+                {row.performedByRoleTag}
+              </Badge>
+            ) : null}
+          </span>
+        </div>
+        {row.notes?.trim() ? (
+          <p className="text-sm text-muted-foreground">
+            <NotesWithDocLinks notes={row.notes} role={role} row={row} empty="" />
+          </p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function StockMovementsPage() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const isWarehouse = user?.role === 'warehouse';
   const { membership } = useWarehouseLocationMembership({
@@ -198,6 +367,9 @@ export default function StockMovementsPage() {
   const brandFilter = searchParams.get('brandId') || 'all';
   const variantFilter = searchParams.get('variantId') || 'all';
   const agentFilter = searchParams.get('agentId') || 'all';
+  const [viewMode, setViewMode] = useState<ViewMode>(readStoredViewMode);
+  const [printing, setPrinting] = useState(false);
+  const [exportingExcel, setExportingExcel] = useState(false);
 
   const patchSearchParams = useCallback(
     (patch: {
@@ -241,6 +413,23 @@ export default function StockMovementsPage() {
   const scopeLocationId =
     isWarehouse && !membership.isMain ? membership.locationId : null;
   const scopeAgentId = isBagScopedRole ? user?.id ?? null : null;
+
+  const qtyScope = useMemo(
+    () => ({
+      agentId: agentFilter !== 'all' ? agentFilter : scopeAgentId,
+      warehouseLocationId:
+        canFilterAllLocations && locationFilter !== 'all'
+          ? locationFilter
+          : scopeLocationId,
+    }),
+    [
+      agentFilter,
+      canFilterAllLocations,
+      locationFilter,
+      scopeAgentId,
+      scopeLocationId,
+    ]
+  );
 
   const { data: locations = [] } = useQuery({
     queryKey: [STOCK_MOVEMENTS_QUERY_KEY, 'locations', user?.company_id],
@@ -464,16 +653,84 @@ export default function StockMovementsPage() {
     patchSearchParams({ brandId: 'all', variantId: 'all', agentId: 'all' });
   };
 
+  const setAndStoreViewMode = (mode: ViewMode) => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const exportScopeLabel = useMemo(() => {
+    const parts: string[] = [];
+    if (focusedProductLabel) parts.push(`Product: ${focusedProductLabel}`);
+    if (focusedAgentLabel) parts.push(`Holder: ${focusedAgentLabel}`);
+    if (categoryFilter !== 'all') {
+      const label =
+        STOCK_MOVEMENT_CATEGORY_FILTER_OPTIONS.find((opt) => opt.value === categoryFilter)
+          ?.label ?? categoryFilter;
+      parts.push(`Category: ${label}`);
+    }
+    if (isBagScopedRole) parts.push('Your inventory');
+    return parts.join(' · ') || 'All movements';
+  }, [
+    categoryFilter,
+    focusedAgentLabel,
+    focusedProductLabel,
+    isBagScopedRole,
+  ]);
+
+  const handlePrintPdf = () => {
+    if (sortedMovements.length === 0) return;
+    setPrinting(true);
+    try {
+      exportStockMovementsPdf({
+        rows: sortedMovements,
+        scopeLabel: exportScopeLabel,
+      });
+    } catch (err) {
+      toast({
+        variant: 'destructive',
+        title: 'Print failed',
+        description: err instanceof Error ? err.message : 'Could not open print view.',
+      });
+    } finally {
+      setPrinting(false);
+    }
+  };
+
+  const handleExportExcel = async () => {
+    if (sortedMovements.length === 0) return;
+    setExportingExcel(true);
+    try {
+      await exportStockMovementsExcel({
+        rows: sortedMovements,
+        scopeLabel: exportScopeLabel,
+      });
+      toast({ title: 'Export complete', description: 'Stock movements exported to Excel.' });
+    } catch (err) {
+      toast({
+        variant: 'destructive',
+        title: 'Export failed',
+        description: err instanceof Error ? err.message : 'Could not export to Excel.',
+      });
+    } finally {
+      setExportingExcel(false);
+    }
+  };
+
   const pageTitle = isBagScopedRole
-    ? 'Stock movements (your bag)'
+    ? 'Stock movements (your inventory)'
     : canFilterAllLocations
       ? 'Stock movements'
       : 'Stock movements (your location)';
   const pageDescription = isBagScopedRole
-    ? 'Recorded inventory transactions that touch your assigned stock.'
+    ? 'Recorded inventory transactions that touch your inventory.'
     : canFilterAllLocations
       ? 'Recorded inventory transactions across warehouse and agent locations.'
       : 'Recorded inventory transactions that touch your assigned sub-warehouse.';
+  const canExport = !isLoading && !error && sortedMovements.length > 0;
 
   return (
     <div className="container mx-auto space-y-6 py-6">
@@ -548,14 +805,82 @@ export default function StockMovementsPage() {
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Transaction history</CardTitle>
-          <CardDescription>
-            Sourced from existing inventory transaction records. Sales that never wrote a ledger
-            row will not appear here.
-          </CardDescription>
+        <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <CardTitle>Transaction history</CardTitle>
+            <CardDescription>
+              Filter, switch views, and export the movements currently shown.
+            </CardDescription>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handlePrintPdf}
+              disabled={!canExport || printing || exportingExcel}
+            >
+              {printing ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <FileDown className="mr-2 h-4 w-4" />
+              )}
+              Print PDF
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void handleExportExcel()}
+              disabled={!canExport || printing || exportingExcel}
+            >
+              {exportingExcel ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <FileSpreadsheet className="mr-2 h-4 w-4" />
+              )}
+              Export Excel
+            </Button>
+            <div className="flex items-center gap-1 rounded-md border p-0.5">
+              <Button
+                type="button"
+                size="sm"
+                variant={viewMode === 'table' ? 'default' : 'ghost'}
+                className="h-8 gap-1.5"
+                onClick={() => setAndStoreViewMode('table')}
+              >
+                <Table2 className="h-4 w-4" />
+                Table
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={viewMode === 'cards' ? 'default' : 'ghost'}
+                className="h-8 gap-1.5"
+                onClick={() => setAndStoreViewMode('cards')}
+              >
+                <LayoutGrid className="h-4 w-4" />
+                Cards
+              </Button>
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            {STOCK_MOVEMENT_CATEGORY_FILTER_OPTIONS.map((opt) => (
+              <Button
+                key={opt.value}
+                type="button"
+                size="sm"
+                variant={categoryFilter === opt.value ? 'default' : 'outline'}
+                className="h-8"
+                onClick={() => setCategoryFilter(opt.value)}
+              >
+                {opt.label}
+              </Button>
+            ))}
+          </div>
+
           <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
             <div className="relative min-w-[220px] flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -572,21 +897,6 @@ export default function StockMovementsPage() {
               triggerClassName="w-full lg:w-[220px] justify-between h-10 shrink-0"
               align="end"
             />
-            <Select
-              value={categoryFilter}
-              onValueChange={(v) => setCategoryFilter(v as StockMovementCategory | 'all')}
-            >
-              <SelectTrigger className="w-full lg:w-[180px]">
-                <SelectValue placeholder="Category" />
-              </SelectTrigger>
-              <SelectContent>
-                {STOCK_MOVEMENT_CATEGORY_FILTER_OPTIONS.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
             <Select
               value={brandFilter}
               onValueChange={(value) => {
@@ -667,6 +977,66 @@ export default function StockMovementsPage() {
                 ? 'No inventory transactions recorded yet.'
                 : 'No movements match the selected filters.'}
             </p>
+          ) : viewMode === 'cards' ? (
+            <div className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {paginatedMovements.map((row) => (
+                  <MovementCard
+                    key={row.id}
+                    row={row}
+                    role={user?.role}
+                    qtyScope={qtyScope}
+                  />
+                ))}
+              </div>
+              <div className="flex flex-col gap-3 rounded-md border bg-muted/20 px-4 py-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span>
+                    Showing {paginationStart}–{paginationEnd} of {sortedMovements.length}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="stock-movements-page-size-cards" className="whitespace-nowrap text-xs">
+                      Rows per page
+                    </Label>
+                    <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
+                      <SelectTrigger id="stock-movements-page-size-cards" className="h-8 w-[72px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PAGE_SIZE_OPTIONS.map((n) => (
+                          <SelectItem key={n} value={String(n)}>
+                            {n}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page <= 1}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                    Previous
+                  </Button>
+                  <span className="min-w-[100px] text-center tabular-nums">
+                    Page {page} of {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page >= totalPages}
+                  >
+                    Next
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </div>
           ) : (
             <div className="overflow-auto rounded-md border">
               <Table>
@@ -726,12 +1096,17 @@ export default function StockMovementsPage() {
                       <TableCell className="whitespace-nowrap text-muted-foreground">
                         {format(new Date(row.createdAt), 'MMM d, yyyy HH:mm')}
                       </TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        <div className="space-y-1">
-                          <div className="font-medium">{row.typeLabel}</div>
-                          <Badge variant="outline" className="text-[10px]">
-                            {STOCK_MOVEMENT_CATEGORY_LABELS[row.category]}
-                          </Badge>
+                      <TableCell className="min-w-[14rem] max-w-[22rem]">
+                        <div className="space-y-0.5">
+                          <div className="font-medium whitespace-normal">{row.typeLabel}</div>
+                          <div className="text-xs text-muted-foreground whitespace-normal">
+                            <NotesWithDocLinks
+                              notes={row.typeDescription}
+                              role={user?.role}
+                              row={row}
+                              empty=""
+                            />
+                          </div>
                         </div>
                       </TableCell>
                       <TableCell className="whitespace-nowrap">{directionBadge(row)}</TableCell>
@@ -749,8 +1124,7 @@ export default function StockMovementsPage() {
                         </div>
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-right font-medium tabular-nums">
-                        {row.direction === 'in' ? '+' : row.direction === 'out' ? '−' : ''}
-                        {row.quantity}
+                        {quantityDisplayText(row, qtyScope)}
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
                         <LocationPartyCell label={row.fromLabel} partyTag={row.fromPartyTag} />
@@ -774,8 +1148,8 @@ export default function StockMovementsPage() {
                           ) : null}
                         </div>
                       </TableCell>
-                      <TableCell className="min-w-[12rem] whitespace-normal text-muted-foreground">
-                        {row.notes?.trim() || '—'}
+                      <TableCell className="min-w-[12rem] text-muted-foreground">
+                        <NotesWithDocLinks notes={row.notes} role={user?.role} row={row} />
                       </TableCell>
                     </TableRow>
                   ))}

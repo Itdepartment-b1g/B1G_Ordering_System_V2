@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import { format } from 'date-fns';
 import { AlertCircle, FileText, Loader2, RotateCcw, Search, SearchCheck } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
@@ -306,6 +307,7 @@ export default function WarehouseClientStockReturnsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
   const isWarehouse = user?.role === 'warehouse';
   const { membership, isLoading: membershipLoading } = useWarehouseLocationMembership({
     userId: user?.id,
@@ -313,7 +315,9 @@ export default function WarehouseClientStockReturnsPage() {
   });
   const isMainWarehouseUser = membership.isMain;
 
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(
+    () => searchParams.get('q')?.trim() || searchParams.get('search')?.trim() || ''
+  );
   const [statusFilter, setStatusFilter] = useState('all');
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
   const [page, setPage] = useState(0);
@@ -512,6 +516,15 @@ export default function WarehouseClientStockReturnsPage() {
   useEffect(() => {
     setPage(0);
   }, [statusFilter, searchQuery, dateRangeFilter, pageSize]);
+
+  useEffect(() => {
+    const fromUrl =
+      searchParams.get('q')?.trim() || searchParams.get('search')?.trim() || '';
+    if (!fromUrl) return;
+    setSearchQuery(fromUrl);
+    setStatusFilter('all');
+    setDateRangeFilter({ preset: 'all' });
+  }, [searchParams]);
 
   const { pageCount, safePage, pagedItems } = getListPaginationSlice(filtered, page, pageSize);
 

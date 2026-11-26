@@ -619,6 +619,12 @@ export interface InventoryTransaction {
   quantity: number;
   from_location?: string;
   to_location?: string;
+  /** Balance at from_location before this movement (bag locations). */
+  from_qty_before?: number | null;
+  from_qty_after?: number | null;
+  /** Balance at to_location before this movement (bag locations). */
+  to_qty_before?: number | null;
+  to_qty_after?: number | null;
   reference_type?: string;
   reference_id?: string;
   performed_by: string;

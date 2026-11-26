@@ -197,7 +197,9 @@ export default function MyOrdersPage() {
     [returnOrder]
   );
 
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(
+    () => searchParams.get('q')?.trim() || searchParams.get('search')?.trim() || ''
+  );
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
   // Edit order dialog state
@@ -656,6 +658,14 @@ export default function MyOrdersPage() {
   useEffect(() => {
     setCurrentPage(1);
   }, [searchQuery, dateRangeFilter, statusFilter, orderSortState]);
+
+  // Deep-link search from Stock Movements (ORD-…)
+  useEffect(() => {
+    const fromUrl =
+      searchParams.get('q')?.trim() || searchParams.get('search')?.trim() || '';
+    if (!fromUrl) return;
+    setSearchQuery(fromUrl);
+  }, [searchParams]);
 
   // Bottom nav Create → open create order dialog
   useEffect(() => {

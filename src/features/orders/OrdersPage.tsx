@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { getDatePresetLabel, getDateRangeFromPreset, isDateInRange, formatDateForInput } from '@/lib/dateRangePresets';
 import {
   DateRangeFilterPopover,
@@ -442,7 +443,10 @@ export default function OrdersPage() {
   const orders = getAllOrders();
   const { user } = useAuth();
   const { hasWarehouseHubLink } = usePermissions();
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchParams] = useSearchParams();
+  const [searchQuery, setSearchQuery] = useState(
+    () => searchParams.get('q')?.trim() || searchParams.get('search')?.trim() || ''
+  );
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>("all");
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'all',
@@ -452,6 +456,14 @@ export default function OrdersPage() {
   const [isExportingOrdersFiltered, setIsExportingOrdersFiltered] = useState(false);
   const [isExportingOrdersAll, setIsExportingOrdersAll] = useState(false);
   const [isExportingOrderBreakdown, setIsExportingOrderBreakdown] = useState(false);
+
+  useEffect(() => {
+    const fromUrl =
+      searchParams.get('q')?.trim() || searchParams.get('search')?.trim() || '';
+    if (!fromUrl) return;
+    setSearchQuery(fromUrl);
+    setActiveOrderTab('all');
+  }, [searchParams]);
 
   const orderDateRange = useMemo(() => {
     return getDateRangeFromPreset(

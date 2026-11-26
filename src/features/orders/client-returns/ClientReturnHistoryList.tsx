@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -611,9 +611,12 @@ export function ClientReturnHistoryList({
   const queryClient = useQueryClient();
   const { orders } = useOrders();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const isMobile = useIsMobile();
 
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(() =>
+    embedded ? '' : searchParams.get('q')?.trim() || searchParams.get('search')?.trim() || ''
+  );
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [stockFilter, setStockFilter] = useState<ClientReturnHistoryStockFilter>('all');
   const [dateRangeFilter, setDateRangeFilter] = useState(ALL_TIME_DATE_RANGE);
@@ -635,6 +638,18 @@ export function ClientReturnHistoryList({
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
   const persistViewMode = !embedded;
+
+  useEffect(() => {
+    if (embedded) return;
+    const fromUrl =
+      searchParams.get('q')?.trim() || searchParams.get('search')?.trim() || '';
+    if (!fromUrl) return;
+    setSearchQuery(fromUrl);
+    setStatusFilter('all');
+    setStockFilter('all');
+    setDateRangeFilter(ALL_TIME_DATE_RANGE);
+    setPage(0);
+  }, [embedded, searchParams]);
 
   const resetFilters = () => {
     setSearchQuery('');

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { FileDown, History, Loader2, Package, RefreshCw, Warehouse } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -6,6 +7,10 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/features/auth';
+import {
+  preferAllocationSessionGroups,
+  readAllocationHistoryDeepLink,
+} from '@/features/inventory/stock-movements/stockMovementDocumentRefs';
 import { useWarehouseLocationMembership } from '@/features/inventory/useWarehouseLocationMembership';
 import { useCompanyBrands } from '@/features/sales-agents/components/super-admin-allocation-history/hooks/useCompanyBrands';
 import type { DateRangeFilterValue } from '@/features/shared/components/DateRangeFilterPopover';
@@ -44,6 +49,7 @@ import {
 export default function WarehouseAllocationHistoryList() {
   const { toast } = useToast();
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
   const isWarehouse = user?.role === 'warehouse';
   const { membership } = useWarehouseLocationMembership({
     userId: user?.id,
@@ -55,6 +61,7 @@ export default function WarehouseAllocationHistoryList() {
   const [selectedFilter, setSelectedFilter] = useState<WarehouseAllocationFilterKey>('all');
   const [filterValue, setFilterValue] = useState('');
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
+  const [sessionFilter, setSessionFilter] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [isExportingFiltered, setIsExportingFiltered] = useState(false);
@@ -74,6 +81,12 @@ export default function WarehouseAllocationHistoryList() {
     }
   }, [isError, error, toast]);
 
+  useEffect(() => {
+    const deepLink = readAllocationHistoryDeepLink(searchParams);
+    if (deepLink.dateRange) setDateRangeFilter(deepLink.dateRange);
+    setSessionFilter(deepLink.sessionId);
+  }, [searchParams]);
+
   const { locationOptions, performedByOptions, brandOptions } =
     useWarehouseAllocationHistoryOptions(groups, companyBrands);
 
@@ -82,11 +95,16 @@ export default function WarehouseAllocationHistoryList() {
     [dateRangeFilter]
   );
 
-  const filteredGroups = useMemo(
-    () =>
-      filterWarehouseAllocationGroups(groups, selectedFilter, filterValue, fromDate, toDate),
-    [groups, selectedFilter, filterValue, fromDate, toDate]
-  );
+  const filteredGroups = useMemo(() => {
+    const dated = filterWarehouseAllocationGroups(
+      groups,
+      selectedFilter,
+      filterValue,
+      fromDate,
+      toDate
+    );
+    return preferAllocationSessionGroups(dated, groups, sessionFilter);
+  }, [groups, selectedFilter, filterValue, fromDate, toDate, sessionFilter]);
 
   const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
     () =>
@@ -111,7 +129,7 @@ export default function WarehouseAllocationHistoryList() {
 
   useEffect(() => {
     setPage(0);
-  }, [selectedFilter, filterValue, dateRangeFilter, sortState]);
+  }, [selectedFilter, filterValue, dateRangeFilter, sessionFilter, sortState]);
 
   const { pageCount, safePage, pagedItems: pagedGroups } = getListPaginationSlice(
     sortedGroups,
@@ -134,10 +152,12 @@ export default function WarehouseAllocationHistoryList() {
     setSelectedFilter('all');
     setFilterValue('');
     setDateRangeFilter({ preset: 'all' });
+    setSessionFilter(null);
   };
 
   const hasActiveFilters =
     hasWarehouseAllocationHistoryDateFilter(dateRangeFilter) ||
+    Boolean(sessionFilter) ||
     (selectedFilter !== 'all' && filterValue.trim().length > 0);
 
   const canExportFiltered = hasActiveFilters && filteredGroups.length > 0 && !isExportingFiltered;

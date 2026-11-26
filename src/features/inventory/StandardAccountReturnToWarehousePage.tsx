@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import { FileText, Loader2, RotateCcw, Search } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
@@ -260,12 +261,15 @@ export default function StandardAccountReturnToWarehousePage() {
   const { hasWarehouseHubLink } = usePermissions();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
   const isTeamLeader = user?.role === 'team_leader';
   const isCompanyAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const inventorySource = isTeamLeader ? 'leader' : 'main';
   const [approvingId, setApprovingId] = useState<string | null>(null);
 
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(
+    () => searchParams.get('q')?.trim() || searchParams.get('search')?.trim() || ''
+  );
   const [statusFilter, setStatusFilter] = useState('all');
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
   const [page, setPage] = useState(0);
@@ -390,6 +394,15 @@ export default function StandardAccountReturnToWarehousePage() {
   useEffect(() => {
     setPage(0);
   }, [statusFilter, searchQuery, dateRangeFilter, pageSize]);
+
+  useEffect(() => {
+    const fromUrl =
+      searchParams.get('q')?.trim() || searchParams.get('search')?.trim() || '';
+    if (!fromUrl) return;
+    setSearchQuery(fromUrl);
+    setStatusFilter('all');
+    setDateRangeFilter({ preset: 'all' });
+  }, [searchParams]);
 
   const { pageCount, safePage, pagedItems } = getListPaginationSlice(filtered, page, pageSize);
 

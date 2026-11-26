@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase';
 import { fetchAllPaginated } from '@/lib/supabasePaginate';
 import {
+  buildStockMovementDisplayNotes,
   collectUuidsFromText,
   formatLocationLabel,
   formatStockMovementNotes,
@@ -11,6 +12,7 @@ import {
   getStockMovementCategory,
   getStockMovementDirection,
   getStockMovementRoleTag,
+  getStockMovementTypeDescription,
   getStockMovementTypeLabel,
   locationTouchesAgentId,
   locationTouchesWarehouseId,
@@ -20,7 +22,7 @@ import {
 } from './stockMovementTypes';
 
 /** Bump when display mapping changes so React Query does not keep stale labels. */
-export const STOCK_MOVEMENTS_QUERY_KEY = 'stock-movements-v6';
+export const STOCK_MOVEMENTS_QUERY_KEY = 'stock-movements-v14';
 
 type RawVariant = {
   id: string;
@@ -36,6 +38,10 @@ type RawTx = {
   quantity: number;
   from_location: string | null;
   to_location: string | null;
+  from_qty_before: number | null;
+  from_qty_after: number | null;
+  to_qty_before: number | null;
+  to_qty_after: number | null;
   reference_type: string | null;
   reference_id: string | null;
   notes: string | null;
@@ -54,10 +60,16 @@ export type StockMovementRow = {
   createdAt: string;
   transactionType: string;
   typeLabel: string;
+  /** Short explanation under the type title. */
+  typeDescription: string;
   category: StockMovementCategory;
   direction: StockMovementDirection;
   quantity: number;
   signedQuantity: number;
+  fromQtyBefore: number | null;
+  fromQtyAfter: number | null;
+  toQtyBefore: number | null;
+  toQtyAfter: number | null;
   fromLocationRaw: string | null;
   toLocationRaw: string | null;
   fromLabel: string;
@@ -89,6 +101,12 @@ export type StockMovementLocationOption = {
 function firstRelation<T>(value: T | T[] | null | undefined): T | null {
   if (Array.isArray(value)) return value[0] ?? null;
   return value ?? null;
+}
+
+function toNullableNumber(value: unknown): number | null {
+  if (value == null || value === '') return null;
+  const n = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 function collectAgentIds(rows: RawTx[]): string[] {
@@ -150,17 +168,18 @@ function locationIsClientParty(raw: string | null | undefined): boolean {
 function collectClientOrderReturnIds(rows: RawTx[]): string[] {
   const ids = new Set<string>();
   for (const row of rows) {
-    if (
-      locationIsClientParty(row.from_location) ||
-      locationIsClientParty(row.to_location)
-    ) {
-      if (row.reference_type === 'client_order_return' && row.reference_id) {
-        ids.add(row.reference_id);
-      }
+    if (row.reference_type === 'client_order_return' && row.reference_id) {
+      ids.add(row.reference_id);
     }
   }
   return Array.from(ids);
 }
+
+type ClientReturnLookup = {
+  clientName: string;
+  returnNumber: string | null;
+  orderNumber: string | null;
+};
 
 function collectClientOrderIds(rows: RawTx[]): string[] {
   const ids = new Set<string>();
@@ -176,8 +195,8 @@ function collectClientOrderIds(rows: RawTx[]): string[] {
   return Array.from(ids);
 }
 
-async function fetchClientNamesByReturnId(ids: string[]): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
+async function fetchClientReturnsById(ids: string[]): Promise<Map<string, ClientReturnLookup>> {
+  const map = new Map<string, ClientReturnLookup>();
   if (ids.length === 0) return map;
 
   const CHUNK = 100;
@@ -185,19 +204,44 @@ async function fetchClientNamesByReturnId(ids: string[]): Promise<Map<string, st
     const chunk = ids.slice(i, i + CHUNK);
     const { data, error } = await supabase
       .from('client_order_returns')
-      .select('id, client_name')
+      .select('id, client_name, return_number, order_number')
       .in('id', chunk);
     if (error) throw error;
     for (const row of data ?? []) {
       const name = String((row as { client_name?: string | null }).client_name || '').trim();
-      map.set(row.id as string, name || 'Client');
+      const returnNumber = String(
+        (row as { return_number?: string | null }).return_number || ''
+      ).trim();
+      const orderNumber = String(
+        (row as { order_number?: string | null }).order_number || ''
+      ).trim();
+      map.set(row.id as string, {
+        clientName: name || 'Client',
+        returnNumber: returnNumber || null,
+        orderNumber: orderNumber || null,
+      });
     }
   }
   return map;
 }
 
-async function fetchClientNamesByOrderId(ids: string[]): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
+type ClientOrderLookup = {
+  clientName: string;
+  orderNumber: string | null;
+};
+
+function collectClientOrderReferenceIds(rows: RawTx[]): string[] {
+  const ids = new Set<string>(collectClientOrderIds(rows));
+  for (const row of rows) {
+    if (row.reference_type === 'client_order' && row.reference_id) {
+      ids.add(row.reference_id);
+    }
+  }
+  return Array.from(ids);
+}
+
+async function fetchClientOrdersById(ids: string[]): Promise<Map<string, ClientOrderLookup>> {
+  const map = new Map<string, ClientOrderLookup>();
   if (ids.length === 0) return map;
 
   const CHUNK = 100;
@@ -205,7 +249,7 @@ async function fetchClientNamesByOrderId(ids: string[]): Promise<Map<string, str
     const chunk = ids.slice(i, i + CHUNK);
     const { data, error } = await supabase
       .from('client_orders')
-      .select('id, client:clients!client_orders_client_id_fkey ( name )')
+      .select('id, order_number, client:clients!client_orders_client_id_fkey ( name )')
       .in('id', chunk);
     if (error) throw error;
     for (const row of data ?? []) {
@@ -213,7 +257,79 @@ async function fetchClientNamesByOrderId(ids: string[]): Promise<Map<string, str
         (row as { client?: { name: string } | { name: string }[] | null }).client
       );
       const name = String(client?.name || '').trim();
-      map.set(row.id as string, name || 'Client');
+      const orderNumber = String(
+        (row as { order_number?: string | null }).order_number || ''
+      ).trim();
+      map.set(row.id as string, {
+        clientName: name || 'Client',
+        orderNumber: orderNumber || null,
+      });
+    }
+  }
+  return map;
+}
+
+function collectTlStockRequestIds(rows: RawTx[]): string[] {
+  const ids = new Set<string>();
+  for (const row of rows) {
+    if (row.reference_type === 'tl_stock_request' && row.reference_id) {
+      ids.add(row.reference_id);
+    }
+  }
+  return Array.from(ids);
+}
+
+async function fetchTlRequestNumbersById(ids: string[]): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (ids.length === 0) return map;
+
+  const CHUNK = 100;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK);
+    const { data, error } = await supabase
+      .from('tl_stock_requests')
+      .select('id, request_number')
+      .in('id', chunk);
+    if (error) throw error;
+    for (const row of data ?? []) {
+      const requestNumber = String(
+        (row as { request_number?: string | null }).request_number || ''
+      ).trim();
+      if (requestNumber) map.set(row.id as string, requestNumber);
+    }
+  }
+  return map;
+}
+
+function collectStandardAccountReturnIds(rows: RawTx[]): string[] {
+  const ids = new Set<string>();
+  for (const row of rows) {
+    if (row.reference_type === 'standard_account_stock_return' && row.reference_id) {
+      ids.add(row.reference_id);
+    }
+  }
+  return Array.from(ids);
+}
+
+async function fetchStandardAccountReturnNumbersById(
+  ids: string[]
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (ids.length === 0) return map;
+
+  const CHUNK = 100;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK);
+    const { data, error } = await supabase
+      .from('standard_account_stock_return_requests')
+      .select('id, request_number')
+      .in('id', chunk);
+    if (error) throw error;
+    for (const row of data ?? []) {
+      const requestNumber = String(
+        (row as { request_number?: string | null }).request_number || ''
+      ).trim();
+      if (requestNumber) map.set(row.id as string, requestNumber);
     }
   }
   return map;
@@ -236,7 +352,7 @@ export async function fetchStockMovements(params: {
   companyId: string;
   /** When set, only rows that touch this warehouse location key. */
   scopeWarehouseLocationId?: string | null;
-  /** When set, only rows that touch this agent bag (`agent_inventory:<id>`). */
+  /** When set, only rows that touch this agent inventory (`agent_inventory:<id>`). */
   scopeAgentId?: string | null;
 }): Promise<StockMovementRow[]> {
   const { companyId, scopeWarehouseLocationId, scopeAgentId } = params;
@@ -256,6 +372,10 @@ export async function fetchStockMovements(params: {
         quantity,
         from_location,
         to_location,
+        from_qty_before,
+        from_qty_after,
+        to_qty_before,
+        to_qty_after,
         reference_type,
         reference_id,
         notes,
@@ -291,11 +411,14 @@ export async function fetchStockMovements(params: {
     );
   }
 
-  const [profiles, clientNameByReturnId, clientNameByOrderId] = await Promise.all([
-    fetchProfiles(collectProfileIdsForMovements(scoped)),
-    fetchClientNamesByReturnId(collectClientOrderReturnIds(scoped)),
-    fetchClientNamesByOrderId(collectClientOrderIds(scoped)),
-  ]);
+  const [profiles, clientReturnById, clientOrderById, tlRequestNumberById, saReturnNumberById] =
+    await Promise.all([
+      fetchProfiles(collectProfileIdsForMovements(scoped)),
+      fetchClientReturnsById(collectClientOrderReturnIds(scoped)),
+      fetchClientOrdersById(collectClientOrderReferenceIds(scoped)),
+      fetchTlRequestNumbersById(collectTlStockRequestIds(scoped)),
+      fetchStandardAccountReturnNumbersById(collectStandardAccountReturnIds(scoped)),
+    ]);
 
   const labelOpts = {
     locationNameById,
@@ -317,17 +440,49 @@ export async function fetchStockMovements(params: {
     const direction = getStockMovementDirection(row.transaction_type, row.notes);
     const brandName = brand?.name ?? '—';
     const variantName = variant?.name ?? '—';
-    let clientName: string | null = null;
-    if (row.reference_id) {
-      if (row.reference_type === 'client_order_return') {
-        clientName = clientNameByReturnId.get(row.reference_id) ?? null;
-      } else if (row.reference_type === 'client_order') {
-        clientName = clientNameByOrderId.get(row.reference_id) ?? null;
-      }
-    }
+    const clientReturn =
+      row.reference_type === 'client_order_return' && row.reference_id
+        ? clientReturnById.get(row.reference_id) ?? null
+        : null;
+    const clientOrder =
+      row.reference_type === 'client_order' && row.reference_id
+        ? clientOrderById.get(row.reference_id) ?? null
+        : null;
+    const tlRequestNumber =
+      row.reference_type === 'tl_stock_request' && row.reference_id
+        ? tlRequestNumberById.get(row.reference_id) ?? null
+        : null;
+    const standardReturnNumber =
+      row.reference_type === 'standard_account_stock_return' && row.reference_id
+        ? saReturnNumberById.get(row.reference_id) ?? null
+        : null;
+    const clientName = clientReturn?.clientName ?? clientOrder?.clientName ?? null;
     const locationOpts = { ...labelOpts, clientName };
     const performerRole =
       performer?.role ?? profiles.roleById.get(row.performed_by) ?? null;
+    const resolvedNotes = formatStockMovementNotes(row.notes, profiles.nameById);
+    const fromLabel = friendlyTechnicalLocationLabel(
+      formatLocationLabel(fromParsed, locationOpts)
+    );
+    const toLabel = friendlyTechnicalLocationLabel(
+      formatLocationLabel(toParsed, locationOpts)
+    );
+    const displayNotes = buildStockMovementDisplayNotes({
+      transactionType: row.transaction_type,
+      quantity: row.quantity,
+      fromLabel,
+      toLabel,
+      fromLocationRaw: row.from_location,
+      toLocationRaw: row.to_location,
+      referenceType: row.reference_type,
+      orderNumber: clientReturn?.orderNumber ?? clientOrder?.orderNumber ?? null,
+      returnNumber: clientReturn?.returnNumber ?? null,
+      requestNumber: tlRequestNumber,
+      standardReturnNumber,
+      clientName,
+      rawNotes: resolvedNotes,
+      createdAt: row.created_at,
+    });
 
     return {
       id: row.id,
@@ -338,23 +493,28 @@ export async function fetchStockMovements(params: {
         toLocation: row.to_location,
         notes: row.notes,
       }),
+      typeDescription: getStockMovementTypeDescription(row.transaction_type, {
+        fromLocation: row.from_location,
+        toLocation: row.to_location,
+        notes: resolvedNotes,
+      }),
       category,
       direction,
       quantity: row.quantity,
       signedQuantity: getSignedQuantity(row.transaction_type, row.quantity, row.notes),
+      fromQtyBefore: toNullableNumber(row.from_qty_before),
+      fromQtyAfter: toNullableNumber(row.from_qty_after),
+      toQtyBefore: toNullableNumber(row.to_qty_before),
+      toQtyAfter: toNullableNumber(row.to_qty_after),
       fromLocationRaw: row.from_location,
       toLocationRaw: row.to_location,
-      fromLabel: friendlyTechnicalLocationLabel(
-        formatLocationLabel(fromParsed, locationOpts)
-      ),
-      toLabel: friendlyTechnicalLocationLabel(
-        formatLocationLabel(toParsed, locationOpts)
-      ),
+      fromLabel,
+      toLabel,
       fromPartyTag: getLocationPartyTag(fromParsed, partyTagOpts),
       toPartyTag: getLocationPartyTag(toParsed, partyTagOpts),
       referenceType: row.reference_type,
       referenceId: row.reference_id,
-      notes: formatStockMovementNotes(row.notes, profiles.nameById),
+      notes: displayNotes,
       brandId: brand?.id ?? null,
       brandName,
       variantId: row.variant_id,
