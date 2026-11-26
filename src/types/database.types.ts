@@ -611,7 +611,19 @@ export interface ClientOrderItem {
   created_at: string;
 }
 
-export interface InventoryTransaction {
+/** Optional before/after bag balances stamped by trigger or historical backfill. */
+export type InventoryTransactionQtyBalances = {
+  /** Balance at from_location before this movement. */
+  from_qty_before?: number | null;
+  /** Balance at from_location after this movement. */
+  from_qty_after?: number | null;
+  /** Balance at to_location before this movement. */
+  to_qty_before?: number | null;
+  /** Balance at to_location after this movement. */
+  to_qty_after?: number | null;
+};
+
+export interface InventoryTransaction extends InventoryTransactionQtyBalances {
   id: string;
   company_id: string;
   transaction_type: TransactionType;
@@ -619,18 +631,19 @@ export interface InventoryTransaction {
   quantity: number;
   from_location?: string;
   to_location?: string;
-  /** Balance at from_location before this movement (bag locations). */
-  from_qty_before?: number | null;
-  from_qty_after?: number | null;
-  /** Balance at to_location before this movement (bag locations). */
-  to_qty_before?: number | null;
-  to_qty_after?: number | null;
   reference_type?: string;
   reference_id?: string;
   performed_by: string;
   notes?: string;
   created_at: string;
 }
+
+/** Writers may omit balances — DB trigger stamps them when null. */
+export type InventoryTransactionInsert = Omit<
+  InventoryTransaction,
+  'id' | 'created_at' | keyof InventoryTransactionQtyBalances
+> &
+  InventoryTransactionQtyBalances;
 
 export type InventoryBatchSourceType =
   | 'opening_balance'
@@ -1343,7 +1356,7 @@ export interface Database {
       };
       inventory_transactions: {
         Row: InventoryTransaction;
-        Insert: Omit<InventoryTransaction, "id" | "created_at">;
+        Insert: InventoryTransactionInsert;
         Update: never;
       };
       inventory_batches: {

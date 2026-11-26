@@ -233,6 +233,9 @@ export type StockMovementDisplayNotesInput = {
   toLabel: string;
   fromLocationRaw?: string | null;
   toLocationRaw?: string | null;
+  /** Party tags from From/To cells (TL, Mobile Sales, Warehouse, …). */
+  fromPartyTag?: string | null;
+  toPartyTag?: string | null;
   referenceType?: string | null;
   orderNumber?: string | null;
   returnNumber?: string | null;
@@ -244,6 +247,107 @@ export type StockMovementDisplayNotesInput = {
   /** Transaction timestamp — used for allocation date in notes. */
   createdAt?: string | null;
 };
+
+function partyTagToRoleProse(partyTag: string | null | undefined): string | null {
+  switch ((partyTag || '').trim()) {
+    case 'TL':
+      return 'Team Leader';
+    case 'Mobile Sales':
+      return 'Mobile Sales';
+    case 'Super Admin':
+      return 'Super Admin';
+    case 'Warehouse':
+      return 'Warehouse';
+    case 'Admin':
+      return 'Admin';
+    case 'Manager':
+      return 'Manager';
+    case 'Agent':
+      return 'Agent';
+    default:
+      return partyTag?.trim() || null;
+  }
+}
+
+function isBagInventoryLocation(parsed: ParsedLocation | null): boolean {
+  return (
+    parsed?.kind === 'main' ||
+    parsed?.kind === 'warehouse' ||
+    parsed?.kind === 'agent'
+  );
+}
+
+/** e.g. "Team Leader Ana inventory" / "Main inventory" / "Warehouse Test inventory". */
+export function formatBagInventorySubject(opts: {
+  parsed: ParsedLocation | null;
+  label: string;
+  partyTag?: string | null;
+}): string | null {
+  const parsed = opts.parsed;
+  if (!isBagInventoryLocation(parsed)) return null;
+
+  const label = (opts.label || '').trim();
+  const role = partyTagToRoleProse(opts.partyTag);
+
+  if (parsed!.kind === 'main') {
+    if (label.startsWith('Main:')) return `${label} inventory`;
+    return 'Main inventory';
+  }
+
+  if (parsed!.kind === 'warehouse') {
+    if (!label || label === '—') return 'Warehouse inventory';
+    if (label.startsWith('Main:')) return `${label} inventory`;
+    return `${label} inventory`;
+  }
+
+  // agent bag
+  const name =
+    !label || label === '—' || label === 'Agent / TL' ? null : label;
+  if (role && name) return `${role} ${name} inventory`;
+  if (role) return `${role} inventory`;
+  if (name) return `${name} inventory`;
+  return 'Agent inventory';
+}
+
+/**
+ * Whose bag went up/down — display-only, e.g.
+ * "Team Leader Ana inventory increased · Mobile Sales Ben inventory decreased"
+ */
+export function buildBagInventoryChangeNote(
+  input: Pick<
+    StockMovementDisplayNotesInput,
+    | 'fromLabel'
+    | 'toLabel'
+    | 'fromLocationRaw'
+    | 'toLocationRaw'
+    | 'fromPartyTag'
+    | 'toPartyTag'
+  >
+): string | null {
+  const fromParsed = parseInventoryLocation(input.fromLocationRaw);
+  const toParsed = parseInventoryLocation(input.toLocationRaw);
+  const parts: string[] = [];
+
+  const fromSubject = formatBagInventorySubject({
+    parsed: fromParsed,
+    label: input.fromLabel,
+    partyTag: input.fromPartyTag,
+  });
+  if (fromSubject) {
+    parts.push(`${fromSubject} decreased`);
+  }
+
+  const toSubject = formatBagInventorySubject({
+    parsed: toParsed,
+    label: input.toLabel,
+    partyTag: input.toPartyTag,
+  });
+  if (toSubject) {
+    parts.push(`${toSubject} increased`);
+  }
+
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
 
 /**
  * User-facing Notes cell: specific action + people/docs, not raw ledger jargon.
@@ -264,9 +368,12 @@ export function buildStockMovementDisplayNotes(
     extractStandardAccountReturnNumber(input.rawNotes);
   const raw = (input.rawNotes || '').trim();
   const type = input.transactionType;
+  const bagChange = buildBagInventoryChangeNote(input);
+
+  let action: string;
 
   if (type === 'client_order_return' || input.referenceType === 'client_order_return') {
-    return formatClientOrderReturnNotes({
+    action = formatClientOrderReturnNotes({
       returnNumber: cr,
       orderNumber: ord,
       clientName: client,
@@ -276,125 +383,100 @@ export function buildStockMovementDisplayNotes(
       toLocation: input.toLocationRaw,
       fallbackNotes: raw,
     });
-  }
-
-  if (type === 'order_fulfilled') {
-    return joinNoteParts([
+  } else if (type === 'order_fulfilled') {
+    action = joinNoteParts([
       `Sold ${unitLabel}${client ? ` to ${client}` : ' to client'}`,
       ord || null,
     ]);
-  }
-
-  if (type === 'allocated_to_agent') {
+  } else if (type === 'allocated_to_agent') {
     const fromParsed = parseInventoryLocation(input.fromLocationRaw);
     const toParsed = parseInventoryLocation(input.toLocationRaw);
     const allocatedOn = formatAllocationNoteDate(input.createdAt);
-    let action: string;
+    let allocAction: string;
     if (fromParsed?.kind === 'main' && toParsed?.kind === 'agent') {
-      action = `Allocated ${unitLabel} from Main inventory to ${to || 'Team Leader'}`;
+      allocAction = `Allocated ${unitLabel} from Main inventory to ${to || 'Team Leader'}`;
     } else if (fromParsed?.kind === 'agent' && toParsed?.kind === 'agent') {
-      action = `Allocated ${unitLabel} from ${from || 'Team Leader'} to ${to || 'agent'}`;
+      allocAction = `Allocated ${unitLabel} from ${from || 'Team Leader'} to ${to || 'agent'}`;
     } else if (from && to && from !== '—') {
-      action = `Allocated ${unitLabel} from ${from} to ${to}`;
+      allocAction = `Allocated ${unitLabel} from ${from} to ${to}`;
     } else {
-      action = `Allocated ${unitLabel}`;
+      allocAction = `Allocated ${unitLabel}`;
     }
-    return joinNoteParts([action, allocatedOn || null]);
-  }
-
-  if (type === 'tl_stock_transfer_out') {
-    return joinNoteParts([
+    action = joinNoteParts([allocAction, allocatedOn || null]);
+  } else if (type === 'tl_stock_transfer_out') {
+    action = joinNoteParts([
       `Dispatched ${unitLabel} on TL transfer (on the way)`,
       tlreq || null,
     ]);
-  }
-  if (type === 'tl_stock_transfer_in') {
-    return joinNoteParts([
+  } else if (type === 'tl_stock_transfer_in') {
+    action = joinNoteParts([
       `Received ${unitLabel} from TL transfer into inventory`,
       tlreq || null,
     ]);
-  }
-
-  if (type === 'return') {
+  } else if (type === 'return') {
     const lower = raw.toLowerCase();
-    if (lower.includes('cancel')) {
-      return joinNoteParts([`Restored ${unitLabel} after order was cancelled`, ord || null]);
-    }
-    return joinNoteParts([
-      `Restored ${unitLabel} after finance rejected the order`,
-      ord || null,
-    ]);
-  }
-
-  if (type === 'return_to_main') {
-    return `Returned ${unitLabel} from ${from || 'field inventory'} to Main inventory`;
-  }
-
-  if (type === 'purchase_order_received') {
-    return `Received ${unitLabel} from supplier PO`;
-  }
-  if (type === 'warehouse_stock_receive') {
-    return `Received ${unitLabel} from warehouse stock request`;
-  }
-  if (type === 'warehouse_transfer_out') {
-    return `Sent ${unitLabel} out on warehouse transfer`;
-  }
-  if (type === 'warehouse_transfer_in') {
-    return `Received ${unitLabel} from warehouse transfer`;
-  }
-  if (type === 'warehouse_allocate_to_sub') {
-    return `Allocated ${unitLabel} from Main to sub-warehouse${to && to !== '—' ? ` (${to})` : ''}`;
-  }
-  if (type === 'warehouse_return_from_sub') {
-    return `Returned ${unitLabel} from sub-warehouse to Main`;
-  }
-
-  if (type === 'client_return_out') {
-    return joinNoteParts([
+    action = lower.includes('cancel')
+      ? joinNoteParts([`Restored ${unitLabel} after order was cancelled`, ord || null])
+      : joinNoteParts([
+          `Restored ${unitLabel} after finance rejected the order`,
+          ord || null,
+        ]);
+  } else if (type === 'return_to_main') {
+    action = `Returned ${unitLabel} from ${from || 'field inventory'} to Main inventory`;
+  } else if (type === 'purchase_order_received') {
+    action = `Received ${unitLabel} from supplier PO`;
+  } else if (type === 'warehouse_stock_receive') {
+    action = `Received ${unitLabel} from warehouse stock request`;
+  } else if (type === 'warehouse_transfer_out') {
+    action = `Sent ${unitLabel} out on warehouse transfer`;
+  } else if (type === 'warehouse_transfer_in') {
+    action = `Received ${unitLabel} from warehouse transfer`;
+  } else if (type === 'warehouse_allocate_to_sub') {
+    action = `Allocated ${unitLabel} from Main to sub-warehouse${to && to !== '—' ? ` (${to})` : ''}`;
+  } else if (type === 'warehouse_return_from_sub') {
+    action = `Returned ${unitLabel} from sub-warehouse to Main`;
+  } else if (type === 'client_return_out') {
+    action = joinNoteParts([
       `Submitted Standard Account return · ${unitLabel} left inventory`,
       rt || null,
     ]);
-  }
-  if (type === 'client_return_cancel_in') {
-    return joinNoteParts([
+  } else if (type === 'client_return_cancel_in') {
+    action = joinNoteParts([
       `Cancelled Standard Account return · ${unitLabel} restored to inventory`,
       rt || null,
     ]);
-  }
-  if (type === 'client_return_in' || type === 'rebate_return_in' || type === 'warehouse_return_in') {
-    return joinNoteParts([`Restocked ${unitLabel} from return`, rt || null]);
-  }
-  if (
+  } else if (
+    type === 'client_return_in' ||
+    type === 'rebate_return_in' ||
+    type === 'warehouse_return_in'
+  ) {
+    action = joinNoteParts([`Restocked ${unitLabel} from return`, rt || null]);
+  } else if (
     type === 'client_return_disposed' ||
     type === 'rebate_return_disposed' ||
     type === 'warehouse_return_disposed'
   ) {
-    return joinNoteParts([`Disposed ${unitLabel} from return`, rt || null]);
-  }
-
-  if (type === 'adjustment') {
+    action = joinNoteParts([`Disposed ${unitLabel} from return`, rt || null]);
+  } else if (type === 'adjustment') {
     const adj = inferAdjustmentDirection(raw);
-    if (adj === 'in') return raw || `Increased inventory by ${unitLabel}`;
-    if (adj === 'out') return raw || `Decreased inventory by ${unitLabel}`;
-    return raw || `Adjusted inventory by ${unitLabel}`;
+    if (adj === 'in') action = raw || `Increased inventory by ${unitLabel}`;
+    else if (adj === 'out') action = raw || `Decreased inventory by ${unitLabel}`;
+    else action = raw || `Adjusted inventory by ${unitLabel}`;
+  } else if (type === 'internal_stock_request_reserve') {
+    action = `Reserved ${unitLabel} for sub-stock request`;
+  } else if (type === 'internal_stock_request_receive') {
+    action = `Received ${unitLabel} from sub-stock request`;
+  } else if (type === 'internal_stock_request_short_release') {
+    action = `Released ${unitLabel} reserved for short sub-stock receive`;
+  } else if (raw) {
+    action = raw;
+  } else if (from && to && from !== '—' && to !== '—') {
+    action = `Moved ${unitLabel} from ${from} to ${to}`;
+  } else {
+    action = `Recorded ${unitLabel}`;
   }
 
-  if (type === 'internal_stock_request_reserve') {
-    return `Reserved ${unitLabel} for sub-stock request`;
-  }
-  if (type === 'internal_stock_request_receive') {
-    return `Received ${unitLabel} from sub-stock request`;
-  }
-  if (type === 'internal_stock_request_short_release') {
-    return `Released ${unitLabel} reserved for short sub-stock receive`;
-  }
-
-  // Keep meaningful free-text notes when we don't have a stronger template.
-  if (raw) return raw;
-  if (from && to && from !== '—' && to !== '—') {
-    return `Moved ${unitLabel} from ${from} to ${to}`;
-  }
-  return `Recorded ${unitLabel}`;
+  return joinNoteParts([action, bagChange]);
 }
 
 /**
@@ -698,7 +780,75 @@ function formatQtyNumber(n: number): string {
     : n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
-/** e.g. "200 → 210 (+10)" or fallback "+10" / "−10". */
+export type StockMovementQtyDisplayParts = {
+  mode: 'balance' | 'delta';
+  before?: number;
+  after?: number;
+  delta: number;
+  beforeText?: string;
+  afterText?: string;
+  deltaText: string;
+  /** Plain-text for Excel / PDF / aria. */
+  plain: string;
+};
+
+/** Structured Qty for colored UI + plain exports. */
+export function getStockMovementQtyDisplayParts(input: {
+  quantity: number;
+  direction: StockMovementDirection;
+  fromLocationRaw?: string | null;
+  toLocationRaw?: string | null;
+  fromQtyBefore?: number | null;
+  fromQtyAfter?: number | null;
+  toQtyBefore?: number | null;
+  toQtyAfter?: number | null;
+  scopeAgentId?: string | null;
+  scopeWarehouseLocationId?: string | null;
+}): StockMovementQtyDisplayParts {
+  const qty = Math.abs(Number(input.quantity) || 0);
+  const balance = resolveStockMovementQtyBalance(input);
+
+  if (!balance) {
+    const delta =
+      input.direction === 'in' ? qty : input.direction === 'out' ? -qty : 0;
+    const deltaText =
+      delta > 0
+        ? `+${formatQtyNumber(delta)}`
+        : delta < 0
+          ? `−${formatQtyNumber(Math.abs(delta))}`
+          : formatQtyNumber(qty);
+    return {
+      mode: 'delta',
+      delta,
+      deltaText,
+      plain: deltaText,
+    };
+  }
+
+  const delta = balance.after - balance.before;
+  const deltaText =
+    delta > 0
+      ? `+${formatQtyNumber(delta)}`
+      : delta < 0
+        ? `−${formatQtyNumber(Math.abs(delta))}`
+        : formatQtyNumber(0);
+  const beforeText = formatQtyNumber(balance.before);
+  const afterText = formatQtyNumber(balance.after);
+  const plain = `Before ${beforeText} → After ${afterText} (${deltaText})`;
+
+  return {
+    mode: 'balance',
+    before: balance.before,
+    after: balance.after,
+    delta,
+    beforeText,
+    afterText,
+    deltaText,
+    plain,
+  };
+}
+
+/** e.g. "Before 3 → After 2 (−1)" or fallback "+10" / "−10". */
 export function formatStockMovementQtyDisplay(input: {
   quantity: number;
   direction: StockMovementDirection;
@@ -711,23 +861,7 @@ export function formatStockMovementQtyDisplay(input: {
   scopeAgentId?: string | null;
   scopeWarehouseLocationId?: string | null;
 }): string {
-  const qty = Math.abs(Number(input.quantity) || 0);
-  const balance = resolveStockMovementQtyBalance(input);
-  if (!balance) {
-    if (input.direction === 'in') return `+${formatQtyNumber(qty)}`;
-    if (input.direction === 'out') return `−${formatQtyNumber(qty)}`;
-    return formatQtyNumber(qty);
-  }
-
-  const delta = balance.after - balance.before;
-  const deltaText =
-    delta > 0
-      ? `+${formatQtyNumber(delta)}`
-      : delta < 0
-        ? `−${formatQtyNumber(Math.abs(delta))}`
-        : formatQtyNumber(0);
-
-  return `${formatQtyNumber(balance.before)} → ${formatQtyNumber(balance.after)} (${deltaText})`;
+  return getStockMovementQtyDisplayParts(input).plain;
 }
 
 export type ParsedLocationKind =

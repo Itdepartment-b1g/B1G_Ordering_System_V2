@@ -22,7 +22,7 @@ import {
 } from './stockMovementTypes';
 
 /** Bump when display mapping changes so React Query does not keep stale labels. */
-export const STOCK_MOVEMENTS_QUERY_KEY = 'stock-movements-v14';
+export const STOCK_MOVEMENTS_QUERY_KEY = 'stock-movements-v15';
 
 type RawVariant = {
   id: string;
@@ -38,10 +38,10 @@ type RawTx = {
   quantity: number;
   from_location: string | null;
   to_location: string | null;
-  from_qty_before: number | null;
-  from_qty_after: number | null;
-  to_qty_before: number | null;
-  to_qty_after: number | null;
+  from_qty_before?: number | null;
+  from_qty_after?: number | null;
+  to_qty_before?: number | null;
+  to_qty_after?: number | null;
   reference_type: string | null;
   reference_id: string | null;
   notes: string | null;
@@ -467,6 +467,8 @@ export async function fetchStockMovements(params: {
     const toLabel = friendlyTechnicalLocationLabel(
       formatLocationLabel(toParsed, locationOpts)
     );
+    const fromPartyTag = getLocationPartyTag(fromParsed, partyTagOpts);
+    const toPartyTag = getLocationPartyTag(toParsed, partyTagOpts);
     const displayNotes = buildStockMovementDisplayNotes({
       transactionType: row.transaction_type,
       quantity: row.quantity,
@@ -474,6 +476,8 @@ export async function fetchStockMovements(params: {
       toLabel,
       fromLocationRaw: row.from_location,
       toLocationRaw: row.to_location,
+      fromPartyTag,
+      toPartyTag,
       referenceType: row.reference_type,
       orderNumber: clientReturn?.orderNumber ?? clientOrder?.orderNumber ?? null,
       returnNumber: clientReturn?.returnNumber ?? null,
@@ -510,8 +514,8 @@ export async function fetchStockMovements(params: {
       toLocationRaw: row.to_location,
       fromLabel,
       toLabel,
-      fromPartyTag: getLocationPartyTag(fromParsed, partyTagOpts),
-      toPartyTag: getLocationPartyTag(toParsed, partyTagOpts),
+      fromPartyTag,
+      toPartyTag,
       referenceType: row.reference_type,
       referenceId: row.reference_id,
       notes: displayNotes,

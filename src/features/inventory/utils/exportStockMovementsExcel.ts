@@ -16,7 +16,7 @@ const HEADERS = [
   'Description',
   'Direction',
   'Product',
-  'Qty',
+  'Before → After',
   'From location',
   'To location',
   'Linked to',
@@ -60,7 +60,7 @@ export async function exportStockMovementsExcel(opts: {
     views: [{ state: 'frozen', ySplit: 3, topLeftCell: 'A4', showGridLines: true }],
   });
 
-  [18, 28, 36, 12, 28, 22, 22, 22, 18, 18, 40].forEach((width, index) => {
+  [18, 28, 36, 12, 28, 28, 22, 22, 18, 18, 40].forEach((width, index) => {
     ws.getColumn(index + 1).width = width;
   });
 

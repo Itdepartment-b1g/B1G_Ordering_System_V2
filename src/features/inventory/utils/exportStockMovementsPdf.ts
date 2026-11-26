@@ -334,7 +334,7 @@ function buildHtml(opts: {
           <th class="col-desc">Type</th>
           <th class="col-qty">Dir</th>
           <th class="col-desc">Product</th>
-          <th class="col-qty">Qty</th>
+          <th class="col-qty">Before → After</th>
           <th class="col-desc">From</th>
           <th class="col-desc">To</th>
           <th class="col-desc">Done by</th>

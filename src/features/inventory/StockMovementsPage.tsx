@@ -61,11 +61,12 @@ import {
   type StockMovementRow,
 } from './stock-movements/stockMovementsApi';
 import {
-  formatStockMovementQtyDisplay,
+  getStockMovementQtyDisplayParts,
   friendlyTechnicalLocationLabel,
   STOCK_MOVEMENT_CATEGORY_FILTER_OPTIONS,
   type StockMovementCategory,
 } from './stock-movements/stockMovementTypes';
+import { cn } from '@/lib/utils';
 import {
   buildStockMovementDocumentPath,
   formatStockMovementAllocationDateLabel,
@@ -206,11 +207,11 @@ function LocationPartyCell({
   );
 }
 
-function quantityDisplayText(
+function qtyPartsForRow(
   row: StockMovementRow,
   scope?: { agentId?: string | null; warehouseLocationId?: string | null }
-): string {
-  return formatStockMovementQtyDisplay({
+) {
+  return getStockMovementQtyDisplayParts({
     quantity: row.quantity,
     direction: row.direction,
     fromLocationRaw: row.fromLocationRaw,
@@ -222,6 +223,97 @@ function quantityDisplayText(
     scopeAgentId: scope?.agentId,
     scopeWarehouseLocationId: scope?.warehouseLocationId,
   });
+}
+
+function QuantityCell({
+  row,
+  scope,
+  className,
+}: {
+  row: StockMovementRow;
+  scope?: { agentId?: string | null; warehouseLocationId?: string | null };
+  className?: string;
+}) {
+  const parts = qtyPartsForRow(row, scope);
+  const deltaClass =
+    parts.delta > 0
+      ? 'text-emerald-700'
+      : parts.delta < 0
+        ? 'text-rose-700'
+        : 'text-muted-foreground';
+
+  if (parts.mode === 'delta') {
+    return (
+      <span className={cn('tabular-nums font-semibold', deltaClass, className)} title={parts.plain}>
+        {parts.deltaText}
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className={cn(
+        'inline-flex flex-wrap items-baseline justify-end gap-x-1.5 tabular-nums',
+        'text-sm',
+        className
+      )}
+      title={parts.plain}
+    >
+      <span className="inline-flex items-baseline gap-1">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+          Before
+        </span>
+        <span className="font-medium text-slate-500">{parts.beforeText}</span>
+      </span>
+      <span className="text-slate-400" aria-hidden>
+        →
+      </span>
+      <span className="inline-flex items-baseline gap-1">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-800">
+          After
+        </span>
+        <span className="font-semibold text-slate-900">{parts.afterText}</span>
+      </span>
+      <span className={cn('font-semibold', deltaClass)}>({parts.deltaText})</span>
+    </span>
+  );
+}
+
+function QtyLegend() {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+      <span className="font-medium text-foreground">Qty legend</span>
+      <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5">
+        <span className="h-2 w-2 rounded-full bg-slate-400" aria-hidden />
+        <span>
+          <span className="font-medium text-slate-600">Before</span>
+          <span className="text-slate-500"> — before move</span>
+        </span>
+      </span>
+      <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-1.5 py-0.5">
+        <span className="h-2 w-2 rounded-full bg-slate-800" aria-hidden />
+        <span>
+          <span className="font-medium text-slate-900">After</span>
+          <span className="text-slate-600"> — after move</span>
+        </span>
+      </span>
+      <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-emerald-800">
+        <span className="h-2 w-2 rounded-full bg-emerald-600" aria-hidden />
+        <span className="font-medium">+ in</span>
+      </span>
+      <span className="inline-flex items-center gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-rose-800">
+        <span className="h-2 w-2 rounded-full bg-rose-600" aria-hidden />
+        <span className="font-medium">− out</span>
+      </span>
+      <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5">
+        <span className="h-2 w-2 rounded-full bg-amber-500" aria-hidden />
+        <span>
+          <span className="font-medium text-amber-900">Reason</span>
+          <span className="text-amber-800/80"> — Type / Notes</span>
+        </span>
+      </span>
+    </div>
+  );
 }
 
 function allocationNoteLinkMeta(row: StockMovementRow) {
@@ -296,15 +388,13 @@ function MovementCard({
       <CardContent className="space-y-3 p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
-            <div className="font-medium whitespace-normal">{row.typeLabel}</div>
-            <div className="text-xs text-muted-foreground whitespace-normal">
+            <div className="font-medium whitespace-normal text-amber-950">{row.typeLabel}</div>
+            <div className="text-xs text-amber-900/70 whitespace-normal">
               <NotesWithDocLinks notes={row.typeDescription} role={role} row={row} empty="" />
             </div>
           </div>
           <div className="shrink-0 text-right">
-            <div className="text-lg font-semibold tabular-nums">
-              {quantityDisplayText(row, qtyScope)}
-            </div>
+            <QuantityCell row={row} scope={qtyScope} className="justify-end text-base" />
             <div className="mt-1">{directionBadge(row)}</div>
           </div>
         </div>
@@ -809,7 +899,8 @@ export default function StockMovementsPage() {
           <div>
             <CardTitle>Transaction history</CardTitle>
             <CardDescription>
-              Filter, switch views, and export the movements currently shown.
+              Filter, switch views, and export the movements currently shown. Qty shows Before →
+              After; reason is in Type / Notes.
             </CardDescription>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -866,6 +957,8 @@ export default function StockMovementsPage() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          <QtyLegend />
+
           <div className="flex flex-wrap gap-2">
             {STOCK_MOVEMENT_CATEGORY_FILTER_OPTIONS.map((opt) => (
               <Button
@@ -1049,10 +1142,11 @@ export default function StockMovementsPage() {
                       onSort={handleSort}
                     />
                     <SortableTableHead
-                      label="Type"
+                      label="Reason (Type)"
                       sortKey="typeLabel"
                       sortDirection={getTableSortDisplayDirection(sortState, 'typeLabel')}
                       onSort={handleSort}
+                      className="text-amber-900"
                     />
                     <TableHead>Direction</TableHead>
                     <SortableTableHead
@@ -1062,7 +1156,7 @@ export default function StockMovementsPage() {
                       onSort={handleSort}
                     />
                     <SortableTableHead
-                      label="Qty"
+                      label="Before → After"
                       sortKey="quantity"
                       sortDirection={getTableSortDisplayDirection(sortState, 'quantity')}
                       onSort={handleSort}
@@ -1087,7 +1181,7 @@ export default function StockMovementsPage() {
                       sortDirection={getTableSortDisplayDirection(sortState, 'performedByName')}
                       onSort={handleSort}
                     />
-                    <TableHead>Notes</TableHead>
+                    <TableHead className="text-amber-900">Notes (detail)</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1098,8 +1192,10 @@ export default function StockMovementsPage() {
                       </TableCell>
                       <TableCell className="min-w-[14rem] max-w-[22rem]">
                         <div className="space-y-0.5">
-                          <div className="font-medium whitespace-normal">{row.typeLabel}</div>
-                          <div className="text-xs text-muted-foreground whitespace-normal">
+                          <div className="font-medium whitespace-normal text-amber-950">
+                            {row.typeLabel}
+                          </div>
+                          <div className="text-xs text-amber-900/70 whitespace-normal">
                             <NotesWithDocLinks
                               notes={row.typeDescription}
                               role={user?.role}
@@ -1123,8 +1219,8 @@ export default function StockMovementsPage() {
                           ) : null}
                         </div>
                       </TableCell>
-                      <TableCell className="whitespace-nowrap text-right font-medium tabular-nums">
-                        {quantityDisplayText(row, qtyScope)}
+                      <TableCell className="min-w-[11rem] text-right">
+                        <QuantityCell row={row} scope={qtyScope} className="w-full justify-end" />
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
                         <LocationPartyCell label={row.fromLabel} partyTag={row.fromPartyTag} />
