@@ -1,6 +1,17 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeftRight, Banknote, Camera, Check, Loader2, PenTool, RotateCcw, X } from 'lucide-react';
+import {
+  ArrowLeftRight,
+  ArrowRight,
+  Banknote,
+  Camera,
+  Check,
+  Loader2,
+  PackageOpen,
+  PenTool,
+  RotateCcw,
+  X,
+} from 'lucide-react';
 import { format } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/features/auth';
@@ -100,16 +111,47 @@ type ClientReturnKind = 'change' | 'refund';
 const EMPTY_POSTED_QTY: Record<string, number> = {};
 
 const RETURN_STEPS = [
-  { id: 0, label: 'Return Items' },
-  { id: 1, label: 'Change Items' },
+  { id: 0, label: 'Return' },
+  { id: 1, label: 'Change' },
   { id: 2, label: 'Reason' },
-  { id: 3, label: 'Proof' },
-  { id: 4, label: 'Sign' },
-  { id: 5, label: 'Review' },
+  { id: 3, label: 'Sign' },
+  { id: 4, label: 'Review' },
 ] as const;
 
 const CHANGE_ITEMS_STEP = 1;
+const REASON_PROOF_STEP = 2;
+const SIGN_STEP = 3;
 const LAST_STEP = RETURN_STEPS[RETURN_STEPS.length - 1].id;
+
+type WizardPhase = 'type' | 'brief' | 'work';
+
+const STEP_BRIEFS: Record<number, { title: string; description: string; icon: typeof RotateCcw }> = {
+  0: {
+    title: 'Select client items to return',
+    description:
+      'Pick the items and quantity to return from this client order, then mark each as restock or disposal before you continue.',
+    icon: RotateCcw,
+  },
+  1: {
+    title: 'Select change items',
+    description:
+      'Swap returned stock for other sellable items of the same brand that match the returned qty.',
+    icon: ArrowLeftRight,
+  },
+  2: {
+    title: 'Reason & proof photos',
+    description:
+      'Select a reason for the return and change, then upload proof photos of the returned and change items.',
+    icon: Camera,
+  },
+};
+
+const BRIEF_PROGRESS_PHASES = [
+  { id: 0, label: 'Return' },
+  { id: CHANGE_ITEMS_STEP, label: 'Change' },
+  { id: REASON_PROOF_STEP, label: 'Reason & Proof' },
+  { id: SIGN_STEP, label: 'Review & Sign' },
+] as const;
 
 function stepsForReturnType(kind: ClientReturnKind) {
   return kind === 'refund' ? RETURN_STEPS.filter((step) => step.id !== CHANGE_ITEMS_STEP) : [...RETURN_STEPS];
@@ -119,6 +161,16 @@ function adjacentStep(kind: ClientReturnKind, current: number, direction: 1 | -1
   const steps = stepsForReturnType(kind);
   const index = Math.max(0, steps.findIndex((step) => step.id === current));
   return steps[Math.min(steps.length - 1, Math.max(0, index + direction))]?.id ?? current;
+}
+
+function stepHasBrief(stepId: number) {
+  return stepId === 0 || stepId === CHANGE_ITEMS_STEP || stepId === REASON_PROOF_STEP;
+}
+
+function briefProgressPhases(kind: ClientReturnKind) {
+  return kind === 'refund'
+    ? BRIEF_PROGRESS_PHASES.filter((phase) => phase.id !== CHANGE_ITEMS_STEP)
+    : [...BRIEF_PROGRESS_PHASES];
 }
 
 function formatReturnPeso(amount: number) {
@@ -239,6 +291,134 @@ function ReturnItemsStepper({
         );
       })}
     </ol>
+  );
+}
+
+function BriefProgressBar({
+  returnType,
+  currentPhaseId,
+}: {
+  returnType: ClientReturnKind;
+  currentPhaseId: number;
+}) {
+  const phases = briefProgressPhases(returnType);
+  const phaseIndex = Math.max(
+    0,
+    phases.findIndex((phase) => phase.id === currentPhaseId)
+  );
+
+  return (
+    <ol className="flex w-full items-start pt-1" aria-label="Return progress">
+      {phases.map((phase, index) => {
+        const status = index === phaseIndex ? 'current' : index < phaseIndex ? 'completed' : 'upcoming';
+        const isLast = index === phases.length - 1;
+
+        return (
+          <li key={phase.id} className="relative flex min-w-0 flex-1 flex-col items-center">
+            {!isLast ? (
+              <span
+                aria-hidden
+                className={cn(
+                  'absolute left-1/2 top-3 z-0 h-px w-full transition-colors duration-300',
+                  index < phaseIndex ? 'bg-primary' : 'bg-border'
+                )}
+              />
+            ) : null}
+            <span
+              aria-current={status === 'current' ? 'step' : undefined}
+              className={cn(
+                'relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold transition-all duration-300',
+                status === 'completed' && 'bg-primary text-primary-foreground',
+                status === 'current' &&
+                  'bg-primary text-primary-foreground ring-2 ring-primary/25 scale-110',
+                status === 'upcoming' && 'border border-border bg-muted text-muted-foreground'
+              )}
+            >
+              {status === 'completed' ? <Check className="h-3 w-3" strokeWidth={2.5} /> : index + 1}
+            </span>
+            <span
+              className={cn(
+                'mt-1.5 max-w-[4.75rem] text-center text-[10px] leading-tight sm:max-w-none sm:text-[11px] transition-colors duration-300',
+                status === 'current' ? 'font-semibold text-foreground' : 'font-medium text-muted-foreground'
+              )}
+            >
+              {phase.label}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+function BriefInfoCard({
+  title,
+  description,
+  icon: Icon,
+}: {
+  title: string;
+  description: string;
+  icon: typeof RotateCcw;
+}) {
+  return (
+    <div className="rounded-xl bg-primary/[0.06] border border-primary/10 p-4 sm:p-5 animate-in fade-in slide-in-from-bottom-2 duration-500">
+      <div className="flex items-stretch gap-4">
+        <div className="flex shrink-0 items-center justify-center w-16 sm:w-20">
+          <div className="relative flex h-14 w-14 items-center justify-center">
+            <PackageOpen
+              className="h-10 w-10 text-primary/80 animate-in zoom-in-50 duration-500"
+              strokeWidth={1.5}
+            />
+            <span className="absolute -right-0.5 -top-0.5 flex h-6 w-6 items-center justify-center rounded-full bg-primary/15">
+              <Icon className="h-3.5 w-3.5 text-primary" />
+            </span>
+          </div>
+        </div>
+        <div className="w-px shrink-0 bg-border/80 self-stretch" aria-hidden />
+        <div className="min-w-0 flex-1 space-y-1.5 py-0.5">
+          <p className="font-semibold text-foreground leading-snug">{title}</p>
+          <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReturnStepBrief({
+  stepId,
+  returnType,
+  onBack,
+  onProceed,
+}: {
+  stepId: number;
+  returnType: ClientReturnKind;
+  onBack: () => void;
+  onProceed: () => void;
+}) {
+  const brief = STEP_BRIEFS[stepId];
+
+  if (!brief) return null;
+
+  return (
+    <div key={stepId} className="flex flex-col gap-5 animate-in fade-in zoom-in-95 duration-300">
+      <DialogHeader className="sr-only">
+        <DialogTitle>{brief.title}</DialogTitle>
+        <DialogDescription>{brief.description}</DialogDescription>
+      </DialogHeader>
+
+      <BriefProgressBar returnType={returnType} currentPhaseId={stepId} />
+      <BriefInfoCard title={brief.title} description={brief.description} icon={brief.icon} />
+
+      <div className="flex flex-col gap-2.5 w-full pt-1 border-t">
+        <Button variant="outline" className="w-full h-11" onClick={onBack}>
+          Back
+        </Button>
+        <Button className="w-full h-11 gap-2" onClick={onProceed}>
+          Proceed
+          <ArrowRight className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -464,7 +644,7 @@ export function ReturnClientOrderDialog({
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const [step, setStep] = useState(0);
   const [returnType, setReturnType] = useState<ClientReturnKind>('change');
-  const [wizardStarted, setWizardStarted] = useState(false);
+  const [wizardPhase, setWizardPhase] = useState<WizardPhase>('type');
   const [showCamera, setShowCamera] = useState(false);
   const [cameraStarting, setCameraStarting] = useState(false);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
@@ -514,7 +694,7 @@ export function ReturnClientOrderDialog({
       stopCamera();
       setStep(0);
       setReturnType('change');
-      setWizardStarted(false);
+      setWizardPhase('type');
       setQuantities({});
       setStockFates({});
       setChangeQuantities({});
@@ -546,7 +726,7 @@ export function ReturnClientOrderDialog({
     setStockFates({});
     setChangeQuantities({});
     setReturnType('change');
-    setWizardStarted(false);
+    setWizardPhase('type');
     setStep(0);
     setFormError(null);
     setQtyHints({});
@@ -561,11 +741,11 @@ export function ReturnClientOrderDialog({
   }, [open, orderId, itemIdsKey]);
 
   useEffect(() => {
-    if (!open || step !== 3) {
+    if (!open || step !== REASON_PROOF_STEP || wizardPhase !== 'work') {
       stopCamera();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stop the stream when leaving Proof
-  }, [open, step]);
+  }, [open, step, wizardPhase]);
 
   useEffect(() => {
     if (!showCamera) return;
@@ -604,7 +784,7 @@ export function ReturnClientOrderDialog({
     ],
     enabled:
       open &&
-      wizardStarted &&
+      wizardPhase !== 'type' &&
       returnType === 'change' &&
       !!user?.id &&
       !!user?.company_id &&
@@ -804,15 +984,15 @@ export function ReturnClientOrderDialog({
       }
       return null;
     }
-    if (currentStep === 2) {
+    if (currentStep === REASON_PROOF_STEP) {
       if (!reason) return 'reason';
       if (reason === 'other' && !otherReason.trim()) return 'other-reason';
       if (!returnDate) return 'return-date';
       if (!notes.trim()) return 'notes';
+      if (photos.length === 0) return 'proof';
       return null;
     }
-    if (currentStep === 3) return photos.length === 0 ? 'proof' : null;
-    if (currentStep === 4) return agentSignatureDataUrl ? null : 'signature';
+    if (currentStep === SIGN_STEP) return agentSignatureDataUrl ? null : 'signature';
     return null;
   };
 
@@ -843,18 +1023,16 @@ export function ReturnClientOrderDialog({
   const stepError = (currentStep: number): string | null => {
     if (currentStep === 0) return itemsError();
     if (currentStep === CHANGE_ITEMS_STEP) return changeError();
-    if (currentStep === 2) return reasonError();
-    if (currentStep === 3) return proofError();
-    if (currentStep === 4) return signatureError();
+    if (currentStep === REASON_PROOF_STEP) return reasonError() || proofError();
+    if (currentStep === SIGN_STEP) return signatureError();
     return null;
   };
 
   const completedSteps = visibleSteps.map((item) => {
     if (item.id === 0) return !itemsError();
     if (item.id === CHANGE_ITEMS_STEP) return !changeError();
-    if (item.id === 2) return !reasonError();
-    if (item.id === 3) return !proofError();
-    if (item.id === 4) return !signatureError();
+    if (item.id === REASON_PROOF_STEP) return !reasonError() && !proofError();
+    if (item.id === SIGN_STEP) return !signatureError();
     return false;
   });
 
@@ -873,7 +1051,7 @@ export function ReturnClientOrderDialog({
     setFormError(null);
     setInvalidField(null);
     setStep(0);
-    setWizardStarted(true);
+    setWizardPhase('brief');
   };
 
   const goNext = () => {
@@ -920,17 +1098,36 @@ export function ReturnClientOrderDialog({
     }
     setFormError(null);
     setInvalidField(null);
-    setStep((current) => adjacentStep(returnType, current, 1));
+    const nextStep = adjacentStep(returnType, step, 1);
+    setStep(nextStep);
+    setWizardPhase(stepHasBrief(nextStep) ? 'brief' : 'work');
   };
 
   const goBack = () => {
     setFormError(null);
     setInvalidField(null);
+    if (wizardPhase === 'brief') {
+      if (step === 0) {
+        setWizardPhase('type');
+        return;
+      }
+      const previousStep = adjacentStep(returnType, step, -1);
+      setStep(previousStep);
+      setWizardPhase('work');
+      return;
+    }
     if (step === 0) {
-      setWizardStarted(false);
+      setWizardPhase('brief');
       return;
     }
     setStep((current) => adjacentStep(returnType, current, -1));
+    setWizardPhase('work');
+  };
+
+  const proceedFromBrief = () => {
+    setFormError(null);
+    setInvalidField(null);
+    setWizardPhase('work');
   };
 
   const handleCaptureFile = (file: File | null) => {
@@ -1048,6 +1245,7 @@ export function ReturnClientOrderDialog({
       const error = stepError(item.id);
       if (error) {
         setStep(item.id);
+        setWizardPhase('work');
         revealInvalid(firstInvalidField(item.id), error);
         return;
       }
@@ -1137,7 +1335,7 @@ export function ReturnClientOrderDialog({
             ? `${saved.returnNumber} saved and posted against ${orderNumber}.`
             : saved.status === 'pending_super_admin'
               ? `${saved.returnNumber} saved. Waiting for Super Admin approval.`
-              : `${saved.returnNumber} saved. Waiting for team leader approval.`,
+              : `${saved.returnNumber} saved. Your bag inventory was updated. Waiting for team leader approval.`,
       });
       setClientConfirmOpen(false);
       onOpenChange(false);
@@ -1188,12 +1386,12 @@ export function ReturnClientOrderDialog({
         <DialogContent
           className={cn(
             'w-[95vw] max-h-[90vh] overflow-hidden flex flex-col',
-            wizardStarted ? 'max-w-3xl' : 'max-w-lg',
+            wizardPhase === 'work' ? 'max-w-3xl' : 'max-w-lg',
             showCamera &&
               '![transform:none] !left-4 !right-4 !top-8 !w-auto sm:!left-1/2 sm:!right-auto sm:!w-[min(95vw,48rem)] sm:!ml-[calc(min(95vw,48rem)/-2)]'
           )}
         >
-          {!wizardStarted ? (
+          {wizardPhase === 'type' ? (
             <>
               <DialogHeader>
                 <DialogTitle>Return order</DialogTitle>
@@ -1254,68 +1452,94 @@ export function ReturnClientOrderDialog({
                 </Button>
               </DialogFooter>
             </>
+          ) : wizardPhase === 'brief' ? (
+            <ReturnStepBrief
+              stepId={step}
+              returnType={returnType}
+              onBack={goBack}
+              onProceed={proceedFromBrief}
+            />
           ) : (
             <>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 flex-wrap">
-              Return items
-              <Badge variant="outline" className="font-normal">
-                {returnType === 'refund' ? 'Refund' : 'Change item'}
-              </Badge>
-            </DialogTitle>
-            <DialogDescription>
-              {orderNumber} · {clientName}
-            </DialogDescription>
-          </DialogHeader>
+          {step >= SIGN_STEP ? (
+            <>
+              <DialogHeader className="sr-only">
+                <DialogTitle>{step === SIGN_STEP ? 'Sign return' : 'Review return'}</DialogTitle>
+                <DialogDescription>
+                  {orderNumber} · {clientName}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="animate-in fade-in zoom-in-95 duration-300">
+                <BriefProgressBar returnType={returnType} currentPhaseId={SIGN_STEP} />
+              </div>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 flex-wrap">
+                  Return items
+                  <Badge variant="outline" className="font-normal">
+                    {returnType === 'refund' ? 'Refund' : 'Change item'}
+                  </Badge>
+                </DialogTitle>
+                <DialogDescription>
+                  {orderNumber} · {clientName}
+                </DialogDescription>
+              </DialogHeader>
 
-          <ReturnItemsStepper
-            steps={visibleSteps}
-            currentStep={step}
-            completedSteps={completedSteps}
-            onStepClick={(nextStep) => {
-              const fromIndex = visibleSteps.findIndex((item) => item.id === step);
-              const toIndex = visibleSteps.findIndex((item) => item.id === nextStep);
-              if (toIndex <= fromIndex) {
-                setFormError(null);
-                setInvalidField(null);
-                setStep(nextStep);
-                return;
-              }
-              for (let index = fromIndex; index < toIndex; index += 1) {
-                const currentId = visibleSteps[index]?.id;
-                if (currentId == null) continue;
-                const error = stepError(currentId);
-                if (error) {
-                  if (currentId === 0 && remainingTotal <= 0) {
-                    toast({
-                      title: 'Nothing to return',
-                      description: 'All items on this order are already returned.',
-                    });
-                  }
-                  setStep(currentId);
-                  revealInvalid(firstInvalidField(currentId), error);
-                  return;
-                }
-                if (currentId === 0 && isChangeReturn) {
-                  const shortfalls = stockShortfalls();
-                  if (shortfalls.length > 0) {
+              <ReturnItemsStepper
+                steps={visibleSteps}
+                currentStep={step}
+                completedSteps={completedSteps}
+                onStepClick={(nextStep) => {
+                  const fromIndex = visibleSteps.findIndex((item) => item.id === step);
+                  const toIndex = visibleSteps.findIndex((item) => item.id === nextStep);
+                  if (toIndex <= fromIndex) {
                     setFormError(null);
                     setInvalidField(null);
-                    setStockWarning(shortfalls);
-                    toast({
-                      title: 'Not enough stock',
-                      description: 'Agent bag qty is less than the items you are returning.',
-                      variant: 'destructive',
-                    });
+                    setStep(nextStep);
+                    setWizardPhase('work');
                     return;
                   }
-                }
-              }
-              setFormError(null);
-              setInvalidField(null);
-              setStep(nextStep);
-            }}
-          />
+                  for (let index = fromIndex; index < toIndex; index += 1) {
+                    const currentId = visibleSteps[index]?.id;
+                    if (currentId == null) continue;
+                    const error = stepError(currentId);
+                    if (error) {
+                      if (currentId === 0 && remainingTotal <= 0) {
+                        toast({
+                          title: 'Nothing to return',
+                          description: 'All items on this order are already returned.',
+                        });
+                      }
+                      setStep(currentId);
+                      setWizardPhase('work');
+                      revealInvalid(firstInvalidField(currentId), error);
+                      return;
+                    }
+                    if (currentId === 0 && isChangeReturn) {
+                      const shortfalls = stockShortfalls();
+                      if (shortfalls.length > 0) {
+                        setFormError(null);
+                        setInvalidField(null);
+                        setStockWarning(shortfalls);
+                        toast({
+                          title: 'Not enough stock',
+                          description: 'Agent bag qty is less than the items you are returning.',
+                          variant: 'destructive',
+                        });
+                        return;
+                      }
+                    }
+                  }
+                  setFormError(null);
+                  setInvalidField(null);
+                  setStep(nextStep);
+                  setWizardPhase('work');
+                }}
+              />
+            </>
+          )}
 
           <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-1 pt-2">
             {step === 0 && (
@@ -1345,12 +1569,11 @@ export function ReturnClientOrderDialog({
                   </p>
                 )}
                 {remainingTotal > 0 ? (
-                  <div className="flex flex-wrap gap-2">
+                  <div className="grid grid-cols-1 gap-2">
                     <Button
                       type="button"
-                      size="sm"
                       variant="outline"
-                      className="h-8"
+                      className="h-11 w-full justify-center gap-2 border-emerald-200 bg-emerald-50/60 text-[11px] font-semibold uppercase tracking-wide text-emerald-800 hover:bg-emerald-100 hover:text-emerald-900 hover:border-emerald-300"
                       onClick={() => {
                         setInvalidField(null);
                         setStockFates((prev) => {
@@ -1362,13 +1585,13 @@ export function ReturnClientOrderDialog({
                         });
                       }}
                     >
+                      <ArrowLeftRight className="h-3.5 w-3.5 shrink-0" />
                       Set all Re-stock / Exchange
                     </Button>
                     <Button
                       type="button"
-                      size="sm"
                       variant="outline"
-                      className="h-8"
+                      className="h-11 w-full justify-center gap-2 border-rose-200 bg-rose-50/60 text-[11px] font-semibold uppercase tracking-wide text-rose-800 hover:bg-rose-100 hover:text-rose-900 hover:border-rose-300"
                       onClick={() => {
                         setInvalidField(null);
                         setStockFates((prev) => {
@@ -1380,6 +1603,7 @@ export function ReturnClientOrderDialog({
                         });
                       }}
                     >
+                      <X className="h-3.5 w-3.5 shrink-0" />
                       Set all Damaged
                     </Button>
                   </div>
@@ -1736,191 +1960,196 @@ export function ReturnClientOrderDialog({
               </div>
             )}
 
-            {step === 2 && (
-              <div className="space-y-4">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>Reason</Label>
-                    <Select
-                      value={reason}
-                      onValueChange={(value) => {
-                        setInvalidField(null);
-                        setReason(value as ClientReturnReasonOption);
-                      }}
-                    >
-                      <SelectTrigger
-                        data-field="reason"
-                        aria-invalid={invalidField === 'reason' || undefined}
-                        className={cn(
-                          invalidField === 'reason' &&
-                            'border-destructive ring-1 ring-destructive focus:ring-destructive'
-                        )}
+            {step === REASON_PROOF_STEP && (
+              <div className="space-y-5">
+                <div className="space-y-4">
+                  <p className="text-sm text-muted-foreground rounded-md border bg-muted/30 p-3">
+                    Select a reason for the return, then attach proof photos of the returned
+                    {isChangeReturn ? ' and change' : ''} items.
+                  </p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Reason</Label>
+                      <Select
+                        value={reason}
+                        onValueChange={(value) => {
+                          setInvalidField(null);
+                          setReason(value as ClientReturnReasonOption);
+                        }}
                       >
-                        <SelectValue placeholder="Select reason" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {CLIENT_RETURN_REASON_OPTIONS.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {reason === 'other' && (
+                        <SelectTrigger
+                          data-field="reason"
+                          aria-invalid={invalidField === 'reason' || undefined}
+                          className={cn(
+                            invalidField === 'reason' &&
+                              'border-destructive ring-1 ring-destructive focus:ring-destructive'
+                          )}
+                        >
+                          <SelectValue placeholder="Select reason" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {CLIENT_RETURN_REASON_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {reason === 'other' && (
+                        <Input
+                          value={otherReason}
+                          data-field="other-reason"
+                          aria-invalid={invalidField === 'other-reason' || undefined}
+                          onChange={(e) => {
+                            setInvalidField(null);
+                            setOtherReason(e.target.value);
+                          }}
+                          placeholder="Type the reason"
+                          className={cn(
+                            invalidField === 'other-reason' &&
+                              'border-destructive ring-1 ring-destructive focus-visible:ring-destructive'
+                          )}
+                        />
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Returned date</Label>
                       <Input
-                        value={otherReason}
-                        data-field="other-reason"
-                        aria-invalid={invalidField === 'other-reason' || undefined}
+                        type="date"
+                        value={returnDate}
+                        data-field="return-date"
+                        aria-invalid={invalidField === 'return-date' || undefined}
                         onChange={(e) => {
                           setInvalidField(null);
-                          setOtherReason(e.target.value);
+                          setReturnDate(e.target.value);
                         }}
-                        placeholder="Type the reason"
                         className={cn(
-                          invalidField === 'other-reason' &&
+                          invalidField === 'return-date' &&
                             'border-destructive ring-1 ring-destructive focus-visible:ring-destructive'
                         )}
                       />
-                    )}
+                    </div>
                   </div>
                   <div className="space-y-2">
-                    <Label>Returned date</Label>
-                    <Input
-                      type="date"
-                      value={returnDate}
-                      data-field="return-date"
-                      aria-invalid={invalidField === 'return-date' || undefined}
+                    <Label htmlFor="client-return-notes">Notes *</Label>
+                    <Textarea
+                      id="client-return-notes"
+                      value={notes}
+                      data-field="notes"
+                      aria-invalid={invalidField === 'notes' || undefined}
                       onChange={(e) => {
                         setInvalidField(null);
-                        setReturnDate(e.target.value);
+                        setNotes(e.target.value);
                       }}
+                      placeholder="Details for this return"
+                      rows={3}
                       className={cn(
-                        invalidField === 'return-date' &&
+                        invalidField === 'notes' &&
                           'border-destructive ring-1 ring-destructive focus-visible:ring-destructive'
                       )}
                     />
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="client-return-notes">Notes *</Label>
-                  <Textarea
-                    id="client-return-notes"
-                    value={notes}
-                    data-field="notes"
-                    aria-invalid={invalidField === 'notes' || undefined}
-                    onChange={(e) => {
-                      setInvalidField(null);
-                      setNotes(e.target.value);
-                    }}
-                    placeholder="Details for this return"
-                    rows={3}
+
+                <div className="space-y-2 border-t pt-4">
+                  <div
+                    data-field="proof"
+                    tabIndex={-1}
                     className={cn(
-                      invalidField === 'notes' &&
-                        'border-destructive ring-1 ring-destructive focus-visible:ring-destructive'
+                      'rounded-md',
+                      invalidField === 'proof' &&
+                        'ring-1 ring-destructive border border-destructive rounded-lg p-2'
                     )}
-                  />
-                </div>
-              </div>
-            )}
-
-            {step === 3 && (
-              <div className="space-y-2">
-                <div
-                  data-field="proof"
-                  tabIndex={-1}
-                  className={cn(
-                    'rounded-md',
-                    invalidField === 'proof' && 'ring-1 ring-destructive border border-destructive rounded-lg p-2'
-                  )}
-                >
-                  <MultiProofPhotoField
-                    label="Proof photos"
-                    value={photos}
-                    onChange={(next) => {
-                      setInvalidField(null);
-                      setPhotos(next);
-                    }}
-                    emptyTitle="Upload from files"
-                    recommendedHint="Select a file, or take a photo"
-                  />
-                </div>
-                <input
-                  ref={captureInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) => {
-                    handleCaptureFile(e.target.files?.[0] ?? null);
-                    e.target.value = '';
-                  }}
-                />
-                {showCamera ? (
-                  <div className="relative border rounded-lg overflow-hidden bg-black">
-                    <video
-                      ref={(el) => {
-                        videoRef.current = el;
-                        if (el && cameraStreamRef.current) {
-                          attachStreamToVideo(el, cameraStreamRef.current);
-                        }
-                      }}
-                      autoPlay
-                      playsInline
-                      muted
-                      className="relative z-0 w-full h-64 bg-black object-cover -scale-x-100"
-                    />
-                    <div className="absolute bottom-3 left-0 right-0 flex justify-center gap-2 px-2">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        onClick={stopCamera}
-                        className="bg-red-600 hover:bg-red-700 text-white"
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        onClick={() =>
-                          void startCamera(facingMode === 'user' ? 'environment' : 'user')
-                        }
-                        className="bg-gray-700 hover:bg-gray-800 text-white"
-                      >
-                        <RotateCcw className="h-4 w-4 mr-2" />
-                        {facingMode === 'user' ? 'Back' : 'Front'}
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={capturePhotoFromCamera}
-                        className="bg-white hover:bg-gray-100 text-gray-900"
-                      >
-                        <Camera className="h-4 w-4 mr-2" />
-                        Capture
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => void startCamera('environment')}
-                    disabled={photos.length >= 3 || cameraStarting}
                   >
-                    {cameraStarting ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    ) : (
-                      <Camera className="h-4 w-4 mr-2" />
-                    )}
-                    Take photo
-                  </Button>
-                )}
+                    <MultiProofPhotoField
+                      label="Proof photos"
+                      value={photos}
+                      onChange={(next) => {
+                        setInvalidField(null);
+                        setPhotos(next);
+                      }}
+                      emptyTitle="Upload from files"
+                      recommendedHint="Select a file, or take a photo"
+                    />
+                  </div>
+                  <input
+                    ref={captureInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      handleCaptureFile(e.target.files?.[0] ?? null);
+                      e.target.value = '';
+                    }}
+                  />
+                  {showCamera ? (
+                    <div className="relative border rounded-lg overflow-hidden bg-black">
+                      <video
+                        ref={(el) => {
+                          videoRef.current = el;
+                          if (el && cameraStreamRef.current) {
+                            attachStreamToVideo(el, cameraStreamRef.current);
+                          }
+                        }}
+                        autoPlay
+                        playsInline
+                        muted
+                        className="relative z-0 w-full h-64 bg-black object-cover -scale-x-100"
+                      />
+                      <div className="absolute bottom-3 left-0 right-0 flex justify-center gap-2 px-2">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={stopCamera}
+                          className="bg-red-600 hover:bg-red-700 text-white"
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() =>
+                            void startCamera(facingMode === 'user' ? 'environment' : 'user')
+                          }
+                          className="bg-gray-700 hover:bg-gray-800 text-white"
+                        >
+                          <RotateCcw className="h-4 w-4 mr-2" />
+                          {facingMode === 'user' ? 'Back' : 'Front'}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={capturePhotoFromCamera}
+                          className="bg-white hover:bg-gray-100 text-gray-900"
+                        >
+                          <Camera className="h-4 w-4 mr-2" />
+                          Capture
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => void startCamera('environment')}
+                      disabled={photos.length >= 3 || cameraStarting}
+                    >
+                      {cameraStarting ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Camera className="h-4 w-4 mr-2" />
+                      )}
+                      Take photo
+                    </Button>
+                  )}
+                </div>
               </div>
             )}
 
-            {step === 4 && (
+            {step === SIGN_STEP && (
               <div className="space-y-3">
                 <p className="text-sm text-muted-foreground">
                   Agent signature only. Sign to confirm you are posting this return.
@@ -1972,7 +2201,7 @@ export function ReturnClientOrderDialog({
               </div>
             )}
 
-            {step === 5 && (
+            {step === LAST_STEP && (
               <div className="space-y-3">
                 <div className="rounded-md border p-3 text-sm space-y-1">
                   <p>
@@ -2156,24 +2385,32 @@ export function ReturnClientOrderDialog({
             {formError && <p className="text-sm text-destructive">{formError}</p>}
           </div>
 
-          <DialogFooter className="gap-2 flex-col sm:flex-row sm:justify-between">
+          <DialogFooter className="flex-col gap-2.5 sm:flex-col sm:space-x-0">
             <Badge variant="outline" className="tabular-nums w-fit">
               {returnType === 'refund'
                 ? `Returning ${totalReturning} · Refund ${formatReturnPeso(refundAmount)}`
                 : `Returning ${totalReturning} · Changing ${totalChanging}`}
             </Badge>
-            <div className="flex flex-wrap gap-2 w-full sm:w-auto justify-end">
-              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
-                Cancel
-              </Button>
-              <Button variant="outline" onClick={goBack} disabled={submitting}>
+            <div className="grid w-full grid-cols-2 gap-2.5">
+              <Button variant="outline" className="h-11 w-full" onClick={goBack} disabled={submitting}>
                 Back
               </Button>
               {step < LAST_STEP ? (
-                <Button onClick={goNext} disabled={submitting}>Next</Button>
+                <Button className="h-11 w-full gap-2" onClick={goNext} disabled={submitting}>
+                  Next
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
               ) : (
-                <Button onClick={handleConfirmReturnClick} disabled={submitting}>
-                  {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RotateCcw className="h-4 w-4 mr-2" />}
+                <Button
+                  className="h-11 w-full"
+                  onClick={handleConfirmReturnClick}
+                  disabled={submitting}
+                >
+                  {submitting ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                  )}
                   {returnType === 'refund' ? 'Confirm refund' : 'Confirm return'}
                 </Button>
               )}
@@ -2232,7 +2469,13 @@ export function ReturnClientOrderDialog({
                 </p>
                 {returnType === 'refund' ? (
                   <p>This refund waits for Super Admin, then Finance. Stock updates only after Finance posts it.</p>
-                ) : null}
+                ) : (
+                  <p>
+                    Your bag inventory will update right away. Change items are deducted, and returned
+                    stock is added to your hold. If your team leader rejects this return, your bag will
+                    be restored.
+                  </p>
+                )}
                 <div className="space-y-2">
                   <Label htmlFor="client-name-confirm">Client name</Label>
                   <Input

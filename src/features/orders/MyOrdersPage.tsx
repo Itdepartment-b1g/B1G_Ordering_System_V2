@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -59,12 +60,15 @@ import type { BankAccount } from '@/types/database.types';
 import { PRICING_OPTIONS, type PricingColumn } from '@/types/database.types';
 import { usePermissions } from '@/hooks/usePermissions';
 import {
+  CLIENT_ORDER_RETURN_QTY_BY_ORDER_QUERY_KEY,
   canCreateClientOrderReturn,
   canOpenClientOrderTimeline,
   canShowClientOrderReturns,
+  fetchReturnedQtyByOrderIds,
 } from './client-returns/clientReturnApi';
 import { ReturnClientOrderDialog } from './client-returns/ReturnClientOrderDialog';
 import { ClientOrderReturnTimeline } from './client-returns/ClientOrderReturnTimeline';
+import { cn } from '@/lib/utils';
 
 interface SelectedItem {
   variantId: string;
@@ -165,6 +169,8 @@ function orderMatchesStatusFilter(order: Order, filter: MyOrdersStatusFilter): b
 
 export default function MyOrdersPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const isAdmin = user?.role === 'admin';
   const canCustomizePricing = ['team_leader', 'manager', 'admin'].includes(user?.role || '');
@@ -516,6 +522,24 @@ export default function MyOrdersPage() {
       return searchMatch && dateMatch && statusMatch;
     });
   }, [myOrders, searchQuery, orderDateRange, statusFilter]);
+
+  const filteredOrderIdsKey = useMemo(
+    () => filteredOrders.map((order) => order.id).filter(Boolean).join(','),
+    [filteredOrders]
+  );
+
+  const { data: returnedQtyByOrderId = {} } = useQuery({
+    queryKey: [CLIENT_ORDER_RETURN_QTY_BY_ORDER_QUERY_KEY, user?.company_id, filteredOrderIdsKey],
+    enabled: showClientReturns && !!user?.company_id && filteredOrderIdsKey.length > 0,
+    queryFn: () => fetchReturnedQtyByOrderIds(filteredOrderIdsKey.split(',')),
+    staleTime: 30_000,
+  });
+
+  const openClientReturnsForOrder = (orderNumber: string) => {
+    const q = orderNumber.trim();
+    if (!q) return;
+    navigate(`/client-order-returns?q=${encodeURIComponent(q)}`);
+  };
 
   const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
     () =>
@@ -2905,6 +2929,22 @@ export default function MyOrdersPage() {
                         <span className="text-muted-foreground">Payment:</span>
                         <span className="font-medium">{formatPaymentSummary(order)}</span>
                       </div>
+                      {showClientReturns ? (
+                        <div className="flex items-center justify-between">
+                          <span className="text-muted-foreground">Return:</span>
+                          {(returnedQtyByOrderId[order.id] || 0) > 0 ? (
+                            <button
+                              type="button"
+                              className="font-medium tabular-nums text-primary underline-offset-2 hover:underline"
+                              onClick={() => openClientReturnsForOrder(order.orderNumber)}
+                            >
+                              {returnedQtyByOrderId[order.id]}
+                            </button>
+                          ) : (
+                            <span className="tabular-nums text-muted-foreground">0</span>
+                          )}
+                        </div>
+                      ) : null}
                       <div className="flex items-center justify-between">
                         <div>
                           <span className="text-muted-foreground">{order.items.reduce((sum: number, item: any) => sum + (item.quantity || 0), 0)} items</span>
@@ -2974,6 +3014,11 @@ export default function MyOrdersPage() {
                     onSort={handleOrderSort}
                     className="font-semibold whitespace-nowrap align-middle"
                   />
+                  {showClientReturns ? (
+                    <TableHead className="text-center font-semibold whitespace-nowrap align-middle">
+                      Return
+                    </TableHead>
+                  ) : null}
                   <TableHead className="text-center font-semibold whitespace-nowrap align-middle">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -2995,6 +3040,23 @@ export default function MyOrdersPage() {
                         {getDisplayStatus(order).text}
                       </Badge>
                     </TableCell>
+                    {showClientReturns ? (
+                      <TableCell className="text-center tabular-nums align-middle">
+                        {(returnedQtyByOrderId[order.id] || 0) > 0 ? (
+                          <button
+                            type="button"
+                            className={cn(
+                              'font-medium text-primary underline-offset-2 hover:underline'
+                            )}
+                            onClick={() => openClientReturnsForOrder(order.orderNumber)}
+                          >
+                            {returnedQtyByOrderId[order.id]}
+                          </button>
+                        ) : (
+                          <span className="text-muted-foreground">0</span>
+                        )}
+                      </TableCell>
+                    ) : null}
                     <TableCell className="text-center align-middle">
                       <DropdownMenu modal={false}>
                         <DropdownMenuTrigger asChild>
@@ -4347,36 +4409,85 @@ export default function MyOrdersPage() {
               </div>
 
               {/* Order Info */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-muted-foreground">Order Date</Label>
-                  <p className="font-medium">{new Date(orderToView.date).toLocaleDateString()}</p>
-                </div>
-                <div>
-                  <h4 className="text-muted-foreground text-sm flex items-center gap-1">
-                    Client Name
-                  </h4>
-                  <p className="font-medium">{orderToView.clientName}</p>
-                </div>
-                <div>
-                  <h4 className="text-muted-foreground text-sm flex items-center gap-1">
-                    Pricing Strategy
-                  </h4>
-                  <Badge variant="outline" className="capitalize font-semibold bg-primary/5">
-                    {orderToView.pricingStrategy === 'special' ? 'Special Pricing (Allocated)' :
-                      orderToView.pricingStrategy === 'dsp' ? 'DSP Pricing' : 'RSP Pricing'}
-                  </Badge>
-                </div>
-              </div>
+              {(() => {
+                const totalUnits = (orderToView.items || []).reduce(
+                  (sum: number, item: any) => sum + (Number(item.quantity) || 0),
+                  0
+                );
+                const totalBrands = new Set(
+                  (orderToView.items || [])
+                    .map((item: any) => String(item.brandName || '').trim())
+                    .filter(Boolean)
+                ).size;
+                const pricingLabel =
+                  orderToView.pricingStrategy === 'special'
+                    ? 'Special Pricing (Allocated)'
+                    : orderToView.pricingStrategy === 'dsp'
+                      ? 'DSP Pricing'
+                      : 'RSP Pricing';
+                const isRejected =
+                  orderToView.status === 'rejected' ||
+                  orderToView.stage === 'leader_rejected' ||
+                  orderToView.stage === 'admin_rejected';
+                const isApproved =
+                  orderToView.status === 'approved' || orderToView.stage === 'admin_approved';
 
-              {/* Agent Info */}
-              <div className="space-y-2">
-                <h4 className="font-semibold text-lg">Sales Agent</h4>
-                <div className="bg-muted p-4 rounded-lg">
-                  <p className="font-medium">{orderToView.agentName}</p>
-                  <p className="text-sm text-muted-foreground">Agent ID: {orderToView.agentId}</p>
-                </div>
-              </div>
+                return (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-muted-foreground">Order Date</Label>
+                      <p className="font-medium">
+                        {new Date(orderToView.date).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground">Client Name</Label>
+                      <p className="font-medium">{orderToView.clientName}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground">Sales Agent</Label>
+                      <p className="font-medium">{orderToView.agentName}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground">Pricing Strategy</Label>
+                      <div className="pt-0.5">
+                        <Badge variant="outline" className="capitalize font-semibold bg-primary/5">
+                          {pricingLabel}
+                        </Badge>
+                      </div>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground">Payment Method</Label>
+                      <p className="font-medium">{formatPaymentSummary(orderToView)}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground">
+                        {isRejected ? 'Rejected At' : 'Approved At'}
+                      </Label>
+                      <p className="font-medium">
+                        {orderToView.approvedAt
+                          ? new Date(orderToView.approvedAt).toLocaleString()
+                          : isApproved || isRejected
+                            ? '—'
+                            : 'Pending'}
+                      </p>
+                      {orderToView.approvedByName ? (
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {isRejected ? 'Rejected by' : 'Approved by'} {orderToView.approvedByName}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground">Total Units</Label>
+                      <p className="font-medium tabular-nums">{totalUnits}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground">Total Brands</Label>
+                      <p className="font-medium tabular-nums">{totalBrands}</p>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Items - Responsive */}
               <div className="space-y-2">
@@ -5078,6 +5189,11 @@ export default function MyOrdersPage() {
           orderNumber={returnOrder?.orderNumber || ''}
           clientName={returnOrder?.clientName || ''}
           items={returnDialogItems}
+          onSuccess={() => {
+            void queryClient.invalidateQueries({
+              queryKey: [CLIENT_ORDER_RETURN_QTY_BY_ORDER_QUERY_KEY],
+            });
+          }}
         />
       )}
     </div>

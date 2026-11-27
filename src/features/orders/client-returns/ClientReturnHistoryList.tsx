@@ -80,6 +80,7 @@ import {
   approveClientOrderReturn,
   rejectClientOrderReturn,
 } from './clientReturnApi';
+import { CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY } from './returnLeaderApi';
 import { ClientReturnViewDialog } from './ClientReturnViewDialog';
 import { ClientOrderReturnTimeline } from './ClientOrderReturnTimeline';
 import { generateAndOpenClientReturnPdf } from './generateClientReturnPdf';
@@ -1013,7 +1014,9 @@ export function ClientReturnHistoryList({
         title: sendingToFinance ? 'Refund sent to finance' : isRefund ? 'Refund posted' : 'Return approved',
         description: sendingToFinance
           ? `${actionRow.returnNumber} is waiting for finance to post the refund.`
-          : `${actionRow.returnNumber} posted. Returned stock was updated.`,
+          : isRefund
+            ? `${actionRow.returnNumber} posted. Returned stock was updated.`
+            : `${actionRow.returnNumber} posted. Bag stock was already updated on submit.`,
       });
       setConfirmKind(null);
       setActionRow(null);
@@ -1034,10 +1037,16 @@ export function ClientReturnHistoryList({
     setActing(true);
     try {
       await rejectClientOrderReturn(actionRow.id, note);
-      await queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY] }),
+        queryClient.invalidateQueries({ queryKey: ['inventory'] }),
+        queryClient.invalidateQueries({ queryKey: [CLIENT_RETURN_STOCK_HOLDS_QUERY_KEY] }),
+      ]);
       toast({
         title: isRefund ? 'Refund rejected' : 'Return rejected',
-        description: `${actionRow.returnNumber} is closed. Agent can file a new CR on the same ORD.`,
+        description: isRefund
+          ? `${actionRow.returnNumber} is closed. Agent can file a new CR on the same ORD.`
+          : `${actionRow.returnNumber} rejected. Agent bag inventory was restored.`,
       });
       setConfirmKind(null);
       setActionRow(null);

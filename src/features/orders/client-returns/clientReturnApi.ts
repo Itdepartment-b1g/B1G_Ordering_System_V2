@@ -210,6 +210,8 @@ export async function fetchClientOrderReturnsForOrder(orderId: string): Promise<
 
 const POSTED_RETURNS_ORDER_ID_CHUNK = 100;
 
+export const CLIENT_ORDER_RETURN_QTY_BY_ORDER_QUERY_KEY = 'client-order-return-qty-by-order';
+
 export async function fetchPostedClientOrderReturnsForOrders(
   orderIds: string[]
 ): Promise<PreviewClientReturn[]> {
@@ -231,6 +233,52 @@ export async function fetchPostedClientOrderReturnsForOrders(
   return rows;
 }
 
+/** Returned qty per client order id (posted + pending change-item). */
+export async function fetchReturnedQtyByOrderIds(
+  orderIds: string[]
+): Promise<Record<string, number>> {
+  const ids = [...new Set(orderIds.filter(Boolean))];
+  if (ids.length === 0) return {};
+
+  const qtyByOrder: Record<string, number> = {};
+  for (let i = 0; i < ids.length; i += POSTED_RETURNS_ORDER_ID_CHUNK) {
+    const chunk = ids.slice(i, i + POSTED_RETURNS_ORDER_ID_CHUNK);
+    const { data, error } = await supabase
+      .from('client_order_returns')
+      .select(
+        `
+        client_order_id,
+        status,
+        return_type,
+        items:client_order_return_items (
+          quantity
+        )
+      `
+      )
+      .in('client_order_id', chunk)
+      .in('status', ['posted', 'pending_leader']);
+    if (error) throw error;
+
+    for (const header of data || []) {
+      const row = asRecord(header);
+      const orderId = String(row.client_order_id || '');
+      if (!orderId) continue;
+      const status = String(row.status || '');
+      const returnType = String(row.return_type || 'change_item');
+      if (status === 'pending_leader' && returnType !== 'change_item' && returnType !== 'change') {
+        continue;
+      }
+      const lineQty = nestedRows(row.items).reduce(
+        (sum, item) => sum + (Number(item.quantity) || 0),
+        0
+      );
+      if (lineQty <= 0) continue;
+      qtyByOrder[orderId] = (qtyByOrder[orderId] || 0) + lineQty;
+    }
+  }
+  return qtyByOrder;
+}
+
 export async function fetchPostedReturnedQtyByItemId(
   orderId: string
 ): Promise<Record<string, number>> {
@@ -240,6 +288,7 @@ export async function fetchPostedReturnedQtyByItemId(
     .select(
       `
       status,
+      return_type,
       items:client_order_return_items (
         client_order_item_id,
         quantity
@@ -247,11 +296,18 @@ export async function fetchPostedReturnedQtyByItemId(
     `
     )
     .eq('client_order_id', orderId)
-    .eq('status', 'posted');
+    .in('status', ['posted', 'pending_leader']);
   if (error) throw error;
 
   for (const header of data || []) {
-    for (const item of nestedRows(asRecord(header).items)) {
+    const row = asRecord(header);
+    const status = String(row.status || '');
+    const returnType = String(row.return_type || 'change_item');
+    // Posted always counts. Pending change-item also counts (bag stock already moved).
+    if (status === 'pending_leader' && returnType !== 'change_item' && returnType !== 'change') {
+      continue;
+    }
+    for (const item of nestedRows(row.items)) {
       const itemId = String(item.client_order_item_id || '');
       if (!itemId) continue;
       qtyByItem[itemId] = (qtyByItem[itemId] || 0) + (Number(item.quantity) || 0);
