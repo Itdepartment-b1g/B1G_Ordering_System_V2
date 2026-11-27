@@ -8,8 +8,6 @@ export type StandardAccountReturnPdfLine = {
   qtyGood?: number | null;
   /** When null/undefined, Damaged cell is left blank for handwriting. */
   qtyDamaged?: number | null;
-  /** Destination batch label(s) for good units; blank when unset. */
-  batchLabel?: string | null;
 };
 
 export type StandardAccountReturnPdfReceiptLine = {
@@ -18,19 +16,23 @@ export type StandardAccountReturnPdfReceiptLine = {
   variantName?: string | null;
   qtyGood: number;
   qtyDamaged: number;
-  batchNumber?: string | null;
-  expirationDate?: string | null;
 };
 
 export type StandardAccountReturnPdfInput = {
   requestNumber: string;
   status?: string | null;
   createdAt: string;
+  approvedAt?: string | null;
+  inspectedAt?: string | null;
+  completedAt?: string | null;
   notes?: string | null;
+  returnType?: string | null;
   clientCompanyName?: string | null;
   destinationLocationName?: string | null;
   destinationIsMain?: boolean | null;
   createdByName?: string | null;
+  approvedByName?: string | null;
+  inspectedByName?: string | null;
   signatureUrl?: string | null;
   /** Override footer line; defaults to SA return wording. */
   footerNote?: string | null;
@@ -44,12 +46,17 @@ export type StandardAccountReturnPdfSource = {
   request_number: string;
   status?: string | null;
   created_at: string;
+  approved_at?: string | null;
+  inspected_at?: string | null;
   notes?: string | null;
+  return_type?: string | null;
   signature_url?: string | null;
   signature_path?: string | null;
   client_company?: { company_name: string } | null;
   destination_location?: { name: string; is_main?: boolean | null } | null;
   created_by_user?: { full_name: string } | null;
+  approved_by_user?: { full_name: string } | null;
+  inspected_by_user?: { full_name: string } | null;
   footerNote?: string | null;
   companyFieldLabel?: string | null;
   items: Array<{
@@ -62,6 +69,7 @@ export type StandardAccountReturnPdfSource = {
     } | null;
   }>;
   receipts?: Array<{
+    received_at?: string | null;
     lines: StandardAccountReturnPdfReceiptLine[];
   }>;
 };
@@ -89,33 +97,6 @@ function formatDateTime(iso: string): string {
   }
 }
 
-function formatLotDate(date: string | null | undefined): string | null {
-  if (!date) return null;
-  try {
-    const parsed = new Date(date);
-    if (Number.isNaN(parsed.getTime())) return date;
-    return parsed.toLocaleDateString(undefined, {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    });
-  } catch {
-    return date;
-  }
-}
-
-function formatBatchLabel(
-  batchNumber: string | null | undefined,
-  expirationDate: string | null | undefined,
-  qtyGood?: number
-): string {
-  const batch = batchNumber?.trim() || '—';
-  const exp = formatLotDate(expirationDate);
-  const base = exp ? `${batch} · exp ${exp}` : batch;
-  if (qtyGood != null && qtyGood > 0) return `${base} (${qtyGood})`;
-  return base;
-}
-
 function fmtQty(n: number): string {
   return Number(n || 0).toLocaleString();
 }
@@ -130,16 +111,27 @@ function statusLabel(status: string | null | undefined): string {
     case 'pending_approval':
       return 'Pending approval';
     case 'pending_receive':
-      return 'Pending inspect';
+      return 'Pending inspection';
     case 'partially_received':
       return 'Partially inspected';
     case 'fully_received':
-      return 'Fully inspected';
+      return 'Completed';
     case 'cancelled':
       return 'Cancelled';
     default:
       return status?.trim() || 'Submitted';
   }
+}
+
+function returnTypeLabel(returnType: string | null | undefined): string {
+  return returnType === 'item_disposal' ? 'For Disposal' : 'Stock Return';
+}
+
+function detailValue(value: string | null | undefined): string {
+  const trimmed = value?.trim();
+  return trimmed
+    ? escapeHtml(trimmed)
+    : '<span class="muted">—</span>';
 }
 
 function destinationLabel(input: StandardAccountReturnPdfInput): string {
@@ -233,9 +225,6 @@ function itemRowsHtml(lines: StandardAccountReturnPdfLine[]): {
       totalDamaged += Number(line.qtyDamaged) || 0;
       hasFilledInspection = true;
     }
-    const batchCell = line.batchLabel?.trim()
-      ? escapeHtml(line.batchLabel.trim())
-      : '&nbsp;';
 
     return `
       <tr>
@@ -243,7 +232,6 @@ function itemRowsHtml(lines: StandardAccountReturnPdfLine[]): {
         <td class="col-qty">${fmtQty(line.returnQuantity)}</td>
         <td class="col-qty">${fmtQtyOrBlank(line.qtyGood)}</td>
         <td class="col-qty">${fmtQtyOrBlank(line.qtyDamaged)}</td>
-        <td class="col-batch">${batchCell}</td>
       </tr>`;
   });
 
@@ -254,7 +242,6 @@ function itemRowsHtml(lines: StandardAccountReturnPdfLine[]): {
         <td class="col-qty">&nbsp;</td>
         <td class="col-qty">&nbsp;</td>
         <td class="col-qty">&nbsp;</td>
-        <td class="col-batch">&nbsp;</td>
       </tr>`);
   }
 
@@ -267,21 +254,27 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
   const rtNo = escapeHtml(input.requestNumber);
   const dest = escapeHtml(destinationLabel(input));
   const status = escapeHtml(statusLabel(input.status));
-  const logoUrl = escapeHtml(new URL('/logo/B1G_LOGO_BLACK.png', window.location.origin).toString());
+  const returnType = escapeHtml(returnTypeLabel(input.returnType));
 
+  const signedByName = input.createdByName?.trim() || null;
   const signatureImgHtml = input.signatureUrl
-    ? `<img class="sig-img" src="${escapeHtml(input.signatureUrl)}" alt="Return signature" />`
+    ? `<img class="sig-img" src="${escapeHtml(input.signatureUrl)}" alt="Signed by ${escapeHtml(signedByName || 'returner')}" />`
     : `<span class="sline"></span>`;
+  const signedByHtml = `
+    <div class="sig-block">
+      <span class="sig-name">${signedByName ? escapeHtml(signedByName) : '<span class="muted">—</span>'}</span>
+      ${signatureImgHtml}
+    </div>`;
 
   const totalsExtra = itemResult.hasFilledInspection
-    ? ` · Good: ${fmtQty(itemResult.totalGood)} · Damaged: ${fmtQty(itemResult.totalDamaged)}`
+    ? ` · Stock Return: ${fmtQty(itemResult.totalGood)} · Disposal: ${fmtQty(itemResult.totalDamaged)}`
     : '';
 
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Stock Return Receipt – ${rtNo}</title>
+<title>Return to Warehouse – ${rtNo}</title>
 <style>
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
@@ -335,21 +328,13 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
     color: #000;
   }
 
-  .logo-block { text-align: center; margin-bottom: 6px; }
-  .logo-img {
-    display: block;
-    max-width: 180px;
-    max-height: 52px;
-    margin: 0 auto;
-    object-fit: contain;
-  }
-
   .doc-title {
     text-align: center;
     font-size: 22px;
     font-weight: 800;
     letter-spacing: 0.06em;
-    margin: 10px 0 14px;
+    margin: 4px 0 16px;
+    text-transform: uppercase;
   }
 
   .dr-number-row {
@@ -401,8 +386,7 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
     padding: 6px 4px;
     border-bottom: 2px solid #000;
   }
-  .items-table thead th.col-qty,
-  .items-table thead th.col-batch { text-align: right; }
+  .items-table thead th.col-qty { text-align: right; }
   .items-table tbody td {
     padding: 7px 4px;
     border-bottom: 1px solid #ccc;
@@ -413,12 +397,6 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
     font-variant-numeric: tabular-nums;
     width: 72px;
   }
-  .items-table .col-batch {
-    text-align: right;
-    font-size: 10px;
-    width: 140px;
-    font-family: ui-monospace, monospace;
-  }
 
   .totals-note {
     font-size: 10px;
@@ -427,14 +405,26 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
     color: #333;
   }
 
-  .delivery-section {
+  .delivery-section,
+  .courier-section {
     margin: 18px 0;
     padding-top: 8px;
     border-top: 1.5px solid #000;
   }
-  .delivery-section .section-label {
+  .delivery-section .section-label,
+  .courier-section .section-label {
     font-weight: 700;
     margin-bottom: 10px;
+  }
+  .handover-section {
+    margin: 4px 0 0;
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+    line-height: 1.9;
+  }
+  .handover-section .sig {
+    margin-top: 10px;
   }
   .delivery-field {
     display: flex;
@@ -450,6 +440,14 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
   .delivery-field .fvalue { flex: 1; }
   .delivery-field .muted { color: #777; font-style: italic; }
   .signature-field { align-items: flex-start; }
+  .sig-block {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .sig-name {
+    font-weight: 600;
+  }
   .sig-img {
     display: block;
     max-height: 64px;
@@ -493,7 +491,7 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
 <body>
   <div class="toolbar">
     <div class="toolbar-left">
-      <h1>Stock Return Receipt
+      <h1>Return to Warehouse
         <span class="hint">Use <b>Print</b> (Ctrl/⌘ + P), turn off <b>Headers and footers</b>, then save as PDF.</span>
       </h1>
     </div>
@@ -506,11 +504,7 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
   </div>
 
   <div class="page">
-    <div class="logo-block">
-      <img class="logo-img" src="${logoUrl}" alt="B1G Corporation" />
-    </div>
-
-    <div class="doc-title">STOCK RETURN RECEIPT</div>
+    <div class="doc-title">Return to Warehouse</div>
 
     <div class="dr-number-row">
       <span class="label">RETURN NUMBER:</span>
@@ -524,15 +518,18 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
       <span class="label">STATUS:</span>
       <span class="value">${status}</span>
     </div>
+    <div class="meta-row">
+      <span class="label">RETURN TYPE:</span>
+      <span class="value">${returnType}</span>
+    </div>
 
     <table class="items-table">
       <thead>
         <tr>
           <th class="col-desc">Description</th>
           <th class="col-qty">Returned</th>
-          <th class="col-qty">Good</th>
-          <th class="col-qty">Damaged</th>
-          <th class="col-batch">Batch (good)</th>
+          <th class="col-qty">Stock Return</th>
+          <th class="col-qty">Disposal</th>
         </tr>
       </thead>
       <tbody>
@@ -554,37 +551,85 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
           : ''
       }
       <div class="delivery-field">
-        <span class="flabel">RETURN TO:</span>
+        <span class="flabel">RETURN TYPE:</span>
+        <span class="fvalue">${returnType}</span>
+      </div>
+      <div class="delivery-field">
+        <span class="flabel">DESTINATION WAREHOUSE:</span>
         <span class="fvalue">${dest}</span>
       </div>
       <div class="delivery-field">
-        <span class="flabel">SUBMITTED AT:</span>
+        <span class="flabel">STATUS:</span>
+        <span class="fvalue">${status}</span>
+      </div>
+      <div class="delivery-field">
+        <span class="flabel">RETURNED BY:</span>
+        <span class="fvalue">${detailValue(input.createdByName)}</span>
+      </div>
+      <div class="delivery-field">
+        <span class="flabel">APPROVED BY:</span>
+        <span class="fvalue">${detailValue(input.approvedByName)}</span>
+      </div>
+      <div class="delivery-field">
+        <span class="flabel">INSPECTED BY:</span>
+        <span class="fvalue">${detailValue(input.inspectedByName)}</span>
+      </div>
+      <div class="delivery-field">
+        <span class="flabel">RETURNED AT:</span>
         <span class="fvalue">${escapeHtml(formatDateTime(input.createdAt))}</span>
       </div>
       <div class="delivery-field">
-        <span class="flabel">SUBMITTED BY:</span>
+        <span class="flabel">APPROVED AT:</span>
         <span class="fvalue">${
-          input.createdByName?.trim()
-            ? escapeHtml(input.createdByName.trim())
+          input.approvedAt
+            ? escapeHtml(formatDateTime(input.approvedAt))
+            : '<span class="muted">—</span>'
+        }</span>
+      </div>
+      <div class="delivery-field">
+        <span class="flabel">INSPECTED AT:</span>
+        <span class="fvalue">${
+          input.inspectedAt
+            ? escapeHtml(formatDateTime(input.inspectedAt))
+            : '<span class="muted">—</span>'
+        }</span>
+      </div>
+      <div class="delivery-field">
+        <span class="flabel">CREATED AT:</span>
+        <span class="fvalue">${escapeHtml(formatDateTime(input.createdAt))}</span>
+      </div>
+      <div class="delivery-field">
+        <span class="flabel">COMPLETED AT:</span>
+        <span class="fvalue">${
+          input.completedAt
+            ? escapeHtml(formatDateTime(input.completedAt))
             : '<span class="muted">—</span>'
         }</span>
       </div>
       <div class="delivery-field">
         <span class="flabel">NOTES:</span>
-        <span class="fvalue">${
-          input.notes?.trim()
-            ? escapeHtml(input.notes.trim())
-            : '<span class="muted">—</span>'
-        }</span>
+        <span class="fvalue">${detailValue(input.notes)}</span>
       </div>
       <div class="delivery-field signature-field">
-        <span class="flabel">SIGNATURE:</span>
-        <span class="fvalue">${signatureImgHtml}</span>
+        <span class="flabel">SIGNED BY:</span>
+        <span class="fvalue">${signedByHtml}</span>
+      </div>
+    </div>
+
+    <div class="courier-section">
+      <div class="section-label">Courier details:</div>
+      <div class="handover-section">
+        <div>TOTAL BOXES :</div>
+        <div>DRIVER NAMES :</div>
+        <div>CONTACT NUMBER :</div>
+        <div class="sig">SIGNATURE :</div>
+        <div>PLATE NUMBER :</div>
+        <div>DATE AND TIME</div>
       </div>
     </div>
 
     <div class="footer-note">
-      ${escapeHtml(input.footerNote?.trim() || 'Standard Account return to warehouse')} · ${escapeHtml(formatDateTime(new Date().toISOString()))}
+      ${escapeHtml(input.footerNote?.trim() || 'Return to warehouse')} · ${escapeHtml(formatDateTime(new Date().toISOString()))}
     </div>
   </div>
 </body>
@@ -624,7 +669,6 @@ function mapSourceToInput(
   type Agg = {
     qtyGood: number;
     qtyDamaged: number;
-    batchParts: string[];
   };
 
   const byVariantId = new Map<string, Agg>();
@@ -632,15 +676,9 @@ function mapSourceToInput(
 
   const bump = (map: Map<string, Agg>, key: string, line: StandardAccountReturnPdfReceiptLine) => {
     if (!key) return;
-    const existing = map.get(key) ?? { qtyGood: 0, qtyDamaged: 0, batchParts: [] };
+    const existing = map.get(key) ?? { qtyGood: 0, qtyDamaged: 0 };
     existing.qtyGood += Number(line.qtyGood) || 0;
     existing.qtyDamaged += Number(line.qtyDamaged) || 0;
-    const goodQty = Number(line.qtyGood) || 0;
-    if (goodQty > 0) {
-      existing.batchParts.push(
-        formatBatchLabel(line.batchNumber, line.expirationDate, goodQty)
-      );
-    }
     map.set(key, existing);
   };
 
@@ -649,15 +687,29 @@ function mapSourceToInput(
     bump(byProductKey, productKey(line.brandName, line.variantName), line);
   }
 
+  const inspectedAt =
+    source.inspected_at ??
+    source.receipts
+      ?.map((receipt) => receipt.received_at)
+      .filter((value): value is string => !!value)
+      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] ??
+    null;
+
   return {
     requestNumber: source.request_number,
     status: source.status,
     createdAt: source.created_at,
+    approvedAt: source.approved_at ?? null,
+    inspectedAt,
+    completedAt: source.status === 'fully_received' ? inspectedAt : null,
     notes: source.notes,
+    returnType: source.return_type ?? 'my_inventory',
     clientCompanyName: source.client_company?.company_name ?? null,
     destinationLocationName: source.destination_location?.name ?? null,
     destinationIsMain: source.destination_location?.is_main ?? null,
     createdByName: source.created_by_user?.full_name ?? null,
+    approvedByName: source.approved_by_user?.full_name ?? null,
+    inspectedByName: source.inspected_by_user?.full_name ?? null,
     signatureUrl: evidence.signatureUrl,
     footerNote: source.footerNote ?? null,
     companyFieldLabel: source.companyFieldLabel ?? null,
@@ -671,7 +723,7 @@ function mapSourceToInput(
       };
 
       if (!fillInspection) {
-        // Pending (or no inspection yet): leave Good / Damaged / Batch blank for handwriting.
+        // Pending (or no inspection yet): leave Stock Return / Disposal blank for handwriting.
         return base;
       }
 
@@ -689,7 +741,6 @@ function mapSourceToInput(
         ...base,
         qtyGood: agg.qtyGood,
         qtyDamaged: agg.qtyDamaged,
-        batchLabel: agg.batchParts.length > 0 ? agg.batchParts.join('; ') : null,
       };
     }),
   };

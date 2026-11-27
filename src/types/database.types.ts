@@ -107,6 +107,8 @@ export interface Company {
   company_account_type: CompanyAccountType;
   team_leader_allowed_pricing?: PricingColumn[];
   mobile_sales_allowed_pricing?: PricingColumn[];
+  /** When true, agents may file CR refunds. Default false; change-item always allowed. */
+  client_order_refunds_enabled?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -609,7 +611,19 @@ export interface ClientOrderItem {
   created_at: string;
 }
 
-export interface InventoryTransaction {
+/** Optional before/after bag balances stamped by trigger or historical backfill. */
+export type InventoryTransactionQtyBalances = {
+  /** Balance at from_location before this movement. */
+  from_qty_before?: number | null;
+  /** Balance at from_location after this movement. */
+  from_qty_after?: number | null;
+  /** Balance at to_location before this movement. */
+  to_qty_before?: number | null;
+  /** Balance at to_location after this movement. */
+  to_qty_after?: number | null;
+};
+
+export interface InventoryTransaction extends InventoryTransactionQtyBalances {
   id: string;
   company_id: string;
   transaction_type: TransactionType;
@@ -623,6 +637,13 @@ export interface InventoryTransaction {
   notes?: string;
   created_at: string;
 }
+
+/** Writers may omit balances — DB trigger stamps them when null. */
+export type InventoryTransactionInsert = Omit<
+  InventoryTransaction,
+  'id' | 'created_at' | keyof InventoryTransactionQtyBalances
+> &
+  InventoryTransactionQtyBalances;
 
 export type InventoryBatchSourceType =
   | 'opening_balance'
@@ -795,7 +816,8 @@ export interface AllocationHistory {
   allocated_to: string;
   allocated_by: string;
   brand_id: string | null;
-  allocation_type: "main_to_leader" | "leader_to_agent";
+  allocation_type: "main_to_leader" | "leader_to_agent" | "leader_to_leader";
+  tl_stock_request_id?: string | null;
   created_at: string;
 }
 
@@ -1335,7 +1357,7 @@ export interface Database {
       };
       inventory_transactions: {
         Row: InventoryTransaction;
-        Insert: Omit<InventoryTransaction, "id" | "created_at">;
+        Insert: InventoryTransactionInsert;
         Update: never;
       };
       inventory_batches: {

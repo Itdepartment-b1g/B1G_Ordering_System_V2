@@ -1,0 +1,247 @@
+import type { PreviewClientReturn } from '../clientReturnPreview';
+import {
+  formatClientReturnType,
+  getPreviewReturnLineQty,
+  getReturnedVariantStockFates,
+} from '../clientReturnPreview';
+import type { SortDirection } from '@/features/shared/components/SortableTableHead';
+
+export type ClientReturnHistorySortKey =
+  | 'returnNumber'
+  | 'clientName'
+  | 'returnedByName'
+  | 'returnDate'
+  | 'returnType'
+  | 'status'
+  | 'saApprovedByName'
+  | 'tlApprovedByName'
+  | 'approvedByName'
+  | 'rejectedByName'
+  | 'qty';
+
+export const DEFAULT_CLIENT_RETURN_HISTORY_SORT_KEY: ClientReturnHistorySortKey = 'returnDate';
+export const DEFAULT_CLIENT_RETURN_HISTORY_SORT_DIRECTION: SortDirection = 'desc';
+
+export function sortClientReturnHistory(
+  rows: PreviewClientReturn[],
+  sortKey: ClientReturnHistorySortKey,
+  sortDirection: SortDirection
+): PreviewClientReturn[] {
+  const direction = sortDirection === 'asc' ? 1 : -1;
+
+  return [...rows].sort((a, b) => {
+    let result = 0;
+    switch (sortKey) {
+      case 'returnNumber':
+        result = String(a.returnNumber || '').localeCompare(String(b.returnNumber || ''), undefined, { numeric: true });
+        break;
+      case 'clientName':
+        result = String(a.clientName || '').localeCompare(String(b.clientName || ''));
+        break;
+      case 'returnedByName':
+        result = String(a.returnedByName || '').localeCompare(String(b.returnedByName || ''));
+        break;
+      case 'returnDate':
+        result = new Date(a.returnDate || 0).getTime() - new Date(b.returnDate || 0).getTime();
+        break;
+      case 'returnType':
+        result = formatClientReturnType(a.returnType).localeCompare(formatClientReturnType(b.returnType));
+        break;
+      case 'status':
+        result = String(a.status || '').localeCompare(String(b.status || ''));
+        break;
+      case 'saApprovedByName':
+        result = (a.saApprovedByName || '').localeCompare(b.saApprovedByName || '');
+        break;
+      case 'tlApprovedByName':
+        result = (a.returnType === 'change_item' ? a.approvedByName || '' : '').localeCompare(
+          b.returnType === 'change_item' ? b.approvedByName || '' : ''
+        );
+        break;
+      case 'approvedByName':
+        result = (a.returnType === 'refund' ? a.approvedByName || '' : '').localeCompare(
+          b.returnType === 'refund' ? b.approvedByName || '' : ''
+        );
+        break;
+      case 'rejectedByName':
+        result = (a.rejectedByName || '').localeCompare(b.rejectedByName || '');
+        break;
+      case 'qty':
+        result = getPreviewReturnLineQty(a) - getPreviewReturnLineQty(b);
+        break;
+      default:
+        result = 0;
+    }
+    if (result === 0) {
+      result = a.returnNumber.localeCompare(b.returnNumber, undefined, { numeric: true });
+    }
+    return result * direction;
+  });
+}
+
+export type ReturnedStockDetailSortKey =
+  | 'returnNumber'
+  | 'orderNumber'
+  | 'clientName'
+  | 'returnDate'
+  | 'createdAt'
+  | 'reason'
+  | 'returnType'
+  | 'stockFate'
+  | 'qty';
+
+export const DEFAULT_RETURNED_STOCK_DETAIL_SORT_KEY: ReturnedStockDetailSortKey = 'createdAt';
+export const DEFAULT_RETURNED_STOCK_DETAIL_SORT_DIRECTION: SortDirection = 'desc';
+
+export function sortReturnedStockDetailRows(
+  rows: PreviewClientReturn[],
+  sortKey: ReturnedStockDetailSortKey,
+  sortDirection: SortDirection,
+  qtyForRow: (row: PreviewClientReturn) => number,
+  variantId?: string,
+  variantName?: string
+): PreviewClientReturn[] {
+  const direction = sortDirection === 'asc' ? 1 : -1;
+
+  return [...rows].sort((a, b) => {
+    let result = 0;
+    switch (sortKey) {
+      case 'returnNumber':
+        result = a.returnNumber.localeCompare(b.returnNumber, undefined, { numeric: true });
+        break;
+      case 'orderNumber':
+        result = a.orderNumber.localeCompare(b.orderNumber, undefined, { numeric: true });
+        break;
+      case 'clientName':
+        result = a.clientName.localeCompare(b.clientName);
+        break;
+      case 'returnDate':
+        result = new Date(a.returnDate).getTime() - new Date(b.returnDate).getTime();
+        break;
+      case 'createdAt':
+        result = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        break;
+      case 'reason':
+        result = a.reason.localeCompare(b.reason);
+        break;
+      case 'returnType':
+        result = formatClientReturnType(a.returnType).localeCompare(formatClientReturnType(b.returnType));
+        break;
+      case 'stockFate': {
+        const rank = (row: PreviewClientReturn) => {
+          const fates = getReturnedVariantStockFates(row, variantId, variantName);
+          if (fates.length === 2) return 1;
+          if (fates[0] === 'restock') return 0;
+          if (fates[0] === 'disposal') return 2;
+          return 3;
+        };
+        result = rank(a) - rank(b);
+        break;
+      }
+      case 'qty':
+        result = qtyForRow(a) - qtyForRow(b);
+        break;
+      default:
+        result = 0;
+    }
+    if (result === 0) {
+      result = a.returnNumber.localeCompare(b.returnNumber, undefined, { numeric: true });
+    }
+    return result * direction;
+  });
+}
+
+export type BrandVariantSortKey = 'variantName' | 'variantType' | 'quantity';
+
+export const DEFAULT_BRAND_VARIANT_SORT_KEY: BrandVariantSortKey = 'variantName';
+export const DEFAULT_BRAND_VARIANT_SORT_DIRECTION: SortDirection = 'asc';
+
+export function sortBrandVariants<T extends { variantName: string; variantType: string; quantity: number }>(
+  variants: T[],
+  sortKey: BrandVariantSortKey,
+  sortDirection: SortDirection
+): T[] {
+  const direction = sortDirection === 'asc' ? 1 : -1;
+
+  return [...variants].sort((a, b) => {
+    let result = 0;
+    switch (sortKey) {
+      case 'variantName':
+        result = a.variantName.localeCompare(b.variantName);
+        break;
+      case 'variantType':
+        result = a.variantType.localeCompare(b.variantType);
+        break;
+      case 'quantity':
+        result = a.quantity - b.quantity;
+        break;
+      default:
+        result = 0;
+    }
+    if (result === 0) result = a.variantName.localeCompare(b.variantName);
+    return result * direction;
+  });
+}
+
+export type ReturnLeaderSortKey =
+  | 'returnNumber'
+  | 'submittedByName'
+  | 'createdAt'
+  | 'status'
+  | 'approvedByName'
+  | 'approvedAt'
+  | 'qty';
+
+export const DEFAULT_RETURN_LEADER_SORT_KEY: ReturnLeaderSortKey = 'createdAt';
+export const DEFAULT_RETURN_LEADER_SORT_DIRECTION: SortDirection = 'desc';
+
+export function sortReturnLeaderHandovers<
+  T extends {
+    returnNumber: string;
+    submittedByName: string;
+    createdAt: string;
+    status: string;
+    approvedByName?: string | null;
+    approvedAt?: string | null;
+    lines: Array<{ quantity: number }>;
+  },
+>(rows: T[], sortKey: ReturnLeaderSortKey, sortDirection: SortDirection): T[] {
+  const direction = sortDirection === 'asc' ? 1 : -1;
+
+  return [...rows].sort((a, b) => {
+    let result = 0;
+    switch (sortKey) {
+      case 'returnNumber':
+        result = a.returnNumber.localeCompare(b.returnNumber, undefined, { numeric: true });
+        break;
+      case 'submittedByName':
+        result = a.submittedByName.localeCompare(b.submittedByName);
+        break;
+      case 'createdAt':
+        result = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        break;
+      case 'status':
+        result = a.status.localeCompare(b.status);
+        break;
+      case 'approvedByName':
+        result = String(a.approvedByName || '').localeCompare(String(b.approvedByName || ''));
+        break;
+      case 'approvedAt':
+        result =
+          new Date(a.approvedAt || 0).getTime() - new Date(b.approvedAt || 0).getTime();
+        break;
+      case 'qty': {
+        const qtyA = a.lines.reduce((sum, line) => sum + line.quantity, 0);
+        const qtyB = b.lines.reduce((sum, line) => sum + line.quantity, 0);
+        result = qtyA - qtyB;
+        break;
+      }
+      default:
+        result = 0;
+    }
+    if (result === 0) {
+      result = a.returnNumber.localeCompare(b.returnNumber, undefined, { numeric: true });
+    }
+    return result * direction;
+  });
+}

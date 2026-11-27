@@ -56,6 +56,9 @@ interface NewPOItem {
     warehouseLocationId?: string;
 }
 
+/** Hidden for now — pairs with PO Receiving being off. */
+const ALLOW_INTERNAL_WAREHOUSE_TRANSFER_PO = false;
+
 interface CreatePurchaseOrderDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
@@ -88,9 +91,7 @@ export function CreatePurchaseOrderDialog({
 }: CreatePurchaseOrderDialogProps) {
     const { toast } = useToast();
 
-    const [fulfillmentMode, setFulfillmentMode] = useState<'supplier' | 'warehouse_transfer'>(
-        linkedWarehouseCompanyId ? 'warehouse_transfer' : 'supplier'
-    );
+    const [fulfillmentMode, setFulfillmentMode] = useState<'supplier' | 'warehouse_transfer'>('supplier');
     const catalogCompanyId =
         fulfillmentMode === 'warehouse_transfer' && linkedWarehouseCompanyId
             ? linkedWarehouseCompanyId
@@ -164,8 +165,12 @@ export function CreatePurchaseOrderDialog({
             setSelectedTeamLeaderId('');
             setLeaderConfirmOpen(false);
             setLeaderNameConfirmInput('');
+            return;
         }
-    }, [open]);
+        if (!ALLOW_INTERNAL_WAREHOUSE_TRANSFER_PO && fulfillmentMode === 'warehouse_transfer') {
+            setFulfillmentMode('supplier');
+        }
+    }, [open, fulfillmentMode]);
 
     useEffect(() => {
         if (fulfillmentMode !== 'warehouse_transfer') {
@@ -862,7 +867,7 @@ export function CreatePurchaseOrderDialog({
                     <div className="flex-1 overflow-hidden flex flex-col md:flex-row">
                         {/* Left Panel: Settings */}
                         <div className="w-full md:w-80 border-r bg-muted/10 p-4 overflow-y-auto space-y-4">
-                            {linkedWarehouseCompanyId && (
+                            {ALLOW_INTERNAL_WAREHOUSE_TRANSFER_PO && linkedWarehouseCompanyId && (
                                 <div className="space-y-2">
                                     <Label>Fulfillment</Label>
                                     <RadioGroup
@@ -900,8 +905,12 @@ export function CreatePurchaseOrderDialog({
                             </div>
                             {(fulfillmentMode !== 'warehouse_transfer' || sourceMode === 'single') && (
                                 <div className="space-y-2">
-                                    <Label>{linkedWarehouseCompanyId ? 'Dispatcher' : 'Supplier'}</Label>
-                                    {linkedWarehouseCompanyId ? (
+                                    <Label>
+                                        {ALLOW_INTERNAL_WAREHOUSE_TRANSFER_PO && linkedWarehouseCompanyId
+                                            ? 'Dispatcher'
+                                            : 'Supplier'}
+                                    </Label>
+                                    {ALLOW_INTERNAL_WAREHOUSE_TRANSFER_PO && linkedWarehouseCompanyId ? (
                                         <Select
                                             value={selectedSourceValue}
                                             onValueChange={(val) => {
@@ -981,7 +990,7 @@ export function CreatePurchaseOrderDialog({
                                 </div>
                             )}
 
-                            {fulfillmentMode === 'warehouse_transfer' && (
+                            {ALLOW_INTERNAL_WAREHOUSE_TRANSFER_PO && fulfillmentMode === 'warehouse_transfer' && (
                                 <PoTeamLeaderSelect
                                     companyId={user?.company_id}
                                     value={selectedTeamLeaderId}
@@ -990,7 +999,7 @@ export function CreatePurchaseOrderDialog({
                                 />
                             )}
 
-                            {fulfillmentMode === 'warehouse_transfer' && (
+                            {ALLOW_INTERNAL_WAREHOUSE_TRANSFER_PO && fulfillmentMode === 'warehouse_transfer' && (
                                 <div className="space-y-2">
                                     <Label>Source mode</Label>
                                     <RadioGroup

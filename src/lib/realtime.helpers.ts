@@ -30,7 +30,10 @@ type TableName =
   | 'stock_requests'
   | 'leader_teams'
   | 'sub_teams'
-  | 'cash_deposits';
+  | 'cash_deposits'
+  | 'client_order_returns'
+  | 'return_leader_handovers'
+  | 'client_return_stock_holds';
 
 type ChangeEvent = 'INSERT' | 'UPDATE' | 'DELETE' | '*';
 
@@ -49,10 +52,10 @@ export function subscribeToTable<T = any>(
   event: ChangeEvent = '*',
   filter?: { column: string; value: string | number }
 ): RealtimeChannel {
-  const channelName = filter 
-    ? `${table}-${filter.column}-${filter.value}-changes`
-    : `${table}-changes`;
-    
+  const channelName = filter
+    ? `${table}-${filter.column}-${filter.value}-changes-${Math.random().toString(36).slice(2, 9)}`
+    : `${table}-changes-${Math.random().toString(36).slice(2, 9)}`;
+
   let channel = supabase
     .channel(channelName)
     .on(

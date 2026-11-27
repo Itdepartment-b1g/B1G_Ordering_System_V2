@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { FileDown, History, Loader2, Package, RefreshCw, Users } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/features/auth';
+import {
+  preferAllocationSessionGroups,
+  readAllocationHistoryDeepLink,
+} from '@/features/inventory/stock-movements/stockMovementDocumentRefs';
 import { SuperAdminAllocationHistoryFilter } from '@/features/sales-agents/components/super-admin-allocation-history/filter/Filter';
 import { useAllocationHistoryOptions } from '@/features/sales-agents/components/super-admin-allocation-history/hooks/useAllocationHistoryOptions';
 import { useCompanyBrands } from '@/features/sales-agents/components/super-admin-allocation-history/hooks/useCompanyBrands';
@@ -46,6 +51,7 @@ import { exportAllocationHistoryExcel } from '@/features/sales-agents/components
 export default function LeaderAllocationHistoryList() {
   const { toast } = useToast();
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
   const { data: allGroups = [], isLoading, isError, error, refetch, isFetching } =
     useSuperAdminAllocationHistory();
   const { data: companyBrands = [], isLoading: isLoadingBrands } = useCompanyBrands();
@@ -55,6 +61,7 @@ export default function LeaderAllocationHistoryList() {
   const [filterValue, setFilterValue] = useState('');
   const [allocatedToRole, setAllocatedToRole] = useState<RecipientRole | ''>('');
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
+  const [sessionFilter, setSessionFilter] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [sortState, setSortState] =
@@ -72,13 +79,25 @@ export default function LeaderAllocationHistoryList() {
     }
   }, [isError, error, toast]);
 
+  useEffect(() => {
+    const deepLink = readAllocationHistoryDeepLink(searchParams);
+    if (deepLink.dateRange) setDateRangeFilter(deepLink.dateRange);
+    setSessionFilter(deepLink.sessionId);
+  }, [searchParams]);
+
   const teamAgentIdSet = useMemo(() => new Set(teamAgentIds), [teamAgentIds]);
 
-  // Main → leader (received by this leader) and leader → agent (to agents on their team only).
+  // Stock this leader received, TL-to-TL they sent, and leader-to-agent allocations for their team.
   const leaderGroups = useMemo(() => {
     if (!user?.id) return [];
     return allGroups.filter((group) => {
       if (group.allocationType === 'main_to_leader' && group.allocatedToId === user.id) {
+        return true;
+      }
+      if (
+        group.allocationType === 'leader_to_leader' &&
+        (group.allocatedToId === user.id || group.allocatedById === user.id)
+      ) {
         return true;
       }
       return (
@@ -117,11 +136,16 @@ export default function LeaderAllocationHistoryList() {
     [dateRangeFilter]
   );
 
-  const filteredGroups = useMemo(
-    () =>
-      filterAllocationHistoryGroups(leaderGroups, selectedFilter, filterValue, fromDate, toDate),
-    [leaderGroups, selectedFilter, filterValue, fromDate, toDate]
-  );
+  const filteredGroups = useMemo(() => {
+    const dated = filterAllocationHistoryGroups(
+      leaderGroups,
+      selectedFilter,
+      filterValue,
+      fromDate,
+      toDate
+    );
+    return preferAllocationSessionGroups(dated, leaderGroups, sessionFilter);
+  }, [leaderGroups, selectedFilter, filterValue, fromDate, toDate, sessionFilter]);
 
   const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
     () =>
@@ -144,7 +168,7 @@ export default function LeaderAllocationHistoryList() {
 
   useEffect(() => {
     setPage(0);
-  }, [selectedFilter, filterValue, allocatedToRole, dateRangeFilter, sortState]);
+  }, [selectedFilter, filterValue, allocatedToRole, dateRangeFilter, sessionFilter, sortState]);
 
   const { pageCount, safePage, pagedItems: pagedGroups } = getListPaginationSlice(
     sortedGroups,
@@ -164,10 +188,12 @@ export default function LeaderAllocationHistoryList() {
     setFilterValue('');
     setAllocatedToRole('');
     setDateRangeFilter({ preset: 'all' });
+    setSessionFilter(null);
   };
 
   const hasActiveFilters =
     hasAllocationHistoryDateFilter(dateRangeFilter) ||
+    Boolean(sessionFilter) ||
     (selectedFilter !== 'all' && filterValue.trim().length > 0);
 
   const canExportFiltered = hasActiveFilters && filteredGroups.length > 0 && !isExportingFiltered;
@@ -234,7 +260,7 @@ export default function LeaderAllocationHistoryList() {
           </CardHeader>
           <CardContent className="flex items-center gap-2 text-xs text-muted-foreground">
             <History className="h-3.5 w-3.5" />
-            Main to leader and leader to agent sessions
+            Main to leader, TL to TL, and leader to agent sessions
           </CardContent>
         </Card>
         <Card>
@@ -263,7 +289,7 @@ export default function LeaderAllocationHistoryList() {
         <CardHeader className="pb-3">
           <CardTitle>Leader Allocation History</CardTitle>
           <CardDescription>
-            Stock received from main inventory and allocations from your inventory to your agents.
+            Stock you received from main or another leader, TL-to-TL stock you sent, and allocations from your inventory to your agents.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

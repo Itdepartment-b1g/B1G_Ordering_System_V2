@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useWarehouseLocationMembership } from '@/features/inventory/useWarehouseLocationMembership';
 import { canViewCompanyAgentInventory } from '@/lib/roleUtils';
+import { canShowClientOrderReturns } from '@/features/orders/client-returns/clientReturnApi';
 
 /**
  * Hook to check user permissions
@@ -22,6 +23,9 @@ export function usePermissions() {
       return !!data;
     },
     staleTime: 1000 * 60, // 1 minute
+    // Override app defaults so a prior false is not kept after SA links a warehouse.
+    refetchOnMount: 'always',
+    gcTime: 0,
   });
 
   const lockStandardCatalog = hasWarehouseHubLink === true;
@@ -49,13 +53,48 @@ export function usePermissions() {
       return hasWarehouseHubLink === true;
     }
 
-    // PO Receiving is only available for team leaders whose tenant is linked to a warehouse hub.
+    // PO Receiving — hidden for now (sidebar + direct route).
     if (route === '/inventory/po-receive') {
-      return user?.role === 'team_leader' && hasWarehouseHubLink === true;
+      return false;
+    }
+
+    // Stock Movements — hidden for now (sidebar + direct route).
+    if (route === '/inventory/stock-movements') {
+      return false;
     }
 
     if (route === '/leader-manual') {
       return user?.role === 'team_leader' && hasWarehouseHubLink === true;
+    }
+
+    // TL-to-TL stock transfers — bag-to-bag inside the same company. No warehouse hub required.
+    if (route === '/inventory/tl-stock-requests') {
+      return user?.role === 'team_leader';
+    }
+    if (route === '/inventory/admin-tl-requests') {
+      return user?.role === 'admin' || user?.role === 'super_admin';
+    }
+    if (route === '/inventory/tl-transfer-shortages') {
+      return (
+        user?.role === 'team_leader' ||
+        user?.role === 'admin' ||
+        user?.role === 'super_admin'
+      );
+    }
+
+    // Client order returns (CR) — no warehouse hub required. Hub only affects disposal handover (RT).
+    if (route === '/client-order-returns' || route.startsWith('/client-order-returns/')) {
+      return canShowClientOrderReturns(hasWarehouseHubLink === true, user?.role);
+    }
+
+    // Finance refunds queue — no warehouse hub required.
+    if (route === '/finance/refunds') {
+      return (
+        user?.role === 'finance' ||
+        user?.role === 'accounting' ||
+        user?.role === 'admin' ||
+        user?.role === 'super_admin'
+      );
     }
 
     // If impersonating, allow full navigation access to the tenant environment.
@@ -79,9 +118,14 @@ export function usePermissions() {
         '/sys-admin-dashboard',
         '/system-admin',
         '/system-management',
+        '/system-updates',
         '/profile',
       ];
-      return systemAdminRoutes.includes(route) || route.startsWith('/sys-admin');
+      return (
+        systemAdminRoutes.includes(route) ||
+        route.startsWith('/sys-admin') ||
+        route.startsWith('/system-updates')
+      );
     }
 
     // Executive has read-only access to specific routes
@@ -140,6 +184,7 @@ export function usePermissions() {
         '/inventory/stock-returns',
         '/inventory/client-stock-returns',
         '/inventory/stock-adjustments',
+        '/inventory/stock-movements',
         '/inventory/delivery-shortages',
         '/profile',
         '/warehouse-manual',

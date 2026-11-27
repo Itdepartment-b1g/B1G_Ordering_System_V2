@@ -1,4 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -6,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, CreditCard, Camera, RotateCcw, Smartphone, CheckCircle, Split, Pencil, Loader2, FileDown, Filter, Download, ChevronDown, Printer } from 'lucide-react';
+import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, CreditCard, Camera, RotateCcw, Smartphone, CheckCircle, Split, Pencil, Loader2, FileDown, Filter, Download, ChevronDown, Printer, Clock, MoreVertical } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -56,6 +58,19 @@ import { sendOrderConfirmationEmail } from '@/lib/email.helpers';
 import { usePaymentSettings } from '@/features/finance/hooks/usePaymentSettings';
 import type { BankAccount } from '@/types/database.types';
 import { PRICING_OPTIONS, type PricingColumn } from '@/types/database.types';
+import { usePermissions } from '@/hooks/usePermissions';
+import {
+  CLIENT_ORDER_RETURN_QTY_BY_ORDER_QUERY_KEY,
+  canCreateClientOrderReturn,
+  canOpenClientOrderTimeline,
+  canShowClientOrderReturns,
+  fetchReturnedQtyByOrderIds,
+  type OrderReturnedQtySummary,
+} from './client-returns/clientReturnApi';
+import { ReturnClientOrderDialog } from './client-returns/ReturnClientOrderDialog';
+import { ClientOrderReturnTimeline } from './client-returns/ClientOrderReturnTimeline';
+import { ReturnQtyBadge, ReturnQtyLegend } from './client-returns/ReturnQtyBadge';
+import { cn } from '@/lib/utils';
 
 interface SelectedItem {
   variantId: string;
@@ -156,11 +171,43 @@ function orderMatchesStatusFilter(order: Order, filter: MyOrdersStatusFilter): b
 
 export default function MyOrdersPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const isAdmin = user?.role === 'admin';
   const canCustomizePricing = ['team_leader', 'manager', 'admin'].includes(user?.role || '');
   const { getOrdersByAgent, addOrder, orders: allOrders } = useOrders();
   const { agentBrands } = useAgentInventory();
-  const [searchQuery, setSearchQuery] = useState('');
+
+  // Client order returns (CR): Return button + order timeline. No warehouse hub required.
+  const { hasWarehouseHubLink } = usePermissions();
+  const showClientReturns = canShowClientOrderReturns(hasWarehouseHubLink, user?.role);
+  const canFileClientReturn = showClientReturns && canCreateClientOrderReturn(user?.role);
+  const canViewReturnTimeline = canOpenClientOrderTimeline(hasWarehouseHubLink, user?.role);
+  const [returnOrder, setReturnOrder] = useState<Order | null>(null);
+  const [timelineOrder, setTimelineOrder] = useState<Order | null>(null);
+  const isOrderReturnable = (order: Order) =>
+    (order.status === 'approved' || order.stage === 'admin_approved') &&
+    order.items.some((item) => !!item.clientOrderItemId);
+  const returnDialogItems = useMemo(
+    () =>
+      (returnOrder?.items || [])
+        .filter((item) => !!item.clientOrderItemId)
+        .map((item) => ({
+          id: item.clientOrderItemId as string,
+          brandId: item.brandId,
+          brandName: item.brandName,
+          variantName: item.variantName,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          variantType: item.variantType,
+        })),
+    [returnOrder]
+  );
+
+  const [searchQuery, setSearchQuery] = useState(
+    () => searchParams.get('q')?.trim() || searchParams.get('search')?.trim() || ''
+  );
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
   // Edit order dialog state
@@ -478,6 +525,24 @@ export default function MyOrdersPage() {
     });
   }, [myOrders, searchQuery, orderDateRange, statusFilter]);
 
+  const filteredOrderIdsKey = useMemo(
+    () => filteredOrders.map((order) => order.id).filter(Boolean).join(','),
+    [filteredOrders]
+  );
+
+  const { data: returnedQtyByOrderId = {} as Record<string, OrderReturnedQtySummary> } = useQuery({
+    queryKey: [CLIENT_ORDER_RETURN_QTY_BY_ORDER_QUERY_KEY, user?.company_id, filteredOrderIdsKey],
+    enabled: showClientReturns && !!user?.company_id && filteredOrderIdsKey.length > 0,
+    queryFn: () => fetchReturnedQtyByOrderIds(filteredOrderIdsKey.split(',')),
+    staleTime: 30_000,
+  });
+
+  const openClientReturnsForOrder = (orderNumber: string) => {
+    const q = orderNumber.trim();
+    if (!q) return;
+    navigate(`/client-order-returns?q=${encodeURIComponent(q)}`);
+  };
+
   const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
     () =>
       resolveTableSortDirection(
@@ -619,6 +684,23 @@ export default function MyOrdersPage() {
   useEffect(() => {
     setCurrentPage(1);
   }, [searchQuery, dateRangeFilter, statusFilter, orderSortState]);
+
+  // Deep-link search from Stock Movements (ORD-…)
+  useEffect(() => {
+    const fromUrl =
+      searchParams.get('q')?.trim() || searchParams.get('search')?.trim() || '';
+    if (!fromUrl) return;
+    setSearchQuery(fromUrl);
+  }, [searchParams]);
+
+  // Bottom nav Create → open create order dialog
+  useEffect(() => {
+    if (searchParams.get('create') !== '1') return;
+    setCreateDialogOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('create');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const selectedBrand = agentBrands.find(b => b.name === selectedBrandName);
 
@@ -2752,29 +2834,29 @@ export default function MyOrdersPage() {
               </div>
             </div>
 
-            {/* Results and Actions */}
-            <div className="flex justify-between items-center text-sm">
-              <span className="text-muted-foreground">
-                {filteredOrders.length} order{filteredOrders.length !== 1 ? 's' : ''}
-                {hasActiveOrderFilters && myOrders.length !== filteredOrders.length && (
-                  <span className="text-muted-foreground/70"> of {myOrders.length}</span>
+            {(showClientReturns || hasActiveOrderFilters) && (
+              <div className="flex flex-col gap-2 sm:flex-row sm:justify-between sm:items-center text-sm">
+                {showClientReturns ? (
+                  <ReturnQtyLegend className="min-w-0" label="Client Return:" />
+                ) : (
+                  <span />
                 )}
-              </span>
-              {hasActiveOrderFilters && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setDateRangeFilter({ preset: 'all' });
-                    setStatusFilter('all');
-                    setSearchQuery('');
-                  }}
-                >
-                  <X className="h-3 w-3 mr-1" />
-                  Clear filters
-                </Button>
-              )}
-            </div>
+                {hasActiveOrderFilters && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setDateRangeFilter({ preset: 'all' });
+                      setStatusFilter('all');
+                      setSearchQuery('');
+                    }}
+                  >
+                    <X className="h-3 w-3 mr-1" />
+                    Clear filters
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
         </CardHeader>
         <CardContent>
@@ -2786,14 +2868,69 @@ export default function MyOrdersPage() {
               paginatedOrders.map((order) => (
                   <Card key={order.id}>
                   <div className="p-3">
-                    <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-start justify-between mb-2 gap-2">
                       <div className="flex-1 min-w-0">
                         <div className="font-mono font-semibold text-sm truncate">{order.orderNumber}</div>
                         <div className="text-xs text-muted-foreground mt-0.5 truncate">{order.clientName}</div>
                       </div>
-                      <Badge variant={getDisplayStatus(order).variant} className="ml-2 flex-shrink-0 text-xs">
-                        {getDisplayStatus(order).text}
-                      </Badge>
+                      <div className="flex flex-shrink-0 items-center gap-1">
+                        <Badge variant={getDisplayStatus(order).variant} className="text-xs">
+                          {getDisplayStatus(order).text}
+                        </Badge>
+                        <DropdownMenu modal={false}>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              aria-label={`Actions for ${order.orderNumber}`}
+                            >
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-48">
+                            <DropdownMenuItem
+                              onSelect={() => window.setTimeout(() => handleViewOrder(order), 0)}
+                            >
+                              <Eye className="h-4 w-4 mr-2" />
+                              View
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onSelect={() => window.setTimeout(() => handlePrintOrderReceipt(order), 0)}
+                            >
+                              <Printer className="h-4 w-4 mr-2" />
+                              Print
+                            </DropdownMenuItem>
+                            {canViewReturnTimeline ? (
+                              <DropdownMenuItem
+                                onSelect={() => window.setTimeout(() => setTimelineOrder(order), 0)}
+                              >
+                                <Clock className="h-4 w-4 mr-2" />
+                                Timeline
+                              </DropdownMenuItem>
+                            ) : null}
+                            {canFileClientReturn && isOrderReturnable(order) ? (
+                              <DropdownMenuItem
+                                onSelect={() => window.setTimeout(() => setReturnOrder(order), 0)}
+                                className="text-rose-600 focus:text-rose-700"
+                              >
+                                <RotateCcw className="h-4 w-4 mr-2" />
+                                Return
+                              </DropdownMenuItem>
+                            ) : null}
+                            {order.stage === 'needs_revision' ? (
+                              <DropdownMenuItem
+                                onSelect={() => window.setTimeout(() => handleEditOrder(order), 0)}
+                                className="text-amber-600 focus:text-amber-700"
+                              >
+                                <Pencil className="h-4 w-4 mr-2" />
+                                Edit
+                              </DropdownMenuItem>
+                            ) : null}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
                     </div>
                     <div className="space-y-1 text-xs pt-2 border-t">
                       <div className="flex items-center justify-between">
@@ -2801,29 +2938,25 @@ export default function MyOrdersPage() {
                         <span className="font-medium">{formatPaymentSummary(order)}</span>
                       </div>
                       <div className="flex items-center justify-between">
-                        <div>
-                          <span className="text-muted-foreground">{order.items.reduce((sum: number, item: any) => sum + (item.quantity || 0), 0)} items</span>
-                          <span className="text-muted-foreground mx-2">•</span>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-muted-foreground">
+                            {order.items.reduce((sum: number, item: any) => sum + (item.quantity || 0), 0)} items
+                          </span>
+                          {showClientReturns ? (
+                            <>
+                              <span className="text-muted-foreground">•</span>
+                              <span className="text-muted-foreground">Client Return:</span>
+                              <ReturnQtyBadge
+                                summary={returnedQtyByOrderId[order.id]}
+                                onClick={() => openClientReturnsForOrder(order.orderNumber)}
+                              />
+                            </>
+                          ) : null}
+                          <span className="text-muted-foreground mx-1">•</span>
                           <span className="text-muted-foreground">{new Date(order.date).toLocaleDateString()}</span>
                         </div>
-                        <div className="font-semibold text-sm">₱{order.total.toLocaleString()}</div>
+                        <div className="font-semibold text-sm shrink-0">₱{order.total.toLocaleString()}</div>
                       </div>
-                    </div>
-                    <div className="flex gap-2 mt-2 pt-2 border-t">
-                      <button 
-                        onClick={() => handleViewOrder(order)}
-                        className="flex-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                      >
-                        View Details
-                      </button>
-                      {order.stage === 'needs_revision' && (
-                        <button
-                          onClick={() => handleEditOrder(order)}
-                          className="flex-1 text-xs text-amber-600 hover:text-amber-700 font-medium transition-colors"
-                        >
-                          Edit
-                        </button>
-                      )}
                     </div>
                   </div>
                 </Card>
@@ -2864,6 +2997,11 @@ export default function MyOrdersPage() {
                     onSort={handleOrderSort}
                     className="text-center font-semibold whitespace-nowrap align-middle"
                   />
+                  {showClientReturns ? (
+                    <TableHead className="text-center font-semibold whitespace-nowrap align-middle">
+                      Client Return
+                    </TableHead>
+                  ) : null}
                   <SortableTableHead
                     label="Amount"
                     sortKey="amount"
@@ -2895,6 +3033,14 @@ export default function MyOrdersPage() {
                     <TableCell className="font-medium align-middle">{order.clientName}</TableCell>
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap align-middle">{new Date(order.date).toLocaleDateString()}</TableCell>
                     <TableCell className="text-center tabular-nums align-middle">{order.items.reduce((sum: number, item: any) => sum + (item.quantity || 0), 0)}</TableCell>
+                    {showClientReturns ? (
+                      <TableCell className="text-center tabular-nums align-middle">
+                        <ReturnQtyBadge
+                          summary={returnedQtyByOrderId[order.id]}
+                          onClick={() => openClientReturnsForOrder(order.orderNumber)}
+                        />
+                      </TableCell>
+                    ) : null}
                     <TableCell className="text-right font-semibold tabular-nums whitespace-nowrap align-middle">
                       ₱{order.total.toLocaleString()}
                     </TableCell>
@@ -2907,19 +3053,59 @@ export default function MyOrdersPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-center align-middle">
-                      <Button variant="ghost" size="icon" onClick={() => handleViewOrder(order)}>
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                      {order.stage === 'needs_revision' && (
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          onClick={() => handleEditOrder(order)}
-                          className="text-amber-600 hover:text-amber-700"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                      )}
+                      <DropdownMenu modal={false}>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            aria-label={`Actions for ${order.orderNumber}`}
+                          >
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-48">
+                          <DropdownMenuItem
+                            onSelect={() => window.setTimeout(() => handleViewOrder(order), 0)}
+                          >
+                            <Eye className="h-4 w-4 mr-2" />
+                            View
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onSelect={() => window.setTimeout(() => handlePrintOrderReceipt(order), 0)}
+                          >
+                            <Printer className="h-4 w-4 mr-2" />
+                            Print
+                          </DropdownMenuItem>
+                          {canViewReturnTimeline ? (
+                            <DropdownMenuItem
+                              onSelect={() => window.setTimeout(() => setTimelineOrder(order), 0)}
+                            >
+                              <Clock className="h-4 w-4 mr-2" />
+                              Timeline
+                            </DropdownMenuItem>
+                          ) : null}
+                          {canFileClientReturn && isOrderReturnable(order) ? (
+                            <DropdownMenuItem
+                              onSelect={() => window.setTimeout(() => setReturnOrder(order), 0)}
+                              className="text-rose-600 focus:text-rose-700"
+                            >
+                              <RotateCcw className="h-4 w-4 mr-2" />
+                              Return
+                            </DropdownMenuItem>
+                          ) : null}
+                          {order.stage === 'needs_revision' ? (
+                            <DropdownMenuItem
+                              onSelect={() => window.setTimeout(() => handleEditOrder(order), 0)}
+                              className="text-amber-600 focus:text-amber-700"
+                            >
+                              <Pencil className="h-4 w-4 mr-2" />
+                              Edit
+                            </DropdownMenuItem>
+                          ) : null}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -4224,36 +4410,85 @@ export default function MyOrdersPage() {
               </div>
 
               {/* Order Info */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-muted-foreground">Order Date</Label>
-                  <p className="font-medium">{new Date(orderToView.date).toLocaleDateString()}</p>
-                </div>
-                <div>
-                  <h4 className="text-muted-foreground text-sm flex items-center gap-1">
-                    Client Name
-                  </h4>
-                  <p className="font-medium">{orderToView.clientName}</p>
-                </div>
-                <div>
-                  <h4 className="text-muted-foreground text-sm flex items-center gap-1">
-                    Pricing Strategy
-                  </h4>
-                  <Badge variant="outline" className="capitalize font-semibold bg-primary/5">
-                    {orderToView.pricingStrategy === 'special' ? 'Special Pricing (Allocated)' :
-                      orderToView.pricingStrategy === 'dsp' ? 'DSP Pricing' : 'RSP Pricing'}
-                  </Badge>
-                </div>
-              </div>
+              {(() => {
+                const totalUnits = (orderToView.items || []).reduce(
+                  (sum: number, item: any) => sum + (Number(item.quantity) || 0),
+                  0
+                );
+                const totalBrands = new Set(
+                  (orderToView.items || [])
+                    .map((item: any) => String(item.brandName || '').trim())
+                    .filter(Boolean)
+                ).size;
+                const pricingLabel =
+                  orderToView.pricingStrategy === 'special'
+                    ? 'Special Pricing (Allocated)'
+                    : orderToView.pricingStrategy === 'dsp'
+                      ? 'DSP Pricing'
+                      : 'RSP Pricing';
+                const isRejected =
+                  orderToView.status === 'rejected' ||
+                  orderToView.stage === 'leader_rejected' ||
+                  orderToView.stage === 'admin_rejected';
+                const isApproved =
+                  orderToView.status === 'approved' || orderToView.stage === 'admin_approved';
 
-              {/* Agent Info */}
-              <div className="space-y-2">
-                <h4 className="font-semibold text-lg">Sales Agent</h4>
-                <div className="bg-muted p-4 rounded-lg">
-                  <p className="font-medium">{orderToView.agentName}</p>
-                  <p className="text-sm text-muted-foreground">Agent ID: {orderToView.agentId}</p>
-                </div>
-              </div>
+                return (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-muted-foreground">Order Date</Label>
+                      <p className="font-medium">
+                        {new Date(orderToView.date).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground">Client Name</Label>
+                      <p className="font-medium">{orderToView.clientName}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground">Sales Agent</Label>
+                      <p className="font-medium">{orderToView.agentName}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground">Pricing Strategy</Label>
+                      <div className="pt-0.5">
+                        <Badge variant="outline" className="capitalize font-semibold bg-primary/5">
+                          {pricingLabel}
+                        </Badge>
+                      </div>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground">Payment Method</Label>
+                      <p className="font-medium">{formatPaymentSummary(orderToView)}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground">
+                        {isRejected ? 'Rejected At' : 'Approved At'}
+                      </Label>
+                      <p className="font-medium">
+                        {orderToView.approvedAt
+                          ? new Date(orderToView.approvedAt).toLocaleString()
+                          : isApproved || isRejected
+                            ? '—'
+                            : 'Pending'}
+                      </p>
+                      {orderToView.approvedByName ? (
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {isRejected ? 'Rejected by' : 'Approved by'} {orderToView.approvedByName}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground">Total Units</Label>
+                      <p className="font-medium tabular-nums">{totalUnits}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground">Total Brands</Label>
+                      <p className="font-medium tabular-nums">{totalBrands}</p>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Items - Responsive */}
               <div className="space-y-2">
@@ -4934,6 +5169,34 @@ export default function MyOrdersPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {showClientReturns && (
+        <ClientOrderReturnTimeline
+          open={!!timelineOrder}
+          onOpenChange={(open) => {
+            if (!open) setTimelineOrder(null);
+          }}
+          order={timelineOrder}
+        />
+      )}
+
+      {showClientReturns && (
+        <ReturnClientOrderDialog
+          open={!!returnOrder}
+          onOpenChange={(open) => {
+            if (!open) setReturnOrder(null);
+          }}
+          orderId={returnOrder?.id || ''}
+          orderNumber={returnOrder?.orderNumber || ''}
+          clientName={returnOrder?.clientName || ''}
+          items={returnDialogItems}
+          onSuccess={() => {
+            void queryClient.invalidateQueries({
+              queryKey: [CLIENT_ORDER_RETURN_QTY_BY_ORDER_QUERY_KEY],
+            });
+          }}
+        />
+      )}
     </div>
   );
 }

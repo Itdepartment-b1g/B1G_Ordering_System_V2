@@ -35,7 +35,6 @@ import {
   Network,
   Plus,
   Package2Icon,
-  PackageCheck,
   RotateCcw,
   PackageX,
   Scale,
@@ -43,6 +42,8 @@ import {
   Layers,
   ClipboardCheck,
   Book,
+  CheckCircle2,
+  ArrowRightLeft,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -90,9 +91,12 @@ const adminMenuItems: MenuItem[] = [
       { title: 'Main Inventory', url: '/inventory/main', icon: Package },
       { title: 'Stock Allocations', url: '/inventory/allocations', icon: Users },
       { title: 'Inventory Requests', url: '/inventory/admin-requests', icon: Send },
-      { title: 'TL Stock Requests', url: '/inventory/admin-tl-requests', icon: Users },
+      { title: 'TL Stock Transfers', url: '/inventory/admin-tl-requests', icon: ArrowRightLeft },
       { title: 'Team Remittances', url: '/inventory/admin-team-remittances', icon: Users },
+      // Hidden for now
+      // { title: 'Stock Movements', url: '/inventory/stock-movements', icon: ArrowRightLeft },
       { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
+      { title: 'Price History', url: '/inventory/price-history', icon: History },
     ]
   },
   {
@@ -114,6 +118,7 @@ const adminMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
+      { title: 'Client Refunds', url: '/finance/refunds', icon: BanknoteIcon },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
       { title: 'Payment Settings', url: '/finance/payment-settings', icon: CreditCard },
     ]
@@ -274,11 +279,14 @@ const keyAccountManagerMenuItems: MenuItem[] = [
 const agentMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
   { title: 'My Inventory', url: '/my-inventory', icon: Package },
-  { title: 'Return History', url: '/inventory/my-returns', icon: RotateCcw },
+  { title: 'Returns to TL History', url: '/inventory/my-returns', icon: RotateCcw },
   { title: 'Allocation History', url: '/my-allocation-history', icon: Package2Icon },
   { title: 'Request Inventory', url: '/inventory/mobile-request', icon: Send },
+  { title: 'Price Agreements', url: '/inventory/price-agreements', icon: CheckCircle2 },
+  { title: 'Price History', url: '/inventory/price-history', icon: History },
   { title: 'My Clients', url: '/my-clients', icon: ShoppingBag },
   { title: 'My Orders', url: '/my-orders', icon: ShoppingCart },
+  { title: 'Client Returns', url: '/client-order-returns', icon: RotateCcw },
   { title: 'My Activity', url: '/system-history', icon: History },
   { title: 'Calendar', url: '/calendar', icon: Calendar },
   { title: 'Profile', url: '/profile', icon: UserCircle },
@@ -306,8 +314,13 @@ const leaderMenuItems: MenuItem[] = [
       { title: 'Pending Requests', url: '/inventory/pending-requests', icon: Send },
       { title: 'Team Remittances', url: '/inventory/team-remittances', icon: ArrowLeft },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: DollarSign },
-      { title: 'PO Receiving', url: '/inventory/po-receive', icon: PackageCheck },
+      { title: 'TL Stock Transfer', url: '/inventory/tl-stock-requests', icon: ArrowRightLeft },
+      { title: 'Transfer Shortages', url: '/inventory/tl-transfer-shortages', icon: PackageSearch },
+      // Hidden for now
+      // { title: 'PO Receiving', url: '/inventory/po-receive', icon: PackageCheck },
       { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
+      { title: 'Price Agreements', url: '/inventory/price-agreements', icon: CheckCircle2 },
+      { title: 'Price History', url: '/inventory/price-history', icon: History },
       // { title: 'Returns to Super Admin', url: '/inventory/main/returns', icon: RotateCcw },
     ]
   },
@@ -326,6 +339,7 @@ const leaderMenuItems: MenuItem[] = [
   { title:  "My Team's Attendance", url: '/team-attendances', icon: Calendar},
   { title: "My Allocation History", url: '/leader-allocation-history', icon: Package2Icon },
   { title: 'My Orders', url: '/my-orders', icon: ShoppingCart },
+  { title: 'Client Returns', url: '/client-order-returns', icon: RotateCcw },
   { title: 'Order Management', url: '/leader-orders', icon: FileText },
   { title: 'Team Activity', url: '/system-history', icon: History },
   { title: 'Calendar', url: '/calendar', icon: Calendar },
@@ -337,6 +351,7 @@ const systemAdminMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/sys-admin-dashboard', icon: LayoutDashboard },
   { title: 'Executive Account', url: '/system-admin', icon: ShieldCheck },
   { title: 'Management Portal', url: '/system-management', icon: LayoutGrid },
+  { title: 'System Updates', url: '/system-updates', icon: FileText },
   { title: 'System History', url: '/system-history', icon: History },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
@@ -378,6 +393,8 @@ const warehouseMenuItems: MenuItem[] = [
       { title: 'Stock Returns', url: '/inventory/stock-returns', icon: RotateCcw },
       { title: 'Client Stock Returns', url: '/inventory/client-stock-returns', icon: RotateCcw },
       { title: 'Stock Adjustments', url: '/inventory/stock-adjustments', icon: Scale },
+      // Hidden for now
+      // { title: 'Stock Movements', url: '/inventory/stock-movements', icon: ArrowRightLeft },
       { title: 'Delivery Shortages', url: '/inventory/delivery-shortages', icon: PackageSearch },
       { title: 'Batch View', url: '/inventory/batches', icon: Layers },
       { title: 'Physical Count', url: '/inventory/physical-count', icon: ClipboardCheck },
@@ -421,6 +438,7 @@ const financeMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
+      { title: 'Client Refunds', url: '/finance/refunds', icon: BanknoteIcon },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
       { title: 'Payment Settings', url: '/finance/payment-settings', icon: CreditCard },
       { title: 'Physical Count', url: '/inventory/physical-count', icon: ClipboardCheck },
@@ -443,6 +461,7 @@ const accountingMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
+      { title: 'Client Refunds', url: '/finance/refunds', icon: BanknoteIcon },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
       { title: 'Physical Count', url: '/inventory/physical-count', icon: ClipboardCheck },
     ]
@@ -476,8 +495,12 @@ const superAdminMenuItems: MenuItem[] = [
       { title: 'Main Inventory', url: '/inventory/main', icon: Package },
       { title: 'Stock Allocations', url: '/inventory/allocations', icon: Users },
       { title: 'Inventory Requests', url: '/inventory/admin-requests', icon: Send },
+      { title: 'TL Stock Transfers', url: '/inventory/admin-tl-requests', icon: ArrowRightLeft },
       { title: 'Team Remittances', url: '/inventory/admin-team-remittances', icon: Users },
+      // Hidden for now
+      // { title: 'Stock Movements', url: '/inventory/stock-movements', icon: ArrowRightLeft },
       { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
+      { title: 'Price History', url: '/inventory/price-history', icon: History },
     ]
   },
   {
@@ -491,6 +514,7 @@ const superAdminMenuItems: MenuItem[] = [
       { title: 'Voided Clients', url: '/voided-clients', icon: Archive },
     ]
   },
+  { title: 'Client Returns', url: '/client-order-returns', icon: RotateCcw },
   {
     title: 'Finance',
     url: '/finance-section',
@@ -499,6 +523,7 @@ const superAdminMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
+      { title: 'Client Refunds', url: '/finance/refunds', icon: BanknoteIcon },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
       { title: 'Payment Settings', url: '/finance/payment-settings', icon: CreditCard },
     ]
@@ -553,11 +578,19 @@ export function AppSidebar() {
   // Get menu items based on role, then filter by permissions
   const menuItems = useMemo(() => {
     const canSeeReturnToWarehouse = hasWarehouseHubLink === true;
+    // Price agreements / history for all sales companies (not warehouse hub accounts)
+    const canSeePriceChangePages = user?.role !== 'warehouse';
+
+    const isPriceChangeRoute = (url: string) =>
+      url === '/inventory/price-history' || url === '/inventory/price-agreements';
 
     // Filter menu items based on permissions
     const filterMenuItems = (items: MenuItem[]): MenuItem[] => {
       return items
         .filter(item => {
+          if (isPriceChangeRoute(item.url) && !canSeePriceChangePages) {
+            return false;
+          }
           // Check if user has permission for this route
           if (!checkPermission(item.url)) {
             return false;
@@ -566,6 +599,9 @@ export function AppSidebar() {
           if (item.hasSubmenu && item.submenu) {
             const filteredSubmenu = item.submenu.filter((subItem) => {
               if (subItem.url === '/inventory/return-to-warehouse' && !canSeeReturnToWarehouse) {
+                return false;
+              }
+              if (isPriceChangeRoute(subItem.url) && !canSeePriceChangePages) {
                 return false;
               }
               return checkPermission(subItem.url);
@@ -582,6 +618,9 @@ export function AppSidebar() {
               ...item,
               submenu: item.submenu.filter((subItem) => {
                 if (subItem.url === '/inventory/return-to-warehouse' && !canSeeReturnToWarehouse) {
+                  return false;
+                }
+                if (isPriceChangeRoute(subItem.url) && !canSeePriceChangePages) {
                   return false;
                 }
                 return checkPermission(subItem.url);
@@ -631,7 +670,7 @@ export function AppSidebar() {
 
     // Filter menu items based on permissions
     return filterMenuItems(baseMenuItems);
-  }, [user?.role, checkPermission, impersonatedCompany, hasWarehouseHubLink]);
+  }, [user?.role, checkPermission, impersonatedCompany, hasWarehouseHubLink, user]);
 
   const toggleSubmenu = (menuTitle: string) => {
     setExpandedMenus(prev =>

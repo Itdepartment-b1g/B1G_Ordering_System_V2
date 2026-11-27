@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,24 +10,198 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Search, Package, ChevronDown, ChevronRight, ArrowLeft, FileSignature, ShoppingCart, Loader2, CheckCircle2, ClipboardCheck, PackageMinus, Info, FileDown, FileSpreadsheet } from 'lucide-react';
+import { Search, Package, Boxes, Store, Layers, TriangleAlert, ChevronDown, ArrowLeft, FileSignature, ShoppingCart, Loader2, CheckCircle2, ClipboardCheck, ClipboardList, History, PackageMinus, Info, FileDown, FileSpreadsheet, MoreVertical, ArrowLeftRight, type LucideIcon } from 'lucide-react';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { format } from 'date-fns';
 import { useAgentInventory } from './hooks';
 import { useAuth } from '@/features/auth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
+import { MobileInventoryBrandOverview } from './components/MobileInventoryBrandOverview';
 import { ReturnInventoryDialog } from './components/ReturnInventoryDialog';
 import { ReturnToMainDialog } from './components/ReturnToMainDialog';
+import MyReturnRequestsSection from './components/MyReturnRequestsSection';
 import { exportMyInventoryPdf } from './utils/exportMyInventoryPdf';
 import { exportMyInventoryExcel } from './utils/exportMyInventoryExcel';
-import type { RemittanceOrder, BankOrderNote } from './types';
+import { buildStockMovementsPath } from './stock-movements/stockMovementsPaths';
+import type { AgentBrand, AgentVariant, RemittanceOrder, BankOrderNote } from './types';
+import {
+  CLIENT_ORDER_RETURNS_QUERY_KEY,
+  buildReturnedStockByVariantId,
+  canShowClientOrderReturns,
+  fetchClientOrderReturns,
+} from '@/features/orders/client-returns/clientReturnApi';
+import type { PreviewClientReturn } from '@/features/orders/client-returns/clientReturnPreview';
+import { ALL_TIME_DATE_RANGE } from '@/features/shared/components/DateRangeFilterPopover';
+import {
+  getListPaginationSlice,
+  ListPagination,
+  type PageSize,
+} from '@/features/shared/components/ListPagination';
+import {
+  QuickFilterSheet,
+  createQuickFilterAndClause,
+  matchesQuickFilterAndClauses,
+  type QuickFilterAndClause,
+  type QuickFilterColumn,
+} from '@/features/shared/components/QuickFilterSheet';
+import { variantTypeTone } from './utils/variantTypeTone';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+
+const INVENTORY_PAGE_SIZE: PageSize = 15;
+
+type InventoryBrandSortKey = 'name' | 'variants' | 'stock' | 'lowStock' | 'returned' | 'status';
+type InventoryQuickColumn = 'brand' | 'type' | 'variant';
+type InventoryStatusFilter = 'all' | 'in_stock' | 'low' | 'returned' | 'out';
+
+const InventoryQuickFilterSheet = QuickFilterSheet<InventoryQuickColumn, InventoryStatusFilter>;
+
+type VariantTypeMeta = {
+  name: string;
+  display_name: string;
+  color_code: string | null;
+};
+
+const DEFAULT_INVENTORY_BRAND_SORT_KEY: InventoryBrandSortKey = 'name';
+const DEFAULT_INVENTORY_BRAND_SORT_DIRECTION = 'asc' as const;
 
 const LOW_STOCK_THRESHOLD = 10;
 const isLowStock = (stock: number) => stock <= LOW_STOCK_THRESHOLD;
+
+function variantMatchesInventoryFilters(
+  brand: AgentBrand,
+  variant: AgentVariant,
+  type: string,
+  query: string,
+  typeTab: string,
+  status: InventoryStatusFilter,
+  returnedQty: number,
+  clauses: QuickFilterAndClause<InventoryQuickColumn>[]
+) {
+  const brandNameMatch = !query || brand.name.toLowerCase().includes(query);
+  const variantNameMatch = !query || variant.name.toLowerCase().includes(query);
+  if (!brandNameMatch && !variantNameMatch) return false;
+  if (typeTab !== 'all' && type.toLowerCase() !== typeTab.toLowerCase()) return false;
+  if (status === 'in_stock' && variant.stock <= 0) return false;
+  if (status === 'low' && !(isLowStock(variant.stock) && variant.stock > 0)) return false;
+  if (status === 'returned' && returnedQty <= 0) return false;
+  if (status === 'out' && variant.stock !== 0) return false;
+  return matchesQuickFilterAndClauses(clauses, (field, value) => {
+    if (field === 'brand') return brand.id === value;
+    if (field === 'type') return type.toLowerCase() === value.toLowerCase();
+    if (field === 'variant') return variant.id === value;
+    return false;
+  });
+}
+
+function isLowStockVariant(variant: { stock?: number; status?: string }) {
+  const stock = variant.stock ?? 0;
+  return stock > 0 && (variant.status === 'low' || isLowStock(stock));
+}
+
+function countLowStockVariants(
+  variants: Array<{ stock?: number; status?: string }> | undefined
+) {
+  return (variants || []).filter(isLowStockVariant).length;
+}
+
+function brandStatusRank(total: number, hasLow: boolean): number {
+  if (total === 0) return 2;
+  if (hasLow) return 1;
+  return 0;
+}
+
+type ReturnedStockEntry = {
+  qty: number;
+  restockQty: number;
+  disposalQty: number;
+  returns: PreviewClientReturn[];
+};
+
+function emptyReturnedStock(): ReturnedStockEntry {
+  return { qty: 0, restockQty: 0, disposalQty: 0, returns: [] };
+}
+
+function variantTypeKey(variantType?: string) {
+  return (variantType || 'flavor').toLowerCase();
+}
+
+function appendVariantToBrand(brand: AgentBrand, variant: AgentVariant) {
+  if (brand.allVariants.some((item) => item.id === variant.id)) return;
+  brand.allVariants.push(variant);
+  const typeKey = variantTypeKey(variant.variantType);
+  const typeList = brand.variantsByType.get(typeKey);
+  if (typeList) typeList.push(variant);
+  else brand.variantsByType.set(typeKey, [variant]);
+  if (typeKey === 'flavor') brand.flavors.push(variant);
+  else if (typeKey === 'battery') brand.batteries.push(variant);
+  else if (typeKey === 'posm') brand.posms.push(variant);
+}
+
+function placeholderReturnedVariant(line: {
+  variantId: string;
+  variantName: string;
+  variantType: string;
+}): AgentVariant {
+  return {
+    id: line.variantId,
+    name: line.variantName,
+    variantType: line.variantType || 'flavor',
+    stock: 0,
+    price: 0,
+    status: 'none',
+  };
+}
+
+function emptyAgentBrand(id: string, name: string): AgentBrand {
+  return {
+    id,
+    name,
+    flavors: [],
+    batteries: [],
+    posms: [],
+    foc: [],
+    allVariants: [],
+    variantsByType: new Map(),
+  };
+}
+
+function returnedVariantMeta(
+  returns: PreviewClientReturn[],
+  variantId: string
+): { brandId?: string; brandName: string; variantName: string; variantType: string } | null {
+  for (const cr of returns) {
+    for (const line of cr.lines) {
+      if (line.variantId === variantId) {
+        return {
+          brandId: line.brandId,
+          brandName: line.brandName,
+          variantName: line.variantName,
+          variantType: line.variantType,
+        };
+      }
+    }
+  }
+  return null;
+}
 
 // Sold tab (End of Day Cash Remittance): only show orders on or after this date. Orders before are v1 imports.
 const SOLD_TAB_ORDER_DATE_THRESHOLD = '2026-02-17';
@@ -50,12 +225,69 @@ const getVariantTypeColor = (type: string) => {
   }
 };
 
+const VARIANT_TYPE_ORDER = ['flavor', 'battery', 'posm', 'foc', 'ncv'];
+
+function formatVariantTypeLabel(type: string, plural = false): string {
+  const value = type.toLowerCase();
+  if (value === 'posm') return 'POSM';
+  if (value === 'foc') return 'FOC';
+  if (value === 'ncv') return 'NCV';
+  if (value === 'battery') return plural ? 'Batteries' : 'Battery';
+  if (value === 'flavor') return plural ? 'Flavors' : 'Flavor';
+  const base = value ? value.charAt(0).toUpperCase() + value.slice(1) : 'Other';
+  if (!plural) return base;
+  return base.endsWith('s') ? base : `${base}s`;
+}
+
+function formatVariantTypeCountSummary(
+  typeEntries: Array<[string, AgentVariant[]]>,
+  fallbackCount: number
+): string {
+  if (typeEntries.length === 0) {
+    return `${fallbackCount} item${fallbackCount === 1 ? '' : 's'}`;
+  }
+  return typeEntries
+    .map(([type, variants]) => `${formatVariantTypeLabel(type, true)} ${variants.length}`)
+    .join(' • ');
+}
+
+function typeExpandKey(brandId: string, type: string) {
+  return `${brandId}::${type.toLowerCase()}`;
+}
+
+function sortedVariantTypeEntries(
+  variantsByType?: Map<string, AgentVariant[]>
+): Array<[string, AgentVariant[]]> {
+  if (!variantsByType) return [];
+  return Array.from(variantsByType.entries()).sort(([a], [b]) => {
+    const ai = VARIANT_TYPE_ORDER.indexOf(a.toLowerCase());
+    const bi = VARIANT_TYPE_ORDER.indexOf(b.toLowerCase());
+    const ao = ai === -1 ? 99 : ai;
+    const bo = bi === -1 ? 99 : bi;
+    if (ao !== bo) return ao - bo;
+    return a.localeCompare(b);
+  });
+}
+
 export default function MyInventory() {
   const { agentBrands } = useAgentInventory();
   const { user } = useAuth();
+  const { hasWarehouseHubLink } = usePermissions();
+  const showReturnedColumn = canShowClientOrderReturns(hasWarehouseHubLink, user?.role);
   const { toast } = useToast();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [searchQuery, setSearchQuery] = useState('');
+  const [typeTab, setTypeTab] = useState('all');
+  const [statusFilter, setStatusFilter] = useState<InventoryStatusFilter>('all');
+  const [columnClauses, setColumnClauses] = useState<QuickFilterAndClause<InventoryQuickColumn>[]>([
+    createQuickFilterAndClause<InventoryQuickColumn>(),
+  ]);
   const [expandedBrands, setExpandedBrands] = useState<string[]>([]);
+  const [brandPage, setBrandPage] = useState(0);
+  const [brandPageSize, setBrandPageSize] = useState<PageSize>(INVENTORY_PAGE_SIZE);
+  const [brandSortState, setBrandSortState] =
+    useState<TableSortCycleState<InventoryBrandSortKey>>(createInitialTableSortCycle);
   const [remitDialogOpen, setRemitDialogOpen] = useState(false);
   const [remitting, setRemitting] = useState(false);
   const [leaderId, setLeaderId] = useState<string | null>(null);
@@ -74,6 +306,7 @@ export default function MyInventory() {
   const [returnDialogOpen, setReturnDialogOpen] = useState(false);
   const [returnToMainDialogOpen, setReturnToMainDialogOpen] = useState(false);
   const [exportingExcel, setExportingExcel] = useState(false);
+  const [exportingVariantId, setExportingVariantId] = useState<string | null>(null);
 
   // Confirmation checkboxes for each section
   const [unsoldConfirmed, setUnsoldConfirmed] = useState(false);
@@ -81,10 +314,8 @@ export default function MyInventory() {
   const [signatureConfirmed, setSignatureConfirmed] = useState(false);
 
   const toggleBrandExpand = (brandId: string) => {
-    setExpandedBrands(prev =>
-      prev.includes(brandId)
-        ? prev.filter(id => id !== brandId)
-        : [...prev, brandId]
+    setExpandedBrands((prev) =>
+      prev.includes(brandId) ? prev.filter((id) => id !== brandId) : [...prev, brandId]
     );
   };
 
@@ -92,41 +323,337 @@ export default function MyInventory() {
     return (brand.allVariants || []).reduce((sum: number, v: any) => sum + v.stock, 0);
   };
 
-  // Create a deep copy of brands with filtering applied at the variant level
-  // Only include brands that end up having at least one item with stock > 0
-  const activeBrands = agentBrands
-    .map(brand => {
-      const allVariantsWithStock = (brand.allVariants || []).filter((v: any) => v.stock > 0);
-      const variantsByTypeWithStock = new Map<string, any[]>();
+  const getTypeStock = (variants: AgentVariant[]) =>
+    variants.reduce((sum, variant) => sum + variant.stock, 0);
 
-      // Rebuild variantsByType with only items that have stock > 0
+  const getTypeReturnedStock = (variants: AgentVariant[]) => {
+    let qty = 0;
+    let restockQty = 0;
+    let disposalQty = 0;
+    const returns: PreviewClientReturn[] = [];
+    const seen = new Set<string>();
+    for (const variant of variants) {
+      const stock = getReturnedStock(variant.id);
+      qty += stock.qty;
+      restockQty += stock.restockQty;
+      disposalQty += stock.disposalQty;
+      for (const row of stock.returns) {
+        if (seen.has(row.id)) continue;
+        seen.add(row.id);
+        returns.push(row);
+      }
+    }
+    return { qty, restockQty, disposalQty, returns };
+  };
+
+  const { data: variantTypes = [] } = useQuery({
+    queryKey: ['variant-types', user?.company_id],
+    enabled: !!user?.company_id,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('variant_types')
+        .select('name, display_name, description, color_code')
+        .eq('company_id', user!.company_id)
+        .eq('is_active', true);
+      if (error) throw error;
+      return (data || []) as VariantTypeMeta[];
+    },
+  });
+
+  const variantTypeByName = useMemo(() => {
+    const map = new Map<string, VariantTypeMeta>();
+    for (const row of variantTypes) map.set(row.name.toLowerCase(), row);
+    return map;
+  }, [variantTypes]);
+
+  const typeLabelFor = (type: string) =>
+    variantTypeByName.get(type.toLowerCase())?.display_name?.trim() || formatVariantTypeLabel(type, false);
+
+  const { data: clientReturns = [] } = useQuery({
+    queryKey: [CLIENT_ORDER_RETURNS_QUERY_KEY, user?.company_id, user?.id],
+    enabled: showReturnedColumn && !!user?.company_id,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    queryFn: fetchClientOrderReturns,
+  });
+
+  const returnedStockByVariantId = useMemo((): Map<string, ReturnedStockEntry> => {
+    if (!showReturnedColumn) return new Map();
+    return buildReturnedStockByVariantId(clientReturns, { holderId: user?.id });
+  }, [clientReturns, showReturnedColumn, user?.id]);
+
+  const getReturnedStock = (variantId: string) =>
+    returnedStockByVariantId.get(variantId) || emptyReturnedStock();
+
+  const openReturnedStockDetail = (variantId: string) => {
+    if (!variantId) return;
+    navigate(`/client-order-returns/item/${variantId}`);
+  };
+
+  /** Brand/type totals have no single variant — open detail when one match, else expand the brand. */
+  const openReturnedStockFromGroup = (brandId: string, variantIds: string[]) => {
+    const withReturns = variantIds.filter((id) => (getReturnedStock(id).qty || 0) > 0);
+    if (withReturns.length === 1) {
+      openReturnedStockDetail(withReturns[0]);
+      return;
+    }
+    if (withReturns.length > 1 && !expandedBrands.includes(brandId)) {
+      setExpandedBrands((prev) => [...prev, brandId]);
+    }
+  };
+
+  const getBrandReturnedStock = (brand: { allVariants?: Array<{ id: string }> }) => {
+    const returnsById = new Map<string, PreviewClientReturn>();
+    let qty = 0;
+    let restockQty = 0;
+    let disposalQty = 0;
+    for (const variant of brand.allVariants || []) {
+      const stock = getReturnedStock(variant.id);
+      qty += stock.qty;
+      restockQty += stock.restockQty;
+      disposalQty += stock.disposalQty;
+      for (const row of stock.returns) {
+        returnsById.set(row.id, row);
+      }
+    }
+    return { qty, restockQty, disposalQty, returns: Array.from(returnsById.values()) };
+  };
+
+  // Keep sellable stock, plus variants/brands that only have returned qty (so the Return column still has a basis)
+  const activeBrands = useMemo(() => {
+    const hasReturnedQty = (variantId: string) =>
+      showReturnedColumn && (returnedStockByVariantId.get(variantId)?.qty || 0) > 0;
+    const keepVariant = (variant: AgentVariant) => variant.stock > 0 || hasReturnedQty(variant.id);
+
+    const brands: AgentBrand[] = agentBrands.map((brand) => {
+      const allVariants = (brand.allVariants || []).filter(keepVariant);
+      const variantsByType = new Map<string, AgentVariant[]>();
       if (brand.variantsByType) {
         brand.variantsByType.forEach((variants, type) => {
-          const filtered = variants.filter((v: any) => v.stock > 0);
-          if (filtered.length > 0) {
-            variantsByTypeWithStock.set(type, filtered);
-          }
+          const filtered = variants.filter(keepVariant);
+          if (filtered.length > 0) variantsByType.set(type, filtered);
         });
       }
-
       return {
         ...brand,
-        allVariants: allVariantsWithStock,
-        variantsByType: variantsByTypeWithStock,
-        flavors: brand.flavors.filter((f: any) => f.stock > 0),
-        batteries: brand.batteries.filter((b: any) => b.stock > 0),
-        posms: (brand.posms || []).filter((p: any) => p.stock > 0)
+        allVariants,
+        variantsByType,
+        flavors: brand.flavors.filter(keepVariant),
+        batteries: brand.batteries.filter(keepVariant),
+        posms: (brand.posms || []).filter(keepVariant),
+        foc: (brand.foc || []).filter(keepVariant),
       };
-    })
-    .filter(brand => brand.allVariants.length > 0);
+    });
 
-  const filteredBrands = activeBrands.filter(brand => {
-    const matchesSearch =
-      brand.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (brand.allVariants || []).some(v => v.name.toLowerCase().includes(searchQuery.toLowerCase()));
+    if (showReturnedColumn) {
+      const seenIds = new Set<string>();
+      for (const brand of brands) {
+        for (const variant of brand.allVariants) seenIds.add(variant.id);
+      }
 
-    return matchesSearch;
-  });
+      for (const [variantId, stock] of returnedStockByVariantId) {
+        if (stock.qty <= 0 || seenIds.has(variantId)) continue;
+        const meta = returnedVariantMeta(clientReturns, variantId);
+        if (!meta) continue;
+        const brandNameKey = meta.brandName.toLowerCase();
+        let brand = meta.brandId
+          ? brands.find((item) => item.id === meta.brandId)
+          : undefined;
+        if (!brand) {
+          brand = brands.find((item) => item.name.toLowerCase() === brandNameKey);
+        }
+        if (!brand) {
+          brand = emptyAgentBrand(meta.brandId || `returned-brand:${meta.brandName}`, meta.brandName);
+          brands.push(brand);
+        }
+        appendVariantToBrand(
+          brand,
+          placeholderReturnedVariant({
+            variantId,
+            variantName: meta.variantName,
+            variantType: meta.variantType,
+          })
+        );
+        seenIds.add(variantId);
+      }
+    }
+
+    return brands.filter((brand) => brand.allVariants.length > 0);
+  }, [agentBrands, clientReturns, returnedStockByVariantId, showReturnedColumn]);
+
+  const typeTabs = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const brand of activeBrands) {
+      brand.variantsByType?.forEach((variants, type) => {
+        counts.set(type, (counts.get(type) || 0) + variants.length);
+      });
+    }
+    return [...counts.entries()].sort(([a], [b]) => {
+      const ai = VARIANT_TYPE_ORDER.indexOf(a.toLowerCase());
+      const bi = VARIANT_TYPE_ORDER.indexOf(b.toLowerCase());
+      const ao = ai === -1 ? 99 : ai;
+      const bo = bi === -1 ? 99 : bi;
+      if (ao !== bo) return ao - bo;
+      return a.localeCompare(b);
+    });
+  }, [activeBrands]);
+
+  const variantCount = typeTabs.reduce((sum, [, count]) => sum + count, 0);
+
+  const listIsFiltered =
+    Boolean(searchQuery.trim()) ||
+    typeTab !== 'all' ||
+    statusFilter !== 'all' ||
+    columnClauses.some((clause) => clause.field !== 'all' && Boolean(clause.value.trim()));
+
+  const filteredBrands = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return activeBrands
+      .map((brand) => {
+        const variantsByType = new Map<string, AgentVariant[]>();
+        const allVariants: AgentVariant[] = [];
+        sortedVariantTypeEntries(brand.variantsByType).forEach(([type, variants]) => {
+          const visible = variants.filter((variant) =>
+            variantMatchesInventoryFilters(
+              brand,
+              variant,
+              type,
+              query,
+              typeTab,
+              statusFilter,
+              returnedStockByVariantId.get(variant.id)?.qty || 0,
+              columnClauses
+            )
+          );
+          if (visible.length === 0) return;
+          variantsByType.set(type, visible);
+          allVariants.push(...visible);
+        });
+        const visibleIds = new Set(allVariants.map((variant) => variant.id));
+        return {
+          ...brand,
+          allVariants,
+          variantsByType,
+          flavors: brand.flavors.filter((variant) => visibleIds.has(variant.id)),
+          batteries: brand.batteries.filter((variant) => visibleIds.has(variant.id)),
+          posms: (brand.posms || []).filter((variant) => visibleIds.has(variant.id)),
+          foc: (brand.foc || []).filter((variant) => visibleIds.has(variant.id)),
+        };
+      })
+      .filter((brand) => brand.allVariants.length > 0);
+  }, [activeBrands, columnClauses, returnedStockByVariantId, searchQuery, statusFilter, typeTab]);
+
+  const statusOptions = useMemo(() => {
+    let inStock = 0;
+    let low = 0;
+    let returned = 0;
+    let out = 0;
+    let all = 0;
+    for (const brand of activeBrands) {
+      for (const variant of brand.allVariants || []) {
+        all += 1;
+        if (variant.stock > 0) inStock += 1;
+        if (isLowStock(variant.stock) && variant.stock > 0) low += 1;
+        if (variant.stock === 0) out += 1;
+        if ((returnedStockByVariantId.get(variant.id)?.qty || 0) > 0) returned += 1;
+      }
+    }
+    const options: Array<{ value: InventoryStatusFilter; label: string; count: number }> = [
+      { value: 'all', label: 'All', count: all },
+      { value: 'in_stock', label: 'In stock', count: inStock },
+      { value: 'low', label: 'Low stock', count: low },
+    ];
+    if (showReturnedColumn) options.push({ value: 'returned', label: 'Returned', count: returned });
+    options.push({ value: 'out', label: 'Out of stock', count: out });
+    return options;
+  }, [activeBrands, returnedStockByVariantId, showReturnedColumn]);
+
+  const quickColumns = useMemo((): QuickFilterColumn<InventoryQuickColumn>[] => {
+    const variants: Array<{ value: string; label: string }> = [];
+    const seen = new Set<string>();
+    for (const brand of activeBrands) {
+      for (const variant of brand.allVariants || []) {
+        if (seen.has(variant.id)) continue;
+        seen.add(variant.id);
+        variants.push({ value: variant.id, label: variant.name });
+      }
+    }
+    return [
+      {
+        key: 'brand',
+        label: 'Brand',
+        searchPlaceholder: 'Search brand...',
+        options: activeBrands.map((brand) => ({ value: brand.id, label: brand.name })),
+      },
+      {
+        key: 'type',
+        label: 'Variant type',
+        searchPlaceholder: 'Search variant type...',
+        options: typeTabs.map(([type]) => ({ value: type, label: typeLabelFor(type) })),
+      },
+      {
+        key: 'variant',
+        label: 'Variant',
+        searchPlaceholder: 'Search variant...',
+        options: variants,
+      },
+    ];
+  }, [activeBrands, typeTabs, variantTypeByName]);
+
+  const sortedBrands = useMemo(() => {
+    const { key, direction } = resolveTableSortDirection(
+      brandSortState,
+      DEFAULT_INVENTORY_BRAND_SORT_KEY,
+      DEFAULT_INVENTORY_BRAND_SORT_DIRECTION
+    );
+    const dir = direction === 'asc' ? 1 : -1;
+    return [...filteredBrands].sort((a, b) => {
+      const aTotal = getTotalStock(a);
+      const bTotal = getTotalStock(b);
+      const aLow = (a.allVariants || []).some((v: any) => isLowStock(v.stock) && v.stock > 0);
+      const bLow = (b.allVariants || []).some((v: any) => isLowStock(v.stock) && v.stock > 0);
+      let result = 0;
+      switch (key) {
+        case 'variants':
+          result = (a.allVariants?.length || 0) - (b.allVariants?.length || 0);
+          break;
+        case 'stock':
+          result = aTotal - bTotal;
+          break;
+        case 'lowStock':
+          result = countLowStockVariants(a.allVariants) - countLowStockVariants(b.allVariants);
+          break;
+        case 'returned':
+          result = getBrandReturnedStock(a).qty - getBrandReturnedStock(b).qty;
+          break;
+        case 'status':
+          result = brandStatusRank(aTotal, aLow) - brandStatusRank(bTotal, bLow);
+          break;
+        case 'name':
+        default:
+          result = a.name.localeCompare(b.name);
+          break;
+      }
+      return result * dir;
+    });
+  }, [filteredBrands, brandSortState, returnedStockByVariantId]);
+
+  const {
+    pagedItems: pagedBrands,
+    safePage: safeBrandPage,
+    pageCount: brandPageCount,
+  } = getListPaginationSlice(sortedBrands, brandPage, brandPageSize);
+
+  useEffect(() => {
+    setBrandPage(0);
+  }, [searchQuery, brandPageSize, brandSortState, typeTab, statusFilter, columnClauses]);
+
+  const handleBrandSort = (key: InventoryBrandSortKey) => {
+    setBrandSortState((current) => getNextTableSortCycleState(current, key));
+  };
 
   const inventoryExportLines = () =>
     filteredBrands.flatMap((brand) =>
@@ -205,6 +732,134 @@ export default function MyInventory() {
     }
   };
 
+  const handleExportVariantPdf = (
+    brand: AgentBrand,
+    variant: AgentVariant,
+    variantType: string
+  ) => {
+    try {
+      exportMyInventoryPdf({
+        heldByName: user?.full_name,
+        lines: [
+          {
+            brandName: brand.name,
+            variantName: variant.name,
+            variantType: variant.variantType || variantType,
+            quantity: Number(variant.stock) || 0,
+          },
+        ],
+      });
+    } catch (error) {
+      toast({
+        title: 'Could not open print view',
+        description: error instanceof Error ? error.message : 'Try again.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleExportVariantExcel = async (
+    brand: AgentBrand,
+    variant: AgentVariant,
+    variantType: string
+  ) => {
+    setExportingVariantId(variant.id);
+    try {
+      await exportMyInventoryExcel({
+        heldByName: user?.full_name,
+        lines: [
+          {
+            brandId: brand.id,
+            brandName: brand.name,
+            variantName: variant.name,
+            variantType: variant.variantType || variantType,
+            qty: Number(variant.stock) || 0,
+          },
+        ],
+      });
+      toast({
+        title: 'Export complete',
+        description: `${brand.name} — ${variant.name} exported to Excel.`,
+      });
+    } catch (error) {
+      toast({
+        title: 'Export failed',
+        description: error instanceof Error ? error.message : 'Could not export this variant.',
+        variant: 'destructive',
+      });
+    } finally {
+      setExportingVariantId(null);
+    }
+  };
+
+  const returnHistoryPathForVariant = (variantId: string) => {
+    if (user?.role === 'team_leader') {
+      return `/inventory/main/returns?variantId=${encodeURIComponent(variantId)}`;
+    }
+    return `/inventory/my-returns?variantId=${encodeURIComponent(variantId)}`;
+  };
+
+  const canOpenReturnHistory =
+    user?.role === 'team_leader' ||
+    user?.role === 'mobile_sales' ||
+    user?.role === 'sales_agent';
+
+  const renderVariantActionsMenu = (
+    brand: AgentBrand,
+    variant: AgentVariant,
+    variantType: string
+  ) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          disabled={exportingVariantId === variant.id}
+        >
+          {exportingVariantId === variant.id ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <MoreVertical className="h-4 w-4" />
+          )}
+          <span className="sr-only">Open actions</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-52">
+        <DropdownMenuItem onClick={() => handleExportVariantPdf(brand, variant, variantType)}>
+          <FileDown className="mr-2 h-4 w-4" />
+          Export PDF
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => void handleExportVariantExcel(brand, variant, variantType)}
+        >
+          <FileSpreadsheet className="mr-2 h-4 w-4" />
+          Export Excel
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onClick={() =>
+            navigate(
+              buildStockMovementsPath({
+                brandId: brand.id,
+                variantId: variant.id,
+              })
+            )
+          }
+        >
+          <ArrowLeftRight className="mr-2 h-4 w-4" />
+          Stock movements
+        </DropdownMenuItem>
+        {canOpenReturnHistory ? (
+          <DropdownMenuItem onClick={() => navigate(returnHistoryPathForVariant(variant.id))}>
+            <History className="mr-2 h-4 w-4" />
+            Return history
+          </DropdownMenuItem>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
   const getTotalVariants = () => {
     let count = 0;
     activeBrands.forEach(brand => {
@@ -214,12 +869,26 @@ export default function MyInventory() {
   };
 
   const getLowStockCount = () => {
-    let count = 0;
-    activeBrands.forEach(brand => {
-      count += (brand.allVariants || []).filter((v: any) => v.status === 'low' || isLowStock(v.stock)).length;
-    });
-    return count;
+    return activeBrands.reduce(
+      (sum, brand) => sum + countLowStockVariants(brand.allVariants),
+      0
+    );
   };
+
+  const totalStocks = activeBrands.reduce((sum, brand) => sum + getTotalStock(brand), 0);
+  const totalLowStock = getLowStockCount();
+  const inventoryStats: Array<{
+    label: string;
+    value: number;
+    icon: LucideIcon;
+    alert?: boolean;
+    filter?: 'low';
+  }> = [
+    { label: 'Total Stocks', value: totalStocks, icon: Boxes },
+    { label: 'Total Brands', value: activeBrands.length, icon: Store },
+    { label: 'Total Variants', value: getTotalVariants(), icon: Layers },
+    { label: 'Total Low Stock', value: totalLowStock, icon: TriangleAlert, alert: totalLowStock > 0, filter: 'low' },
+  ];
 
   // Get items with stock > 0 to remit
   const getItemsToRemit = () => {
@@ -313,7 +982,7 @@ export default function MyInventory() {
     console.log('🎧 MyInventoryPage: Setting up real-time subscriptions');
 
     // Debounce timer for real-time updates
-    let orderDebounceTimer: NodeJS.Timeout | null = null;
+    let orderDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
     const debouncedOrderRefresh = () => {
       if (orderDebounceTimer) clearTimeout(orderDebounceTimer);
@@ -360,6 +1029,22 @@ export default function MyInventory() {
       setSignatureConfirmed(false);
     }
   }, [remitDialogOpen, user?.id]);
+
+  // Deep link from dashboard: /my-inventory?remit=1 opens remittance dialog
+  useEffect(() => {
+    const shouldOpenRemit = searchParams.get('remit') === '1';
+    if (!shouldOpenRemit) return;
+    if (user?.role === 'team_leader') {
+      setSearchParams({}, { replace: true });
+      return;
+    }
+    if (!leaderId) return;
+
+    setRemitDialogOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('remit');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams, leaderId, user?.role]);
 
   // Auto-confirm sold orders if there are none (optional section)
   useEffect(() => {
@@ -716,23 +1401,26 @@ export default function MyInventory() {
   // They just need to be assigned to a leader
   const canRemit = !!leaderId;
 
+  const actionBtnClass =
+    'h-10 w-full justify-center gap-2 px-3 text-sm sm:w-auto sm:justify-start';
+
   return (
-    <div className="w-full p-4 md:p-6 space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+    <div className="w-full max-w-full min-w-0 overflow-x-hidden p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6">
+      {/* Header — stacked on webview; actions wrap instead of a tall side column */}
+      <div className="space-y-3 sm:space-y-4">
         <div>
-          <h1 className="text-2xl font-bold">My Inventory</h1>
-          <p className="text-sm text-muted-foreground mt-1">Manage your stock and remittance</p>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight">My Inventory</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">Manage your stock and remittance</p>
         </div>
-        <div className="flex gap-2 w-full sm:w-auto">
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
           {user?.role !== 'team_leader' && (
             <Button
               onClick={() => setRemitDialogOpen(true)}
               variant="default"
-              className="gap-2 flex-1 sm:flex-initial"
+              className={`${actionBtnClass} col-span-2 sm:col-auto`}
               disabled={!canRemit}
             >
-              <ClipboardCheck className="h-4 w-4" />
+              <ClipboardCheck className="h-4 w-4 shrink-0" />
               Remit
             </Button>
           )}
@@ -741,13 +1429,16 @@ export default function MyInventory() {
               <Button
                 onClick={() => setReturnToMainDialogOpen(true)}
                 variant="outline"
-                className="gap-2 flex-1 sm:flex-initial"
+                className={actionBtnClass}
               >
-                <PackageMinus className="h-4 w-4" />
-                Return to Main
+                <PackageMinus className="h-4 w-4 shrink-0" />
+                <span className="truncate">Return to Main</span>
               </Button>
-              <Button variant="outline" className="flex-1 sm:flex-initial" asChild>
-                <Link to="/inventory/main/returns">Return to main history</Link>
+              <Button variant="outline" className={actionBtnClass} asChild>
+                <Link to="/inventory/main/returns">
+                  <History className="h-4 w-4 shrink-0" />
+                  <span className="truncate">Return history</span>
+                </Link>
               </Button>
             </>
           ) : (
@@ -755,275 +1446,551 @@ export default function MyInventory() {
               <Button
                 onClick={() => setReturnDialogOpen(true)}
                 variant="outline"
-                className="gap-2 flex-1 sm:flex-initial"
+                className={actionBtnClass}
                 disabled={!leaderId}
               >
-                <PackageMinus className="h-4 w-4" />
+                <PackageMinus className="h-4 w-4 shrink-0" />
                 Return
               </Button>
               {(user?.role === 'mobile_sales' || user?.role === 'sales_agent') && (
-                <Button variant="outline" className="flex-1 sm:flex-initial" asChild>
-                  <Link to="/inventory/my-returns">Your return history</Link>
-                </Button>
+                <>
+                  <Button variant="outline" className={actionBtnClass} asChild>
+                    <Link to="/inventory/my-remittances">
+                      <ClipboardList className="h-4 w-4 shrink-0" />
+                      <span className="truncate">Remittance history</span>
+                    </Link>
+                  </Button>
+                  <Button variant="outline" className={actionBtnClass} asChild>
+                    <Link to="/inventory/my-returns">
+                      <History className="h-4 w-4 shrink-0" />
+                      <span className="truncate">Your return history</span>
+                    </Link>
+                  </Button>
+                </>
               )}
             </>
           )}
+          <Button variant="outline" className={actionBtnClass} onClick={handleExportPdf}>
+            <FileDown className="h-4 w-4 shrink-0" />
+            <span className="truncate">Export PDF</span>
+          </Button>
+          <Button
+            variant="outline"
+            className={actionBtnClass}
+            onClick={() => void handleExportExcel()}
+            disabled={exportingExcel}
+          >
+            {exportingExcel ? (
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+            ) : (
+              <FileSpreadsheet className="h-4 w-4 shrink-0" />
+            )}
+            <span className="truncate">Export Excel</span>
+          </Button>
         </div>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-sm text-muted-foreground">Brands</div>
-            <div className="text-2xl font-bold mt-1">{activeBrands.length}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-sm text-muted-foreground">Items</div>
-            <div className="text-2xl font-bold mt-1">{getTotalVariants()}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-sm text-muted-foreground">Low Stock</div>
-            <div className={`text-2xl font-bold mt-1 ${getLowStockCount() > 0 ? 'text-yellow-600' : 'text-green-600'}`}>
-              {getLowStockCount() > 0 ? getLowStockCount() : '0'}
-            </div>
-          </CardContent>
-        </Card>
+      <div className="grid grid-cols-2 gap-2 sm:gap-3">
+        {inventoryStats.map((stat) => {
+          const Icon = stat.icon;
+          const lowStockActive = stat.filter === 'low' && statusFilter === 'low';
+          const cardClass = `rounded-lg border bg-white px-2.5 py-2.5 sm:px-3 sm:py-3 text-left ${
+            lowStockActive ? 'border-amber-300 ring-1 ring-amber-200' : 'border-[#D5DCF3]'
+          }`;
+          const content = (
+            <>
+              <div className={`flex items-center gap-1.5 ${stat.alert ? 'text-amber-600' : 'text-[#02066F]/55'}`}>
+                <Icon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} aria-hidden />
+                <p className="text-[11px] sm:text-xs font-normal leading-snug">{stat.label}</p>
+              </div>
+              <p
+                className={`mt-1 text-xl sm:text-2xl font-semibold tabular-nums leading-none ${
+                  stat.alert ? 'text-amber-600' : 'text-[#02066F]'
+                }`}
+              >
+                {stat.value.toLocaleString()}
+              </p>
+            </>
+          );
+
+          if (stat.filter !== 'low') {
+            return (
+              <div key={stat.label} className={cardClass}>
+                {content}
+              </div>
+            );
+          }
+
+          return (
+            <button
+              key={stat.label}
+              type="button"
+              aria-pressed={lowStockActive}
+              aria-label={lowStockActive ? 'Show all inventory' : `Show ${totalLowStock} low stock variants`}
+              onClick={() => {
+                setStatusFilter((current) => (current === 'low' ? 'all' : 'low'));
+                setTypeTab('all');
+              }}
+              className={`${cardClass} focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#02066F]`}
+            >
+              {content}
+            </button>
+          );
+        })}
       </div>
 
       {/* Inventory List */}
-      <Card>
-        <CardHeader className="pb-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <h2 className="font-semibold">Inventory</h2>
-            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
-            <Button variant="outline" className="gap-2" onClick={handleExportPdf}>
-              <FileDown className="h-4 w-4" />
-              Export PDF
-            </Button>
-            <Button variant="outline" className="gap-2" onClick={() => void handleExportExcel()} disabled={exportingExcel}>
-              {exportingExcel ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
-              Export Excel
-            </Button>
-            <div className="relative w-full sm:w-64">
+      <Card className="min-w-0 overflow-hidden">
+        <CardHeader className="space-y-3 p-3 pb-3 sm:p-6 sm:pb-4">
+          <div className="flex w-full min-w-0 items-center gap-2">
+            <div className="relative min-w-0 flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Search..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
+                className="h-10 pl-10"
+                aria-label="Search inventory"
               />
             </div>
-            </div>
+            <InventoryQuickFilterSheet
+              showDate={false}
+              dateRange={ALL_TIME_DATE_RANGE}
+              onDateRangeChange={() => undefined}
+              columns={quickColumns}
+              columnClauses={columnClauses}
+              onColumnClausesChange={setColumnClauses}
+              status={statusFilter}
+              statusOptions={statusOptions}
+              onStatusChange={setStatusFilter}
+              onClear={() => {
+                setStatusFilter('all');
+                setColumnClauses([createQuickFilterAndClause<InventoryQuickColumn>()]);
+              }}
+              triggerClassName="h-10 shrink-0"
+            />
           </div>
         </CardHeader>
-        <CardContent>
-          {/* Mobile List */}
-          <div className="md:hidden space-y-2">
-            {filteredBrands.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
-                <p>{searchQuery ? 'No results found' : 'No inventory'}</p>
-              </div>
-            ) : (
-              filteredBrands.map((brand) => (
-                <Card key={brand.id}>
-                  <div className="p-3">
-                    {/* Brand Header */}
-                    <div className="flex items-start justify-between mb-2">
-                      <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold truncate">{brand.name}</h3>
-                        <div className="text-xs text-muted-foreground mt-0.5">
-                          {brand.flavors.length + brand.batteries.length + (brand.posms || []).length} items
-                        </div>
-                      </div>
-                      <div className="text-right ml-3">
-                        {(() => {
-                          const total = getTotalStock(brand);
-                          const hasLow = brand.flavors.some((f: any) => f.status === 'low' || isLowStock(f.stock)) || brand.batteries.some((b: any) => b.status === 'low' || isLowStock(b.stock)) || (brand.posms || []).some((p: any) => p.status === 'low' || isLowStock(p.stock));
-                          return (
-                            <>
-                              <div className={`text-xl font-bold ${hasLow && total > 0 ? 'text-amber-600' : ''}`}>{total}</div>
-                              {total === 0 ? <div className="text-xs text-red-600">Out</div> : hasLow ? <div className="text-xs text-yellow-600">Low</div> : <div className="text-xs text-green-600">OK</div>}
-                            </>
-                          );
-                        })()}
-                      </div>
-                    </div>
-                    {/* Details */}
-                    {expandedBrands.includes(brand.id) && (
-                      <div className="space-y-2 pt-2 border-t mt-2">
-                        {brand.variantsByType && Array.from(brand.variantsByType.entries()).map(([type, variants]) => (
-                          <div key={type}>
-                            <div className="text-xs font-semibold text-muted-foreground mb-1 capitalize">
-                              {type === 'posm' ? 'POSM' : type === 'foc' ? 'FOC' : type === 'ncv' ? 'NCV' : `${type}s`}
-                            </div>
-                            <div className="space-y-1">
-                              {variants.map((v: any) => (
-                                <div key={v.id} className="flex items-center justify-between text-sm py-1">
-                                  <span className="truncate">{v.name}</span>
-                                  <div className="text-right ml-2 flex-shrink-0">
-                                    <span className={`font-semibold ${isLowStock(v.stock) ? 'text-amber-600' : ''}`}>{v.stock}</span>
-                                    <span className="text-xs text-muted-foreground ml-1">₱{v.price.toFixed(2)}</span>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Toggle Button */}
-                    <button
-                      onClick={() => toggleBrandExpand(brand.id)}
-                      className="w-full mt-2 pt-2 border-t text-xs text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      {expandedBrands.includes(brand.id) ? 'Hide' : 'Show'} Details
-                    </button>
-                  </div>
-                </Card>
-              ))
-            )}
+        <CardContent className="space-y-4">
+          <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+            <button
+              type="button"
+              aria-pressed={typeTab === 'all'}
+              onClick={() => setTypeTab('all')}
+              className={`shrink-0 rounded-full px-3 py-1.5 text-sm font-medium ${
+                typeTab === 'all'
+                  ? 'bg-[#02066F] text-white'
+                  : 'bg-white text-[#02066F] ring-1 ring-[#02066F]/10'
+              }`}
+            >
+              All
+              <span className="ml-1.5 tabular-nums opacity-80">{variantCount}</span>
+            </button>
+            {typeTabs.map(([type, count]) => {
+              const tone = variantTypeTone(variantTypeByName.get(type.toLowerCase())?.color_code);
+              const active = typeTab.toLowerCase() === type.toLowerCase();
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setTypeTab(type)}
+                  className={`shrink-0 rounded-full px-3 py-1.5 text-sm font-medium ${
+                    active ? `${tone.accent} text-white` : `bg-white ring-1 ${tone.ring} ${tone.title}`
+                  }`}
+                >
+                  {typeLabelFor(type)}
+                  <span className="ml-1.5 tabular-nums opacity-80">{count}</span>
+                </button>
+              );
+            })}
           </div>
 
-          {/* Desktop/Tablet: table */}
-          <div className="hidden md:block w-full overflow-x-auto">
-            <Table className="min-w-[900px]">
+          {/* Mobile: brand inventory overview */}
+          <div className="md:hidden">
+            <MobileInventoryBrandOverview
+              brands={pagedBrands}
+              isFiltered={listIsFiltered}
+              onShowDetails={(brandId) => navigate(`/my-inventory/${brandId}`)}
+            />
+          </div>
+
+          {/* Desktop: one table — brand accordion rows (CR table pattern) */}
+          <div className="hidden md:block rounded-md border overflow-hidden">
+            <Table className="min-w-[840px]">
               <TableHeader>
-                <TableRow>
-                  <TableHead className="w-10"></TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead className="text-right">Variants</TableHead>
-                  <TableHead className="text-right">Stock</TableHead>
-                  <TableHead className="text-right">Price</TableHead>
-                  <TableHead className="text-right">DSP</TableHead>
-                  <TableHead className="text-right">RSP</TableHead>
-                  <TableHead className="text-right">Status</TableHead>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="w-10 px-2" />
+                  <SortableTableHead
+                    label="Brand"
+                    sortKey="name"
+                    sortDirection={getTableSortDisplayDirection(brandSortState, 'name')}
+                    onSort={handleBrandSort}
+                  />
+                  <SortableTableHead
+                    label="Variants"
+                    sortKey="variants"
+                    sortDirection={getTableSortDisplayDirection(brandSortState, 'variants')}
+                    onSort={handleBrandSort}
+                    className="text-right whitespace-nowrap"
+                  />
+                  <SortableTableHead
+                    label="Stock"
+                    sortKey="stock"
+                    sortDirection={getTableSortDisplayDirection(brandSortState, 'stock')}
+                    onSort={handleBrandSort}
+                    className="text-right w-28"
+                  />
+                  <SortableTableHead
+                    label="Low Stocks"
+                    sortKey="lowStock"
+                    sortDirection={getTableSortDisplayDirection(brandSortState, 'lowStock')}
+                    onSort={handleBrandSort}
+                    className="text-right w-28"
+                  />
+                  {showReturnedColumn ? (
+                    <SortableTableHead
+                      label="Returned Items"
+                      sortKey="returned"
+                      sortDirection={getTableSortDisplayDirection(brandSortState, 'returned')}
+                      onSort={handleBrandSort}
+                      className="text-right w-44"
+                    />
+                  ) : null}
+                  <SortableTableHead
+                    label="Status"
+                    sortKey="status"
+                    sortDirection={getTableSortDisplayDirection(brandSortState, 'status')}
+                    onSort={handleBrandSort}
+                    className="w-32"
+                  />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredBrands.map((brand) => (
-                  <React.Fragment key={brand.id}>
-                    {/* Brand Row */}
-                    <TableRow className={`hover:bg-muted/50 ${(() => {
-                      const total = getTotalStock(brand);
-                      const hasLow = brand.flavors.some((f: any) => isLowStock(f.stock)) || brand.batteries.some((b: any) => isLowStock(b.stock)) || (brand.posms || []).some((p: any) => isLowStock(p.stock));
-                      return hasLow && total > 0 ? 'bg-amber-50/60' : 'bg-primary/5';
-                    })()}`}>
-                      <TableCell className="cursor-pointer" onClick={() => toggleBrandExpand(brand.id)}>
-                        {expandedBrands.includes(brand.id) ? (
-                          <ChevronDown className="h-4 w-4" />
-                        ) : (
-                          <ChevronRight className="h-4 w-4" />
-                        )}
-                      </TableCell>
-                      <TableCell className="font-bold cursor-pointer" onClick={() => toggleBrandExpand(brand.id)}>
-                        {brand.name}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="default">Brand</Badge>
-                      </TableCell>
-                      <TableCell className="text-right text-muted-foreground cursor-pointer" onClick={() => toggleBrandExpand(brand.id)}>
-                        <span className="text-xs">
-                          {brand.variantsByType && Array.from(brand.variantsByType.entries()).map(([type, variants], idx) => {
-                            const prefix = idx > 0 ? ' • ' : '';
-                            const typeName = type === 'posm' ? 'POSM' : type === 'foc' ? 'FOC' : type === 'ncv' ? 'NCV' : type.charAt(0).toUpperCase() + type.slice(1);
-                            const plural = variants.length !== 1 && type !== 'posm' && type !== 'foc' && type !== 'ncv' ? 's' : '';
-                            return `${prefix}${variants.length} ${typeName}${plural}`;
-                          }).join('')}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-right cursor-pointer" onClick={() => toggleBrandExpand(brand.id)}>
-                        <span className={(() => {
-                          const total = getTotalStock(brand);
-                          const hasLow = (brand.allVariants || []).some((v: any) => isLowStock(v.stock));
-                          return hasLow && total > 0 ? 'font-semibold text-amber-600' : 'font-semibold';
-                        })()}>
-                          {getTotalStock(brand)}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-right text-muted-foreground">-</TableCell>
-                      <TableCell className="text-right text-muted-foreground">-</TableCell>
-                      <TableCell className="text-right text-muted-foreground">-</TableCell>
-                      <TableCell className="text-right">
-                        {(() => {
-                          const total = getTotalStock(brand);
-                          const hasLow = (brand.allVariants || []).some((v: any) => v.status === 'low' || isLowStock(v.stock));
-                          const pillClass = total === 0 ? 'bg-red-100 text-red-700' : hasLow ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700';
-                          const label = total === 0 ? 'Out of Stock' : hasLow ? 'Low stock' : 'In Stock';
-                          return <span className={`px-2 py-1 rounded-full text-xs font-medium ${pillClass}`}>{label}</span>;
-                        })()}
-                      </TableCell>
-                    </TableRow>
+                {pagedBrands.length === 0 ? (
+                  <TableRow>
+                    <TableCell
+                      colSpan={showReturnedColumn ? 7 : 6}
+                      className="text-center py-12 text-muted-foreground"
+                    >
+                      {listIsFiltered ? 'No results found' : 'No inventory'}
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  pagedBrands.map((brand) => {
+                    const brandOpen = expandedBrands.includes(brand.id);
+                    const typeEntries = sortedVariantTypeEntries(brand.variantsByType);
+                    const lowStockCount = countLowStockVariants(brand.allVariants);
+                    const brandHasLow = lowStockCount > 0;
+                    const brandTotal = getTotalStock(brand);
+                    const itemCount = (brand.allVariants || []).length;
+                    const variantSummary = formatVariantTypeCountSummary(typeEntries, itemCount);
+                    const brandReturned = showReturnedColumn
+                      ? getBrandReturnedStock(brand)
+                      : {
+                          qty: 0,
+                          restockQty: 0,
+                          disposalQty: 0,
+                          returns: [] as PreviewClientReturn[],
+                        };
+                    const statusLabel =
+                      brandTotal === 0 ? 'Out of Stock' : brandHasLow ? 'Low stock' : 'In Stock';
+                    const statusClass =
+                      brandTotal === 0
+                        ? 'bg-red-100 text-red-700 border-red-200'
+                        : brandHasLow
+                          ? 'bg-amber-100 text-amber-700 border-amber-200'
+                          : 'bg-emerald-100 text-emerald-700 border-emerald-200';
+                    const colSpan = showReturnedColumn ? 7 : 6;
 
-                    {/* Dynamic Variant Type Sections */}
-                    {expandedBrands.includes(brand.id) && brand.variantsByType && Array.from(brand.variantsByType.entries()).map(([type, variants]) => {
-                      const colors = getVariantTypeColor(type);
-                      const typeDisplay = type === 'posm' ? 'POSM' : type === 'foc' ? 'FOC' : type === 'ncv' ? 'NCV' : type.toUpperCase();
+                    return (
+                      <React.Fragment key={brand.id}>
+                        <TableRow className={brandOpen ? 'bg-muted/20' : undefined}>
+                          <TableCell className="px-2">
+                            <button
+                              type="button"
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
+                              onClick={() => toggleBrandExpand(brand.id)}
+                              aria-expanded={brandOpen}
+                              aria-label={
+                                brandOpen ? 'Collapse brand details' : 'Expand brand details'
+                              }
+                            >
+                              <ChevronDown
+                                className={`h-4 w-4 text-muted-foreground transition-transform ${
+                                  brandOpen ? 'rotate-180' : ''
+                                }`}
+                              />
+                            </button>
+                          </TableCell>
+                          <TableCell>
+                            <p className="font-semibold truncate" title={brand.name}>
+                              {brand.name}
+                            </p>
+                          </TableCell>
+                          <TableCell
+                            className="text-right text-sm text-gray-500 whitespace-nowrap"
+                            title={variantSummary}
+                          >
+                            <p className="tabular-nums">{variantSummary}</p>
+                          </TableCell>
+                          <TableCell
+                            className={`text-right font-semibold tabular-nums ${
+                              brandHasLow && brandTotal > 0 ? 'text-amber-600' : ''
+                            }`}
+                          >
+                            {brandTotal}
+                          </TableCell>
+                          <TableCell
+                            className={`text-right font-semibold tabular-nums ${
+                              lowStockCount > 0 ? 'text-amber-600' : 'text-muted-foreground'
+                            }`}
+                          >
+                            {lowStockCount}
+                          </TableCell>
+                          {showReturnedColumn ? (
+                            <TableCell className="text-right p-1">
+                              <button
+                                type="button"
+                                className={`w-full min-h-9 rounded-md px-2 py-1.5 text-sm font-semibold tabular-nums ${
+                                  brandReturned.qty > 0
+                                    ? 'text-rose-700 hover:bg-rose-50 hover:underline'
+                                    : 'text-muted-foreground'
+                                }`}
+                                title={
+                                  brandReturned.qty > 0
+                                    ? 'View returned stock detail'
+                                    : undefined
+                                }
+                                disabled={brandReturned.qty <= 0}
+                                onClick={() =>
+                                  openReturnedStockFromGroup(
+                                    brand.id,
+                                    (brand.allVariants || []).map((v: { id: string }) => v.id)
+                                  )
+                                }
+                              >
+                                {brandReturned.qty || '—'}
+                              </button>
+                            </TableCell>
+                          ) : null}
+                          <TableCell>
+                            <Badge
+                              variant="secondary"
+                              className={`font-medium border ${statusClass}`}
+                            >
+                              {statusLabel}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
 
-                      return (
-                        <React.Fragment key={type}>
-                          {/* Type Header */}
-                          <TableRow className={colors.headerBg}>
-                            <TableCell></TableCell>
-                            <TableCell colSpan={8} className="pl-8 py-2">
-                              <span className={`text-xs font-semibold ${colors.header}`}>{typeDisplay}</span>
+                        {brandOpen ? (
+                          <TableRow className="hover:bg-transparent">
+                            <TableCell colSpan={colSpan} className="bg-muted/10 p-4">
+                              <div className="space-y-3 min-w-0 ml-2">
+                                {typeEntries.map(([type, variants]) => {
+                                  const colors = getVariantTypeColor(type);
+                                  const typeKey = typeExpandKey(brand.id, type);
+                                  const typeStock = getTypeStock(variants);
+                                  const typeReturned = showReturnedColumn
+                                    ? getTypeReturnedStock(variants)
+                                    : {
+                                        qty: 0,
+                                        restockQty: 0,
+                                        disposalQty: 0,
+                                        returns: [] as PreviewClientReturn[],
+                                      };
+                                  const typeHasLow = variants.some(
+                                    (v) => isLowStock(v.stock) && v.stock > 0
+                                  );
+
+                                  return (
+                                    <div
+                                      key={typeKey}
+                                      className="border rounded-lg overflow-hidden bg-background"
+                                    >
+                                      <div
+                                        className={`flex items-center gap-2 px-3 py-2.5 border-b ${colors.headerBg}`}
+                                      >
+                                        <span className={`font-semibold ${colors.header}`}>
+                                          {formatVariantTypeLabel(type, true)}
+                                        </span>
+                                        <span className="text-xs text-muted-foreground tabular-nums">
+                                          {variants.length} variant
+                                          {variants.length === 1 ? '' : 's'}
+                                        </span>
+                                        <span
+                                          className={`ml-auto text-sm font-semibold tabular-nums ${
+                                            typeHasLow ? 'text-amber-600' : ''
+                                          }`}
+                                        >
+                                          Stock {typeStock}
+                                        </span>
+                                        {showReturnedColumn ? (
+                                          <button
+                                            type="button"
+                                            className={`text-xs tabular-nums ml-3 ${
+                                              typeReturned.qty > 0
+                                                ? 'text-rose-700 font-semibold hover:underline'
+                                                : 'text-muted-foreground'
+                                            }`}
+                                            disabled={typeReturned.qty <= 0}
+                                            title={
+                                              typeReturned.qty > 0
+                                                ? 'View returned stock detail'
+                                                : undefined
+                                            }
+                                            onClick={() =>
+                                              openReturnedStockFromGroup(
+                                                brand.id,
+                                                variants.map((v) => v.id)
+                                              )
+                                            }
+                                          >
+                                            Returned {typeReturned.qty || '—'}
+                                          </button>
+                                        ) : null}
+                                      </div>
+
+                                      <div className="overflow-x-auto">
+                                        <Table className="min-w-[720px]">
+                                          <TableHeader>
+                                            <TableRow className="hover:bg-transparent">
+                                              <TableHead>Variant</TableHead>
+                                              <TableHead className="text-right">Stock</TableHead>
+                                              {showReturnedColumn ? (
+                                                <TableHead className="text-right">
+                                                  Returned
+                                                </TableHead>
+                                              ) : null}
+                                              <TableHead className="text-right">Price</TableHead>
+                                              <TableHead className="text-right">DSP</TableHead>
+                                              <TableHead className="text-right">RSP</TableHead>
+                                              <TableHead>Status</TableHead>
+                                              <TableHead className="w-12 text-right">
+                                                <span className="sr-only">Actions</span>
+                                              </TableHead>
+                                            </TableRow>
+                                          </TableHeader>
+                                          <TableBody>
+                                            {variants.map((variant: AgentVariant) => (
+                                              <TableRow key={variant.id}>
+                                                <TableCell className="font-medium">
+                                                  {variant.name}
+                                                </TableCell>
+                                                <TableCell
+                                                  className={`text-right font-semibold tabular-nums ${
+                                                    isLowStock(variant.stock) ? 'text-amber-600' : ''
+                                                  }`}
+                                                >
+                                                  {variant.stock}
+                                                </TableCell>
+                                                {showReturnedColumn ? (
+                                                  <TableCell className="p-1 text-right">
+                                                    <button
+                                                      type="button"
+                                                      className={`w-full min-h-9 rounded-md px-2 py-1.5 text-sm font-semibold ${
+                                                        getReturnedStock(variant.id).qty > 0
+                                                          ? 'text-rose-700 hover:bg-rose-50 hover:underline'
+                                                          : 'text-muted-foreground'
+                                                      }`}
+                                                      title={
+                                                        getReturnedStock(variant.id).qty > 0
+                                                          ? 'View returned stock detail'
+                                                          : undefined
+                                                      }
+                                                      disabled={getReturnedStock(variant.id).qty <= 0}
+                                                      onClick={() =>
+                                                        openReturnedStockDetail(variant.id)
+                                                      }
+                                                    >
+                                                      {getReturnedStock(variant.id).qty || '—'}
+                                                    </button>
+                                                  </TableCell>
+                                                ) : null}
+                                                <TableCell className="text-right font-medium">
+                                                  ₱{variant.price.toFixed(2)}
+                                                </TableCell>
+                                                <TableCell className="text-right text-muted-foreground text-sm">
+                                                  {variant.dspPrice
+                                                    ? `₱${variant.dspPrice.toFixed(2)}`
+                                                    : '—'}
+                                                </TableCell>
+                                                <TableCell className="text-right text-muted-foreground text-sm">
+                                                  {variant.rspPrice
+                                                    ? `₱${variant.rspPrice.toFixed(2)}`
+                                                    : '—'}
+                                                </TableCell>
+                                                <TableCell>
+                                                  <Badge
+                                                    variant={
+                                                      variant.stock === 0
+                                                        ? 'destructive'
+                                                        : isLowStock(variant.stock)
+                                                          ? 'secondary'
+                                                          : 'default'
+                                                    }
+                                                    className={`text-xs font-medium border ${
+                                                      isLowStock(variant.stock) &&
+                                                      variant.stock > 0
+                                                        ? 'bg-amber-100 text-amber-700 border-amber-200'
+                                                        : variant.stock > 0
+                                                          ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                                                          : ''
+                                                    }`}
+                                                  >
+                                                    {variant.stock === 0
+                                                      ? 'Out of stock'
+                                                      : isLowStock(variant.stock)
+                                                        ? 'Low stock'
+                                                        : 'In Stock'}
+                                                  </Badge>
+                                                </TableCell>
+                                                <TableCell className="text-right">
+                                                  {renderVariantActionsMenu(brand, variant, type)}
+                                                </TableCell>
+                                              </TableRow>
+                                            ))}
+                                          </TableBody>
+                                        </Table>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             </TableCell>
                           </TableRow>
-
-                          {/* Variant Rows */}
-                          {variants.map((variant: any) => (
-                            <TableRow key={variant.id} className={`hover:bg-muted/20 ${isLowStock(variant.stock) && variant.stock > 0 ? 'bg-amber-50/80' : 'bg-muted/10'}`}>
-                              <TableCell></TableCell>
-                              <TableCell className="pl-12 text-sm font-medium">
-                                <span className="text-muted-foreground">↳</span> {variant.name}
-                              </TableCell>
-                              <TableCell>
-                                <Badge variant="secondary" className={`${colors.bg} ${colors.text} capitalize`}>
-                                  {type === 'posm' ? 'POSM' : type === 'foc' ? 'FOC' : type === 'ncv' ? 'NCV' : type}
-                                </Badge>
-                              </TableCell>
-                              <TableCell className="text-right text-muted-foreground text-xs">-</TableCell>
-                              <TableCell className={`text-right font-semibold ${isLowStock(variant.stock) ? 'text-amber-600' : ''}`}>
-                                {variant.stock}
-                              </TableCell>
-                              <TableCell className="text-right font-medium">₱{variant.price.toFixed(2)}</TableCell>
-                              <TableCell className="text-right text-muted-foreground text-sm">
-                                {variant.dspPrice ? `₱${variant.dspPrice.toFixed(2)}` : '-'}
-                              </TableCell>
-                              <TableCell className="text-right text-muted-foreground text-sm">
-                                {variant.rspPrice ? `₱${variant.rspPrice.toFixed(2)}` : '-'}
-                              </TableCell>
-                              <TableCell className="text-right">
-                                <Badge
-                                  variant={
-                                    variant.stock === 0 ? 'destructive' :
-                                      isLowStock(variant.stock) ? 'secondary' : 'default'
-                                  }
-                                  className={`text-xs ${isLowStock(variant.stock) && variant.stock > 0 ? 'bg-amber-100 text-amber-700 border-amber-200' : ''}`}
-                                >
-                                  {variant.stock === 0 ? 'Out of stock' : isLowStock(variant.stock) ? 'Low stock' : variant.status === 'available' ? 'available' : variant.status}
-                                </Badge>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </React.Fragment>
-                      );
-                    })}
-                  </React.Fragment>
-                ))}
+                        ) : null}
+                      </React.Fragment>
+                    );
+                  })
+                )}
               </TableBody>
             </Table>
           </div>
+
+          {sortedBrands.length > 0 ? (
+            <ListPagination
+              pageSize={brandPageSize}
+              safePage={safeBrandPage}
+              pageCount={brandPageCount}
+              onPageSizeChange={(value) => {
+                setBrandPageSize(value);
+                setBrandPage(0);
+              }}
+              onPrevious={() => setBrandPage((current) => Math.max(0, current - 1))}
+              onNext={() => setBrandPage((current) => Math.min(brandPageCount - 1, current + 1))}
+            />
+          ) : null}
         </CardContent>
       </Card>
 
+      {/* My Return Requests (mobile sales only) */}
+      {user?.role !== 'team_leader' && <MyReturnRequestsSection />}
+
       {/* Remit Inventory Dialog */}
+
       <Dialog open={remitDialogOpen} onOpenChange={setRemitDialogOpen}>
         <DialogContent className="w-[95vw] max-w-4xl h-[90vh] md:h-auto md:max-h-[90vh] overflow-hidden flex flex-col p-0">
           <DialogHeader className="px-4 pt-6 pb-4 md:px-6">

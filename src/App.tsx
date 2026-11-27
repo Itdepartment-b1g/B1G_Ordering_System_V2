@@ -4,6 +4,8 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { queryClient, queryPersistOptions } from "@/lib/queryClient";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
+import { Provider } from "react-redux";
+import { store } from "@/store/store";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider, ProtectedRoute, LoginPage, RoleBasedRedirect } from "@/features/auth";
 import { COMPANY_AGENT_INVENTORY_ROLES } from "@/lib/roleUtils";
@@ -12,12 +14,14 @@ import ExecutiveDashboardPage from "@/features/dashboard/ExecutiveDashboardPage"
 import { SystemHistoryPage } from "@/features/system-history";
 import { ProfilePage } from "@/features/profile";
 import { SystemSettingsPage } from "@/features/settings";
-import { OrdersPage, PurchaseOrdersPage, MyOrdersPage, OrderProvider, PurchaseOrderProvider } from "@/features/orders";
+import { OrdersPage, PurchaseOrdersPage, MyOrdersPage, OrderProvider, PurchaseOrderProvider, ClientOrderReturnsPage, ClientOrderReturnDetailPage, ReturnLeaderDetailPage, ReturnedStockDetailPage, FinanceRefundsPage } from "@/features/orders";
 import BrandsPage from "@/features/orders/BrandsPage";
 import VariantTypesPage from "@/features/orders/VariantTypesPage";
 import SuppliersPage from "@/features/orders/SuppliersPage";
-import {WarehouseDeliveryShortagesPage, MainInventoryPage, MainInventoryReturnHistoryPage, VariantStockHoldersPage, MobileSalesReturnHistoryPage, LeaderAgentReturnsPage, WarehouseInventoryDashboardPage, SubWarehousesPage, SubWarehouseStockRequestPage, MainWarehouseSubStockRequestsPage, WarehouseDisposalsPage, WarehouseStockRequestsPage, WarehouseStockReturnsPage, WarehouseClientStockReturnsPage, StandardAccountReturnToWarehousePage, WarehouseStockAdjustmentsPage, WarehouseAllocationHistoryPage, BatchViewPage, PhysicalCountPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, RemittedStocksPage, AdminTeamRemittancesPage, LeaderRemittancePage, LeaderCashDepositsPage, PendingRequestsPage, AdminRequestsPage, LeaderStockRequestPage, MobileSalesStockRequestPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
+import {WarehouseDeliveryShortagesPage, MainInventoryPage, MainInventoryReturnHistoryPage, MainInventoryReturnedDetailPage, VariantStockHoldersPage, MobileSalesReturnHistoryPage, MobileSalesReturnHistoryDetailPage, LeaderAgentReturnsPage, WarehouseInventoryDashboardPage, SubWarehousesPage, SubWarehouseStockRequestPage, MainWarehouseSubStockRequestsPage, WarehouseDisposalsPage, WarehouseStockRequestsPage, WarehouseStockReturnsPage, WarehouseClientStockReturnsPage, StandardAccountReturnToWarehousePage, WarehouseStockAdjustmentsPage, StockMovementsPage, WarehouseAllocationHistoryPage, BatchViewPage, PhysicalCountPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, MyInventoryBrandPage, RemittedStocksPage, AdminTeamRemittancesPage, LeaderRemittancePage, LeaderCashDepositsPage, PendingRequestsPage, AdminRequestsPage, LeaderStockRequestPage, MobileSalesStockRequestPage, MobileSalesStockRequestDetailPage, PriceAgreementPage, PriceHistoryPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
+import { PriceChangeConfirmGate } from "@/features/inventory/PriceChangeConfirmGate";
 import TLStockRequestPage from "@/features/inventory/TLStockRequestPage";
+import TLTransferShortagesPage from "@/features/inventory/TLTransferShortagesPage";
 import AdminTLRequestsPage from "@/features/inventory/AdminTLRequestsPage";
 import { ClientsPage, MyClientsPage, MyTeamsPage, PendingClientsPage } from "@/features/clients";
 import { AnalyticsPage, ClientAnalyticsPage, ProductAnalyticsPage } from "@/features/analytics";
@@ -38,6 +42,11 @@ import { FinancePage } from "@/features/finance";
 import PaymentSettingsPage from "@/features/finance/PaymentSettingsPage";
 import SystemAdminPage from "@/features/system-admin/SystemAdminPage";
 import ManagementPortal from "@/features/system-admin/ManagementPortal";
+import {
+  SystemUpdatesPage,
+  SystemUpdateFormPage,
+  SystemUpdateDetailPage,
+} from "@/features/system-updates";
 import { WarRoomPage } from "@/features/war-room";
 import { KeyAccountsDashboardWrapper, ClientHierarchyPage, ClientAssignmentPage, KeyAccountTeamPage, KeyAccountPurchaseOrderPage, KeyAccountPurchaseOrdersPage, KeyAccountAnalyticsPage, KeyAccountClientAnalyticsPage, KeyAccountRebatesPage, KeyAccountCreateRebatePage, KeyAccountPaymentSettingsPage, KeyAccountPaymentTermsPage } from "@/features/key-accounts";
 import NotFound from "@/features/shared/NotFound";
@@ -52,6 +61,7 @@ import AgentAttendanceOverviewPage from "@/features/sales-agents/AgentAttendance
 import TeamAttendancesPage from "./features/team-leader/pages/TeamAttendancesPage";
 import LeaderAllocationHistoryPage from "./features/team-leader/pages/LeaderAllocationHistoryPage";
 import MobileSalesAllocationHistoryPage from "./features/inventory/MobileSalesAllocationHistoryPage";
+import MobileSalesAllocationHistoryDetailPage from "./features/inventory/MobileSalesAllocationHistoryDetailPage";
 import LeaderManualPage from "./features/team-leader/pages/LeaderManualPage";
 import LeaderPoReceivePage from "./features/team-leader/pages/LeaderPoReceivePage";
 import SuperAdminAllocationHistoryPage from "@/features/sales-agents/SuperAdminAllocationHistoryPage";
@@ -65,6 +75,7 @@ const ComponentVisual = componentVisualLoader
   : null;
 
 const App = () => (
+  <Provider store={store}>
   <PersistQueryClientProvider
     client={queryClient}
     persistOptions={queryPersistOptions}
@@ -79,6 +90,7 @@ const App = () => (
                 <Toaster />
                 <Sonner />
                 <AgentRemittanceReminder />
+                <PriceChangeConfirmGate />
                 <SupportWidget />
                 <BrowserRouter>
                   <Routes>
@@ -100,7 +112,17 @@ const App = () => (
                     <Route path="/inventory" element={<ProtectedRoute><MainInventoryPage /></ProtectedRoute>} />
                     <Route path="/inventory/main" element={<ProtectedRoute><MainInventoryPage /></ProtectedRoute>} />
                     <Route path="/inventory/main/returns" element={<ProtectedRoute><MainInventoryReturnHistoryPage /></ProtectedRoute>} />
+                    <Route path="/inventory/main/returned/:variantId?" element={<ProtectedRoute><MainInventoryReturnedDetailPage /></ProtectedRoute>} />
                     <Route path="/inventory/main/stock-holders/:variantId" element={<ProtectedRoute><VariantStockHoldersPage /></ProtectedRoute>} />
+                    <Route path="/inventory/price-history" element={<ProtectedRoute><PriceHistoryPage /></ProtectedRoute>} />
+                    <Route
+                      path="/inventory/price-agreements"
+                      element={
+                        <ProtectedRoute allowedRoles={['team_leader', 'mobile_sales']}>
+                          <PriceAgreementPage />
+                        </ProtectedRoute>
+                      }
+                    />
                     <Route
                       path="/inventory/board"
                       element={
@@ -190,6 +212,23 @@ const App = () => (
                       }
                     />
                     <Route
+                      path="/inventory/stock-movements"
+                      element={
+                        <ProtectedRoute
+                          allowedRoles={[
+                            "warehouse",
+                            "admin",
+                            "super_admin",
+                            "team_leader",
+                            "mobile_sales",
+                            "sales_agent",
+                          ]}
+                        >
+                          <StockMovementsPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
                       path="/inventory/delivery-shortages"
                       element={
                         <ProtectedRoute allowedRoles={["warehouse"]}>
@@ -230,15 +269,18 @@ const App = () => (
                     <Route path="/inventory/cash-deposits" element={<ProtectedRoute><LeaderCashDepositsPage /></ProtectedRoute>} />
                     <Route path="/inventory/request" element={<ProtectedRoute><LeaderStockRequestPage /></ProtectedRoute>} />
                     <Route path="/inventory/mobile-request" element={<ProtectedRoute><MobileSalesStockRequestPage /></ProtectedRoute>} />
+                    <Route path="/inventory/mobile-request/:requestId" element={<ProtectedRoute allowedRoles={['mobile_sales', 'sales_agent']}><MobileSalesStockRequestDetailPage /></ProtectedRoute>} />
                     <Route path="/inventory/pending-requests" element={<ProtectedRoute><PendingRequestsPage /></ProtectedRoute>} />
                     <Route path="/inventory/admin-requests" element={<ProtectedRoute><AdminRequestsPage /></ProtectedRoute>} />
                     <Route path="/inventory/tl-stock-requests" element={<ProtectedRoute allowedRoles={['team_leader']}><TLStockRequestPage /></ProtectedRoute>} />
+                    <Route path="/inventory/tl-transfer-shortages" element={<ProtectedRoute allowedRoles={['team_leader', 'admin', 'super_admin']}><TLTransferShortagesPage /></ProtectedRoute>} />
                     <Route path="/inventory/po-receive" element={<ProtectedRoute allowedRoles={['team_leader']}><LeaderPoReceivePage /></ProtectedRoute>} />
                     <Route path="/inventory/admin-tl-requests" element={<ProtectedRoute allowedRoles={['admin', 'super_admin']}><AdminTLRequestsPage /></ProtectedRoute>} />
                     <Route path="/inventory/leaders" element={<ProtectedRoute><LeaderInventoryPage /></ProtectedRoute>} />
                     <Route path="/leader-inventory" element={<ProtectedRoute><LeaderInventoryPage /></ProtectedRoute>} />
                     <Route path="/inventory/leader/returns" element={<ProtectedRoute allowedRoles={['team_leader', 'manager']}><LeaderAgentReturnsPage /></ProtectedRoute>} />
                     <Route path="/inventory/my-returns" element={<ProtectedRoute allowedRoles={['mobile_sales', 'sales_agent']}><MobileSalesReturnHistoryPage /></ProtectedRoute>} />
+                    <Route path="/inventory/my-returns/:returnId" element={<ProtectedRoute allowedRoles={['mobile_sales', 'sales_agent']}><MobileSalesReturnHistoryDetailPage /></ProtectedRoute>} />
                     <Route path="/team-members" element={<ProtectedRoute><LeaderInventoryPage /></ProtectedRoute>} />
                     <Route path="/leader-inventory/request" element={<ProtectedRoute><LeaderStockRequestPage /></ProtectedRoute>} />
                     <Route path="/my-team" element={<ProtectedRoute><MyTeamPage /></ProtectedRoute>} />
@@ -266,6 +308,14 @@ const App = () => (
                         </ProtectedRoute>
                       }
                     />
+                    <Route
+                      path="/my-allocation-history/:groupId"
+                      element={
+                        <ProtectedRoute allowedRoles={['mobile_sales', 'sales_agent']}>
+                          <MobileSalesAllocationHistoryDetailPage />
+                        </ProtectedRoute>
+                      }
+                    />
                     <Route path="/manager-teams" element={<ProtectedRoute><ManagerTeamsPage /></ProtectedRoute>} />
                     <Route path="/manager-inventory" element={<ProtectedRoute><ManagerTeamInventoryPage /></ProtectedRoute>} />
                     <Route path="/manager-remittances" element={<ProtectedRoute><ManagerTeamRemittancesPage /></ProtectedRoute>} />
@@ -282,9 +332,15 @@ const App = () => (
                     <Route path="/finance" element={<ProtectedRoute><FinancePage /></ProtectedRoute>} />
                     <Route path="/finance/payment-settings" element={<ProtectedRoute allowedRoles={['super_admin', 'finance', 'warehouse']}><PaymentSettingsPage /></ProtectedRoute>} />
                     <Route path="/my-inventory" element={<ProtectedRoute><MyInventoryPage /></ProtectedRoute>} />
+                    <Route path="/my-inventory/:brandId" element={<ProtectedRoute><MyInventoryBrandPage /></ProtectedRoute>} />
                     <Route path="/my-clients" element={<ProtectedRoute><MyClientsPage /></ProtectedRoute>} />
                     <Route path="/my-teams" element={<ProtectedRoute allowedRoles={['team_leader']}><MyTeamsPage /></ProtectedRoute>} />
                     <Route path="/my-orders" element={<ProtectedRoute><MyOrdersPage /></ProtectedRoute>} />
+                    <Route path="/client-order-returns" element={<ProtectedRoute><ClientOrderReturnsPage /></ProtectedRoute>} />
+                    <Route path="/client-order-returns/cr/:returnId" element={<ProtectedRoute><ClientOrderReturnDetailPage /></ProtectedRoute>} />
+                    <Route path="/client-order-returns/rl/:handoverId" element={<ProtectedRoute><ReturnLeaderDetailPage /></ProtectedRoute>} />
+                    <Route path="/client-order-returns/item/:variantId" element={<ProtectedRoute><ReturnedStockDetailPage /></ProtectedRoute>} />
+                    <Route path="/finance/refunds" element={<ProtectedRoute allowedRoles={['finance', 'accounting', 'admin', 'super_admin']}><FinanceRefundsPage /></ProtectedRoute>} />
                     <Route path="/my-history" element={<ProtectedRoute><AgentHistoryPage /></ProtectedRoute>} />
                     <Route path="/system-history" element={<ProtectedRoute><SystemHistoryPage /></ProtectedRoute>} />
                     <Route path="/analytics" element={<ProtectedRoute><AnalyticsPage /></ProtectedRoute>} />
@@ -316,6 +372,38 @@ const App = () => (
                     <Route path="/system-settings" element={<ProtectedRoute><SystemSettingsPage /></ProtectedRoute>} />
                     <Route path="/system-admin" element={<ProtectedRoute><SystemAdminPage /></ProtectedRoute>} />
                     <Route path="/system-management" element={<ProtectedRoute><ManagementPortal /></ProtectedRoute>} />
+                    <Route
+                      path="/system-updates"
+                      element={
+                        <ProtectedRoute allowedRoles={['system_administrator']}>
+                          <SystemUpdatesPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/system-updates/new"
+                      element={
+                        <ProtectedRoute allowedRoles={['system_administrator']}>
+                          <SystemUpdateFormPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/system-updates/:updateId/edit"
+                      element={
+                        <ProtectedRoute allowedRoles={['system_administrator']}>
+                          <SystemUpdateFormPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/system-updates/:updateId"
+                      element={
+                        <ProtectedRoute allowedRoles={['system_administrator']}>
+                          <SystemUpdateDetailPage />
+                        </ProtectedRoute>
+                      }
+                    />
                     <Route path="/sys-admin-dashboard" element={<ProtectedRoute><SysAdDashboardPage /></ProtectedRoute>} />
                     <Route path="/super-admin-dashboard" element={<ProtectedRoute allowedRoles={['super_admin']}><SuperAdminDashboardPage /></ProtectedRoute>} />
                     <Route path="/executive-dashboard" element={<ProtectedRoute allowedRoles={['executive']}><ExecutiveDashboardPage /></ProtectedRoute>} />
@@ -447,6 +535,7 @@ const App = () => (
       </OrderProvider>
     </AuthProvider>
   </PersistQueryClientProvider>
+  </Provider>
 );
 
 export default App;

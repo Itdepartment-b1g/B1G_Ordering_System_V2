@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Building2, Eye, Loader2, MoreVertical, Printer, RotateCcw, Search, Users } from 'lucide-react';
 import { useAuth } from '@/features/auth';
 import { Badge } from '@/components/ui/badge';
@@ -51,6 +51,7 @@ type ReturnLine = {
   createdAt: string;
   returnedBy: string;
   performerId: string | null;
+  variantId: string | null;
   variantName: string;
   variantType: string | null;
   brandName: string;
@@ -248,6 +249,7 @@ type ReturnTransactionRow = {
   from_location: string | null;
   transaction_type: string;
   performed_by: string | null;
+  variant_id: string | null;
   variant:
     | {
         name: string | null;
@@ -282,6 +284,7 @@ async function fetchReturnTransactions(
         from_location,
         transaction_type,
         performed_by,
+        variant_id,
         variant:variants!inventory_transactions_variant_id_fkey(
           name,
           variant_type,
@@ -465,11 +468,13 @@ function AgentToLeaderReturns({
   searchQuery,
   rangeStart,
   rangeEnd,
+  variantIdFilter,
 }: {
   companyId: string;
   searchQuery: string;
   rangeStart?: Date;
   rangeEnd?: Date;
+  variantIdFilter?: string | null;
 }) {
   const { toast } = useToast();
   const [detailReturn, setDetailReturn] = useState<AgentToLeaderReturn | null>(null);
@@ -535,6 +540,9 @@ function AgentToLeaderReturns({
     const query = searchQuery.trim().toLowerCase();
     return returns.filter((row) => {
       if (!isDateInRange(row.returnedAt, rangeStart, rangeEnd)) return false;
+      if (variantIdFilter && !row.items.some((item) => item.variantId === variantIdFilter)) {
+        return false;
+      }
       if (!query) return true;
       return (
         row.returnedBy.toLowerCase().includes(query) ||
@@ -548,11 +556,11 @@ function AgentToLeaderReturns({
         )
       );
     });
-  }, [returns, searchQuery, rangeStart, rangeEnd]);
+  }, [returns, searchQuery, rangeStart, rangeEnd, variantIdFilter]);
 
   useEffect(() => {
     setPage(0);
-  }, [searchQuery, rangeStart, rangeEnd, pageSize]);
+  }, [searchQuery, rangeStart, rangeEnd, pageSize, variantIdFilter]);
 
   const { pageCount, safePage, pagedItems } = getListPaginationSlice(visible, page, pageSize);
 
@@ -747,6 +755,8 @@ function AgentToLeaderReturns({
 export default function MainInventoryReturnHistoryPage() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const [searchParams] = useSearchParams();
+  const variantIdFilter = searchParams.get('variantId');
   const isWarehouse = user?.role === 'warehouse';
   const { membership } = useWarehouseLocationMembership({ userId: user?.id, isWarehouse });
   const isMainWarehouseUser = membership.isMain;
@@ -827,6 +837,7 @@ export default function MainInventoryReturnHistoryPage() {
             ? locationName || 'Sub Warehouse'
             : leaderName || performerName || 'Unknown',
           performerId: row.performed_by,
+          variantId: row.variant_id,
           variantName: variant?.name || 'Unknown',
           variantType: variant?.variant_type || null,
           brandName: brand?.name || 'Unknown',
@@ -876,6 +887,9 @@ export default function MainInventoryReturnHistoryPage() {
     const query = searchQuery.trim().toLowerCase();
     return groups.filter((group) => {
       if (!isDateInRange(group.returnedAt, dateRange.start, dateRange.end)) return false;
+      if (variantIdFilter && !group.lines.some((line) => line.variantId === variantIdFilter)) {
+        return false;
+      }
       if (!query) return true;
       return (
         group.returnedBy.toLowerCase().includes(query) ||
@@ -887,11 +901,11 @@ export default function MainInventoryReturnHistoryPage() {
         )
       );
     });
-  }, [groups, searchQuery, dateRange.start, dateRange.end]);
+  }, [groups, searchQuery, dateRange.start, dateRange.end, variantIdFilter]);
 
   useEffect(() => {
     setHistoryPage(0);
-  }, [searchQuery, dateRange.start, dateRange.end, pageSize, returnTab]);
+  }, [searchQuery, dateRange.start, dateRange.end, pageSize, returnTab, variantIdFilter]);
 
   const renderHistoryCard = (
     cardGroups: ReturnGroup[],
@@ -1127,6 +1141,7 @@ export default function MainInventoryReturnHistoryPage() {
           searchQuery={searchQuery}
           rangeStart={dateRange.start}
           rangeEnd={dateRange.end}
+          variantIdFilter={variantIdFilter}
         />
       )}
 

@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { getDatePresetLabel, getDateRangeFromPreset, isDateInRange, formatDateForInput } from '@/lib/dateRangePresets';
 import {
   DateRangeFilterPopover,
@@ -13,14 +15,30 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Search, CheckCircle, XCircle, Eye, Package, ChevronLeft, ChevronRight, CheckSquare, AlertCircle, Filter, Download, Upload, Loader2, RotateCcw, FileDown, Printer } from 'lucide-react';
+import { Search, CheckCircle, XCircle, Eye, Package, ChevronLeft, ChevronRight, CheckSquare, AlertCircle, Filter, Download, Upload, Loader2, RotateCcw, FileDown, Printer, Clock, MoreVertical } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/use-toast';
 import { useOrders, type Order } from './OrderContext';
 import { generateAndOpenOrderReceiptFromOrder } from './generateOrderReceiptPdf';
 import { useAuth } from '@/features/auth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { canApproveFinance, isFinanceRole } from '@/lib/roleUtils';
 import { supabase } from '@/lib/supabase';
+import {
+  CLIENT_ORDER_RETURN_QTY_BY_ORDER_QUERY_KEY,
+  canOpenClientOrderTimeline,
+  canShowClientOrderReturns,
+  fetchReturnedQtyByOrderIds,
+  type OrderReturnedQtySummary,
+} from '@/features/orders/client-returns/clientReturnApi';
+import { ClientOrderReturnTimeline } from '@/features/orders/client-returns/ClientOrderReturnTimeline';
+import { ReturnQtyBadge, ReturnQtyLegend } from '@/features/orders/client-returns/ReturnQtyBadge';
 import {
   buildOrdersListExportFilename,
   computeOrderListExportSummary,
@@ -101,10 +119,70 @@ function formatApprovedAt(approvedAt?: string) {
 type OrderTableProps = {
   orderList: Order[];
   onViewOrder: (order: Order) => void;
+  onOpenTimeline?: (order: Order) => void;
+  onPrintOrder?: (order: Order) => void;
   showApprovedAt?: boolean;
+  showClientReturns?: boolean;
+  returnedQtyByOrderId?: Record<string, OrderReturnedQtySummary>;
+  onOpenClientReturns?: (orderNumber: string) => void;
 };
 
-function OrderTable({ orderList, onViewOrder, showApprovedAt = false }: OrderTableProps) {
+function OrderRowActionsMenu({
+  order,
+  onViewOrder,
+  onOpenTimeline,
+  onPrintOrder,
+}: {
+  order: Order;
+  onViewOrder: (order: Order) => void;
+  onOpenTimeline?: (order: Order) => void;
+  onPrintOrder?: (order: Order) => void;
+}) {
+  return (
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          aria-label={`Actions for ${order.orderNumber}`}
+        >
+          <MoreVertical className="h-4 w-4 text-gray-600" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuItem onSelect={() => window.setTimeout(() => onViewOrder(order), 0)}>
+          <Eye className="h-4 w-4 mr-2" />
+          View
+        </DropdownMenuItem>
+        {onPrintOrder ? (
+          <DropdownMenuItem onSelect={() => window.setTimeout(() => onPrintOrder(order), 0)}>
+            <Printer className="h-4 w-4 mr-2" />
+            Print
+          </DropdownMenuItem>
+        ) : null}
+        {onOpenTimeline ? (
+          <DropdownMenuItem onSelect={() => window.setTimeout(() => onOpenTimeline(order), 0)}>
+            <Clock className="h-4 w-4 mr-2" />
+            Order timeline
+          </DropdownMenuItem>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function OrderTable({
+  orderList,
+  onViewOrder,
+  onOpenTimeline,
+  onPrintOrder,
+  showApprovedAt = false,
+  showClientReturns = false,
+  returnedQtyByOrderId = {},
+  onOpenClientReturns,
+}: OrderTableProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const [sortState, setSortState] =
     useState<TableSortCycleState<ClientOrderListSortKey>>(createInitialTableSortCycle);
@@ -199,6 +277,19 @@ function OrderTable({ orderList, onViewOrder, showApprovedAt = false }: OrderTab
                     <div className="text-xs text-muted-foreground">Items</div>
                     <div>{order.items.reduce((sum, item) => sum + (item.quantity || 0), 0)}</div>
                   </div>
+                  {showClientReturns ? (
+                    <div className="col-span-2 flex items-center justify-between">
+                      <span className="text-xs text-muted-foreground">Client Return</span>
+                      <ReturnQtyBadge
+                        summary={returnedQtyByOrderId[order.id]}
+                        onClick={
+                          onOpenClientReturns
+                            ? () => onOpenClientReturns(order.orderNumber)
+                            : undefined
+                        }
+                      />
+                    </div>
+                  ) : null}
                   {showApprovedAt && (
                     <div className="col-span-2">
                       <div className="text-xs text-muted-foreground">Approved at</div>
@@ -211,9 +302,12 @@ function OrderTable({ orderList, onViewOrder, showApprovedAt = false }: OrderTab
                   </div>
                 </div>
                 <div className="mt-3 flex justify-end">
-                  <Button variant="ghost" size="sm" onClick={() => onViewOrder(order)}>
-                    <Eye className="h-4 w-4 mr-1" /> View
-                  </Button>
+                  <OrderRowActionsMenu
+                    order={order}
+                    onViewOrder={onViewOrder}
+                    onOpenTimeline={onOpenTimeline}
+                    onPrintOrder={onPrintOrder}
+                  />
                 </div>
               </div>
             ))}
@@ -262,6 +356,9 @@ function OrderTable({ orderList, onViewOrder, showApprovedAt = false }: OrderTab
                     onSort={handleSort}
                     className="text-right"
                   />
+                  {showClientReturns ? (
+                    <TableHead className="text-center whitespace-nowrap">Client Return</TableHead>
+                  ) : null}
                   <SortableTableHead
                     label="Amount"
                     sortKey="total"
@@ -291,6 +388,18 @@ function OrderTable({ orderList, onViewOrder, showApprovedAt = false }: OrderTab
                       </TableCell>
                     )}
                     <TableCell className="text-right">{order.items.reduce((sum, item) => sum + (item.quantity || 0), 0)}</TableCell>
+                    {showClientReturns ? (
+                      <TableCell className="text-center tabular-nums">
+                        <ReturnQtyBadge
+                          summary={returnedQtyByOrderId[order.id]}
+                          onClick={
+                            onOpenClientReturns
+                              ? () => onOpenClientReturns(order.orderNumber)
+                              : undefined
+                          }
+                        />
+                      </TableCell>
+                    ) : null}
                     <TableCell className="text-right font-semibold">
                       ₱{order.total.toLocaleString()}
                     </TableCell>
@@ -318,15 +427,12 @@ function OrderTable({ orderList, onViewOrder, showApprovedAt = false }: OrderTab
                       </div>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => onViewOrder(order)}
-                        title="View Order Details"
-                        className="hover:bg-gray-100"
-                      >
-                        <Eye className="h-4 w-4 text-gray-600" />
-                      </Button>
+                      <OrderRowActionsMenu
+                        order={order}
+                        onViewOrder={onViewOrder}
+                        onOpenTimeline={onOpenTimeline}
+                        onPrintOrder={onPrintOrder}
+                      />
                     </TableCell>
                   </TableRow>
                 ))}
@@ -395,7 +501,12 @@ export default function OrdersPage() {
   const { getAllOrders, updateOrderStatus } = useOrders();
   const orders = getAllOrders();
   const { user } = useAuth();
-  const [searchQuery, setSearchQuery] = useState('');
+  const { hasWarehouseHubLink } = usePermissions();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const [searchQuery, setSearchQuery] = useState(
+    () => searchParams.get('q')?.trim() || searchParams.get('search')?.trim() || ''
+  );
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>("all");
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'all',
@@ -406,6 +517,14 @@ export default function OrdersPage() {
   const [isExportingOrdersAll, setIsExportingOrdersAll] = useState(false);
   const [isExportingOrderBreakdown, setIsExportingOrderBreakdown] = useState(false);
 
+  useEffect(() => {
+    const fromUrl =
+      searchParams.get('q')?.trim() || searchParams.get('search')?.trim() || '';
+    if (!fromUrl) return;
+    setSearchQuery(fromUrl);
+    setActiveOrderTab('all');
+  }, [searchParams]);
+
   const orderDateRange = useMemo(() => {
     return getDateRangeFromPreset(
       dateRangeFilter.preset,
@@ -415,6 +534,8 @@ export default function OrdersPage() {
   }, [dateRangeFilter]);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [viewingOrder, setViewingOrder] = useState<Order | null>(null);
+  const [timelineDialogOpen, setTimelineDialogOpen] = useState(false);
+  const [timelineOrder, setTimelineOrder] = useState<Order | null>(null);
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [orderToApprove, setOrderToApprove] = useState<Order | null>(null);
@@ -448,6 +569,19 @@ export default function OrdersPage() {
   const isSuperAdmin = user?.role === 'super_admin';
   const isLeader = user?.role === 'team_leader';
   const canPrintOrderReceipt = isSuperAdmin || isLeader;
+  const canOpenTimeline = canOpenClientOrderTimeline(hasWarehouseHubLink, user?.role);
+  const showClientReturns = canShowClientOrderReturns(hasWarehouseHubLink, user?.role);
+
+  const handleOpenTimeline = (order: Order) => {
+    setTimelineOrder(order);
+    setTimelineDialogOpen(true);
+  };
+
+  const openClientReturnsForOrder = (orderNumber: string) => {
+    const q = orderNumber.trim();
+    if (!q) return;
+    navigate(`/client-order-returns?q=${encodeURIComponent(q)}`);
+  };
   /** Same order list visibility as tabs/table — export uses `visibleOrders` / `filterOrders`. */
   const canExportOrderList = canViewCompanyOrders || isLeader;
   
@@ -921,6 +1055,19 @@ export default function OrdersPage() {
     }
     return filtered;
   };
+
+  const filteredOrderIdsKey = useMemo(
+    () => filterOrders().map((order) => order.id).filter(Boolean).join(','),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mirror My Orders: recompute when list filters change
+    [visibleOrders, searchQuery, selectedPaymentMethod, orderDateRange, teamMemberIds]
+  );
+
+  const { data: returnedQtyByOrderId = {} as Record<string, OrderReturnedQtySummary> } = useQuery({
+    queryKey: [CLIENT_ORDER_RETURN_QTY_BY_ORDER_QUERY_KEY, user?.company_id, filteredOrderIdsKey],
+    enabled: showClientReturns && !!user?.company_id && filteredOrderIdsKey.length > 0,
+    queryFn: () => fetchReturnedQtyByOrderIds(filteredOrderIdsKey.split(',')),
+    staleTime: 30_000,
+  });
 
   // -------------------------
   // Import / Export Handlers
@@ -2014,39 +2161,44 @@ export default function OrdersPage() {
 
       <Card>
         <CardHeader>
-          <div className="flex flex-col md:flex-row gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search orders by number, client, or agent..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col md:flex-row gap-4">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search orders by number, client, or agent..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
+              <DateRangeFilterPopover
+                value={dateRangeFilter}
+                onChange={setDateRangeFilter}
+                triggerClassName="w-full md:w-[220px] justify-between h-10 shrink-0"
               />
+              <Select
+                value={selectedPaymentMethod}
+                onValueChange={setSelectedPaymentMethod}
+              >
+                <SelectTrigger className="w-full md:w-[200px] shrink-0">
+                  <div className="flex items-center gap-2">
+                    <Filter className="h-4 w-4 text-muted-foreground" />
+                    <SelectValue placeholder="Filter Method" />
+                  </div>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Payment Methods</SelectItem>
+                  <SelectItem value="BANK_TRANSFER">Bank Transfer</SelectItem>
+                  <SelectItem value="CASH">Cash</SelectItem>
+                  <SelectItem value="CHEQUE">Cheque</SelectItem>
+                  <SelectItem value="GCASH">GCash</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-            <DateRangeFilterPopover
-              value={dateRangeFilter}
-              onChange={setDateRangeFilter}
-              triggerClassName="w-full md:w-[220px] justify-between h-10 shrink-0"
-            />
-            <Select
-              value={selectedPaymentMethod}
-              onValueChange={setSelectedPaymentMethod}
-            >
-              <SelectTrigger className="w-full md:w-[200px] shrink-0">
-                <div className="flex items-center gap-2">
-                  <Filter className="h-4 w-4 text-muted-foreground" />
-                  <SelectValue placeholder="Filter Method" />
-                </div>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Payment Methods</SelectItem>
-                <SelectItem value="BANK_TRANSFER">Bank Transfer</SelectItem>
-                <SelectItem value="CASH">Cash</SelectItem>
-                <SelectItem value="CHEQUE">Cheque</SelectItem>
-                <SelectItem value="GCASH">GCash</SelectItem>
-              </SelectContent>
-            </Select>
+            {showClientReturns ? (
+              <ReturnQtyLegend className="min-w-0" label="Client Return:" />
+            ) : null}
           </div>
         </CardHeader>
         <CardContent>
@@ -2078,16 +2230,52 @@ export default function OrdersPage() {
               </TabsTrigger>
             </TabsList>
             <TabsContent value="pending" className="mt-4">
-              <OrderTable orderList={filterOrders('pending')} onViewOrder={handleViewOrder} showApprovedAt={canSeeApprovedAt} />
+              <OrderTable
+                orderList={filterOrders('pending')}
+                onViewOrder={handleViewOrder}
+                onOpenTimeline={canOpenTimeline ? handleOpenTimeline : undefined}
+                onPrintOrder={canPrintOrderReceipt ? handlePrintOrderReceipt : undefined}
+                showApprovedAt={canSeeApprovedAt}
+                showClientReturns={showClientReturns}
+                returnedQtyByOrderId={returnedQtyByOrderId}
+                onOpenClientReturns={openClientReturnsForOrder}
+              />
             </TabsContent>
             <TabsContent value="approved" className="mt-4">
-              <OrderTable orderList={filterOrders('approved')} onViewOrder={handleViewOrder} showApprovedAt={canSeeApprovedAt} />
+              <OrderTable
+                orderList={filterOrders('approved')}
+                onViewOrder={handleViewOrder}
+                onOpenTimeline={canOpenTimeline ? handleOpenTimeline : undefined}
+                onPrintOrder={canPrintOrderReceipt ? handlePrintOrderReceipt : undefined}
+                showApprovedAt={canSeeApprovedAt}
+                showClientReturns={showClientReturns}
+                returnedQtyByOrderId={returnedQtyByOrderId}
+                onOpenClientReturns={openClientReturnsForOrder}
+              />
             </TabsContent>
             <TabsContent value="rejected" className="mt-4">
-              <OrderTable orderList={filterOrders('rejected')} onViewOrder={handleViewOrder} showApprovedAt={canSeeApprovedAt} />
+              <OrderTable
+                orderList={filterOrders('rejected')}
+                onViewOrder={handleViewOrder}
+                onOpenTimeline={canOpenTimeline ? handleOpenTimeline : undefined}
+                onPrintOrder={canPrintOrderReceipt ? handlePrintOrderReceipt : undefined}
+                showApprovedAt={canSeeApprovedAt}
+                showClientReturns={showClientReturns}
+                returnedQtyByOrderId={returnedQtyByOrderId}
+                onOpenClientReturns={openClientReturnsForOrder}
+              />
             </TabsContent>
             <TabsContent value="all" className="mt-4">
-              <OrderTable orderList={filterOrders()} onViewOrder={handleViewOrder} showApprovedAt={canSeeApprovedAt} />
+              <OrderTable
+                orderList={filterOrders()}
+                onViewOrder={handleViewOrder}
+                onOpenTimeline={canOpenTimeline ? handleOpenTimeline : undefined}
+                onPrintOrder={canPrintOrderReceipt ? handlePrintOrderReceipt : undefined}
+                showApprovedAt={canSeeApprovedAt}
+                showClientReturns={showClientReturns}
+                returnedQtyByOrderId={returnedQtyByOrderId}
+                onOpenClientReturns={openClientReturnsForOrder}
+              />
             </TabsContent>
           </Tabs>
         </CardContent>
@@ -2247,17 +2435,39 @@ export default function OrdersPage() {
               <DialogTitle>Order Details</DialogTitle>
               <DialogDescription>Review details and take action on this order.</DialogDescription>
             </div>
-            {canPrintOrderReceipt && viewingOrder && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="shrink-0"
-                onClick={() => handlePrintOrderReceipt(viewingOrder)}
-              >
-                <Printer className="h-4 w-4 mr-2" />
-                Print
-              </Button>
-            )}
+            {viewingOrder && (canOpenTimeline || canPrintOrderReceipt) ? (
+              <DropdownMenu modal={false}>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8 shrink-0"
+                    aria-label={`Actions for ${viewingOrder.orderNumber}`}
+                  >
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  {canOpenTimeline ? (
+                    <DropdownMenuItem
+                      onSelect={() => window.setTimeout(() => handleOpenTimeline(viewingOrder), 0)}
+                    >
+                      <Clock className="h-4 w-4 mr-2" />
+                      Order timeline
+                    </DropdownMenuItem>
+                  ) : null}
+                  {canPrintOrderReceipt ? (
+                    <DropdownMenuItem
+                      onSelect={() => window.setTimeout(() => handlePrintOrderReceipt(viewingOrder), 0)}
+                    >
+                      <Printer className="h-4 w-4 mr-2" />
+                      Print
+                    </DropdownMenuItem>
+                  ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
           </DialogHeader>
           {viewingOrder && (
             <div className="space-y-6 py-4">
@@ -3131,6 +3341,17 @@ export default function OrdersPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      {canOpenTimeline ? (
+        <ClientOrderReturnTimeline
+          open={timelineDialogOpen && !!timelineOrder}
+          onOpenChange={(open) => {
+            setTimelineDialogOpen(open);
+            if (!open) setTimelineOrder(null);
+          }}
+          order={timelineOrder}
+        />
+      ) : null}
     </div>
   );
 }

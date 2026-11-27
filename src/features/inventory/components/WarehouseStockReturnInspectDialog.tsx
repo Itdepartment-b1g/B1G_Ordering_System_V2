@@ -150,8 +150,10 @@ export function WarehouseStockReturnInspectDialog({
         <DialogHeader>
           <DialogTitle>Inspect returned stock — {requestNumber}</DialogTitle>
           <DialogDescription>
-            From {fromLocationName}. Sub batch is fixed from submit. Add rows to distribute returned
-            qty across main warehouse batches (and expiry when needed), then split good vs damaged.
+            From {fromLocationName}. Classify every inspected quantity as Stock Return (usable —
+            returns to warehouse inventory) or Disposal (damaged/unusable — never added to stock).
+            Stock Return + Disposal must equal the quantity you inspect, and cannot exceed remaining
+            returned qty.
           </DialogDescription>
         </DialogHeader>
 
@@ -247,7 +249,7 @@ export function WarehouseStockReturnInspectDialog({
                                 </Select>
                               </div>
                               <div className="grid gap-1">
-                                <Label className="text-xs">Good</Label>
+                                <Label className="text-xs text-emerald-700">Stock Return</Label>
                                 <Input
                                   type="number"
                                   min={0}
@@ -265,7 +267,7 @@ export function WarehouseStockReturnInspectDialog({
                                 />
                               </div>
                               <div className="grid gap-1">
-                                <Label className="text-xs">Damaged</Label>
+                                <Label className="text-xs text-destructive">Disposal</Label>
                                 <Input
                                   type="number"
                                   min={0}
@@ -293,7 +295,7 @@ export function WarehouseStockReturnInspectDialog({
                                     setSplitGood(item.request_item_id, split.id, maxRow)
                                   }
                                 >
-                                  All good
+                                  All stock
                                 </Button>
                                 <Button
                                   type="button"
@@ -305,7 +307,7 @@ export function WarehouseStockReturnInspectDialog({
                                     setSplitDamaged(item.request_item_id, split.id, maxRow)
                                   }
                                 >
-                                  All dmg
+                                  All disposal
                                 </Button>
                                 <Button
                                   type="button"

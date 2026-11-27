@@ -18,7 +18,8 @@ export type AllocationHistoryGroup = {
   allocatedByName: string;
   brandId: string | null;
   brandName: string | null;
-  allocationType: 'main_to_leader' | 'leader_to_agent';
+  allocationType: 'main_to_leader' | 'leader_to_agent' | 'leader_to_leader';
+  requestNumber?: string | null;
   totalQuantity: number;
   lineCount: number;
   lines: AllocationHistoryLine[];
@@ -55,7 +56,8 @@ type SupabaseHistoryRow = {
   allocated_to: string;
   allocated_by: string;
   brand_id: string | null;
-  allocation_type: 'main_to_leader' | 'leader_to_agent';
+  allocation_type: 'main_to_leader' | 'leader_to_agent' | 'leader_to_leader';
+  tl_stock_request?: { request_number?: string | null } | { request_number?: string | null }[] | null;
   allocated_to_profile?: { full_name: string } | { full_name: string }[] | null;
   allocated_by_profile?: { full_name: string } | { full_name: string }[] | null;
   brand?: { name: string } | { name: string }[] | null;
@@ -137,6 +139,7 @@ export function mapAllocationHistoryRows(
       brandId: derivedBrand.brandId,
       brandName: derivedBrand.brandName,
       allocationType: row.allocation_type,
+      requestNumber: unwrapRelation(row.tl_stock_request)?.request_number ?? null,
       totalQuantity,
       lineCount: lines.length,
       lines,

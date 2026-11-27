@@ -1,14 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { format } from 'date-fns';
-import { CheckCircle2, Eye, FileText, Loader2, MoreHorizontal, RotateCcw, Search, XCircle } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { FileText, Loader2, RotateCcw, Search } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useToast } from '@/hooks/use-toast';
 import { StandardAccountReturnToWarehouseDialog } from './components/StandardAccountReturnToWarehouseDialog';
+import {
+  SaReturnAccordionList,
+  SaReturnExpandedPanel,
+  type SaReturnListStatus,
+} from './components/SaReturnAccordionList';
 import { getStandardAccountReturnEvidenceSignedUrl } from './utils/uploadStandardAccountReturnEvidence';
 import { exportStandardAccountReturnPdfFromSource } from './utils/exportStandardAccountReturnPdf';
+import { fetchLeaderRequestedFromName } from './utils/exportLeaderStockRequestPdf';
 import {
   DEFAULT_PAGE_SIZE,
   getListPaginationSlice,
@@ -21,8 +27,6 @@ import {
 } from '@/features/shared/components/DateRangeFilterPopover';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -31,13 +35,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import {
   Select,
   SelectContent,
@@ -56,12 +53,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
-type ReturnStatus =
-  | 'pending_approval'
-  | 'pending_receive'
-  | 'partially_received'
-  | 'fully_received'
-  | 'cancelled';
+type ReturnStatus = SaReturnListStatus;
 
 type SaReturnReceiptLine = {
   warehouse_variant_id: string | null;
@@ -76,6 +68,8 @@ type SaReturnReceiptLine = {
 
 type SaReturnReceipt = {
   id: string;
+  received_at: string | null;
+  received_by_user: { full_name: string } | null;
   lines: SaReturnReceiptLine[];
 };
 
@@ -87,39 +81,31 @@ type SaReturnRow = {
   created_at: string;
   created_by: string | null;
   source_agent_id: string | null;
+  approved_at: string | null;
+  return_type: 'my_inventory' | 'item_disposal';
   signature_url: string | null;
   signature_path: string | null;
   proof_image_url: string | null;
   proof_image_path: string | null;
   destination_location: { name: string; is_main: boolean | null } | null;
   created_by_user: { full_name: string } | null;
+  approved_by_user: { full_name: string } | null;
+  inspected_by_user: { full_name: string } | null;
+  inspected_at: string | null;
   items: Array<{
     id: string;
     warehouse_variant_id: string;
     return_quantity: number;
     inspected_quantity: number;
-    variant: { name: string; brand: { name: string } | null } | null;
+    stock_return_quantity: number;
+    disposal_quantity: number;
+    variant: {
+      name: string;
+      variant_type: string | null;
+      brand: { name: string } | null;
+    } | null;
   }>;
   receipts: SaReturnReceipt[];
-};
-
-const STATUS_LABELS: Record<ReturnStatus, string> = {
-  pending_approval: 'Pending approval',
-  pending_receive: 'Pending inspect',
-  partially_received: 'Partially inspected',
-  fully_received: 'Fully inspected',
-  cancelled: 'Cancelled',
-};
-
-const STATUS_VARIANT: Record<
-  ReturnStatus,
-  'default' | 'secondary' | 'outline' | 'destructive'
-> = {
-  pending_approval: 'default',
-  pending_receive: 'secondary',
-  partially_received: 'default',
-  fully_received: 'outline',
-  cancelled: 'destructive',
 };
 
 function firstRelation<T>(value: T | T[] | null | undefined): T | null {
@@ -131,32 +117,21 @@ function mapRow(raw: Record<string, unknown>): SaReturnRow {
   const createdBy = firstRelation(
     raw.created_by_user as SaReturnRow['created_by_user'] | SaReturnRow['created_by_user'][]
   );
+  const approvedBy = firstRelation(
+    raw.approved_by_user as SaReturnRow['approved_by_user'] | SaReturnRow['approved_by_user'][]
+  );
   const destinationLocation = firstRelation(
     raw.destination_location as
       | SaReturnRow['destination_location']
       | SaReturnRow['destination_location'][]
   );
-  const items = ((raw.items as unknown[]) ?? []).map((item) => {
-    const row = item as Record<string, unknown>;
-    const variant = firstRelation(
-      row.client_variant as SaReturnRow['items'][0]['variant'] | SaReturnRow['items'][0]['variant'][]
-    );
-    const brand = variant?.brand
-      ? firstRelation(variant.brand as { name: string } | { name: string }[])
-      : null;
-    return {
-      id: row.id as string,
-      warehouse_variant_id: row.warehouse_variant_id as string,
-      return_quantity: row.return_quantity as number,
-      inspected_quantity: row.inspected_quantity as number,
-      variant: variant
-        ? { name: variant.name, brand: brand ? { name: brand.name } : null }
-        : null,
-    };
-  });
-
   const receipts = ((raw.receipts as unknown[]) ?? []).map((receipt) => {
     const r = receipt as Record<string, unknown>;
+    const receivedBy = firstRelation(
+      r.received_by_user as
+        | SaReturnReceipt['received_by_user']
+        | SaReturnReceipt['received_by_user'][]
+    );
     const lines = ((r.lines as unknown[]) ?? []).map((line) => {
       const l = line as Record<string, unknown>;
       const variant = firstRelation(
@@ -193,8 +168,65 @@ function mapRow(raw: Record<string, unknown>): SaReturnRow {
 
     return {
       id: r.id as string,
+      received_at: (r.received_at as string | null) ?? null,
+      received_by_user: receivedBy,
       lines,
     } satisfies SaReturnReceipt;
+  });
+
+  const sortedReceipts = [...receipts].sort((a, b) => {
+    const aTime = a.received_at ? new Date(a.received_at).getTime() : 0;
+    const bTime = b.received_at ? new Date(b.received_at).getTime() : 0;
+    return bTime - aTime;
+  });
+
+  const inspectedBy =
+    sortedReceipts
+      .map((receipt) => receipt.received_by_user)
+      .find((user) => user?.full_name?.trim()) ?? null;
+
+  const inspectedAt = sortedReceipts.find((receipt) => receipt.received_at)?.received_at ?? null;
+
+  const classificationByVariant = new Map<string, { stockReturn: number; disposal: number }>();
+  for (const receipt of receipts) {
+    for (const line of receipt.lines) {
+      const key = line.warehouse_variant_id;
+      if (!key) continue;
+      const current = classificationByVariant.get(key) ?? { stockReturn: 0, disposal: 0 };
+      current.stockReturn += Number(line.qty_good) || 0;
+      current.disposal += Number(line.qty_damaged) || 0;
+      classificationByVariant.set(key, current);
+    }
+  }
+
+  const items = ((raw.items as unknown[]) ?? []).map((item) => {
+    const row = item as Record<string, unknown>;
+    const variant = firstRelation(
+      row.client_variant as SaReturnRow['items'][0]['variant'] | SaReturnRow['items'][0]['variant'][]
+    );
+    const brand = variant?.brand
+      ? firstRelation(variant.brand as { name: string } | { name: string }[])
+      : null;
+    const warehouseVariantId = row.warehouse_variant_id as string;
+    const classification = classificationByVariant.get(warehouseVariantId) ?? {
+      stockReturn: 0,
+      disposal: 0,
+    };
+    return {
+      id: row.id as string,
+      warehouse_variant_id: warehouseVariantId,
+      return_quantity: row.return_quantity as number,
+      inspected_quantity: row.inspected_quantity as number,
+      stock_return_quantity: classification.stockReturn,
+      disposal_quantity: classification.disposal,
+      variant: variant
+        ? {
+            name: variant.name,
+            variant_type: (variant.variant_type as string | null) ?? null,
+            brand: brand ? { name: brand.name } : null,
+          }
+        : null,
+    };
   });
 
   return {
@@ -205,28 +237,39 @@ function mapRow(raw: Record<string, unknown>): SaReturnRow {
     created_at: raw.created_at as string,
     created_by: (raw.created_by as string | null) ?? null,
     source_agent_id: (raw.source_agent_id as string | null) ?? null,
+    approved_at: (raw.approved_at as string | null) ?? null,
+    return_type:
+      raw.return_type === 'item_disposal' ? 'item_disposal' : 'my_inventory',
     signature_url: (raw.signature_url as string | null) ?? null,
     signature_path: (raw.signature_path as string | null) ?? null,
     proof_image_url: (raw.proof_image_url as string | null) ?? null,
     proof_image_path: (raw.proof_image_path as string | null) ?? null,
     destination_location: destinationLocation,
     created_by_user: createdBy,
+    approved_by_user: approvedBy,
+    inspected_by_user: inspectedBy,
+    inspected_at: inspectedAt,
     items,
     receipts,
   };
 }
+
+const SaReturnList = SaReturnAccordionList<SaReturnRow>;
 
 export default function StandardAccountReturnToWarehousePage() {
   const { user } = useAuth();
   const { hasWarehouseHubLink } = usePermissions();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
   const isTeamLeader = user?.role === 'team_leader';
   const isCompanyAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const inventorySource = isTeamLeader ? 'leader' : 'main';
   const [approvingId, setApprovingId] = useState<string | null>(null);
 
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(
+    () => searchParams.get('q')?.trim() || searchParams.get('search')?.trim() || ''
+  );
   const [statusFilter, setStatusFilter] = useState('all');
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
   const [page, setPage] = useState(0);
@@ -239,6 +282,13 @@ export default function StandardAccountReturnToWarehousePage() {
   const [cancelTarget, setCancelTarget] = useState<SaReturnRow | null>(null);
   const [cancelSubmitting, setCancelSubmitting] = useState(false);
   const [exportingPdfId, setExportingPdfId] = useState<string | null>(null);
+
+  const { data: pendingApproverName } = useQuery({
+    queryKey: ['sa-return-pending-approver-name', user?.company_id],
+    enabled: !!user?.company_id && hasWarehouseHubLink,
+    staleTime: 5 * 60_000,
+    queryFn: () => fetchLeaderRequestedFromName(user?.company_id),
+  });
 
   const { data: returns = [], isLoading, error: returnsError } = useQuery({
     queryKey: ['sa-stock-returns', user?.company_id, user?.id, isTeamLeader],
@@ -257,6 +307,9 @@ export default function StandardAccountReturnToWarehousePage() {
           created_at,
           created_by,
           source_agent_id,
+          approved_at,
+          approved_by,
+          return_type,
           signature_url,
           signature_path,
           proof_image_url,
@@ -266,6 +319,7 @@ export default function StandardAccountReturnToWarehousePage() {
             is_main
           ),
           created_by_user:profiles!created_by ( full_name ),
+          approved_by_user:profiles!approved_by ( full_name ),
           items:standard_account_stock_return_request_items (
             id,
             warehouse_variant_id,
@@ -273,11 +327,14 @@ export default function StandardAccountReturnToWarehousePage() {
             inspected_quantity,
             client_variant:variants!client_variant_id (
               name,
+              variant_type,
               brand:brands ( name )
             )
           ),
           receipts:standard_account_stock_return_receipts (
             id,
+            received_at,
+            received_by_user:profiles!received_by ( full_name ),
             lines:standard_account_stock_return_receipt_lines (
               warehouse_variant_id,
               qty_good,
@@ -338,6 +395,15 @@ export default function StandardAccountReturnToWarehousePage() {
     setPage(0);
   }, [statusFilter, searchQuery, dateRangeFilter, pageSize]);
 
+  useEffect(() => {
+    const fromUrl =
+      searchParams.get('q')?.trim() || searchParams.get('search')?.trim() || '';
+    if (!fromUrl) return;
+    setSearchQuery(fromUrl);
+    setStatusFilter('all');
+    setDateRangeFilter({ preset: 'all' });
+  }, [searchParams]);
+
   const { pageCount, safePage, pagedItems } = getListPaginationSlice(filtered, page, pageSize);
 
   const openDetail = async (row: SaReturnRow) => {
@@ -369,7 +435,10 @@ export default function StandardAccountReturnToWarehousePage() {
         request_number: row.request_number,
         status: row.status,
         created_at: row.created_at,
+        approved_at: row.approved_at,
+        inspected_at: row.inspected_at,
         notes: row.notes,
+        return_type: row.return_type,
         signature_url: row.signature_url,
         signature_path: row.signature_path,
         client_company: companyRow?.company_name
@@ -377,6 +446,8 @@ export default function StandardAccountReturnToWarehousePage() {
           : null,
         destination_location: row.destination_location,
         created_by_user: row.created_by_user,
+        approved_by_user: row.approved_by_user,
+        inspected_by_user: row.inspected_by_user,
         items: row.items.map((item) => ({
           warehouse_variant_id: item.warehouse_variant_id,
           return_quantity: item.return_quantity,
@@ -384,6 +455,7 @@ export default function StandardAccountReturnToWarehousePage() {
           variant: item.variant,
         })),
         receipts: row.receipts.map((receipt) => ({
+          received_at: receipt.received_at,
           lines: receipt.lines.map((line) => ({
             warehouseVariantId: line.warehouse_variant_id,
             brandName: line.variant?.brand?.name ?? null,
@@ -537,9 +609,9 @@ export default function StandardAccountReturnToWarehousePage() {
               <SelectContent>
                 <SelectItem value="all">All statuses</SelectItem>
                 <SelectItem value="pending_approval">Pending approval</SelectItem>
-                <SelectItem value="pending_receive">Pending inspect</SelectItem>
+                <SelectItem value="pending_receive">Pending inspection</SelectItem>
                 <SelectItem value="partially_received">Partially inspected</SelectItem>
-                <SelectItem value="fully_received">Fully inspected</SelectItem>
+                <SelectItem value="fully_received">Completed</SelectItem>
                 <SelectItem value="cancelled">Cancelled</SelectItem>
               </SelectContent>
             </Select>
@@ -558,112 +630,20 @@ export default function StandardAccountReturnToWarehousePage() {
           ) : filtered.length === 0 ? (
             <div className="py-12 text-center text-sm text-muted-foreground">No returns yet.</div>
           ) : (
-            <>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Return #</TableHead>
-                  <TableHead>Destination</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Items</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {pagedItems.map((row) => {
-                  const totalQty = row.items.reduce((s, i) => s + i.return_quantity, 0);
-                  const inspected = row.items.reduce((s, i) => s + i.inspected_quantity, 0);
-                  const destLabel = row.destination_location
-                    ? `${row.destination_location.name}${
-                        row.destination_location.is_main ? ' (Main)' : ' (Sub)'
-                      }`
-                    : '—';
-                  return (
-                    <TableRow key={row.id}>
-                      <TableCell className="font-medium">{row.request_number}</TableCell>
-                      <TableCell className="text-sm">{destLabel}</TableCell>
-                      <TableCell>
-                        <Badge variant={STATUS_VARIANT[row.status]}>
-                          {STATUS_LABELS[row.status]}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {row.items.length} SKU · {inspected}/{totalQty} inspected
-                        <div className="text-xs text-muted-foreground truncate max-w-[280px]">
-                          {row.items
-                            .slice(0, 3)
-                            .map((i) => i.variant?.name ?? '—')
-                            .join(', ')}
-                          {row.items.length > 3 ? '…' : ''}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {format(new Date(row.created_at), 'MMM d, yyyy HH:mm')}
-                        {row.created_by_user?.full_name
-                          ? ` · ${row.created_by_user.full_name}`
-                          : ''}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8">
-                              <MoreHorizontal className="h-4 w-4" />
-                              <span className="sr-only">Open actions</span>
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-48">
-                            <DropdownMenuItem onClick={() => void openDetail(row)}>
-                              <Eye className="mr-2 h-4 w-4" />
-                              View
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              disabled={exportingPdfId === row.id}
-                              onClick={() => void handleExportPdf(row)}
-                            >
-                              {exportingPdfId === row.id ? (
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              ) : (
-                                <FileText className="mr-2 h-4 w-4" />
-                              )}
-                              Print PDF
-                            </DropdownMenuItem>
-                            {isCompanyAdmin && row.status === 'pending_approval' && (
-                              <DropdownMenuItem
-                                disabled={approvingId === row.id}
-                                onClick={() => void handleApprove(row)}
-                              >
-                                {approvingId === row.id ? (
-                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                ) : (
-                                  <CheckCircle2 className="mr-2 h-4 w-4" />
-                                )}
-                                Approve
-                              </DropdownMenuItem>
-                            )}
-                            {(row.status === 'pending_approval' || row.status === 'pending_receive') && (
-                              <>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                  className="text-destructive focus:text-destructive"
-                                  onClick={() => setCancelTarget(row)}
-                                >
-                                  <XCircle className="mr-2 h-4 w-4" />
-                                  {row.status === 'pending_approval' && isCompanyAdmin
-                                    ? 'Reject'
-                                    : 'Cancel'}
-                                </DropdownMenuItem>
-                              </>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-            <div className="pt-4">
+            <div className="space-y-4">
+              <SaReturnList
+                rows={pagedItems}
+                isCompanyAdmin={isCompanyAdmin}
+                approvingId={approvingId}
+                exportingPdfId={exportingPdfId}
+                pendingApproverName={pendingApproverName}
+                onView={(row) => void openDetail(row)}
+                onPrintPdf={(row) => void handleExportPdf(row)}
+                onApprove={
+                  isCompanyAdmin ? (row) => void handleApprove(row) : undefined
+                }
+                onCancel={(row) => setCancelTarget(row)}
+              />
               <ListPagination
                 pageSize={pageSize}
                 safePage={safePage}
@@ -673,7 +653,6 @@ export default function StandardAccountReturnToWarehousePage() {
                 onNext={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
               />
             </div>
-            </>
           )}
         </CardContent>
       </Card>
@@ -721,97 +700,14 @@ export default function StandardAccountReturnToWarehousePage() {
             </div>
           </DialogHeader>
           {detailReturn && (
-            <div className="space-y-4 text-sm">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <span className="text-muted-foreground">Destination</span>
-                  <p className="font-medium">
-                    {detailReturn.destination_location
-                      ? `${detailReturn.destination_location.name}${
-                          detailReturn.destination_location.is_main ? ' (Main)' : ' (Sub)'
-                        }`
-                      : '—'}
-                  </p>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Status</span>
-                  <div className="mt-1">
-                    <Badge variant={STATUS_VARIANT[detailReturn.status]}>
-                      {STATUS_LABELS[detailReturn.status]}
-                    </Badge>
-                  </div>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Submitted by</span>
-                  <p>{detailReturn.created_by_user?.full_name ?? '—'}</p>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Created</span>
-                  <p>{format(new Date(detailReturn.created_at), 'PPp')}</p>
-                </div>
-              </div>
-
-              {detailReturn.notes && (
-                <div>
-                  <span className="text-muted-foreground">Notes</span>
-                  <p>{detailReturn.notes}</p>
-                </div>
-              )}
-
-              <div>
-                <h4 className="font-medium mb-2">Lines</h4>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Product</TableHead>
-                      <TableHead className="text-right">Returned</TableHead>
-                      <TableHead className="text-right">Inspected</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {detailReturn.items.map((item) => (
-                      <TableRow key={item.id}>
-                        <TableCell>
-                          {item.variant?.brand?.name ? `${item.variant.brand.name} · ` : ''}
-                          {item.variant?.name ?? '—'}
-                        </TableCell>
-                        <TableCell className="text-right">{item.return_quantity}</TableCell>
-                        <TableCell className="text-right">{item.inspected_quantity}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <h4 className="font-medium">Return proof</h4>
-                  {detailProofUrl ? (
-                    <a href={detailProofUrl} target="_blank" rel="noreferrer">
-                      <img
-                        src={detailProofUrl}
-                        alt="Return proof"
-                        className="max-h-48 w-full rounded-md border object-contain bg-muted/20"
-                      />
-                    </a>
-                  ) : (
-                    <p className="text-muted-foreground text-xs">No proof photo attached.</p>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <h4 className="font-medium">Signature</h4>
-                  {detailSignatureUrl ? (
-                    <img
-                      src={detailSignatureUrl}
-                      alt="Return signature"
-                      className="max-h-36 w-full rounded-md border object-contain bg-white"
-                    />
-                  ) : (
-                    <p className="text-muted-foreground text-xs">No signature attached.</p>
-                  )}
-                </div>
-              </div>
-            </div>
+            <SaReturnExpandedPanel
+              row={{
+                ...detailReturn,
+                proof_image_url: detailProofUrl ?? detailReturn.proof_image_url,
+                signature_url: detailSignatureUrl ?? detailReturn.signature_url,
+              }}
+              pendingApproverName={pendingApproverName}
+            />
           )}
         </DialogContent>
       </Dialog>

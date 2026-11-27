@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { FileDown, History, Loader2, Package, RefreshCw, Users } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -6,6 +7,10 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/features/auth';
+import {
+  preferAllocationSessionGroups,
+  readAllocationHistoryDeepLink,
+} from '@/features/inventory/stock-movements/stockMovementDocumentRefs';
 import { getDatePresetLabel } from '@/lib/dateRangePresets';
 import type { DateRangeFilterValue } from '@/features/shared/components/DateRangeFilterPopover';
 import {
@@ -45,6 +50,7 @@ import {
 export default function SuperAdminAllocationHistoryList() {
   const { toast } = useToast();
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
   const { data: groups = [], isLoading, isError, error, refetch, isFetching } =
     useSuperAdminAllocationHistory();
   const { data: companyBrands = [], isLoading: isLoadingBrands } = useCompanyBrands();
@@ -53,6 +59,7 @@ export default function SuperAdminAllocationHistoryList() {
   const [filterValue, setFilterValue] = useState('');
   const [allocatedToRole, setAllocatedToRole] = useState<RecipientRole | ''>('');
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
+  const [sessionFilter, setSessionFilter] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [sortState, setSortState] =
@@ -74,6 +81,12 @@ export default function SuperAdminAllocationHistoryList() {
     }
   }, [isError, error, toast]);
 
+  useEffect(() => {
+    const deepLink = readAllocationHistoryDeepLink(searchParams);
+    if (deepLink.dateRange) setDateRangeFilter(deepLink.dateRange);
+    setSessionFilter(deepLink.sessionId);
+  }, [searchParams]);
+
   const {
     allocatedToTeamLeaderOptions,
     allocatedToMobileSalesOptions,
@@ -86,10 +99,16 @@ export default function SuperAdminAllocationHistoryList() {
     [dateRangeFilter]
   );
 
-  const filteredGroups = useMemo(
-    () => filterAllocationHistoryGroups(groups, selectedFilter, filterValue, fromDate, toDate),
-    [groups, selectedFilter, filterValue, fromDate, toDate]
-  );
+  const filteredGroups = useMemo(() => {
+    const dated = filterAllocationHistoryGroups(
+      groups,
+      selectedFilter,
+      filterValue,
+      fromDate,
+      toDate
+    );
+    return preferAllocationSessionGroups(dated, groups, sessionFilter);
+  }, [groups, selectedFilter, filterValue, fromDate, toDate, sessionFilter]);
 
   const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
     () =>
@@ -108,7 +127,7 @@ export default function SuperAdminAllocationHistoryList() {
 
   useEffect(() => {
     setPage(0);
-  }, [selectedFilter, filterValue, allocatedToRole, dateRangeFilter, sortState]);
+  }, [selectedFilter, filterValue, allocatedToRole, dateRangeFilter, sessionFilter, sortState]);
 
   const handleSort = (key: SuperAdminAllocationSortKey) => {
     setSortState((current) => getNextTableSortCycleState(current, key));
@@ -132,10 +151,12 @@ export default function SuperAdminAllocationHistoryList() {
     setFilterValue('');
     setAllocatedToRole('');
     setDateRangeFilter({ preset: 'all' });
+    setSessionFilter(null);
   };
 
   const hasActiveFilters =
     hasAllocationHistoryDateFilter(dateRangeFilter) ||
+    Boolean(sessionFilter) ||
     (selectedFilter !== 'all' && filterValue.trim().length > 0);
 
   const hasDateFilter = hasAllocationHistoryDateFilter(dateRangeFilter);
@@ -275,7 +296,7 @@ export default function SuperAdminAllocationHistoryList() {
         <CardHeader className="pb-3">
           <CardTitle>Allocation History</CardTitle>
           <CardDescription>
-            Track stock allocations from main inventory to team leaders and agents.
+            Track stock allocations from main inventory to team leaders and agents, including TL to TL transfers.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

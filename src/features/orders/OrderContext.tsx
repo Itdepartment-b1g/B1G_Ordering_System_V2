@@ -8,6 +8,9 @@ import { sendNotification, sendNotificationToCompanyRoles } from '@/features/sha
 //order page
 export interface OrderItem {
   id: string;
+  /** client_order_items.id — required when filing a client return */
+  clientOrderItemId?: string;
+  brandId?: string;
   brandName: string;
   variantName: string;
   variantType: string;
@@ -62,6 +65,8 @@ export interface Order {
   depositSlipUrl?: string; // URL of the deposit slip image uploaded by team leader
   depositReferenceNumber?: string; // Reference number for the cash deposit
   depositNotes?: string | null; // Notes/remarks recorded with the deposit
+  /** Agent cash/cheque remittance to leader completed */
+  remitted?: boolean;
   approvedBy?: string;
   approvedByName?: string;
   approvedAt?: string;
@@ -177,6 +182,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           stage,
           pricing_strategy,
           deposit_id,
+          remitted,
           approved_by,
           approved_at,
           created_at,
@@ -195,7 +201,9 @@ export function OrderProvider({ children }: { children: ReactNode }) {
             variant:variants(
               name,
               variant_type,
-              brand:brands(name)
+              brand_id,
+              variant_type_id,
+              brand:brands(id, name)
             )
           )
         `);
@@ -247,7 +255,9 @@ export function OrderProvider({ children }: { children: ReactNode }) {
             variant:variants(
               name,
               variant_type,
-              brand:brands(name)
+              brand_id,
+              variant_type_id,
+              brand:brands(id, name)
             )
           `)
           .in('client_order_id', orderIdsNeedingItems);
@@ -255,9 +265,13 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         (itemsFallback || []).forEach((row: any) => {
           const list = ordersWithEmbeddedItems[row.client_order_id] || [];
           list.push({
-            id: row.variant_id,
+            id: row.id,
+            variant_id: row.variant_id,
             quantity: row.quantity,
             unit_price: row.unit_price,
+            selling_price: row.selling_price,
+            dsp_price: row.dsp_price,
+            rsp_price: row.rsp_price,
             variant: row.variant || null,
           });
           ordersWithEmbeddedItems[row.client_order_id] = list;
@@ -274,13 +288,17 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         const items = rawItems.map((item: any) => {
           // Handle variant data - check if it's an object or nested
           const variant = item.variant || {};
-          const brand = variant.brand || {};
+          const brandRaw = variant.brand;
+          const brand = Array.isArray(brandRaw) ? (brandRaw[0] || {}) : (brandRaw || {});
           const brandName = (typeof brand === 'object' && brand.name) ? brand.name : (typeof brand === 'string' ? brand : 'Unknown');
+          const brandId = typeof brand === 'object' && brand.id ? String(brand.id) : (variant.brand_id ? String(variant.brand_id) : undefined);
 
           const unitPrice = Number(item.unit_price) || 0;
 
           return {
             id: item.variant_id,
+            clientOrderItemId: item.id,
+            brandId,
             brandName: brandName,
             variantName: variant?.name || 'Unknown',
             variantType: variant?.variant_type || 'flavor',
@@ -347,6 +365,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           depositSlipUrl: cashDeposit?.deposit_slip_url || undefined,
           depositReferenceNumber: cashDeposit?.reference_number || undefined,
           depositNotes: cashDeposit?.notes || null,
+          remitted: order.remitted === true,
           approvedBy: order.approved_by || undefined,
           approvedByName: order.approver?.full_name || undefined,
           approvedAt: order.approved_at || undefined,

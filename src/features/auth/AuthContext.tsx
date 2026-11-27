@@ -25,9 +25,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const clearPersistedUiCaches = () => {
     try {
       // React Query persisted cache (PersistQueryClientProvider)
+      window.localStorage.removeItem('VITE_APP_QUERY_CACHE_v2');
+      // Legacy key from before the v2 persister rename
       window.localStorage.removeItem('VITE_APP_QUERY_CACHE');
     } catch (e) {
-      console.warn('Unable to clear VITE_APP_QUERY_CACHE from localStorage:', e);
+      console.warn('Unable to clear query cache from localStorage:', e);
     }
   };
 

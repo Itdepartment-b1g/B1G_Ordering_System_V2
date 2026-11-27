@@ -1,8 +1,11 @@
+import { useLayoutEffect } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './hooks';
 import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { AppSidebar } from '@/features/shared/components/AppSidebar';
 import { NotificationsDropdown } from '@/features/shared/components/NotificationsDropdown';
+import { MobileBottomNav, mobileSalesBottomNavItems } from '@/features/shared/components/MobileBottomNav';
+import { SystemUpdateAckDialog } from '@/features/system-updates';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -12,6 +15,12 @@ interface ProtectedRouteProps {
 export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
   const { user, isAuthenticated, isLoading } = useAuth();
   const location = useLocation();
+
+  useLayoutEffect(() => {
+    const main = document.querySelector('main');
+    if (main instanceof HTMLElement) main.scrollTop = 0;
+    window.scrollTo(0, 0);
+  }, [location.pathname]);
 
   // Show loading state while checking authentication
   if (isLoading) {
@@ -49,22 +58,25 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
   // Note: Role-based route restrictions can be added here for other roles
 
   return (
-    <SidebarProvider>
-      <div className="min-h-screen flex w-full overflow-x-hidden">
+    <SidebarProvider className="h-svh max-h-svh overflow-hidden">
+      <div className="flex h-full min-h-0 w-full overflow-hidden">
         <AppSidebar />
-        <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
-          <header className="h-16 border-b flex items-center justify-between px-4 bg-background overflow-x-hidden">
+        <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
+          <header className="z-30 flex h-16 shrink-0 items-center justify-between overflow-x-hidden border-b bg-background px-4">
             <SidebarTrigger />
             <div className="flex items-center gap-2">
               <NotificationsDropdown />
             </div>
           </header>
-          <main className="flex-1 overflow-auto overflow-x-hidden bg-muted/30 w-full max-w-full">
+          <main className="min-h-0 w-full min-w-0 max-w-full flex-1 overflow-x-hidden overflow-y-auto bg-muted/30">
             {children}
           </main>
+          {user?.role === 'mobile_sales' && (
+            <MobileBottomNav items={mobileSalesBottomNavItems} />
+          )}
         </div>
       </div>
+      <SystemUpdateAckDialog />
     </SidebarProvider>
   );
 }
-

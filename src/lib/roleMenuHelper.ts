@@ -20,7 +20,10 @@ const adminMenuItems: MenuItem[] = [
     { title: 'Main Inventory', url: '/inventory/main', description: 'View and manage all company stock levels and pricing.' },
     { title: 'Stock Allocations', url: '/inventory/allocations', description: 'Allocate stock from main inventory to team leaders.' },
     { title: 'Inventory Requests', url: '/inventory/admin-requests', description: 'Approve or reject stock requests escalated to admin.' },
+    { title: 'TL Stock Transfers', url: '/inventory/admin-tl-requests', description: 'Approve team-leader-to-team-leader stock transfers. No warehouse link required.' },
     { title: 'Team Remittances', url: '/inventory/admin-team-remittances', description: 'Review remitted stocks and reconcile team inventory.' },
+    // Hidden for now
+    // { title: 'Stock Movements', url: '/inventory/stock-movements', description: 'Unified history of recorded inventory transactions (in, out, transfers, returns).' },
     { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', description: 'Return stock to your linked warehouse for inspection (good/damaged + batch).' },
   ]},
   { title: 'Clients', url: '/clients', description: 'Admin-level management of all customer records.', hasSubmenu: true, submenu: [
@@ -48,7 +51,7 @@ const adminMenuItems: MenuItem[] = [
 const agentMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/dashboard', description: 'Personal snapshot of today’s targets, orders, and performance.' },
   { title: 'My Inventory', url: '/my-inventory', description: 'View stock currently assigned to you and its status.' },
-  { title: 'Return History', url: '/inventory/my-returns', description: 'Review the stock you returned to your team leader.' },
+  { title: 'Returns to TL History', url: '/inventory/my-returns', description: 'Review the stock you returned to your team leader.' },
   { title: 'Allocation History', url: '/my-allocation-history', description: 'See the stock your team leader allocated to you.' },
   { title: 'Request Inventory', url: '/inventory/request', description: 'Submit stock requests to your team leader for approval.' },
   { title: 'Mobile Sales Stock', url: '/inventory/mobile-request', description: 'Request stock specifically for mobile sales inventory.' },
@@ -70,7 +73,10 @@ const leaderMenuItems: MenuItem[] = [
     { title: 'Pending Requests', url: '/inventory/pending-requests', description: 'Approve or reject inventory requests from your agents.' },
     { title: 'Team Remittances', url: '/inventory/team-remittances', description: 'Review stock and cash remittances submitted by your team.' },
     { title: 'Cash Deposits', url: '/inventory/cash-deposits', description: 'Record and review cash/cheque deposits for your team.' },
-    { title: 'PO Receiving', url: '/inventory/po-receive', description: 'Receive warehouse transfer POs assigned to you and report delivery shortages.' },
+    { title: 'TL Stock Transfer', url: '/inventory/tl-stock-requests', description: 'Request stock from another team leader in your company. Super Admin approves, they dispatch, then you receive. Works without a warehouse link.' },
+    { title: 'Transfer Shortages', url: '/inventory/tl-transfer-shortages', description: 'Investigate TL-to-TL stock that was dispatched but arrived short. Works without a warehouse link.' },
+    // Hidden for now
+    // { title: 'PO Receiving', url: '/inventory/po-receive', description: 'Receive warehouse transfer POs assigned to you and report delivery shortages.' },
     { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', description: 'Return your allocated stock to the linked warehouse for inspection (good/damaged + batch).' },
     { title: 'Returns to Super Admin', url: '/inventory/main/returns', description: 'Review the stock you returned from your inventory to the super admin.' },
     { title: 'How to use?', url: '/leader-manual', description: 'Open the team leader manual and usage guides.' },
@@ -90,6 +96,7 @@ const leaderMenuItems: MenuItem[] = [
 const systemAdminMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/sys-admin-dashboard', description: 'System-wide overview for the system administrator.' },
   { title: 'Management Portal', url: '/system-management', description: 'Configure companies, tenants, and system-wide settings.' },
+  { title: 'System Updates', url: '/system-updates', description: 'Publish version updates to companies and track user acknowledgments.' },
   { title: 'System History', url: '/system-history', description: 'Full audit log of important system changes.' },
   { title: 'Profile', url: '/profile', description: 'Manage your system administrator profile.' },
 ];
@@ -149,7 +156,10 @@ const superAdminMenuItems: MenuItem[] = [
     { title: 'Main Inventory', url: '/inventory/main', description: 'Manage central warehouse stock and costs.' },
     { title: 'Stock Allocations', url: '/inventory/allocations', description: 'Allocate stock down to companies or teams.' },
     { title: 'Inventory Requests', url: '/inventory/admin-requests', description: 'Approve or reject high-level stock requests.' },
+    { title: 'TL Stock Transfers', url: '/inventory/admin-tl-requests', description: 'Approve team-leader-to-team-leader stock transfers. No warehouse link required.' },
     { title: 'Team Remittances', url: '/inventory/admin-team-remittances', description: 'Audit remittances from teams for compliance.' },
+    // Hidden for now
+    // { title: 'Stock Movements', url: '/inventory/stock-movements', description: 'Unified history of recorded inventory transactions (in, out, transfers, returns).' },
     { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', description: 'Return stock to your linked warehouse for inspection (good/damaged + batch).' },
   ]},
   { title: 'Clients', url: '/clients', description: 'High-level client management and quality control.', hasSubmenu: true, submenu: [
@@ -203,6 +213,8 @@ const warehouseMenuItems: MenuItem[] = [
       { title: 'Stock Returns', url: '/inventory/stock-returns', description: 'Inspect sub-warehouse returns; good restocks main batch lots, damaged goes to disposal.' },
       { title: 'Client Stock Returns', url: '/inventory/client-stock-returns', description: 'Inspect Standard Account returns (RT-…); good restocks main batches, damaged to disposal.' },
       { title: 'Stock Adjustments', url: '/inventory/stock-adjustments', description: 'Audited stock corrections with batch tracking and history.' },
+      // Hidden for now
+    // { title: 'Stock Movements', url: '/inventory/stock-movements', description: 'Unified history of recorded inventory transactions (in, out, transfers, returns).' },
       { title: 'Delivery Shortages', url: '/inventory/delivery-shortages', description: 'Investigate PO buyer shortfalls and sub-stock receive shortages.' },
       { title: 'Batch View', url: '/inventory/batches', description: 'Browse on-hand stock grouped by batch with brand and variant breakdown.' },
       { title: 'Physical Count', url: '/inventory/physical-count', description: 'Count warehouse stock by batch and lot; sign to confirm; records physical vs system qty without changing stock.' },
