@@ -722,6 +722,14 @@ export default function DashboardPage() {
                 ) : (
                   <p className="mt-3 text-xs text-muted-foreground">Nothing to remit right now</p>
                 )}
+                <Button
+                  asChild
+                  variant="link"
+                  className="mt-1 h-auto px-0 text-xs"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Link to="/inventory/my-remittances">View remittance history</Link>
+                </Button>
               </CardContent>
             </Card>
           </div>

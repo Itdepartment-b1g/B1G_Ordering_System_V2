@@ -10,7 +10,13 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Search, Edit, Trash2, Building, Camera, Upload, X, MapPin, RefreshCw, Eye, Loader2, CheckCircle, User, Mail, FileText, Phone, ExternalLink, Tag, ChevronLeft, ChevronRight, Filter } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Building, Camera, Upload, X, MapPin, RefreshCw, Eye, Loader2, CheckCircle, User, Mail, FileText, Phone, ExternalLink, Tag, ChevronLeft, ChevronRight, Filter, MoreVertical } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/use-toast';
 import { ToastAction } from '@/components/ui/toast';
 import { useAuth } from '@/features/auth';
@@ -2670,48 +2676,102 @@ export default function MyClientsPage() {
               <div className="text-center text-muted-foreground py-6">No clients found</div>
             ) : (
               paginatedClients.map((client) => (
-                <div key={client.id} className="rounded-lg border bg-background p-4 shadow-sm">
-                  <div className="flex items-center justify-between">
-                    <div className="min-w-0">
-                      <div className="font-semibold truncate">{client.name}</div>
-                      <div className="text-xs text-muted-foreground truncate">{client.company}</div>
+                <div key={client.id} className="overflow-hidden rounded-xl border bg-background shadow-sm">
+                  <div className="flex items-center gap-3 p-3">
+                    {client.photo ? (
+                      <img
+                        src={client.photo}
+                        alt={client.name}
+                        className="h-12 w-12 shrink-0 rounded-full object-cover border"
+                      />
+                    ) : (
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-muted">
+                        <Building className="h-5 w-5 text-muted-foreground" />
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold leading-tight">{client.name}</p>
+                      <p className="truncate text-xs text-muted-foreground">{client.email || '—'}</p>
                     </div>
-                    <div className="flex flex-col items-end gap-1">
-                      <Badge
-                        variant={
-                          (client.category ?? 'Open') === 'Open'
-                            ? 'default'
-                            : (client.category ?? 'Open') === 'Renovating'
-                            ? 'secondary'
-                            : 'destructive'
-                        }
-                        className="text-xs"
-                      >
-                        {client.category ?? 'Open'}
-                      </Badge>
-                      <Badge variant="outline" className={`border ${getApprovalStatusBadge(client.approvalStatus).className}`}>
-                        {getApprovalStatusBadge(client.approvalStatus).label}
-                      </Badge>
-                      <Badge variant="secondary">{client.totalOrders} orders</Badge>
-                    </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0"
+                          aria-label="Client actions"
+                        >
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onSelect={() => handleOpenView(client)}>
+                          <Eye className="mr-2 h-4 w-4" />
+                          View
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => handleOpenEdit(client)}>
+                          <Edit className="mr-2 h-4 w-4" />
+                          Edit
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
-                  <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-                    <div>
-                      <div className="text-xs text-muted-foreground">Email</div>
-                      <div className="truncate">{client.email}</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xs text-muted-foreground">Last Order</div>
-                      <div>{new Date(client.lastOrder).toLocaleDateString()}</div>
-                    </div>
-                  </div>
-                  <div className="mt-3 flex justify-end gap-2">
-                    <Button variant="ghost" size="sm" onClick={() => handleOpenView(client)}>
-                      <Eye className="h-4 w-4 mr-1" /> View
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => handleOpenEdit(client)}>
-                      <Edit className="h-4 w-4 mr-1" /> Edit
-                    </Button>
+
+                  <div className="border-t px-3 py-3">
+                    <p className="mb-2 text-xs font-medium text-muted-foreground">Other details</p>
+                    <dl className="space-y-2 text-sm">
+                      <div className="flex items-start justify-between gap-3">
+                        <dt className="shrink-0 text-muted-foreground">Phone</dt>
+                        <dd className="min-w-0 text-right font-medium">{client.phone || '—'}</dd>
+                      </div>
+                      <div className="flex items-start justify-between gap-3">
+                        <dt className="shrink-0 text-muted-foreground">Longitude</dt>
+                        <dd className="min-w-0 text-right font-medium">
+                          {client.location ? (
+                            <a
+                              href={`https://www.google.com/maps?q=${client.location.latitude},${client.location.longitude}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary hover:underline"
+                            >
+                              {client.location.longitude.toFixed(6)}
+                            </a>
+                          ) : (
+                            '—'
+                          )}
+                        </dd>
+                      </div>
+                      <div className="flex items-start justify-between gap-3">
+                        <dt className="shrink-0 text-muted-foreground">Latitude</dt>
+                        <dd className="min-w-0 text-right font-medium">
+                          {client.location ? (
+                            <a
+                              href={`https://www.google.com/maps?q=${client.location.latitude},${client.location.longitude}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary hover:underline"
+                            >
+                              {client.location.latitude.toFixed(6)}
+                            </a>
+                          ) : (
+                            '—'
+                          )}
+                        </dd>
+                      </div>
+                      <div className="flex items-start justify-between gap-3">
+                        <dt className="shrink-0 text-muted-foreground">Total Orders</dt>
+                        <dd className="min-w-0 text-right font-medium">{client.totalOrders}</dd>
+                      </div>
+                      <div className="flex items-start justify-between gap-3">
+                        <dt className="shrink-0 text-muted-foreground">Created at</dt>
+                        <dd className="min-w-0 text-right font-medium">
+                          {client.createdAt
+                            ? new Date(client.createdAt).toLocaleString()
+                            : '—'}
+                        </dd>
+                      </div>
+                    </dl>
                   </div>
                 </div>
               ))
