@@ -296,7 +296,7 @@ export default function SuperAdminAllocationHistoryList() {
         <CardHeader className="pb-3">
           <CardTitle>Allocation History</CardTitle>
           <CardDescription>
-            Track stock allocations from main inventory to team leaders and agents.
+            Track stock allocations from main inventory to team leaders and agents, including TL to TL transfers.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

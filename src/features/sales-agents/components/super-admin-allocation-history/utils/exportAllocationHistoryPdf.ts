@@ -75,7 +75,8 @@ function buildAllocationHistoryHtml(group: AllocationHistoryGroup): string {
   const allocatedTo = escapeHtml(group.allocatedToName?.trim() || '—');
   const allocatedBy = escapeHtml(group.allocatedByName?.trim() || '—');
   const when = escapeHtml(formatManilaDateTime(group.createdAt));
-  const flow = escapeHtml(allocationTypeLabel(group.allocationType));
+  const flowLabel = allocationTypeLabel(group.allocationType);
+  const flow = escapeHtml(group.requestNumber ? `${flowLabel} (${group.requestNumber})` : flowLabel);
 
   return `<!doctype html>
 <html lang="en">
