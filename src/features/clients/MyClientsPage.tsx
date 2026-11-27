@@ -1960,7 +1960,7 @@ export default function MyClientsPage() {
       </div>
     );
   }
-
+//FOR COMMIT PURPOSES
   return (
     <div className="p-4 md:p-6 lg:p-8 space-y-4 md:space-y-6">
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
