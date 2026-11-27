@@ -47,7 +47,9 @@ export function formatManilaDateTime(iso: string): string {
 }
 
 export function allocationTypeLabel(type: AllocationHistoryGroup['allocationType']): string {
-  return type === 'leader_to_agent' ? 'Leader to Agent' : 'Main to Leader';
+  if (type === 'leader_to_agent') return 'Leader to Agent';
+  if (type === 'leader_to_leader') return 'TL to TL';
+  return 'Main to Leader';
 }
 
 function variantTypeLabel(type: string | null): string | null {
@@ -192,6 +194,13 @@ export function AllocationDetailsDialog({
                 <p className="font-medium">{group.allocatedToName}</p>
               </div>
               <div>
+                <p className="text-xs text-muted-foreground">Flow</p>
+                <p className="font-medium">{allocationTypeLabel(group.allocationType)}</p>
+                {group.requestNumber ? (
+                  <p className="font-mono text-[11px] text-muted-foreground">{group.requestNumber}</p>
+                ) : null}
+              </div>
+              <div>
                 <p className="text-xs text-muted-foreground">Brand</p>
                 <p className="font-medium">{group.brandName ?? '—'}</p>
               </div>
@@ -325,6 +334,21 @@ export function AllocationHistoryMobileList({
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">{group.brandName ?? 'Allocation'}</p>
+                <div className="mt-1 flex flex-col items-start gap-1">
+                  <Badge
+                    variant="secondary"
+                    className={
+                      group.allocationType === 'leader_to_leader'
+                        ? 'border-purple-200 bg-purple-100 text-purple-900 hover:bg-purple-100'
+                        : undefined
+                    }
+                  >
+                    {allocationTypeLabel(group.allocationType)}
+                  </Badge>
+                  {group.requestNumber ? (
+                    <span className="font-mono text-[11px] text-muted-foreground">{group.requestNumber}</span>
+                  ) : null}
+                </div>
                 <p className="mt-1 truncate text-xs text-muted-foreground">From {group.allocatedByName}</p>
                 <p
                   className={`mt-1 text-xs ${
@@ -400,7 +424,21 @@ export function AllocationGroupRow({
         <TableCell className="whitespace-nowrap text-sm">{formatManilaDateTime(group.createdAt)}</TableCell>
         <TableCell className="font-medium">{group.allocatedToName}</TableCell>
         <TableCell>
-          <Badge variant="secondary">{allocationTypeLabel(group.allocationType)}</Badge>
+          <div className="flex flex-col items-start gap-1">
+            <Badge
+              variant="secondary"
+              className={
+                group.allocationType === 'leader_to_leader'
+                  ? 'border-purple-200 bg-purple-100 text-purple-900 hover:bg-purple-100'
+                  : undefined
+              }
+            >
+              {allocationTypeLabel(group.allocationType)}
+            </Badge>
+            {group.requestNumber ? (
+              <span className="font-mono text-[11px] text-muted-foreground">{group.requestNumber}</span>
+            ) : null}
+          </div>
         </TableCell>
         <TableCell
           className={

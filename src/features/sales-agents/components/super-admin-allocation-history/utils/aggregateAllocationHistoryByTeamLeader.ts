@@ -180,7 +180,7 @@ function sortRecipientSummaries(
 
 /**
  * Aggregate allocations for team leaders and mobile sales.
- * Includes both `main_to_leader` and `leader_to_agent`.
+ * Includes `main_to_leader`, `leader_to_agent`, and `leader_to_leader`.
  * When `roster` is provided, every company TL/MS appears (even with 0 units).
  */
 export function aggregateAllocationHistoryByTeamLeader(

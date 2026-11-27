@@ -61,7 +61,9 @@ export async function exportAllocationHistoryExcel(
     const dataRow = worksheet.getRow(rowCursor++);
     dataRow.getCell(1).value = formatManilaDateTime(group.createdAt);
     dataRow.getCell(2).value = group.allocatedToName;
-    dataRow.getCell(3).value = allocationTypeLabel(group.allocationType);
+    dataRow.getCell(3).value = group.requestNumber
+      ? `${allocationTypeLabel(group.allocationType)} (${group.requestNumber})`
+      : allocationTypeLabel(group.allocationType);
     dataRow.getCell(4).value = group.brandName ?? '—';
     dataRow.getCell(5).value = group.allocatedByName;
     dataRow.getCell(6).value = group.lineCount;
