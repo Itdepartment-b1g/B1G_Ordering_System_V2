@@ -442,13 +442,13 @@ function buildTransferRequestHtml(options: TlStockTransferRequestPdfOptions): st
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Stock Transfer — ${requestNo}</title>
+<title>TL Stock Transfer — ${requestNo}</title>
 <style>${sharedStyles()}</style>
 </head>
 <body>
   <div class="toolbar">
     <div class="toolbar-left">
-      <h1>Stock Transfer
+      <h1>TL Stock Transfer
         <span class="hint">Use <b>Print</b> (Ctrl/⌘ + P), turn off <b>Headers and footers</b>, then save as PDF.</span>
       </h1>
     </div>
@@ -460,8 +460,7 @@ function buildTransferRequestHtml(options: TlStockTransferRequestPdfOptions): st
     </div>
   </div>
   <div class="page">
-    <div class="doc-title">STOCK TRANSFER</div>
-    <div class="doc-subtitle">${escapeHtml(options.statusLabel)}</div>
+    <div class="doc-title">TL STOCK TRANSFER</div>
     <div class="dr-number-row">
       <span class="label">TRANSFER NO:</span>
       <span class="value">${requestNo}</span>
@@ -646,7 +645,7 @@ export async function exportTlStockTransferRequestPdf(
   options: TlStockTransferRequestPdfOptions
 ): Promise<void> {
   const html = buildTransferRequestHtml(options);
-  openPrintableHtml(`Stock Transfer — ${options.requestNumber}`, html);
+  openPrintableHtml(`TL Stock Transfer — ${options.requestNumber}`, html);
 }
 
 export function buildTlTdrPdfHtml(options: TlTdrPdfOptions): string {

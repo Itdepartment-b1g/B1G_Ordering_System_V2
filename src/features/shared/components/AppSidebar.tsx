@@ -314,7 +314,7 @@ const leaderMenuItems: MenuItem[] = [
       { title: 'Pending Requests', url: '/inventory/pending-requests', icon: Send },
       { title: 'Team Remittances', url: '/inventory/team-remittances', icon: ArrowLeft },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: DollarSign },
-      { title: 'Stock Transfers', url: '/inventory/tl-stock-requests', icon: ArrowRightLeft },
+      { title: 'TL Stock Transfer', url: '/inventory/tl-stock-requests', icon: ArrowRightLeft },
       { title: 'Transfer Shortages', url: '/inventory/tl-transfer-shortages', icon: PackageSearch },
       { title: 'PO Receiving', url: '/inventory/po-receive', icon: PackageCheck },
       { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },

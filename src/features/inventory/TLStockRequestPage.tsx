@@ -407,7 +407,7 @@ export default function TLStockRequestPage() {
     <div className="container mx-auto p-4 space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div>
-          <h1 className="text-2xl font-bold">Stock transfers</h1>
+          <h1 className="text-2xl font-bold">TL Stock Transfer</h1>
           <p className="text-muted-foreground">
             Request stock from another team leader. Super Admin approves, they dispatch, then you
             receive. Works without a warehouse link.
