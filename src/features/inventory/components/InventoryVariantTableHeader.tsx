@@ -59,7 +59,7 @@ export function InventoryVariantTableHeader({
             className={th}
           />
         )}
-        {showReturnedColumn && <TableHead className={th}>Returned</TableHead>}
+        {showReturnedColumn && <TableHead className={th}>Client Returned</TableHead>}
         {showPoReservedColumn && (
           <SortableTableHead
             label="PO Reserved"

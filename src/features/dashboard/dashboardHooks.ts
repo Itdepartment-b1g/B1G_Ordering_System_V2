@@ -310,7 +310,17 @@ type AgentOrderRow = {
     total_amount: number | string | null;
     status: string | null;
     stage: string | null;
+    order_date?: string | null;
+    payment_method?: string | null;
+    payment_mode?: string | null;
+    payment_splits?: unknown;
+    remitted?: boolean | null;
+    deposit_id?: string | null;
+    cash_deposit?: { id?: string; status?: string | null } | { id?: string; status?: string | null }[] | null;
 };
+
+/** Same cutoff as My Inventory remittance / Sold tab. */
+const SOLD_TAB_ORDER_DATE_THRESHOLD = '2026-02-17';
 
 function isNeedsRevisionOrder(order: AgentOrderRow): boolean {
     return order.stage === 'needs_revision';
@@ -331,6 +341,71 @@ function sumAgentOrderAmounts(orders: AgentOrderRow[]): number {
     return orders.reduce((sum, order) => sum + (Number(order.total_amount) || 0), 0);
 }
 
+function nestedDeposit(
+    value: AgentOrderRow['cash_deposit']
+): { id?: string; status?: string | null } | null {
+    if (!value) return null;
+    if (Array.isArray(value)) return value[0] || null;
+    return value;
+}
+
+/** Cash + cheque portions only (same rules as My Inventory remittance). */
+function cashChequeRemitAmount(order: AgentOrderRow): number {
+    const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
+    const paymentMethod = order.payment_method as
+        | 'GCASH'
+        | 'BANK_TRANSFER'
+        | 'CASH'
+        | 'CHEQUE'
+        | null;
+    const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
+
+    let cashPortion = 0;
+    let chequePortion = 0;
+
+    if (paymentMode === 'SPLIT') {
+        for (const split of splits as Array<{ method?: string; amount?: number }>) {
+            const amount = Number(split.amount) || 0;
+            if (split.method === 'CASH') cashPortion += amount;
+            else if (split.method === 'CHEQUE') chequePortion += amount;
+        }
+    } else if (paymentMethod === 'CASH') {
+        cashPortion = Number(order.total_amount) || 0;
+    } else if (paymentMethod === 'CHEQUE') {
+        chequePortion = Number(order.total_amount) || 0;
+    }
+
+    return cashPortion + chequePortion;
+}
+
+function summarizePendingCashRemittance(orders: AgentOrderRow[]): {
+    cashChequeOrdersCount: number;
+    cashChequeAmount: number;
+} {
+    let cashChequeOrdersCount = 0;
+    let cashChequeAmount = 0;
+
+    for (const order of orders) {
+        const totalAmount = Number(order.total_amount) || 0;
+        if (totalAmount === 0) continue;
+        if (order.remitted) continue;
+
+        const deposit = nestedDeposit(order.cash_deposit);
+        if (order.deposit_id && deposit?.status === 'verified') continue;
+
+        const orderDate = order.order_date ?? null;
+        if (!orderDate || orderDate < SOLD_TAB_ORDER_DATE_THRESHOLD) continue;
+
+        const remittedAmount = cashChequeRemitAmount(order);
+        if (remittedAmount <= 0) continue;
+
+        cashChequeOrdersCount += 1;
+        cashChequeAmount += remittedAmount;
+    }
+
+    return { cashChequeOrdersCount, cashChequeAmount };
+}
+
 export function useAgentStats() {
     const { user } = useAuth();
     const queryClient = useQueryClient();
@@ -347,8 +422,28 @@ export function useAgentStats() {
             console.log('📊 Fetching agent stats for user:', user.id);
 
             const [ordersResult, clientsResult] = await Promise.all([
-                supabase.from('client_orders').select('id, total_amount, status, stage').eq('agent_id', user.id),
-                supabase.from('clients').select('id').eq('agent_id', user.id)
+                supabase
+                    .from('client_orders')
+                    .select(
+                        `
+                        id,
+                        total_amount,
+                        status,
+                        stage,
+                        order_date,
+                        payment_method,
+                        payment_mode,
+                        payment_splits,
+                        remitted,
+                        deposit_id,
+                        cash_deposit:cash_deposits!client_orders_deposit_id_fkey(
+                          id,
+                          status
+                        )
+                      `
+                    )
+                    .eq('agent_id', user.id),
+                supabase.from('clients').select('id').eq('agent_id', user.id),
             ]);
 
             // Check for errors
@@ -359,33 +454,35 @@ export function useAgentStats() {
                 console.error('❌ Error fetching clients:', clientsResult.error);
             }
 
-            const orders = ordersResult.data;
+            const orders = (ordersResult.data || []) as AgentOrderRow[];
             const clients = clientsResult.data;
 
-            console.log('📦 Orders fetched:', orders?.length || 0, orders);
+            console.log('📦 Orders fetched:', orders.length, orders);
             console.log('👥 Clients fetched:', clients?.length || 0);
 
             // Calculate overall sales (all orders regardless of status/stage)
-            const overallSales = (orders || []).reduce((sum, order) => {
+            const overallSales = orders.reduce((sum, order) => {
                 const amount = Number(order.total_amount) || 0;
                 return sum + amount;
             }, 0);
 
             // Calculate approved sales only (stage = admin_approved is the final approval)
-            const approvedOrders = (orders || []).filter(order => order.stage === 'admin_approved');
+            const approvedOrders = orders.filter((order) => order.stage === 'admin_approved');
             const approvedSales = approvedOrders.reduce((sum, order) => {
                 const amount = Number(order.total_amount) || 0;
                 return sum + amount;
             }, 0);
 
             // Pending sales split: awaiting approval vs needs revision (by stage)
-            const orderRows = (orders || []) as AgentOrderRow[];
-            const needsRevisionOrders = orderRows.filter(isNeedsRevisionOrder);
-            const awaitingApprovalOrders = orderRows.filter(isAwaitingApprovalOrder);
+            const needsRevisionOrders = orders.filter(isNeedsRevisionOrder);
+            const awaitingApprovalOrders = orders.filter(isAwaitingApprovalOrder);
 
             const pendingSalesNeedsRevision = sumAgentOrderAmounts(needsRevisionOrders);
             const pendingSalesPending = sumAgentOrderAmounts(awaitingApprovalOrders);
             const pendingSales = pendingSalesPending + pendingSalesNeedsRevision;
+
+            const { cashChequeOrdersCount, cashChequeAmount } =
+                summarizePendingCashRemittance(orders);
 
             console.log('💰 Sales calculated:', {
                 overallSales,
@@ -399,17 +496,21 @@ export function useAgentStats() {
                     ' from ' +
                     (awaitingApprovalOrders.length + needsRevisionOrders.length) +
                     ' orders)',
+                cashChequeOrdersCount,
+                cashChequeAmount,
             });
 
             return {
-                myOrders: orders?.length || 0,
+                myOrders: orders.length,
                 myClients: clients?.length || 0,
                 overallSales,
                 approvedSales,
                 pendingSales,
                 pendingSalesPending,
                 pendingSalesNeedsRevision,
-                myCommission: 0 // Logic not implemented yet as per current code
+                cashChequeOrdersCount,
+                cashChequeAmount,
+                myCommission: 0, // Logic not implemented yet as per current code
             };
         },
         staleTime: 1000 * 60 * 5,
@@ -418,8 +519,12 @@ export function useAgentStats() {
     useEffect(() => {
         if (!user?.id || (user.role !== 'sales_agent' && user.role !== 'mobile_sales')) return;
 
-        const channel1 = subscribeToTable('client_orders', () => queryClient.invalidateQueries({ queryKey: ['agent_stats', user.id, 'v2'] }));
-        const channel2 = subscribeToTable('clients', () => queryClient.invalidateQueries({ queryKey: ['agent_stats', user.id, 'v2'] }));
+        const channel1 = subscribeToTable('client_orders', () =>
+            queryClient.invalidateQueries({ queryKey: ['agent_stats', user.id, 'v2'] })
+        );
+        const channel2 = subscribeToTable('clients', () =>
+            queryClient.invalidateQueries({ queryKey: ['agent_stats', user.id, 'v2'] })
+        );
 
         return () => {
             unsubscribe(channel1);

@@ -99,6 +99,8 @@ export default function DashboardPage() {
     pendingSales = 0,
     pendingSalesPending = 0,
     pendingSalesNeedsRevision = 0,
+    cashChequeOrdersCount = 0,
+    cashChequeAmount = 0,
     myCommission = 0
   } = agentStats || {};
 
@@ -629,26 +631,100 @@ export default function DashboardPage() {
             </Card>
           </div>
 
-          {/* Sales Breakdown Card */}
-          <Card className="border-l-4 border-l-yellow-500">
-            <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
-              <div className="space-y-1 pr-2">
-                <CardTitle className="text-sm font-medium">Pending Sales</CardTitle>
-        
-              </div>
-              <Clock className="h-4 w-4 text-yellow-600 shrink-0" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-xl md:text-2xl font-bold text-yellow-600">₱{pendingSales.toLocaleString()}</div>
-
-              <p className="text-xs text-muted-foreground leading-snug">
-                  <span className="text-yellow-700/90">Pending ₱{pendingSalesPending.toLocaleString()}</span>
+          {/* Pending Sales + To Remit */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4">
+            <Card
+              className={`border-l-4 border-l-yellow-500 transition-colors ${
+                pendingSales > 0 ? 'cursor-pointer hover:bg-amber-50/40' : ''
+              }`}
+              role={pendingSales > 0 ? 'button' : undefined}
+              tabIndex={pendingSales > 0 ? 0 : undefined}
+              onClick={() => {
+                if (pendingSales > 0) navigate('/my-orders?status=pending');
+              }}
+              onKeyDown={(e) => {
+                if ((e.key === 'Enter' || e.key === ' ') && pendingSales > 0) {
+                  e.preventDefault();
+                  navigate('/my-orders?status=pending');
+                }
+              }}
+            >
+              <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+                <div className="space-y-1 pr-2">
+                  <CardTitle className="text-sm font-medium">Pending Sales</CardTitle>
+                </div>
+                <Clock className="h-4 w-4 text-yellow-600 shrink-0" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl md:text-2xl font-bold text-yellow-600">
+                  ₱{pendingSales.toLocaleString()}
+                </div>
+                <p className="text-xs text-muted-foreground leading-snug mt-1">
+                  <span className="text-yellow-700/90">
+                    Pending ₱{pendingSalesPending.toLocaleString()}
+                  </span>
                   {' + '}
-                  <span className="text-yellow-700/90">Needs revision ₱{pendingSalesNeedsRevision.toLocaleString()}</span>
+                  <span className="text-yellow-700/90">
+                    Needs revision ₱{pendingSalesNeedsRevision.toLocaleString()}
+                  </span>
                 </p>
-              <p className="text-xs text-muted-foreground mt-1">Awaiting approval</p>
-            </CardContent>
-          </Card>
+                <p className="text-xs text-muted-foreground mt-1">Awaiting approval</p>
+                {pendingSales > 0 ? (
+                  <p className="mt-3 text-xs font-medium text-yellow-700 flex items-center gap-1">
+                    Click to filter orders
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </p>
+                ) : (
+                  <p className="mt-3 text-xs text-muted-foreground">No pending orders</p>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card
+              className={`border-l-4 border-l-green-500 transition-colors ${
+                cashChequeOrdersCount > 0 ? 'cursor-pointer hover:bg-green-50/40' : ''
+              }`}
+              role={cashChequeOrdersCount > 0 ? 'button' : undefined}
+              tabIndex={cashChequeOrdersCount > 0 ? 0 : undefined}
+              onClick={() => {
+                if (cashChequeOrdersCount > 0) navigate('/my-inventory?remit=1');
+              }}
+              onKeyDown={(e) => {
+                if ((e.key === 'Enter' || e.key === ' ') && cashChequeOrdersCount > 0) {
+                  e.preventDefault();
+                  navigate('/my-inventory?remit=1');
+                }
+              }}
+            >
+              <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+                <div className="space-y-1 pr-2">
+                  <CardTitle className="text-sm font-medium">To Remit (Cash)</CardTitle>
+                </div>
+                <Receipt className="h-4 w-4 text-green-600 shrink-0" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl md:text-2xl font-bold text-green-700">
+                  {cashChequeOrdersCount}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {cashChequeOrdersCount === 1
+                    ? 'order pending remittance'
+                    : 'orders pending remittance'}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  ₱{cashChequeAmount.toLocaleString()} cash/cheque
+                </p>
+                {cashChequeOrdersCount > 0 ? (
+                  <p className="mt-3 text-xs font-medium text-green-700 flex items-center gap-1">
+                    Click to open remittance
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </p>
+                ) : (
+                  <p className="mt-3 text-xs text-muted-foreground">Nothing to remit right now</p>
+                )}
+              </CardContent>
+            </Card>
+          </div>
 
           {/* Recent Activity Table */}
           <Card>

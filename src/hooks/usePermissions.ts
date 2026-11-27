@@ -53,9 +53,14 @@ export function usePermissions() {
       return hasWarehouseHubLink === true;
     }
 
-    // PO Receiving is only available for team leaders whose tenant is linked to a warehouse hub.
+    // PO Receiving — hidden for now (sidebar + direct route).
     if (route === '/inventory/po-receive') {
-      return user?.role === 'team_leader' && hasWarehouseHubLink === true;
+      return false;
+    }
+
+    // Stock Movements — hidden for now (sidebar + direct route).
+    if (route === '/inventory/stock-movements') {
+      return false;
     }
 
     if (route === '/leader-manual') {
