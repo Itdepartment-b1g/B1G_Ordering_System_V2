@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Search, Edit, Trash2, Building, Camera, Upload, X, MapPin, RefreshCw, Eye, Loader2, CheckCircle, User, Mail, FileText, Phone, ExternalLink, Tag, ChevronLeft, ChevronRight, Filter, MoreVertical } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Building, Camera, Upload, X, MapPin, RefreshCw, Eye, Loader2, CheckCircle, User, Mail, FileText, Phone, ExternalLink, Tag, ChevronLeft, ChevronRight, Filter, MoreVertical, Printer } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,6 +23,7 @@ import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
 import { useMyClients, Client } from './hooks';
 import { useQueryClient } from '@tanstack/react-query';
+import { exportClientPdf } from './utils/exportClientPdf';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -298,6 +299,18 @@ export default function MyClientsPage() {
         return { label: 'Rejected', className: 'bg-red-50 text-red-700 border-red-200' };
       default:
         return { label: 'Pending Approval', className: 'bg-yellow-50 text-yellow-700 border-yellow-200' };
+    }
+  };
+
+  const handlePrintClient = async (client: Client) => {
+    try {
+      await exportClientPdf(client);
+    } catch (error) {
+      toast({
+        title: 'Print failed',
+        description: error instanceof Error ? error.message : 'Could not open print preview.',
+        variant: 'destructive',
+      });
     }
   };
 
@@ -2714,6 +2727,12 @@ export default function MyClientsPage() {
                           <Edit className="mr-2 h-4 w-4" />
                           Edit
                         </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onSelect={() => window.setTimeout(() => void handlePrintClient(client), 0)}
+                        >
+                          <Printer className="mr-2 h-4 w-4" />
+                          Print PDF
+                        </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
@@ -2972,6 +2991,15 @@ export default function MyClientsPage() {
                         <Button variant="ghost" size="icon" className="h-8 w-8 md:h-10 md:w-10" onClick={() => handleOpenEdit(client)} title="Edit">
                           <Edit className="h-3.5 w-3.5 md:h-4 md:w-4" />
                         </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 md:h-10 md:w-10"
+                          onClick={() => void handlePrintClient(client)}
+                          title="Print PDF"
+                        >
+                          <Printer className="h-3.5 w-3.5 md:h-4 md:w-4" />
+                        </Button>
                         {user?.role !== 'mobile_sales' && (
                         <Button variant="ghost" size="icon" className="h-8 w-8 md:h-10 md:w-10" onClick={() => handleOpenDelete(client)} title="Delete">
                           <Trash2 className="h-3.5 w-3.5 md:h-4 md:w-4" />
@@ -3022,8 +3050,20 @@ export default function MyClientsPage() {
       {/* View Client Dialog */}
       <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
         <DialogContent className="max-w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
+          <DialogHeader className="flex flex-row items-start justify-between gap-3 space-y-0 pr-8">
             <DialogTitle className="text-xl">Client Details</DialogTitle>
+            {viewingClient ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={() => void handlePrintClient(viewingClient)}
+              >
+                <Printer className="mr-2 h-4 w-4" />
+                Print PDF
+              </Button>
+            ) : null}
           </DialogHeader>
           {viewingClient && (
             <div className="space-y-6 py-4">
