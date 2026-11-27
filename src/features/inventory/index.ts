@@ -14,6 +14,7 @@ export { default as LeaderAgentReturnsPage } from './LeaderAgentReturnsPage';
 export { default as MyInventoryPage } from './MyInventoryPage';
 export { default as MyInventoryBrandPage } from './MyInventoryBrandPage';
 export { default as RemittedStocksPage } from './RemittedStocksPage';
+export { default as AgentRemittanceHistoryPage } from './AgentRemittanceHistoryPage';
 export { default as WarehouseDisposalsPage } from './WarehouseDisposalsPage';
 export { default as WarehouseStockRequestsPage } from './WarehouseStockRequestsPage';
 export { default as WarehouseStockReturnsPage } from './WarehouseStockReturnsPage';
