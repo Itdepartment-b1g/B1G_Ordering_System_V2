@@ -42,6 +42,11 @@ import { FinancePage } from "@/features/finance";
 import PaymentSettingsPage from "@/features/finance/PaymentSettingsPage";
 import SystemAdminPage from "@/features/system-admin/SystemAdminPage";
 import ManagementPortal from "@/features/system-admin/ManagementPortal";
+import {
+  SystemUpdatesPage,
+  SystemUpdateFormPage,
+  SystemUpdateDetailPage,
+} from "@/features/system-updates";
 import { WarRoomPage } from "@/features/war-room";
 import { KeyAccountsDashboardWrapper, ClientHierarchyPage, ClientAssignmentPage, KeyAccountTeamPage, KeyAccountPurchaseOrderPage, KeyAccountPurchaseOrdersPage, KeyAccountAnalyticsPage, KeyAccountClientAnalyticsPage, KeyAccountRebatesPage, KeyAccountCreateRebatePage, KeyAccountPaymentSettingsPage, KeyAccountPaymentTermsPage } from "@/features/key-accounts";
 import NotFound from "@/features/shared/NotFound";
@@ -367,6 +372,38 @@ const App = () => (
                     <Route path="/system-settings" element={<ProtectedRoute><SystemSettingsPage /></ProtectedRoute>} />
                     <Route path="/system-admin" element={<ProtectedRoute><SystemAdminPage /></ProtectedRoute>} />
                     <Route path="/system-management" element={<ProtectedRoute><ManagementPortal /></ProtectedRoute>} />
+                    <Route
+                      path="/system-updates"
+                      element={
+                        <ProtectedRoute allowedRoles={['system_administrator']}>
+                          <SystemUpdatesPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/system-updates/new"
+                      element={
+                        <ProtectedRoute allowedRoles={['system_administrator']}>
+                          <SystemUpdateFormPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/system-updates/:updateId/edit"
+                      element={
+                        <ProtectedRoute allowedRoles={['system_administrator']}>
+                          <SystemUpdateFormPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/system-updates/:updateId"
+                      element={
+                        <ProtectedRoute allowedRoles={['system_administrator']}>
+                          <SystemUpdateDetailPage />
+                        </ProtectedRoute>
+                      }
+                    />
                     <Route path="/sys-admin-dashboard" element={<ProtectedRoute><SysAdDashboardPage /></ProtectedRoute>} />
                     <Route path="/super-admin-dashboard" element={<ProtectedRoute allowedRoles={['super_admin']}><SuperAdminDashboardPage /></ProtectedRoute>} />
                     <Route path="/executive-dashboard" element={<ProtectedRoute allowedRoles={['executive']}><ExecutiveDashboardPage /></ProtectedRoute>} />

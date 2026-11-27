@@ -351,6 +351,7 @@ const systemAdminMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/sys-admin-dashboard', icon: LayoutDashboard },
   { title: 'Executive Account', url: '/system-admin', icon: ShieldCheck },
   { title: 'Management Portal', url: '/system-management', icon: LayoutGrid },
+  { title: 'System Updates', url: '/system-updates', icon: FileText },
   { title: 'System History', url: '/system-history', icon: History },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];

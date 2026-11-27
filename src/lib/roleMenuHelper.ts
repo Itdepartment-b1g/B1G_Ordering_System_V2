@@ -96,6 +96,7 @@ const leaderMenuItems: MenuItem[] = [
 const systemAdminMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/sys-admin-dashboard', description: 'System-wide overview for the system administrator.' },
   { title: 'Management Portal', url: '/system-management', description: 'Configure companies, tenants, and system-wide settings.' },
+  { title: 'System Updates', url: '/system-updates', description: 'Publish version updates to companies and track user acknowledgments.' },
   { title: 'System History', url: '/system-history', description: 'Full audit log of important system changes.' },
   { title: 'Profile', url: '/profile', description: 'Manage your system administrator profile.' },
 ];

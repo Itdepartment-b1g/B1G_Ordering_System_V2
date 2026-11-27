@@ -118,9 +118,14 @@ export function usePermissions() {
         '/sys-admin-dashboard',
         '/system-admin',
         '/system-management',
+        '/system-updates',
         '/profile',
       ];
-      return systemAdminRoutes.includes(route) || route.startsWith('/sys-admin');
+      return (
+        systemAdminRoutes.includes(route) ||
+        route.startsWith('/sys-admin') ||
+        route.startsWith('/system-updates')
+      );
     }
 
     // Executive has read-only access to specific routes

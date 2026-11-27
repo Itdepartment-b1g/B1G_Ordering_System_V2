@@ -5,6 +5,7 @@ import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { AppSidebar } from '@/features/shared/components/AppSidebar';
 import { NotificationsDropdown } from '@/features/shared/components/NotificationsDropdown';
 import { MobileBottomNav, mobileSalesBottomNavItems } from '@/features/shared/components/MobileBottomNav';
+import { SystemUpdateAckDialog } from '@/features/system-updates';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -75,6 +76,7 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
           )}
         </div>
       </div>
+      <SystemUpdateAckDialog />
     </SidebarProvider>
   );
 }
