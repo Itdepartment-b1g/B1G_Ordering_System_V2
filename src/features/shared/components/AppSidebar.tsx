@@ -279,7 +279,7 @@ const keyAccountManagerMenuItems: MenuItem[] = [
 const agentMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
   { title: 'My Inventory', url: '/my-inventory', icon: Package },
-  { title: 'Return History', url: '/inventory/my-returns', icon: RotateCcw },
+  { title: 'Returns to TL History', url: '/inventory/my-returns', icon: RotateCcw },
   { title: 'Allocation History', url: '/my-allocation-history', icon: Package2Icon },
   { title: 'Request Inventory', url: '/inventory/mobile-request', icon: Send },
   { title: 'Price Agreements', url: '/inventory/price-agreements', icon: CheckCircle2 },

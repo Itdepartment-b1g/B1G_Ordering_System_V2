@@ -111,17 +111,23 @@ function detailField(label: string, valueHtml: string): string {
 
 function returnPageHtml(input: MainInventoryReturnPdfInput): string {
   const total = input.lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
-  const returnedBy = input.returnedBy?.trim() ? escapeHtml(input.returnedBy.trim()) : '—';
-  const returnedTo = input.returnedTo?.trim() ? escapeHtml(input.returnedTo.trim()) : '—';
+  const returnedByRaw = input.returnedBy?.trim() || '—';
+  const returnedToRaw = input.returnedTo?.trim() || '—';
+  const returnedBy = escapeHtml(returnedByRaw);
+  const returnedTo = escapeHtml(returnedToRaw);
   const when = escapeHtml(formatDateTime(input.returnedAt));
   const reason = input.reason?.trim()
     ? escapeHtml(input.reason.trim())
     : '<span class="muted">—</span>';
   const status = input.status?.trim() ? escapeHtml(input.status.trim()) : '';
+  const description = escapeHtml(
+    `${returnedByRaw} returned their stock to ${returnedToRaw}`
+  );
 
   return `
   <div class="page">
-    <div class="doc-title">STOCK RETURN</div>
+    <div class="doc-title">AGENT STOCK RETURN</div>
+    <div class="doc-desc">${description}</div>
     <div class="meta-row">
       <span class="label">RETURN BY:</span>
       <span class="value">${returnedBy}</span>
@@ -151,6 +157,7 @@ function returnPageHtml(input: MainInventoryReturnPdfInput): string {
     <div class="totals-note">Total returned: ${fmtQty(total)} unit(s)</div>
     <div class="delivery-section">
       <div class="section-label">RETURN DETAILS</div>
+      ${detailField('NOTES:', description)}
       ${detailField('RETURN BY:', returnedBy)}
       ${detailField('RETURN TO:', returnedTo)}
       ${detailField('DATE:', when)}
@@ -158,7 +165,7 @@ function returnPageHtml(input: MainInventoryReturnPdfInput): string {
       ${detailField('REASON:', reason)}
       ${detailField('SIGNATURE:', '<span class="sline"></span>')}
     </div>
-    <div class="footer-note">Stock return · ${escapeHtml(formatDateTime(new Date().toISOString()))}</div>
+    <div class="footer-note">Agent stock return · ${escapeHtml(formatDateTime(new Date().toISOString()))}</div>
   </div>`;
 }
 
@@ -174,7 +181,7 @@ function buildReturnsHtml(inputs: MainInventoryReturnPdfInput[]): string {
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Stock Return – ${returnedBy}</title>
+<title>Agent Stock Return – ${returnedBy}</title>
 <style>
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
@@ -231,7 +238,14 @@ function buildReturnsHtml(inputs: MainInventoryReturnPdfInput[]): string {
     font-size: 22px;
     font-weight: 800;
     letter-spacing: 0.06em;
-    margin: 10px 0 14px;
+    margin: 10px 0 6px;
+  }
+  .doc-desc {
+    text-align: center;
+    font-size: 12px;
+    font-weight: 400;
+    color: #333;
+    margin: 0 0 14px;
   }
   .meta-row {
     display: flex;
@@ -281,7 +295,7 @@ function buildReturnsHtml(inputs: MainInventoryReturnPdfInput[]): string {
 <body>
   <div class="toolbar">
     <div class="toolbar-left">
-      <h1>Stock Return
+      <h1>Agent Stock Return
         <span class="hint">Use <b>Print</b> (Ctrl/⌘ + P), turn off <b>Headers and footers</b>, then save as PDF.</span>
       </h1>
     </div>

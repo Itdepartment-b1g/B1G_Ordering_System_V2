@@ -112,6 +112,7 @@ type OrderTableProps = {
   orderList: Order[];
   onViewOrder: (order: Order) => void;
   onOpenTimeline?: (order: Order) => void;
+  onPrintOrder?: (order: Order) => void;
   showApprovedAt?: boolean;
 };
 
@@ -119,10 +120,12 @@ function OrderRowActionsMenu({
   order,
   onViewOrder,
   onOpenTimeline,
+  onPrintOrder,
 }: {
   order: Order;
   onViewOrder: (order: Order) => void;
   onOpenTimeline?: (order: Order) => void;
+  onPrintOrder?: (order: Order) => void;
 }) {
   return (
     <DropdownMenu modal={false}>
@@ -142,6 +145,12 @@ function OrderRowActionsMenu({
           <Eye className="h-4 w-4 mr-2" />
           View
         </DropdownMenuItem>
+        {onPrintOrder ? (
+          <DropdownMenuItem onSelect={() => window.setTimeout(() => onPrintOrder(order), 0)}>
+            <Printer className="h-4 w-4 mr-2" />
+            Print
+          </DropdownMenuItem>
+        ) : null}
         {onOpenTimeline ? (
           <DropdownMenuItem onSelect={() => window.setTimeout(() => onOpenTimeline(order), 0)}>
             <Clock className="h-4 w-4 mr-2" />
@@ -153,7 +162,13 @@ function OrderRowActionsMenu({
   );
 }
 
-function OrderTable({ orderList, onViewOrder, onOpenTimeline, showApprovedAt = false }: OrderTableProps) {
+function OrderTable({
+  orderList,
+  onViewOrder,
+  onOpenTimeline,
+  onPrintOrder,
+  showApprovedAt = false,
+}: OrderTableProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const [sortState, setSortState] =
     useState<TableSortCycleState<ClientOrderListSortKey>>(createInitialTableSortCycle);
@@ -264,6 +279,7 @@ function OrderTable({ orderList, onViewOrder, onOpenTimeline, showApprovedAt = f
                     order={order}
                     onViewOrder={onViewOrder}
                     onOpenTimeline={onOpenTimeline}
+                    onPrintOrder={onPrintOrder}
                   />
                 </div>
               </div>
@@ -373,6 +389,7 @@ function OrderTable({ orderList, onViewOrder, onOpenTimeline, showApprovedAt = f
                         order={order}
                         onViewOrder={onViewOrder}
                         onOpenTimeline={onOpenTimeline}
+                        onPrintOrder={onPrintOrder}
                       />
                     </TableCell>
                   </TableRow>
@@ -2149,6 +2166,7 @@ export default function OrdersPage() {
                 orderList={filterOrders('pending')}
                 onViewOrder={handleViewOrder}
                 onOpenTimeline={canOpenTimeline ? handleOpenTimeline : undefined}
+                onPrintOrder={canPrintOrderReceipt ? handlePrintOrderReceipt : undefined}
                 showApprovedAt={canSeeApprovedAt}
               />
             </TabsContent>
@@ -2157,6 +2175,7 @@ export default function OrdersPage() {
                 orderList={filterOrders('approved')}
                 onViewOrder={handleViewOrder}
                 onOpenTimeline={canOpenTimeline ? handleOpenTimeline : undefined}
+                onPrintOrder={canPrintOrderReceipt ? handlePrintOrderReceipt : undefined}
                 showApprovedAt={canSeeApprovedAt}
               />
             </TabsContent>
@@ -2165,6 +2184,7 @@ export default function OrdersPage() {
                 orderList={filterOrders('rejected')}
                 onViewOrder={handleViewOrder}
                 onOpenTimeline={canOpenTimeline ? handleOpenTimeline : undefined}
+                onPrintOrder={canPrintOrderReceipt ? handlePrintOrderReceipt : undefined}
                 showApprovedAt={canSeeApprovedAt}
               />
             </TabsContent>
@@ -2173,6 +2193,7 @@ export default function OrdersPage() {
                 orderList={filterOrders()}
                 onViewOrder={handleViewOrder}
                 onOpenTimeline={canOpenTimeline ? handleOpenTimeline : undefined}
+                onPrintOrder={canPrintOrderReceipt ? handlePrintOrderReceipt : undefined}
                 showApprovedAt={canSeeApprovedAt}
               />
             </TabsContent>

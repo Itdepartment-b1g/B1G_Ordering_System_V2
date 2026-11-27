@@ -233,14 +233,27 @@ export async function fetchPostedClientOrderReturnsForOrders(
   return rows;
 }
 
-/** Returned qty per client order id (posted + pending change-item). */
+export type OrderReturnedQtySummary = {
+  total: number;
+  posted: number;
+  pending: number;
+};
+
+/** Returned qty per client order id (posted + pending change-item), split by status. */
 export async function fetchReturnedQtyByOrderIds(
   orderIds: string[]
-): Promise<Record<string, number>> {
+): Promise<Record<string, OrderReturnedQtySummary>> {
   const ids = [...new Set(orderIds.filter(Boolean))];
   if (ids.length === 0) return {};
 
-  const qtyByOrder: Record<string, number> = {};
+  const qtyByOrder: Record<string, OrderReturnedQtySummary> = {};
+  const ensure = (orderId: string): OrderReturnedQtySummary => {
+    if (!qtyByOrder[orderId]) {
+      qtyByOrder[orderId] = { total: 0, posted: 0, pending: 0 };
+    }
+    return qtyByOrder[orderId];
+  };
+
   for (let i = 0; i < ids.length; i += POSTED_RETURNS_ORDER_ID_CHUNK) {
     const chunk = ids.slice(i, i + POSTED_RETURNS_ORDER_ID_CHUNK);
     const { data, error } = await supabase
@@ -273,7 +286,13 @@ export async function fetchReturnedQtyByOrderIds(
         0
       );
       if (lineQty <= 0) continue;
-      qtyByOrder[orderId] = (qtyByOrder[orderId] || 0) + lineQty;
+      const summary = ensure(orderId);
+      if (status === 'posted') {
+        summary.posted += lineQty;
+      } else {
+        summary.pending += lineQty;
+      }
+      summary.total += lineQty;
     }
   }
   return qtyByOrder;

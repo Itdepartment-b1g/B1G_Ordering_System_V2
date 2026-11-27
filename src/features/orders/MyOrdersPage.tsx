@@ -65,10 +65,101 @@ import {
   canOpenClientOrderTimeline,
   canShowClientOrderReturns,
   fetchReturnedQtyByOrderIds,
+  type OrderReturnedQtySummary,
 } from './client-returns/clientReturnApi';
 import { ReturnClientOrderDialog } from './client-returns/ReturnClientOrderDialog';
 import { ClientOrderReturnTimeline } from './client-returns/ClientOrderReturnTimeline';
 import { cn } from '@/lib/utils';
+
+type ReturnQtyTone = 'none' | 'pending' | 'posted' | 'mixed';
+
+function getReturnQtyTone(summary?: OrderReturnedQtySummary | null): ReturnQtyTone {
+  const posted = summary?.posted || 0;
+  const pending = summary?.pending || 0;
+  if (posted <= 0 && pending <= 0) return 'none';
+  if (posted > 0 && pending > 0) return 'mixed';
+  if (pending > 0) return 'pending';
+  return 'posted';
+}
+
+const RETURN_QTY_TONE_CLASS: Record<ReturnQtyTone, string> = {
+  none: 'bg-muted text-muted-foreground',
+  pending: 'bg-amber-100 text-amber-800 border border-amber-200',
+  posted: 'bg-rose-100 text-rose-800 border border-rose-200',
+  mixed: 'bg-violet-100 text-violet-800 border border-violet-200',
+};
+
+const RETURN_QTY_LEGEND: Array<{ tone: ReturnQtyTone; label: string }> = [
+  { tone: 'none', label: 'None' },
+  { tone: 'pending', label: 'Pending' },
+  { tone: 'posted', label: 'Posted' },
+  { tone: 'mixed', label: 'Pending + Posted' },
+];
+
+function ReturnQtyBadge({
+  summary,
+  onClick,
+}: {
+  summary?: OrderReturnedQtySummary | null;
+  onClick?: () => void;
+}) {
+  const tone = getReturnQtyTone(summary);
+  const total = summary?.total || 0;
+  const title =
+    tone === 'none'
+      ? 'No returns'
+      : tone === 'pending'
+        ? `Pending ${summary?.pending || 0}`
+        : tone === 'posted'
+          ? `Posted ${summary?.posted || 0}`
+          : `Posted ${summary?.posted || 0} · Pending ${summary?.pending || 0}`;
+
+  const className = cn(
+    'inline-flex min-w-[1.75rem] items-center justify-center rounded-md px-1.5 py-0.5 text-xs font-semibold tabular-nums',
+    RETURN_QTY_TONE_CLASS[tone],
+    onClick && total > 0 && 'underline-offset-2 hover:underline'
+  );
+
+  if (onClick && total > 0) {
+    return (
+      <button type="button" title={title} className={className} onClick={onClick}>
+        {total}
+      </button>
+    );
+  }
+
+  return (
+    <span title={title} className={className}>
+      {total}
+    </span>
+  );
+}
+
+function ReturnQtyLegend({ className }: { className?: string }) {
+  return (
+    <div
+      className={cn(
+        'flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground',
+        className
+      )}
+      aria-label="Return column legend"
+    >
+      <span className="font-medium text-foreground/80">Return:</span>
+      {RETURN_QTY_LEGEND.map((item) => (
+        <span key={item.tone} className="inline-flex items-center gap-1.5">
+          <span
+            className={cn(
+              'inline-block h-2.5 w-2.5 rounded-sm',
+              RETURN_QTY_TONE_CLASS[item.tone]
+            )}
+            aria-hidden
+          />
+          {item.label}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 interface SelectedItem {
   variantId: string;
@@ -528,7 +619,7 @@ export default function MyOrdersPage() {
     [filteredOrders]
   );
 
-  const { data: returnedQtyByOrderId = {} } = useQuery({
+  const { data: returnedQtyByOrderId = {} as Record<string, OrderReturnedQtySummary> } = useQuery({
     queryKey: [CLIENT_ORDER_RETURN_QTY_BY_ORDER_QUERY_KEY, user?.company_id, filteredOrderIdsKey],
     enabled: showClientReturns && !!user?.company_id && filteredOrderIdsKey.length > 0,
     queryFn: () => fetchReturnedQtyByOrderIds(filteredOrderIdsKey.split(',')),
@@ -2832,29 +2923,25 @@ export default function MyOrdersPage() {
               </div>
             </div>
 
-            {/* Results and Actions */}
-            <div className="flex justify-between items-center text-sm">
-              <span className="text-muted-foreground">
-                {filteredOrders.length} order{filteredOrders.length !== 1 ? 's' : ''}
-                {hasActiveOrderFilters && myOrders.length !== filteredOrders.length && (
-                  <span className="text-muted-foreground/70"> of {myOrders.length}</span>
+            {(showClientReturns || hasActiveOrderFilters) && (
+              <div className="flex flex-col gap-2 sm:flex-row sm:justify-between sm:items-center text-sm">
+                {showClientReturns ? <ReturnQtyLegend className="min-w-0" /> : <span />}
+                {hasActiveOrderFilters && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setDateRangeFilter({ preset: 'all' });
+                      setStatusFilter('all');
+                      setSearchQuery('');
+                    }}
+                  >
+                    <X className="h-3 w-3 mr-1" />
+                    Clear filters
+                  </Button>
                 )}
-              </span>
-              {hasActiveOrderFilters && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setDateRangeFilter({ preset: 'all' });
-                    setStatusFilter('all');
-                    setSearchQuery('');
-                  }}
-                >
-                  <X className="h-3 w-3 mr-1" />
-                  Clear filters
-                </Button>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         </CardHeader>
         <CardContent>
@@ -2894,6 +2981,12 @@ export default function MyOrdersPage() {
                               <Eye className="h-4 w-4 mr-2" />
                               View
                             </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onSelect={() => window.setTimeout(() => handlePrintOrderReceipt(order), 0)}
+                            >
+                              <Printer className="h-4 w-4 mr-2" />
+                              Print
+                            </DropdownMenuItem>
                             {canViewReturnTimeline ? (
                               <DropdownMenuItem
                                 onSelect={() => window.setTimeout(() => setTimelineOrder(order), 0)}
@@ -2929,29 +3022,25 @@ export default function MyOrdersPage() {
                         <span className="text-muted-foreground">Payment:</span>
                         <span className="font-medium">{formatPaymentSummary(order)}</span>
                       </div>
-                      {showClientReturns ? (
-                        <div className="flex items-center justify-between">
-                          <span className="text-muted-foreground">Return:</span>
-                          {(returnedQtyByOrderId[order.id] || 0) > 0 ? (
-                            <button
-                              type="button"
-                              className="font-medium tabular-nums text-primary underline-offset-2 hover:underline"
-                              onClick={() => openClientReturnsForOrder(order.orderNumber)}
-                            >
-                              {returnedQtyByOrderId[order.id]}
-                            </button>
-                          ) : (
-                            <span className="tabular-nums text-muted-foreground">0</span>
-                          )}
-                        </div>
-                      ) : null}
                       <div className="flex items-center justify-between">
-                        <div>
-                          <span className="text-muted-foreground">{order.items.reduce((sum: number, item: any) => sum + (item.quantity || 0), 0)} items</span>
-                          <span className="text-muted-foreground mx-2">•</span>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-muted-foreground">
+                            {order.items.reduce((sum: number, item: any) => sum + (item.quantity || 0), 0)} items
+                          </span>
+                          {showClientReturns ? (
+                            <>
+                              <span className="text-muted-foreground">•</span>
+                              <span className="text-muted-foreground">Return:</span>
+                              <ReturnQtyBadge
+                                summary={returnedQtyByOrderId[order.id]}
+                                onClick={() => openClientReturnsForOrder(order.orderNumber)}
+                              />
+                            </>
+                          ) : null}
+                          <span className="text-muted-foreground mx-1">•</span>
                           <span className="text-muted-foreground">{new Date(order.date).toLocaleDateString()}</span>
                         </div>
-                        <div className="font-semibold text-sm">₱{order.total.toLocaleString()}</div>
+                        <div className="font-semibold text-sm shrink-0">₱{order.total.toLocaleString()}</div>
                       </div>
                     </div>
                   </div>
@@ -2993,6 +3082,11 @@ export default function MyOrdersPage() {
                     onSort={handleOrderSort}
                     className="text-center font-semibold whitespace-nowrap align-middle"
                   />
+                  {showClientReturns ? (
+                    <TableHead className="text-center font-semibold whitespace-nowrap align-middle">
+                      Return
+                    </TableHead>
+                  ) : null}
                   <SortableTableHead
                     label="Amount"
                     sortKey="amount"
@@ -3014,11 +3108,6 @@ export default function MyOrdersPage() {
                     onSort={handleOrderSort}
                     className="font-semibold whitespace-nowrap align-middle"
                   />
-                  {showClientReturns ? (
-                    <TableHead className="text-center font-semibold whitespace-nowrap align-middle">
-                      Return
-                    </TableHead>
-                  ) : null}
                   <TableHead className="text-center font-semibold whitespace-nowrap align-middle">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -3029,6 +3118,14 @@ export default function MyOrdersPage() {
                     <TableCell className="font-medium align-middle">{order.clientName}</TableCell>
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap align-middle">{new Date(order.date).toLocaleDateString()}</TableCell>
                     <TableCell className="text-center tabular-nums align-middle">{order.items.reduce((sum: number, item: any) => sum + (item.quantity || 0), 0)}</TableCell>
+                    {showClientReturns ? (
+                      <TableCell className="text-center tabular-nums align-middle">
+                        <ReturnQtyBadge
+                          summary={returnedQtyByOrderId[order.id]}
+                          onClick={() => openClientReturnsForOrder(order.orderNumber)}
+                        />
+                      </TableCell>
+                    ) : null}
                     <TableCell className="text-right font-semibold tabular-nums whitespace-nowrap align-middle">
                       ₱{order.total.toLocaleString()}
                     </TableCell>
@@ -3040,23 +3137,6 @@ export default function MyOrdersPage() {
                         {getDisplayStatus(order).text}
                       </Badge>
                     </TableCell>
-                    {showClientReturns ? (
-                      <TableCell className="text-center tabular-nums align-middle">
-                        {(returnedQtyByOrderId[order.id] || 0) > 0 ? (
-                          <button
-                            type="button"
-                            className={cn(
-                              'font-medium text-primary underline-offset-2 hover:underline'
-                            )}
-                            onClick={() => openClientReturnsForOrder(order.orderNumber)}
-                          >
-                            {returnedQtyByOrderId[order.id]}
-                          </button>
-                        ) : (
-                          <span className="text-muted-foreground">0</span>
-                        )}
-                      </TableCell>
-                    ) : null}
                     <TableCell className="text-center align-middle">
                       <DropdownMenu modal={false}>
                         <DropdownMenuTrigger asChild>
@@ -3076,6 +3156,12 @@ export default function MyOrdersPage() {
                           >
                             <Eye className="h-4 w-4 mr-2" />
                             View
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onSelect={() => window.setTimeout(() => handlePrintOrderReceipt(order), 0)}
+                          >
+                            <Printer className="h-4 w-4 mr-2" />
+                            Print
                           </DropdownMenuItem>
                           {canViewReturnTimeline ? (
                             <DropdownMenuItem
